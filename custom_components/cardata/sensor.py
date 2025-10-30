@@ -17,12 +17,41 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
-from homeassistant.const import UnitOfLength
+from homeassistant.const import (
+    UnitOfLength, 
+    UnitOfEnergy, 
+    UnitOfPressure, 
+    UnitOfPower, 
+    UnitOfEnergyDistance, 
+    UnitOfElectricCurrent,
+    UnitOfTime,
+    UnitOfElectricPotential,
+    UnitOfVolume, 
+    UnitOfTemperature
+)
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 
+UNIT_NAME_TO_DEVICE_CLASS_MAP = {}
+
+"""Initialize the mapping of unit names to device classes."""
+
+def add_device_class_based_on_unit(sensorDeviceClass, typeOfUnit) -> None:
+    for unit in typeOfUnit:
+        UNIT_NAME_TO_DEVICE_CLASS_MAP[unit.value] = sensorDeviceClass
+
+add_device_class_based_on_unit(SensorDeviceClass.DISTANCE, UnitOfLength)
+add_device_class_based_on_unit(SensorDeviceClass.PRESSURE, UnitOfPressure)
+add_device_class_based_on_unit(SensorDeviceClass.ENERGY, UnitOfEnergy)
+add_device_class_based_on_unit(SensorDeviceClass.ENERGY_DISTANCE, UnitOfEnergyDistance)
+add_device_class_based_on_unit(SensorDeviceClass.POWER, UnitOfPower)
+add_device_class_based_on_unit(SensorDeviceClass.CURRENT, UnitOfElectricCurrent)
+add_device_class_based_on_unit(SensorDeviceClass.DURATION, UnitOfTime)
+add_device_class_based_on_unit(SensorDeviceClass.VOLTAGE, UnitOfElectricPotential)
+add_device_class_based_on_unit(SensorDeviceClass.VOLUME, UnitOfVolume)
+add_device_class_based_on_unit(SensorDeviceClass.TEMPERATURE, UnitOfTemperature)
 
 class CardataSensor(CardataEntity, SensorEntity):
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
@@ -39,11 +68,24 @@ class CardataSensor(CardataEntity, SensorEntity):
             if last_state and last_state.state not in ("unknown", "unavailable"):
                 self._attr_native_value = last_state.state
                 unit = last_state.attributes.get("unit_of_measurement")
+
                 if unit is not None:
+                    # Manual mapping for units that differ between HA and CarData
+                    match unit:
+                        case "l":
+                            unit = UnitOfVolume.LITERS.value
+                        case "celsius":
+                            unit = UnitOfTemperature.CELSIUS.value
+                        case "weeks":
+                            unit = UnitOfTime.WEEKS.value
+                        case "months":
+                            unit = UnitOfTime.MONTHS.value
+                        case "kPa" | "kpa":
+                            unit = UnitOfPressure.KPA
+                    
+                    self._attr_device_class = UNIT_NAME_TO_DEVICE_CLASS_MAP.get(unit)
                     self._attr_native_unit_of_measurement = unit
-                    # If unit is a length/distance type, enable conversion
-                    if unit in {u.value for u in UnitOfLength}:
-                        self._attr_device_class = SensorDeviceClass.DISTANCE # Enables km/mi, m/ft, etc., conversion
+
                 timestamp = last_state.attributes.get("timestamp")
                 if not timestamp and last_state.last_changed:
                     timestamp = last_state.last_changed.isoformat()
@@ -189,7 +231,6 @@ class CardataSocEstimateSensor(CardataEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
-    _attr_icon = "mdi:battery-clock"
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "soc_estimate")
@@ -245,7 +286,7 @@ class CardataTestingSocEstimateSensor(CardataEntity, SensorEntity):
     _attr_should_poll = False
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
-    _attr_icon = "mdi:battery-clock"
+    _attr_device_class = SensorDeviceClass.BATTERY 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
@@ -391,7 +432,7 @@ async def async_setup_entry(
         location_descriptors = [
             "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
             "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
-            "vehicle.cabin.infotainment.navigation.currentLocation.heading",
+
         ]
         if descriptor in location_descriptors:
             return
