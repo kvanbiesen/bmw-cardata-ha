@@ -133,6 +133,29 @@ class CardataSensor(CardataEntity, SensorEntity):
         # Special handling for mileage sensor
         if self._descriptor == "vehicle.vehicle.travelledDistance":
             self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    @property
+    def name(self) -> str | None:
+        """Return the sensor name, prefixed with the car model to avoid duplicates
+        when multiple BMWs are linked to the same account.
+        """
+        base_name = super().name
+
+        model_name: str | None = None
+        try:
+            info = self.device_info
+            # DeviceInfo behaves like a mapping but may also expose attributes
+            model_name = getattr(info, "name", None)
+            if model_name is None and isinstance(info, dict):
+                model_name = info.get("name")
+        except Exception:
+            model_name = None
+
+        if model_name and base_name:
+            if not str(base_name).startswith(str(model_name)):
+                return f"{model_name} {base_name}"
+
+        return base_name
     
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
