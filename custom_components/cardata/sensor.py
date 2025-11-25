@@ -1,629 +1,514 @@
-"""Sensor platform for BMW CarData."""
+"""Config flow for BMW CarData integration."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+import asyncio
+import base64
+import hashlib
+import secrets
+import string
+import time
+from typing import Any, Dict, Optional
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
+import aiohttp
+import voluptuous as vol
+
+import logging
+
+from homeassistant import config_entries
+from homeassistant.components import persistent_notification
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.data_entry_flow import FlowResult, FlowResultType
+
+from . import async_manual_refresh_tokens
+from .container import CardataContainerError
+from .const import (
+    DEFAULT_SCOPE,
+    DOMAIN,
+    VEHICLE_METADATA,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util import dt as dt_util
-from homeassistant.const import (
-    UnitOfLength, 
-    UnitOfEnergy, 
-    UnitOfPressure, 
-    UnitOfPower, 
-    UnitOfEnergyDistance, 
-    UnitOfElectricCurrent,
-    UnitOfTime,
-    UnitOfElectricPotential,
-    UnitOfVolume, 
-    UnitOfTemperature
-)
+from .device_flow import CardataAuthError, poll_for_tokens, request_device_code
 
-from .const import DOMAIN
-from .coordinator import CardataCoordinator
-from .entity import CardataEntity
-
-UNIT_NAME_TO_DEVICE_CLASS_MAP = {}
-
-"""Initialize the mapping of unit names to device classes."""
-
-def add_device_class_based_on_unit(sensorDeviceClass, typeOfUnit) -> None:
-    for unit in typeOfUnit:
-        UNIT_NAME_TO_DEVICE_CLASS_MAP[unit.value] = sensorDeviceClass
-
-add_device_class_based_on_unit(SensorDeviceClass.DISTANCE, UnitOfLength)
-add_device_class_based_on_unit(SensorDeviceClass.PRESSURE, UnitOfPressure)
-add_device_class_based_on_unit(SensorDeviceClass.ENERGY, UnitOfEnergy)
-add_device_class_based_on_unit(SensorDeviceClass.ENERGY_DISTANCE, UnitOfEnergyDistance)
-add_device_class_based_on_unit(SensorDeviceClass.POWER, UnitOfPower)
-add_device_class_based_on_unit(SensorDeviceClass.CURRENT, UnitOfElectricCurrent)
-add_device_class_based_on_unit(SensorDeviceClass.DURATION, UnitOfTime)
-add_device_class_based_on_unit(SensorDeviceClass.VOLTAGE, UnitOfElectricPotential)
-add_device_class_based_on_unit(SensorDeviceClass.VOLUME, UnitOfVolume)
-add_device_class_based_on_unit(SensorDeviceClass.TEMPERATURE, UnitOfTemperature)
-
-def normalize_unit(unit: str | None) -> str | None:
-    """Normalize BMW unit strings to Home Assistant compatible units."""
-    if unit is None:
-        return None
-    
-    # Manual mapping for units that differ between HA and CarData
-    unit_mapping = {
-        "l": UnitOfVolume.LITERS,
-        "celsius": UnitOfTemperature.CELSIUS,
-        "weeks": UnitOfTime.DAYS,  # Convert weeks to days
-        "w": UnitOfTime.DAYS,      # BMW sends 'w' for weeks
-        "months": UnitOfTime.DAYS,  # Convert months to approximate days
-        "kPa": UnitOfPressure.KPA,
-        "kpa": UnitOfPressure.KPA,
-        "d": UnitOfTime.DAYS, 
-        # Note: 'm' is handled specially based on descriptor name (meters vs minutes ambiguity)
-    }
-    
-    # Return mapped unit or original if no mapping exists
-    mapped = unit_mapping.get(unit)
-    return mapped if mapped else unit
+DATA_SCHEMA = vol.Schema({vol.Required("client_id"): str})
 
 
-def get_device_class_for_unit(unit: str | None, descriptor: str = None) -> SensorDeviceClass | None:
-    """Get device class, with special handling for ambiguous units like 'm'."""
-    if unit is None:
-        return None
-    
-    # Special case: 'm' can be meters OR minutes depending on context
-    if unit == 'm' and descriptor:
-        descriptor_lower = descriptor.lower()
-        
-        # These keywords indicate altitude/distance, not duration
-        distance_keywords = [
-            'altitude', 'elevation', 'sealevel', 'sea_level', 
-            'height', 'position', 'location', 'distance'
-        ]
-        
-        # Check if descriptor contains any distance keywords
-        if any(keyword in descriptor_lower for keyword in distance_keywords):
-            return SensorDeviceClass.DISTANCE
-        
-        # These keywords indicate duration/time
-        duration_keywords = ['time', 'duration', 'minutes', 'mins']
-        if any(keyword in descriptor_lower for keyword in duration_keywords):
-            return SensorDeviceClass.DURATION
-    
-    # Use the standard mapping
-    return UNIT_NAME_TO_DEVICE_CLASS_MAP.get(unit)
+def _build_code_verifier() -> str:
+    alphabet = string.ascii_letters + string.digits + "-._~"
+    return "".join(secrets.choice(alphabet) for _ in range(86))
 
 
-def convert_value_for_unit(value: float | str | int, original_unit: str | None, normalized_unit: str | None) -> float | str | int:
-    """Convert value when unit normalization requires it."""
-    if original_unit == normalized_unit or value is None:
-        return value
-    
-    try:
-        numeric_value = float(value)
-    except (TypeError, ValueError):
-        return value
-    
-    # Convert weeks to days
-    if original_unit in ("weeks", "w") and normalized_unit == UnitOfTime.DAYS:
-        return numeric_value * 7
-    
-    # Convert months to days (approximate)
-    if original_unit == "months" and normalized_unit == UnitOfTime.DAYS:
-        return numeric_value * 30
-    
-    return value
+def _generate_code_challenge(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
-class CardataSensor(CardataEntity, SensorEntity):
-    def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
-        super().__init__(coordinator, vin, descriptor)
-        self._attr_should_poll = False
-        self._unsubscribe = None
-        
-        # Special handling for mileage sensor
-        if self._descriptor == "vehicle.vehicle.travelledDistance":
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-    
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        if getattr(self, "_attr_native_value", None) is None:
-            last_state = await self.async_get_last_state()
-            if last_state and last_state.state not in ("unknown", "unavailable"):
-                self._attr_native_value = last_state.state
-                unit = last_state.attributes.get("unit_of_measurement")
 
-                if unit is not None:
-                    # Normalize the unit
-                    original_unit = unit
-                    unit = normalize_unit(unit)
-                    
-                    # Convert value if needed (e.g., weeks to days)
-                    self._attr_native_value = convert_value_for_unit(
-                        self._attr_native_value, 
-                        original_unit, 
-                        unit
-                    )
-                    
-                    # Get device class with context-aware logic for ambiguous units like 'm'
-                    existing_device_class = getattr(self, "_attr_device_class", None)
-                    if existing_device_class is None:
-                        self._attr_device_class = get_device_class_for_unit(unit, self._descriptor)
-                    self._attr_native_unit_of_measurement = unit
+class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle config flow for BMW CarData."""
 
-                timestamp = last_state.attributes.get("timestamp")
-                if not timestamp and last_state.last_changed:
-                    timestamp = last_state.last_changed.isoformat()
-                self._coordinator.restore_descriptor_state(
-                    self.vin,
-                    self.descriptor,
-                    self._attr_native_value,
-                    unit,
-                    timestamp,
-                )
-        
-        # Subscribe to updates
-        self._unsubscribe = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_update,
-            self._handle_update,
-        )
-        # Handle any existing data
-        self._handle_update(self.vin, self.descriptor)
+    VERSION = 1
 
-    async def async_will_remove_from_hass(self) -> None:
-        await super().async_will_remove_from_hass()
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
+    def __init__(self) -> None:
+        self._client_id: Optional[str] = None
+        self._device_data: Optional[Dict[str, Any]] = None
+        self._code_verifier: Optional[str] = None
+        self._token_data: Optional[Dict[str, Any]] = None
+        self._reauth_entry: Optional[config_entries.ConfigEntry] = None
 
-    def _handle_update(self, vin: str, descriptor: str) -> None:
-        """Handle incoming data updates from the coordinator."""
-        if vin != self.vin or descriptor != self.descriptor:
-            return
-        
-        state = self._coordinator.get_state(vin, descriptor)
-        if not state:
-            return
-        
-        # Normalize unit and convert value if needed
-        original_unit = state.unit
-        normalized_unit = normalize_unit(state.unit)
-        converted_value = convert_value_for_unit(state.value, original_unit, normalized_unit)
-        
-        self._attr_native_value = converted_value
-        self._attr_native_unit_of_measurement = normalized_unit
-        
-        # Set device class if not already set, using context-aware logic
-        existing_device_class = getattr(self, "_attr_device_class", None)
-        if existing_device_class is None:
-            self._attr_device_class = get_device_class_for_unit(
-                normalized_unit,
-                self._descriptor
+    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        if user_input is None:
+            return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA)
+
+        client_id = user_input["client_id"].strip()
+
+        for entry in list(self._async_current_entries()):
+            existing_client_id = entry.data.get("client_id") if hasattr(entry, "data") else None
+            if entry.unique_id == client_id or existing_client_id == client_id:
+                await self.hass.config_entries.async_remove(entry.entry_id)
+
+        await self.async_set_unique_id(client_id)
+
+        self._client_id = client_id
+
+        try:
+            await self._request_device_code()
+        except CardataAuthError as err:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=DATA_SCHEMA,
+                errors={"base": "device_code_failed"},
+                description_placeholders={"error": str(err)},
             )
 
-        self.schedule_update_ha_state()
+        return await self.async_step_authorize()
 
-class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
-    _attr_should_poll = False
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    async def _request_device_code(self) -> None:
+        assert self._client_id is not None
+        self._code_verifier = _build_code_verifier()
+        async with aiohttp.ClientSession() as session:
+            self._device_data = await request_device_code(
+                session,
+                client_id=self._client_id,
+                scope=DEFAULT_SCOPE,
+                code_challenge=_generate_code_challenge(self._code_verifier),
+            )
 
-    def __init__(
-        self,
-        coordinator: CardataCoordinator,
-        stream_manager,
-        entry_id: str,
-        sensor_type: str,
-        quota_manager,
-    ) -> None:
-        self._coordinator = coordinator
-        self._stream = stream_manager
-        self._entry_id = entry_id
-        self._sensor_type = sensor_type
-        self._quota = quota_manager
-        self._unsub = None
-        if sensor_type == "last_message":
-            suffix = "last_message"
-            self._attr_name = "Last Message Received"
-            self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        elif sensor_type == "last_telematic_api":
-            suffix = "last_telematic_api"
-            self._attr_name = "Last Telematics API Call"
-            self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        elif sensor_type == "connection_status":
-            suffix = "connection_status"
-            self._attr_name = "Stream Connection Status"
-        else:
-            suffix = sensor_type
-            self._attr_name = sensor_type
-        self._attr_unique_id = f"{entry_id}_diagnostics_{suffix}"
+    async def async_step_authorize(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        assert self._client_id is not None
+        assert self._device_data is not None
+        assert self._code_verifier is not None
 
-    @property
-    def device_info(self) -> DeviceInfo:
-        return {
-            "identifiers": {(DOMAIN, self._entry_id)},
-            "manufacturer": "BMW",
-            "name": "CarData Debug Device",
+        placeholders = {
+            "verification_url": self._device_data.get("verification_uri_complete")
+            or self._device_data.get("verification_uri"),
+            "user_code": self._device_data.get("user_code", ""),
         }
 
-    @property
-    def extra_state_attributes(self) -> dict:
-        if self._sensor_type == "connection_status":
-            attrs = dict(self._stream.debug_info)
-            if self._coordinator.last_disconnect_reason:
-                attrs["last_disconnect_reason"] = self._coordinator.last_disconnect_reason
-            if self._quota:
-                attrs["api_quota_used"] = self._quota.used
-                attrs["api_quota_remaining"] = self._quota.remaining
-                if next_reset := self._quota.next_reset_iso:
-                    attrs["api_quota_next_reset"] = next_reset
-            return attrs
-        if self._sensor_type == "last_telematic_api":
-            attrs: dict[str, Any] = {}
-            if self._quota:
-                attrs["api_quota_used"] = self._quota.used
-                attrs["api_quota_remaining"] = self._quota.remaining
-                if next_reset := self._quota.next_reset_iso:
-                    attrs["api_quota_next_reset"] = next_reset
-            return attrs
-        return {}
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        if self._attr_native_value is None:
-            last_state = await self.async_get_last_state()
-            if last_state and last_state.state not in ("unknown", "unavailable"):
-                if self._sensor_type in {"last_message", "last_telematic_api"}:
-                    self._attr_native_value = dt_util.parse_datetime(last_state.state)
-                else:
-                    self._attr_native_value = last_state.state
-        self._unsub = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_diagnostics,
-            self._handle_update,
-        )
-        self._handle_update()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._unsub:
-            self._unsub()
-            self._unsub = None
-
-    def _handle_update(self) -> None:
-        if self._sensor_type == "last_message":
-            value = self._coordinator.last_message_at
-            if value is not None:
-                self._attr_native_value = value
-        elif self._sensor_type == "last_telematic_api":
-            value = self._coordinator.last_telematic_api_at
-            if value is not None:
-                self._attr_native_value = value
-        elif self._sensor_type == "connection_status":
-            value = self._coordinator.connection_status
-            if value is not None:
-                self._attr_native_value = value
-        self.schedule_update_ha_state()
-
-    @property
-    def native_value(self):
-        return self._attr_native_value
-
-
-class CardataSocEstimateSensor(CardataEntity, SensorEntity):
-    _attr_should_poll = False
-    _attr_device_class = SensorDeviceClass.BATTERY
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "%"
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(coordinator, vin, "soc_estimate")
-        self._base_name = "State Of Charge (Predicted on Integration side)"
-        self._update_name(write_state=False)
-        self._unsubscribe = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in ("unknown", "unavailable"):
-            try:
-                self._attr_native_value = float(last_state.state)
-            except (TypeError, ValueError):
-                self._attr_native_value = None
-            else:
-                restored_ts = last_state.attributes.get("timestamp")
-                reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-                if reference is None:
-                    reference = last_state.last_changed
-                if reference is not None:
-                    reference = dt_util.as_utc(reference)
-                if self._coordinator.get_soc_estimate(self.vin) is None:
-                    self._coordinator.restore_soc_cache(
-                        self.vin,
-                        estimate=self._attr_native_value,
-                        timestamp=reference,
-                    )
-        self._unsubscribe = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_soc_estimate,
-            self._handle_update,
-        )
-        existing = self._coordinator.get_soc_estimate(self.vin)
-        if existing is not None:
-            self._attr_native_value = existing
-            self.schedule_update_ha_state()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-
-    def _handle_update(self, vin: str) -> None:
-        if vin != self.vin:
-            return
-        value = self._coordinator.get_soc_estimate(vin)
-        self._attr_native_value = value
-        self.schedule_update_ha_state()
-
-
-class CardataTestingSocEstimateSensor(CardataEntity, SensorEntity):
-    _attr_should_poll = False
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "%"
-    _attr_device_class = SensorDeviceClass.BATTERY 
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(coordinator, vin, "soc_estimate_testing")
-        self._base_name = "New Extrapolation Testing sensor"
-        self._update_name(write_state=False)
-        self._unsubscribe = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in ("unknown", "unavailable"):
-            try:
-                self._attr_native_value = float(last_state.state)
-            except (TypeError, ValueError):
-                self._attr_native_value = None
-            else:
-                restored_ts = last_state.attributes.get("timestamp")
-                reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-                if reference is None:
-                    reference = last_state.last_changed
-                if reference is not None:
-                    reference = dt_util.as_utc(reference)
-                if self._coordinator.get_testing_soc_estimate(self.vin) is None:
-                    self._coordinator.restore_testing_soc_cache(
-                        self.vin,
-                        estimate=self._attr_native_value,
-                        timestamp=reference,
-                    )
-        self._unsubscribe = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_soc_estimate,
-            self._handle_update,
-        )
-        existing = self._coordinator.get_testing_soc_estimate(self.vin)
-        if existing is not None:
-            self._attr_native_value = existing
-            self.schedule_update_ha_state()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-
-    def _handle_update(self, vin: str) -> None:
-        if vin != self.vin:
-            return
-        value = self._coordinator.get_testing_soc_estimate(vin)
-        self._attr_native_value = value
-        self.schedule_update_ha_state()
-
-
-class CardataSocRateSensor(CardataEntity, SensorEntity):
-    _attr_should_poll = False
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "%/h"
-    _attr_icon = "mdi:battery-clock"
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(coordinator, vin, "soc_rate")
-        self._base_name = "Predicted charge speed"
-        self._update_name(write_state=False)
-        self._unsubscribe = None
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in ("unknown", "unavailable"):
-            try:
-                self._attr_native_value = float(last_state.state)
-            except (TypeError, ValueError):
-                self._attr_native_value = None
-            else:
-                restored_ts = last_state.attributes.get("timestamp")
-                reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-                if reference is None:
-                    reference = last_state.last_changed
-                if reference is not None:
-                    reference = dt_util.as_utc(reference)
-                if self._coordinator.get_soc_rate(self.vin) is None:
-                    self._coordinator.restore_soc_cache(
-                        self.vin,
-                        rate=self._attr_native_value,
-                        timestamp=reference,
-                    )
-        self._unsubscribe = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_soc_estimate,
-            self._handle_update,
-        )
-        existing = self._coordinator.get_soc_rate(self.vin)
-        if existing is not None:
-            self._attr_native_value = existing
-            self.schedule_update_ha_state()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-
-    def _handle_update(self, vin: str) -> None:
-        if vin != self.vin:
-            return
-        value = self._coordinator.get_soc_rate(vin)
-        self._attr_native_value = value
-        self.schedule_update_ha_state()
-
-
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
-) -> None:
-    runtime = hass.data[DOMAIN][entry.entry_id]
-    coordinator: CardataCoordinator = runtime.coordinator
-
-    entities: Dict[Tuple[str, str], CardataSensor] = {}
-    soc_estimate_entities: Dict[str, CardataSocEstimateSensor] = {}
-    soc_estimate_testing_entities: Dict[str, CardataTestingSocEstimateSensor] = {}
-    soc_rate_entities: Dict[str, CardataSocRateSensor] = {}
-
-    def ensure_soc_tracking_entities(vin: str) -> None:
-        new_entities = []
-        if vin not in soc_estimate_entities:
-            estimate = CardataSocEstimateSensor(coordinator, vin)
-            soc_estimate_entities[vin] = estimate
-            new_entities.append(estimate)
-        if vin not in soc_estimate_testing_entities:
-            testing_estimate = CardataTestingSocEstimateSensor(coordinator, vin)
-            soc_estimate_testing_entities[vin] = testing_estimate
-            new_entities.append(testing_estimate)
-        if vin not in soc_rate_entities:
-            rate = CardataSocRateSensor(coordinator, vin)
-            soc_rate_entities[vin] = rate
-            new_entities.append(rate)
-        if new_entities:
-            async_add_entities(new_entities, True)
-
-    def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False) -> None:
-        ensure_soc_tracking_entities(vin)
-        if (vin, descriptor) in entities:
-            return
-        
-        # Filter out location descriptors - these are used by device_tracker only
-        location_descriptors = [
-            "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
-            "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
-
-        ]
-        if descriptor in location_descriptors:
-            return
-        
-        state = coordinator.get_state(vin, descriptor)
-        if state:
-            if isinstance(state.value, bool):
-                return
-        elif not assume_sensor:
-            return
-        entity = CardataSensor(coordinator, vin, descriptor)
-        entities[(vin, descriptor)] = entity
-        async_add_entities([entity])
-
-    entity_registry = er.async_get(hass)
-    legacy_unique_ids = {
-        f"{entry.entry_id}_connection_status": f"{entry.entry_id}_diagnostics_connection_status",
-        f"{entry.entry_id}_last_message": f"{entry.entry_id}_diagnostics_last_message",
-    }
-    for old_unique_id, new_unique_id in legacy_unique_ids.items():
-        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, old_unique_id)
-        if entity_id:
-            entity_registry.async_update_entity(
-                entity_id, new_unique_id=new_unique_id
+        if user_input is None:
+            return self.async_show_form(
+                step_id="authorize",
+                data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
+                description_placeholders=placeholders,
             )
 
-    legacy_soc_rate_unique = f"{entry.entry_id}_diagnostics_soc_rate"
-    legacy_soc_rate_entity = entity_registry.async_get_entity_id(
-        "sensor", DOMAIN, legacy_soc_rate_unique
-    )
-    if legacy_soc_rate_entity:
-        entity_registry.async_remove(legacy_soc_rate_entity)
+        device_code = self._device_data["device_code"]
+        interval = int(self._device_data.get("interval", 5))
 
-    for entity_entry in er.async_entries_for_config_entry(
-        entity_registry, entry.entry_id
-    ):
-        if entity_entry.domain != "sensor":
-            continue
-        if entity_entry.disabled_by is not None:
-            continue
-        unique_id = entity_entry.unique_id
-        if not unique_id or "_" not in unique_id:
-            continue
-        if unique_id.startswith(f"{entry.entry_id}_diagnostics_"):
-            continue
-        vin, descriptor = unique_id.split("_", 1)
-        if descriptor in {"soc_estimate", "soc_rate", "soc_estimate_testing"}:
-            ensure_soc_tracking_entities(vin)
-            continue
-        ensure_entity(vin, descriptor, assume_sensor=True)
+        async with aiohttp.ClientSession() as session:
+            try:
+                token_data = await poll_for_tokens(
+                    session,
+                    client_id=self._client_id,
+                    device_code=device_code,
+                    code_verifier=self._code_verifier,
+                    interval=interval,
+                    timeout=int(self._device_data.get("expires_in", 600)),
+                )
+            except CardataAuthError as err:
+                LOGGER.warning("BMW authorization pending/failed: %s", err)
+                return self.async_show_form(
+                    step_id="authorize",
+                    data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
+                    errors={"base": "authorization_failed"},
+                    description_placeholders={"error": str(err), **placeholders},
+                )
 
-    for vin, descriptor in coordinator.iter_descriptors(binary=False):
-        ensure_entity(vin, descriptor)
+        self._token_data = token_data
+        LOGGER.debug("Received token: scope=%s id_token_length=%s", token_data.get("scope"), len(token_data.get("id_token") or ""))
+        return await self.async_step_tokens()
 
-    for vin in list(coordinator.data.keys()):
-        ensure_soc_tracking_entities(vin)
+    async def async_step_tokens(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        assert self._client_id is not None
+        token_data = self._token_data
 
-    async def async_handle_new(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
+        entry_data = {
+            "client_id": self._client_id,
+            "access_token": token_data.get("access_token"),
+            "refresh_token": token_data.get("refresh_token"),
+            "id_token": token_data.get("id_token"),
+            "expires_in": token_data.get("expires_in"),
+            "scope": token_data.get("scope"),
+            "gcid": token_data.get("gcid"),
+            "token_type": token_data.get("token_type"),
+            "received_at": time.time(),
+        }
 
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new)
-    )
+        if self._reauth_entry:
+            merged = dict(self._reauth_entry.data)
+            merged.update(entry_data)
+            merged.pop("reauth_pending", None)
+            self.hass.config_entries.async_update_entry(self._reauth_entry, data=merged)
+            runtime = self.hass.data.get(DOMAIN, {}).get(self._reauth_entry.entry_id)
+            if runtime:
+                runtime.reauth_in_progress = False
+                runtime.reauth_flow_id = None
+                runtime.last_reauth_attempt = 0.0
+                runtime.last_refresh_attempt = 0.0
+                runtime.reauth_pending = False
+                new_token = entry_data.get("id_token")
+                new_gcid = entry_data.get("gcid")
+                if new_token or new_gcid:
+                    self.hass.async_create_task(
+                        runtime.stream.async_update_credentials(
+                            gcid=new_gcid,
+                            id_token=new_token,
+                        )
+                    )
+            notification_id = f"{DOMAIN}_reauth_{self._reauth_entry.entry_id}"
+            persistent_notification.async_dismiss(self.hass, notification_id)
+            return self.async_abort(reason="reauth_successful")
 
-    async def async_handle_soc_estimate(vin: str) -> None:
-        ensure_soc_tracking_entities(vin)
+        friendly_title = f"BimmerData Streamline ({self._client_id[:8]})"
+        return self.async_create_entry(title=friendly_title, data=entry_data)
 
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_soc_estimate, async_handle_soc_estimate
+    async def async_step_reauth(self, entry_data: Dict[str, Any]) -> FlowResult:
+        """Handle reauth flow initiated by async_start_reauth."""
+        # Get entry_id from context (set by async_start_reauth)
+        entry_id = self.context.get("entry_id")
+        if entry_id:
+            self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
+        
+        # Get client_id from the entry itself
+        if self._reauth_entry:
+            self._client_id = self._reauth_entry.data.get("client_id")
+        
+        if not self._client_id:
+            LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
+            return self.async_abort(reason="reauth_missing_client_id")
+            
+        try:
+            await self._request_device_code()
+        except CardataAuthError as err:
+            LOGGER.error(
+                "Unable to request BMW device authorization code for entry %s: %s",
+                entry_id,
+                err,
+            )
+            if self._reauth_entry:
+                runtime = self.hass.data.get(DOMAIN, {}).get(self._reauth_entry.entry_id)
+                if runtime:
+                    runtime.reauth_in_progress = False
+                    runtime.reauth_flow_id = None
+            return self.async_abort(
+                reason="reauth_device_code_failed",
+                description_placeholders={"error": str(err)},
+            )
+        return await self.async_step_authorize()
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        return CardataOptionsFlowHandler(config_entry)
+
+LOGGER = logging.getLogger(__name__)
+
+
+class CardataOptionsFlowHandler(config_entries.OptionsFlow):
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._config_entry = config_entry
+        self._reauth_client_id: Optional[str] = None
+
+    async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        return self.async_show_menu(
+            step_id="init",
+            menu_options={
+                "action_refresh_tokens": "Refresh tokens",
+                "action_reauth": "Start device authorization again",
+                "action_fetch_mappings": "Initiate vehicles (API)",
+                "action_fetch_basic": "Get basic vehicle information (API)",
+                "action_fetch_telematic": "Get telematics data (API)",
+                "action_reset_container": "Reset telemetry container",
+            },
         )
-    )
 
-    diagnostic_entities: list[CardataDiagnosticsSensor] = []
-    stream_manager = runtime.stream
-    for sensor_type in ("connection_status", "last_message", "last_telematic_api"):
-        if sensor_type == "last_message":
-            unique_id = f"{entry.entry_id}_diagnostics_last_message"
-        elif sensor_type == "last_telematic_api":
-            unique_id = f"{entry.entry_id}_diagnostics_last_telematic_api"
+    def _confirm_schema(self) -> vol.Schema:
+        return vol.Schema({vol.Required("confirm", default=False): bool})
+
+    def _show_confirm(
+        self,
+        *,
+        step_id: str,
+        errors: Optional[Dict[str, str]] = None,
+        placeholders: Optional[Dict[str, Any]] = None,
+    ) -> FlowResult:
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self._confirm_schema(),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
+
+    def _get_runtime(self):
+        return self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+
+    async def async_step_action_refresh_tokens(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        description = "Refresh stored tokens now?"
+        if user_input is None:
+            return self._show_confirm(step_id="action_refresh_tokens")
+        if not user_input.get("confirm"):
+            return self._show_confirm(
+                step_id="action_refresh_tokens",
+                errors={"confirm": "confirm"},
+            )
+        try:
+            await async_manual_refresh_tokens(self.hass, self._config_entry)
+        except CardataAuthError as err:
+            return self._show_confirm(
+                step_id="action_refresh_tokens",
+                errors={"base": "refresh_failed"},
+                placeholders={"error": str(err)},
+            )
+        return self.async_create_entry(title="", data={})
+
+    async def async_step_action_reauth(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        current_client_id = (
+            self._reauth_client_id
+            or self._config_entry.data.get("client_id")
+            or ""
+        )
+        schema = vol.Schema(
+            {
+                vol.Required("client_id", default=current_client_id): str,
+                vol.Required("confirm", default=False): bool,
+            }
+        )
+        if user_input is None:
+            return self.async_show_form(step_id="action_reauth", data_schema=schema)
+        client_id = user_input.get("client_id", "")
+        if isinstance(client_id, str):
+            client_id = client_id.strip()
         else:
-            unique_id = f"{entry.entry_id}_diagnostics_connection_status"
-        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-        if entity_id:
-            entity_entry = entity_registry.async_get(entity_id)
-            if entity_entry and entity_entry.disabled_by is not None:
-                continue
-            existing_state = hass.states.get(entity_id)
-            if existing_state and not existing_state.attributes.get("restored", False):
-                continue
-        diagnostic_entities.append(
-            CardataDiagnosticsSensor(
-                coordinator,
-                stream_manager,
-                entry.entry_id,
-                sensor_type,
-                runtime.quota_manager,
+            client_id = ""
+        errors: Dict[str, str] = {}
+        if not client_id:
+            errors["client_id"] = "invalid_client_id"
+        if not user_input.get("confirm"):
+            errors["confirm"] = "confirm"
+        if errors:
+            return self.async_show_form(
+                step_id="action_reauth",
+                data_schema=schema,
+                errors=errors,
             )
-        )
+        self._reauth_client_id = client_id
+        return await self._handle_reauth()
 
-    if diagnostic_entities:
-        async_add_entities(diagnostic_entities, True)
+    async def async_step_action_fetch_mappings(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        description = "Call the vehicles mapping API now?"
+        runtime = self._get_runtime()
+        if runtime is None:
+            return self._show_confirm(
+                step_id="action_fetch_mappings",
+                errors={"base": "runtime_missing"},
+            )
+        if user_input is None:
+            return self._show_confirm(step_id="action_fetch_mappings")
+        if not user_input.get("confirm"):
+            return self._show_confirm(
+                step_id="action_fetch_mappings",
+                errors={"confirm": "confirm"},
+            )
+        await self.hass.services.async_call(
+            DOMAIN,
+            "fetch_vehicle_mappings",
+            {"entry_id": self._config_entry.entry_id},
+            blocking=True,
+        )
+        return self.async_create_entry(title="", data={})
+
+    def _collect_vins(self) -> list[str]:
+        runtime = self._get_runtime()
+        vins = set()
+        if runtime:
+            vins.update(runtime.coordinator.data.keys())
+        metadata = self._config_entry.data.get(VEHICLE_METADATA)
+        if isinstance(metadata, dict):
+            vins.update(metadata.keys())
+        if entry_vin := self._config_entry.data.get("vin"):
+            vins.add(entry_vin)
+        return [vin for vin in vins if isinstance(vin, str)]
+
+    async def async_step_action_fetch_basic(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        description = "Call the basic vehicle information API for all known VINs?"
+        runtime = self._get_runtime()
+        if runtime is None:
+            return self._show_confirm(
+                step_id="action_fetch_basic",
+                errors={"base": "runtime_missing"},
+            )
+        vins = self._collect_vins()
+        if not vins:
+            return self._show_confirm(
+                step_id="action_fetch_basic",
+                errors={"base": "no_vins"},
+            )
+        if user_input is None:
+            return self._show_confirm(step_id="action_fetch_basic")
+        if not user_input.get("confirm"):
+            return self._show_confirm(
+                step_id="action_fetch_basic",
+                errors={"confirm": "confirm"},
+            )
+        for vin in sorted(vins):
+            await self.hass.services.async_call(
+                DOMAIN,
+                "fetch_basic_data",
+                {"entry_id": self._config_entry.entry_id, "vin": vin},
+                blocking=True,
+            )
+        return self.async_create_entry(title="", data={})
+
+    async def async_step_action_fetch_telematic(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        description = "Call the telematics API now?"
+        runtime = self._get_runtime()
+        if runtime is None:
+            return self._show_confirm(
+                step_id="action_fetch_telematic",
+                errors={"base": "runtime_missing"},
+            )
+        if user_input is None:
+            return self._show_confirm(step_id="action_fetch_telematic")
+        if not user_input.get("confirm"):
+            return self._show_confirm(
+                step_id="action_fetch_telematic",
+                errors={"confirm": "confirm"},
+            )
+        await self.hass.services.async_call(
+            DOMAIN,
+            "fetch_telematic_data",
+            {"entry_id": self._config_entry.entry_id},
+            blocking=True,
+        )
+        return self.async_create_entry(title="", data={})
+
+    async def async_step_action_reset_container(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        description = (
+            "Delete existing BMW CarData telemetry containers created by the integration "
+            "and recreate a fresh one?"
+        )
+        runtime = self._get_runtime()
+        if runtime is None:
+            return self._show_confirm(
+                step_id="action_reset_container",
+                errors={"base": "runtime_missing"},
+            )
+        if user_input is None:
+            return self._show_confirm(step_id="action_reset_container")
+        if not user_input.get("confirm"):
+            return self._show_confirm(
+                step_id="action_reset_container",
+                errors={"confirm": "confirm"},
+            )
+
+        entry = self.hass.config_entries.async_get_entry(self._config_entry.entry_id)
+        if entry is None:
+            return self._show_confirm(
+                step_id="action_reset_container",
+                errors={"base": "runtime_missing"},
+            )
+
+        access_token = entry.data.get("access_token")
+        if not access_token:
+            try:
+                await async_manual_refresh_tokens(self.hass, entry)
+            except CardataAuthError as err:
+                return self._show_confirm(
+                    step_id="action_reset_container",
+                    errors={"base": "refresh_failed"},
+                    placeholders={"error": str(err)},
+                )
+            entry = self.hass.config_entries.async_get_entry(entry.entry_id)
+            if entry is None:
+                return self._show_confirm(
+                    step_id="action_reset_container",
+                    errors={"base": "runtime_missing"},
+                )
+            access_token = entry.data.get("access_token")
+            if not access_token:
+                return self._show_confirm(
+                    step_id="action_reset_container",
+                    errors={"base": "missing_token"},
+                )
+
+        try:
+            new_id = await runtime.container_manager.async_reset_hv_container(access_token)
+        except CardataContainerError as err:
+            return self._show_confirm(
+                step_id="action_reset_container",
+                errors={"base": "reset_failed"},
+                placeholders={"error": str(err)},
+            )
+
+        updated = dict(entry.data)
+        if new_id:
+            updated["hv_container_id"] = new_id
+            updated["hv_descriptor_signature"] = runtime.container_manager.descriptor_signature
+        else:
+            updated.pop("hv_container_id", None)
+            updated.pop("hv_descriptor_signature", None)
+        self.hass.config_entries.async_update_entry(entry, data=updated)
+
+        return self.async_create_entry(title="", data={})
+
+    async def _handle_reauth(self) -> FlowResult:
+        """Trigger reauth flow using the official method."""
+        entry = self._config_entry
+        if entry is None:
+            return self.async_abort(reason="unknown")
+        
+        client_id = (self._reauth_client_id or entry.data.get("client_id") or "").strip()
+        self._reauth_client_id = None
+        if not client_id:
+            return self.async_abort(reason="reauth_missing_client_id")
+
+        # Update the client_id in the entry data before triggering reauth
+        updated = dict(entry.data)
+        updated["client_id"] = client_id
+        
+        runtime = self._get_runtime()
+        if runtime:
+            runtime.reauth_in_progress = True
+            runtime.reauth_pending = True
+        
+        self.hass.config_entries.async_update_entry(entry, data=updated)
+
+        # Use the official async_start_reauth method
+        # The reauth flow will read client_id from the entry data
+        entry.async_start_reauth(self.hass)
+        
+        return self.async_abort(reason="reauth_started")
+
+
+async def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+    return CardataOptionsFlowHandler(config_entry)
