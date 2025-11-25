@@ -155,7 +155,9 @@ class CardataSensor(CardataEntity, SensorEntity):
                     )
                     
                     # Get device class with context-aware logic for ambiguous units like 'm'
-                    self._attr_device_class = get_device_class_for_unit(unit, self._descriptor)
+                    existing_device_class = getattr(self, "_attr_device_class", None)
+                    if existing_device_class is None:
+                        self._attr_device_class = get_device_class_for_unit(unit, self._descriptor)
                     self._attr_native_unit_of_measurement = unit
 
                 timestamp = last_state.attributes.get("timestamp")
@@ -202,8 +204,12 @@ class CardataSensor(CardataEntity, SensorEntity):
         self._attr_native_unit_of_measurement = normalized_unit
         
         # Set device class if not already set, using context-aware logic
-        if not self._attr_device_class:
-            self._attr_device_class = get_device_class_for_unit(normalized_unit, self._descriptor)
+        existing_device_class = getattr(self, "_attr_device_class", None)
+        if existing_device_class is None:
+            self._attr_device_class = get_device_class_for_unit(
+                normalized_unit,
+                self._descriptor
+            )
 
         self.schedule_update_ha_state()
 
