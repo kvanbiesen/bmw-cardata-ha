@@ -53,11 +53,84 @@ add_device_class_based_on_unit(SensorDeviceClass.VOLTAGE, UnitOfElectricPotentia
 add_device_class_based_on_unit(SensorDeviceClass.VOLUME, UnitOfVolume)
 add_device_class_based_on_unit(SensorDeviceClass.TEMPERATURE, UnitOfTemperature)
 
+def normalize_unit(unit: str | None) -> str | None:
+    """Normalize BMW unit strings to Home Assistant compatible units."""
+    if unit is None:
+        return None
+    
+    # Manual mapping for units that differ between HA and CarData
+    unit_mapping = {
+        "l": UnitOfVolume.LITERS,
+        "celsius": UnitOfTemperature.CELSIUS,
+        "weeks": UnitOfTime.DAYS,  # Convert weeks to days
+        "w": UnitOfTime.DAYS,      # BMW sends 'w' for weeks
+        "months": UnitOfTime.DAYS,  # Convert months to approximate days
+        "kPa": UnitOfPressure.KPA,
+        "kpa": UnitOfPressure.KPA,
+        "d": UnitOfTime.DAYS, 
+        # Note: 'm' is handled specially based on descriptor name (meters vs minutes ambiguity)
+    }
+    
+    # Return mapped unit or original if no mapping exists
+    mapped = unit_mapping.get(unit)
+    return mapped if mapped else unit
+
+
+def get_device_class_for_unit(unit: str | None, descriptor: str = None) -> SensorDeviceClass | None:
+    """Get device class, with special handling for ambiguous units like 'm'."""
+    if unit is None:
+        return None
+    
+    # Special case: 'm' can be meters OR minutes depending on context
+    if unit == 'm' and descriptor:
+        descriptor_lower = descriptor.lower()
+        
+        # These keywords indicate altitude/distance, not duration
+        distance_keywords = [
+            'altitude', 'elevation', 'sealevel', 'sea_level', 
+            'height', 'position', 'location', 'distance'
+        ]
+        
+        # Check if descriptor contains any distance keywords
+        if any(keyword in descriptor_lower for keyword in distance_keywords):
+            return SensorDeviceClass.DISTANCE
+        
+        # These keywords indicate duration/time
+        duration_keywords = ['time', 'duration', 'minutes', 'mins']
+        if any(keyword in descriptor_lower for keyword in duration_keywords):
+            return SensorDeviceClass.DURATION
+    
+    # Use the standard mapping
+    return UNIT_NAME_TO_DEVICE_CLASS_MAP.get(unit)
+
+
+def convert_value_for_unit(value: float | str | int, original_unit: str | None, normalized_unit: str | None) -> float | str | int:
+    """Convert value when unit normalization requires it."""
+    if original_unit == normalized_unit or value is None:
+        return value
+    
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return value
+    
+    # Convert weeks to days
+    if original_unit in ("weeks", "w") and normalized_unit == UnitOfTime.DAYS:
+        return numeric_value * 7
+    
+    # Convert months to days (approximate)
+    if original_unit == "months" and normalized_unit == UnitOfTime.DAYS:
+        return numeric_value * 30
+    
+    return value
+
 class CardataSensor(CardataEntity, SensorEntity):
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._attr_should_poll = False
         self._unsubscribe = None
+        
+        # Special handling for mileage sensor
         if self._descriptor == "vehicle.vehicle.travelledDistance":
             self._attr_state_class = SensorStateClass.TOTAL_INCREASING
     
@@ -70,20 +143,19 @@ class CardataSensor(CardataEntity, SensorEntity):
                 unit = last_state.attributes.get("unit_of_measurement")
 
                 if unit is not None:
-                    # Manual mapping for units that differ between HA and CarData
-                    match unit:
-                        case "l":
-                            unit = UnitOfVolume.LITERS.value
-                        case "celsius":
-                            unit = UnitOfTemperature.CELSIUS.value
-                        case "weeks":
-                            unit = UnitOfTime.WEEKS.value
-                        case "months":
-                            unit = UnitOfTime.MONTHS.value
-                        case "kPa" | "kpa":
-                            unit = UnitOfPressure.KPA
+                    # Normalize the unit
+                    original_unit = unit
+                    unit = normalize_unit(unit)
                     
-                    self._attr_device_class = UNIT_NAME_TO_DEVICE_CLASS_MAP.get(unit)
+                    # Convert value if needed (e.g., weeks to days)
+                    self._attr_native_value = convert_value_for_unit(
+                        self._attr_native_value, 
+                        original_unit, 
+                        unit
+                    )
+                    
+                    # Get device class with context-aware logic for ambiguous units like 'm'
+                    self._attr_device_class = get_device_class_for_unit(unit, self._descriptor)
                     self._attr_native_unit_of_measurement = unit
 
                 timestamp = last_state.attributes.get("timestamp")
@@ -96,11 +168,14 @@ class CardataSensor(CardataEntity, SensorEntity):
                     unit,
                     timestamp,
                 )
+        
+        # Subscribe to updates
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_update,
             self._handle_update,
         )
+        # Handle any existing data
         self._handle_update(self.vin, self.descriptor)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -110,16 +185,27 @@ class CardataSensor(CardataEntity, SensorEntity):
             self._unsubscribe = None
 
     def _handle_update(self, vin: str, descriptor: str) -> None:
+        """Handle incoming data updates from the coordinator."""
         if vin != self.vin or descriptor != self.descriptor:
             return
+        
         state = self._coordinator.get_state(vin, descriptor)
         if not state:
             return
-        self._attr_native_value = state.value
-        self._attr_native_unit_of_measurement = state.unit
+        
+        # Normalize unit and convert value if needed
+        original_unit = state.unit
+        normalized_unit = normalize_unit(state.unit)
+        converted_value = convert_value_for_unit(state.value, original_unit, normalized_unit)
+        
+        self._attr_native_value = converted_value
+        self._attr_native_unit_of_measurement = normalized_unit
+        
+        # Set device class if not already set, using context-aware logic
+        if not self._attr_device_class:
+            self._attr_device_class = get_device_class_for_unit(normalized_unit, self._descriptor)
 
         self.schedule_update_ha_state()
-
 
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
     _attr_should_poll = False
