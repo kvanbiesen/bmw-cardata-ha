@@ -1,6 +1,6 @@
 {
   "name": "BimmerData Streamline",
   "render_readme": true,
-  "image": "icons/icon.png",
+  "image": "https://github.com/kvanbiesen/bmw-cardata-ha/blob/main/icons/icon.png?raw=true",
   "domain": "cardata"
 }
