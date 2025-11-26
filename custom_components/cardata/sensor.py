@@ -594,24 +594,47 @@ async def async_setup_entry(
     soc_estimate_testing_entities: Dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: Dict[str, CardataSocRateSensor] = {}
 
-    def ensure_soc_tracking_entities(vin: str) -> None:
-        """Create SoC-related sensors only if the vehicle exposes HV battery data.
+    def _is_vehicle_electrified(vin: str) -> bool:
+        """Return True if the VIN looks like an EV / PHEV / hybrid.
 
-        This prevents petrol / non-electrified cars from getting
-        meaningless SoC / charging sensors that will always stay 'unknown'.
+        Prefer basic vehicle metadata (propulsionType / driveTrain). If that is
+        missing or inconclusive, fall back to presence of HV battery descriptors
+        in telematic data.
         """
-        # Look at descriptors we already know for this VIN
+        # 1) Check metadata populated by apply_basic_data()
+        meta = coordinator.device_metadata.get(vin, {})
+        attrs = meta.get("extra_attributes") or {}
+
+        propulsion = str(attrs.get("propulsion_type") or "").lower()
+        drive_train = str(attrs.get("drive_train") or "").lower()
+
+        # If we explicitly see petrol/diesel/etc, treat as non-electrified
+        if propulsion:
+            if any(k in propulsion for k in ("petrol", "gasoline", "diesel")):
+                return False
+
+        # Positive signals for electrified powertrains
+        electrified_keywords = ("ev", "bev", "phev", "plug", "hybrid", "electric")
+
+        if propulsion and any(kw in propulsion for kw in electrified_keywords):
+            return True
+
+        if drive_train and any(kw in drive_train for kw in ("hybrid", "electric")):
+            return True
+
+        # 2) Fallback: presence of HV battery descriptors in telematics
         descriptors_for_vin = coordinator.data.get(vin, {})
+        if any(d in descriptors_for_vin for d in HV_BATTERY_DESCRIPTORS):
+            return True
 
-        # Only create SoC sensors if at least one HV battery descriptor is present
-        has_hv_battery = any(
-            descriptor in descriptors_for_vin
-            for descriptor in HV_BATTERY_DESCRIPTORS
-        )
+        return False
 
-        if not has_hv_battery:
+
+    def ensure_soc_tracking_entities(vin: str) -> None:
+        """Create SoC tracking sensors only for electrified vehicles."""
+        if not _is_vehicle_electrified(vin):
             _LOGGER.debug(
-                "Skipping SoC tracking entities for non-electric vehicle %s", vin
+                "Skipping SoC tracking entities for non-electrified vehicle %s", vin
             )
             return
 
@@ -630,7 +653,6 @@ async def async_setup_entry(
             new_entities.append(rate)
         if new_entities:
             async_add_entities(new_entities, True)
-
 
     def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False) -> None:
         ensure_soc_tracking_entities(vin)
