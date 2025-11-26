@@ -349,7 +349,7 @@ class CardataSocEstimateSensor(CardataEntity, SensorEntity):
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "%"
+    _attr_native_unit_of_measurement = "%"  
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "soc_estimate")
@@ -357,6 +357,29 @@ class CardataSocEstimateSensor(CardataEntity, SensorEntity):
         self._update_name(write_state=False)
         self._unsubscribe = None
 
+    @property
+    def name(self) -> str | None:
+        """Return the sensor name, prefixed with the car model to avoid duplicates
+        and to hide the raw VIN from the UI.
+        """
+        base_name = super().name
+
+        model_name: str | None = None
+        try:
+            info = self.device_info
+            # DeviceInfo behaves like a mapping but may also expose attributes
+            model_name = getattr(info, "name", None)
+            if model_name is None and isinstance(info, dict):
+                model_name = info.get("name")
+        except Exception:
+            model_name = None
+
+        if model_name and base_name:
+            if not str(base_name).startswith(str(model_name)):
+                return f"{model_name} {base_name}"
+
+        return base_name
+    
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
@@ -414,6 +437,29 @@ class CardataTestingSocEstimateSensor(CardataEntity, SensorEntity):
         self._update_name(write_state=False)
         self._unsubscribe = None
 
+    @property
+    def name(self) -> str | None:
+        """Return the sensor name, prefixed with the car model to avoid duplicates
+        and to hide the raw VIN from the UI.
+        """
+        base_name = super().name
+
+        model_name: str | None = None
+        try:
+            info = self.device_info
+            # DeviceInfo behaves like a mapping but may also expose attributes
+            model_name = getattr(info, "name", None)
+            if model_name is None and isinstance(info, dict):
+                model_name = info.get("name")
+        except Exception:
+            model_name = None
+
+        if model_name and base_name:
+            if not str(base_name).startswith(str(model_name)):
+                return f"{model_name} {base_name}"
+
+        return base_name
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
@@ -469,6 +515,29 @@ class CardataSocRateSensor(CardataEntity, SensorEntity):
         self._base_name = "Predicted charge speed"
         self._update_name(write_state=False)
         self._unsubscribe = None
+
+    @property
+    def name(self) -> str | None:
+        """Return the sensor name, prefixed with the car model to avoid duplicates
+        and to hide the raw VIN from the UI.
+        """
+        base_name = super().name
+
+        model_name: str | None = None
+        try:
+            info = self.device_info
+            # DeviceInfo behaves like a mapping but may also expose attributes
+            model_name = getattr(info, "name", None)
+            if model_name is None and isinstance(info, dict):
+                model_name = info.get("name")
+        except Exception:
+            model_name = None
+
+        if model_name and base_name:
+            if not str(base_name).startswith(str(model_name)):
+                return f"{model_name} {base_name}"
+
+        return base_name
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
