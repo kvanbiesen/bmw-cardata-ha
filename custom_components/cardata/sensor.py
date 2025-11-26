@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple
+import logging
+
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -30,9 +32,11 @@ from homeassistant.const import (
     UnitOfTemperature
 )
 
-from .const import DOMAIN
+from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
+
+_LOGGER = logging.getLogger(__name__)
 
 UNIT_NAME_TO_DEVICE_CLASS_MAP = {}
 
@@ -522,6 +526,26 @@ async def async_setup_entry(
     soc_rate_entities: Dict[str, CardataSocRateSensor] = {}
 
     def ensure_soc_tracking_entities(vin: str) -> None:
+        """Create SoC-related sensors only if the vehicle exposes HV battery data.
+
+        This prevents petrol / non-electrified cars from getting
+        meaningless SoC / charging sensors that will always stay 'unknown'.
+        """
+        # Look at descriptors we already know for this VIN
+        descriptors_for_vin = coordinator.data.get(vin, {})
+
+        # Only create SoC sensors if at least one HV battery descriptor is present
+        has_hv_battery = any(
+            descriptor in descriptors_for_vin
+            for descriptor in HV_BATTERY_DESCRIPTORS
+        )
+
+        if not has_hv_battery:
+            _LOGGER.debug(
+                "Skipping SoC tracking entities for non-electric vehicle %s", vin
+            )
+            return
+
         new_entities = []
         if vin not in soc_estimate_entities:
             estimate = CardataSocEstimateSensor(coordinator, vin)
@@ -537,6 +561,7 @@ async def async_setup_entry(
             new_entities.append(rate)
         if new_entities:
             async_add_entities(new_entities, True)
+
 
     def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False) -> None:
         ensure_soc_tracking_entities(vin)
