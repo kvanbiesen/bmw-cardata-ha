@@ -217,6 +217,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("Failed to restore metadata for %s", vin, exc_info=True)
                 continue
             if metadata:
+                # classify drivetrain / EV capability from basic-data
+                _set_vehicle_powertrain_flags(coordinator, vin, payload, metadata)
+
                 device_registry.async_get_or_create(
                     config_entry_id=entry.entry_id,
                     identifiers={(DOMAIN, vin)},
@@ -1111,6 +1114,9 @@ async def _async_fetch_basic_data_for_vins(
         if not metadata:
             continue
 
+        # NEW: classify drivetrain / EV capability
+        _set_vehicle_powertrain_flags(coordinator, vin, payload, metadata)
+
         _async_store_vehicle_metadata(hass, entry, vin, metadata.get("raw_data") or payload)
 
         device_registry.async_get_or_create(
@@ -1140,11 +1146,40 @@ async def _async_perform_telematic_fetch(
     *,
     vin_override: Optional[str] = None,
 ) -> bool:
+    """Fetch telematic data for one or more VINs.
+
+    - If vin_override is provided: fetch only that VIN (service use case).
+    - Otherwise: fetch all known VINs (entry.data, coordinator state, metadata).
+    """
     target_entry_id = entry.entry_id
-    vin = vin_override or entry.data.get("vin")
-    if not vin and runtime.coordinator.data:
-        vin = next(iter(runtime.coordinator.data))
-    if not vin:
+
+    # Build list of VINs to fetch
+    if vin_override:
+        vins: list[str] = [vin_override]
+    else:
+        vins: list[str] = []
+
+        # 1) Explicit vin stored in entry (older single-vehicle setups)
+        explicit_vin = entry.data.get("vin")
+        if isinstance(explicit_vin, str):
+            vins.append(explicit_vin)
+
+        # 2) VINs known from coordinator state (stream/bootstrap)
+        vins_from_data = list(runtime.coordinator.data.keys())
+
+        # 3) VINs from stored vehicle metadata
+        metadata = entry.data.get(VEHICLE_METADATA, {})
+        if isinstance(metadata, dict):
+            vins_from_metadata = list(metadata.keys())
+        else:
+            vins_from_metadata = []
+
+        # Merge & deduplicate while preserving order
+        for v in vins_from_data + vins_from_metadata:
+            if isinstance(v, str) and v not in vins:
+                vins.append(v)
+
+    if not vins:
         _LOGGER.error(
             "Cardata fetch_telematic_data: no VIN available; provide vin parameter"
         )
@@ -1186,53 +1221,62 @@ async def _async_perform_telematic_fetch(
         "Accept": "application/json",
     }
     params = {"containerId": container_id}
-    url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
-
     quota = runtime.quota_manager
-    if quota:
+
+    any_success = False
+
+    for vin in vins:
+        if quota:
+            try:
+                await quota.async_claim()
+            except CardataQuotaError as err:
+                _LOGGER.warning(
+                    "Cardata fetch_telematic_data blocked for %s: %s",
+                    vin,
+                    err,
+                )
+                # Stop here to avoid hammering the API
+                break
+
+        url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+
         try:
-            await quota.async_claim()
-        except CardataQuotaError as err:
-            _LOGGER.warning(
-                "Cardata fetch_telematic_data blocked for %s: %s",
+            async with runtime.session.get(url, headers=headers, params=params) as response:
+                text = await response.text()
+                if response.status != 200:
+                    _LOGGER.error(
+                        "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
+                        response.status,
+                        vin,
+                        text,
+                    )
+                    continue
+                try:
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    payload = text
+                _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
+                telematic_payload = None
+                if isinstance(payload, dict):
+                    telematic_payload = payload.get("telematicData") or payload.get("data")
+                if isinstance(telematic_payload, dict):
+                    await runtime.coordinator.async_handle_message(
+                        {"vin": vin, "data": telematic_payload}
+                    )
+                    any_success = True
+        except aiohttp.ClientError as err:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: network error for %s: %s",
                 vin,
                 err,
             )
-            return False
 
-    try:
-        async with runtime.session.get(url, headers=headers, params=params) as response:
-            text = await response.text()
-            if response.status != 200:
-                _LOGGER.error(
-                    "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
-                    response.status,
-                    vin,
-                    text,
-                )
-                return True
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                payload = text
-            _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
-            telematic_payload = None
-            if isinstance(payload, dict):
-                telematic_payload = payload.get("telematicData") or payload.get("data")
-            if isinstance(telematic_payload, dict):
-                await runtime.coordinator.async_handle_message(
-                    {"vin": vin, "data": telematic_payload}
-                )
-            runtime.coordinator.last_telematic_api_at = datetime.now(timezone.utc)
-            async_dispatcher_send(
-                runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
-            )
-    except aiohttp.ClientError as err:
-        _LOGGER.error(
-            "Cardata fetch_telematic_data: network error for %s: %s",
-            vin,
-            err,
+    if any_success:
+        runtime.coordinator.last_telematic_api_at = datetime.now(timezone.utc)
+        async_dispatcher_send(
+            runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
         )
+
     return True
 
 
@@ -1276,6 +1320,82 @@ async def _telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     except asyncio.CancelledError:
         return
 
+def _set_vehicle_powertrain_flags(
+    coordinator: CardataCoordinator,
+    vin: str,
+    payload: Dict[str, Any],
+    metadata: Dict[str, Any] | None = None,
+) -> None:
+    """Derive electrified/ICE status from basic vehicle data.
+
+    We trust REST basic-data more than the streaming descriptors,
+    because BMW sometimes streams EV descriptors even for pure ICE cars.
+    """
+    # Attach a dict on the coordinator the first time we need it
+    info = getattr(coordinator, "vehicle_powertrain_info", None)
+    if not isinstance(info, dict):
+        info = {}
+        setattr(coordinator, "vehicle_powertrain_info", info)
+
+    # Try to extract fuel type from payload or metadata
+    fuel_type = payload.get("fuelType") or payload.get("fuel_type")
+    if metadata and fuel_type is None:
+        fuel_type = metadata.get("fuel_type")
+
+    # Try to extract drive-train information (format differs between markets)
+    drive_train_data = (
+        payload.get("driveTrain")
+        or payload.get("drivetrain")
+        or payload.get("drive_train")
+        or (metadata.get("drive_train") if metadata else None)
+    )
+
+    drive_train_type: str | None = None
+    if isinstance(drive_train_data, dict):
+        drive_train_type = (
+            drive_train_data.get("type")
+            or drive_train_data.get("driveTrainType")
+            or drive_train_data.get("drivetrainType")
+        )
+    elif isinstance(drive_train_data, str):
+        drive_train_type = drive_train_data
+
+    fuel_type_str = str(fuel_type).upper() if isinstance(fuel_type, str) else ""
+    drive_train_str = str(drive_train_type).upper() if drive_train_type else ""
+
+    is_electrified = False
+    is_plugin_hybrid = False
+
+    # Heuristics based on drivetrain type
+    if any(token in drive_train_str for token in ("ELECTRIC", "BEV")):
+        is_electrified = True
+    if "HYBRID" in drive_train_str:
+        is_electrified = True
+        if any(token in drive_train_str for token in ("PLUG_IN", "PHEV")):
+            is_plugin_hybrid = True
+
+    # Heuristics based on fuel type
+    if fuel_type_str in ("ELECTRIC", "ELECTRIFIED", "HYBRID", "PLUG_IN_HYBRID", "PHEV"):
+        is_electrified = True
+        if fuel_type_str in ("PLUG_IN_HYBRID", "PHEV"):
+            is_plugin_hybrid = True
+
+    info[vin] = {
+        "fuel_type": fuel_type_str or None,
+        "drive_train": drive_train_str or None,
+        "is_electrified": is_electrified,
+        "is_plugin_hybrid": is_plugin_hybrid,
+    }
+
+    _LOGGER.debug(
+        "Powertrain classification for %s: is_electrified=%s is_plugin_hybrid=%s "
+        "fuel_type=%s drive_train=%s",
+        vin,
+        is_electrified,
+        is_plugin_hybrid,
+        fuel_type_str or "<unknown>",
+        drive_train_str or "<unknown>",
+    )
 
 def _async_store_vehicle_metadata(
     hass: HomeAssistant,
