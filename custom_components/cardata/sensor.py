@@ -594,47 +594,45 @@ async def async_setup_entry(
     soc_estimate_testing_entities: Dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: Dict[str, CardataSocRateSensor] = {}
 
-    def _is_vehicle_electrified(vin: str) -> bool:
-        """Return True if the VIN looks like an EV / PHEV / hybrid.
+    def is_vin_electrified(vin: str) -> bool:
+        """Return True if this VIN is BEV/PHEV per basic vehicle data.
 
-        Prefer basic vehicle metadata (propulsionType / driveTrain). If that is
-        missing or inconclusive, fall back to presence of HV battery descriptors
-        in telematic data.
+        Primary source: coordinator.vehicle_powertrain_info populated from REST
+        basic-data. Fallback: presence of HV battery descriptors in live data.
         """
-        # 1) Check metadata populated by apply_basic_data()
-        meta = coordinator.device_metadata.get(vin, {})
-        attrs = meta.get("extra_attributes") or {}
+        info = getattr(coordinator, "vehicle_powertrain_info", None)
+        if isinstance(info, dict) and vin in info:
+            details = info.get(vin) or {}
+            flag = details.get("is_electrified")
+            if isinstance(flag, bool):
+                return flag
 
-        propulsion = str(attrs.get("propulsion_type") or "").lower()
-        drive_train = str(attrs.get("drive_train") or "").lower()
-
-        # If we explicitly see petrol/diesel/etc, treat as non-electrified
-        if propulsion:
-            if any(k in propulsion for k in ("petrol", "gasoline", "diesel")):
-                return False
-
-        # Positive signals for electrified powertrains
-        electrified_keywords = ("ev", "bev", "phev", "plug", "hybrid", "electric")
-
-        if propulsion and any(kw in propulsion for kw in electrified_keywords):
+        # Fallback only if we have no metadata at all:
+        state_map = coordinator.data.get(vin) or {}
+        if any(descriptor in state_map for descriptor in HV_BATTERY_DESCRIPTORS):
+            _LOGGER.debug(
+                "No basic-data powertrain info for %s; inferring electrified=True "
+                "from HV descriptors",
+                vin,
+            )
             return True
 
-        if drive_train and any(kw in drive_train for kw in ("hybrid", "electric")):
-            return True
-
-        # 2) Fallback: presence of HV battery descriptors in telematics
-        descriptors_for_vin = coordinator.data.get(vin, {})
-        if any(d in descriptors_for_vin for d in HV_BATTERY_DESCRIPTORS):
-            return True
-
+        _LOGGER.debug(
+            "No basic-data powertrain info for %s; treating as non-electric by default",
+            vin,
+        )
         return False
 
-
     def ensure_soc_tracking_entities(vin: str) -> None:
-        """Create SoC tracking sensors only for electrified vehicles."""
-        if not _is_vehicle_electrified(vin):
+        """Create SoC-related sensors only for electrified vehicles.
+
+        This avoids exposing fake EV sensors on pure ICE cars where BMW still
+        streams EV-related descriptors.
+        """
+        if not is_vin_electrified(vin):
             _LOGGER.debug(
-                "Skipping SoC tracking entities for non-electrified vehicle %s", vin
+                "Skipping SoC tracking entities for non-electric vehicle %s",
+                vin,
             )
             return
 
