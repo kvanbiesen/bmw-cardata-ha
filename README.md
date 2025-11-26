@@ -11,10 +11,15 @@ I'm developing this on my free time with personal use cases as highest priority.
 The Beta branch is used as a day to day development branch and can contain completely broken stuff, please don't use it or report bugs from it unless specifically asked for. The main branch is updated when I feel that it works well enough and has something worth to publish.
 
 ## Issues / Discussion
-Please try to post only issues relevant to the integration itself on the [Issues](https://github.com/JjyKsi/bmw-cardata-ha/issues) and keep all the outside discussion (problems with registration on BMWs side, asking for guidance, etc) in the discussions: [Discussions](https://github.com/JjyKsi/bmw-cardata-ha/discussions) It's not an end of the world if it's in the wrong place, but moving them around makes extra work for me which is away from the development. 
-
+Please try to post only issues relevant to the integration itself on the [Issues](https://github.com/kvanbiesen/bmw-cardata-ha/issues) and keep all the outside discussion (problems with registration on BMWs side, asking for guidance, etc)
 
 ## Release Notes: 
+## Taken over since no response for original developper -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
+ - Fixed unit conversions
+ - REmeber location on reboot
+ - Impelmented the re-auth for HA2025
+ - Squashed a lot of bug and mentioned in the original one
+
 #### 14.10.2025
 - Added device tracker entities per VIN, including dynamic creation when navigation coordinates appear and richer vehicle metadata exposure.
 - Improved reauthorization flow: configuration now asks for (and remembers) the client ID, surfaces BMW errors without crashing, and avoids transient “Missing GCID or ID token” retries.
