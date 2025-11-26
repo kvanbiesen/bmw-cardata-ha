@@ -2,4 +2,5 @@
   "name": "BimmerData Streamline",
   "render_readme": true,
   "image": "icons/icon.png",
+  "domain": "cardata"
 }
