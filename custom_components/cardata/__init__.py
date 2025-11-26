@@ -1140,11 +1140,40 @@ async def _async_perform_telematic_fetch(
     *,
     vin_override: Optional[str] = None,
 ) -> bool:
+    """Fetch telematic data for one or more VINs.
+
+    - If vin_override is provided: fetch only that VIN (service use case).
+    - Otherwise: fetch all known VINs (entry.data, coordinator state, metadata).
+    """
     target_entry_id = entry.entry_id
-    vin = vin_override or entry.data.get("vin")
-    if not vin and runtime.coordinator.data:
-        vin = next(iter(runtime.coordinator.data))
-    if not vin:
+
+    # Build list of VINs to fetch
+    if vin_override:
+        vins: list[str] = [vin_override]
+    else:
+        vins: list[str] = []
+
+        # 1) Explicit vin stored in entry (older single-vehicle setups)
+        explicit_vin = entry.data.get("vin")
+        if isinstance(explicit_vin, str):
+            vins.append(explicit_vin)
+
+        # 2) VINs known from coordinator state (stream/bootstrap)
+        vins_from_data = list(runtime.coordinator.data.keys())
+
+        # 3) VINs from stored vehicle metadata
+        metadata = entry.data.get(VEHICLE_METADATA, {})
+        if isinstance(metadata, dict):
+            vins_from_metadata = list(metadata.keys())
+        else:
+            vins_from_metadata = []
+
+        # Merge & deduplicate while preserving order
+        for v in vins_from_data + vins_from_metadata:
+            if isinstance(v, str) and v not in vins:
+                vins.append(v)
+
+    if not vins:
         _LOGGER.error(
             "Cardata fetch_telematic_data: no VIN available; provide vin parameter"
         )
@@ -1186,53 +1215,62 @@ async def _async_perform_telematic_fetch(
         "Accept": "application/json",
     }
     params = {"containerId": container_id}
-    url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
-
     quota = runtime.quota_manager
-    if quota:
+
+    any_success = False
+
+    for vin in vins:
+        if quota:
+            try:
+                await quota.async_claim()
+            except CardataQuotaError as err:
+                _LOGGER.warning(
+                    "Cardata fetch_telematic_data blocked for %s: %s",
+                    vin,
+                    err,
+                )
+                # Stop here to avoid hammering the API
+                break
+
+        url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+
         try:
-            await quota.async_claim()
-        except CardataQuotaError as err:
-            _LOGGER.warning(
-                "Cardata fetch_telematic_data blocked for %s: %s",
+            async with runtime.session.get(url, headers=headers, params=params) as response:
+                text = await response.text()
+                if response.status != 200:
+                    _LOGGER.error(
+                        "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
+                        response.status,
+                        vin,
+                        text,
+                    )
+                    continue
+                try:
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    payload = text
+                _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
+                telematic_payload = None
+                if isinstance(payload, dict):
+                    telematic_payload = payload.get("telematicData") or payload.get("data")
+                if isinstance(telematic_payload, dict):
+                    await runtime.coordinator.async_handle_message(
+                        {"vin": vin, "data": telematic_payload}
+                    )
+                    any_success = True
+        except aiohttp.ClientError as err:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: network error for %s: %s",
                 vin,
                 err,
             )
-            return False
 
-    try:
-        async with runtime.session.get(url, headers=headers, params=params) as response:
-            text = await response.text()
-            if response.status != 200:
-                _LOGGER.error(
-                    "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
-                    response.status,
-                    vin,
-                    text,
-                )
-                return True
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                payload = text
-            _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
-            telematic_payload = None
-            if isinstance(payload, dict):
-                telematic_payload = payload.get("telematicData") or payload.get("data")
-            if isinstance(telematic_payload, dict):
-                await runtime.coordinator.async_handle_message(
-                    {"vin": vin, "data": telematic_payload}
-                )
-            runtime.coordinator.last_telematic_api_at = datetime.now(timezone.utc)
-            async_dispatcher_send(
-                runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
-            )
-    except aiohttp.ClientError as err:
-        _LOGGER.error(
-            "Cardata fetch_telematic_data: network error for %s: %s",
-            vin,
-            err,
+    if any_success:
+        runtime.coordinator.last_telematic_api_at = datetime.now(timezone.utc)
+        async_dispatcher_send(
+            runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
         )
+
     return True
 
 
