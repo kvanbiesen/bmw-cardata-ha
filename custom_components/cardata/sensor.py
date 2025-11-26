@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Tuple
+import logging
+
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -30,9 +32,11 @@ from homeassistant.const import (
     UnitOfTemperature
 )
 
-from .const import DOMAIN
+from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
+
+_LOGGER = logging.getLogger(__name__)
 
 UNIT_NAME_TO_DEVICE_CLASS_MAP = {}
 
@@ -345,7 +349,7 @@ class CardataSocEstimateSensor(CardataEntity, SensorEntity):
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "%"
+    _attr_native_unit_of_measurement = "%"  
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "soc_estimate")
@@ -353,6 +357,29 @@ class CardataSocEstimateSensor(CardataEntity, SensorEntity):
         self._update_name(write_state=False)
         self._unsubscribe = None
 
+    @property
+    def name(self) -> str | None:
+        """Return the sensor name, prefixed with the car model to avoid duplicates
+        and to hide the raw VIN from the UI.
+        """
+        base_name = super().name
+
+        model_name: str | None = None
+        try:
+            info = self.device_info
+            # DeviceInfo behaves like a mapping but may also expose attributes
+            model_name = getattr(info, "name", None)
+            if model_name is None and isinstance(info, dict):
+                model_name = info.get("name")
+        except Exception:
+            model_name = None
+
+        if model_name and base_name:
+            if not str(base_name).startswith(str(model_name)):
+                return f"{model_name} {base_name}"
+
+        return base_name
+    
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
@@ -410,6 +437,29 @@ class CardataTestingSocEstimateSensor(CardataEntity, SensorEntity):
         self._update_name(write_state=False)
         self._unsubscribe = None
 
+    @property
+    def name(self) -> str | None:
+        """Return the sensor name, prefixed with the car model to avoid duplicates
+        and to hide the raw VIN from the UI.
+        """
+        base_name = super().name
+
+        model_name: str | None = None
+        try:
+            info = self.device_info
+            # DeviceInfo behaves like a mapping but may also expose attributes
+            model_name = getattr(info, "name", None)
+            if model_name is None and isinstance(info, dict):
+                model_name = info.get("name")
+        except Exception:
+            model_name = None
+
+        if model_name and base_name:
+            if not str(base_name).startswith(str(model_name)):
+                return f"{model_name} {base_name}"
+
+        return base_name
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
@@ -466,6 +516,29 @@ class CardataSocRateSensor(CardataEntity, SensorEntity):
         self._update_name(write_state=False)
         self._unsubscribe = None
 
+    @property
+    def name(self) -> str | None:
+        """Return the sensor name, prefixed with the car model to avoid duplicates
+        and to hide the raw VIN from the UI.
+        """
+        base_name = super().name
+
+        model_name: str | None = None
+        try:
+            info = self.device_info
+            # DeviceInfo behaves like a mapping but may also expose attributes
+            model_name = getattr(info, "name", None)
+            if model_name is None and isinstance(info, dict):
+                model_name = info.get("name")
+        except Exception:
+            model_name = None
+
+        if model_name and base_name:
+            if not str(base_name).startswith(str(model_name)):
+                return f"{model_name} {base_name}"
+
+        return base_name
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
@@ -521,7 +594,48 @@ async def async_setup_entry(
     soc_estimate_testing_entities: Dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: Dict[str, CardataSocRateSensor] = {}
 
+    def is_vin_electrified(vin: str) -> bool:
+        """Return True if this VIN is BEV/PHEV per basic vehicle data.
+
+        Primary source: coordinator.vehicle_powertrain_info populated from REST
+        basic-data. Fallback: presence of HV battery descriptors in live data.
+        """
+        info = getattr(coordinator, "vehicle_powertrain_info", None)
+        if isinstance(info, dict) and vin in info:
+            details = info.get(vin) or {}
+            flag = details.get("is_electrified")
+            if isinstance(flag, bool):
+                return flag
+
+        # Fallback only if we have no metadata at all:
+        state_map = coordinator.data.get(vin) or {}
+        if any(descriptor in state_map for descriptor in HV_BATTERY_DESCRIPTORS):
+            _LOGGER.debug(
+                "No basic-data powertrain info for %s; inferring electrified=True "
+                "from HV descriptors",
+                vin,
+            )
+            return True
+
+        _LOGGER.debug(
+            "No basic-data powertrain info for %s; treating as non-electric by default",
+            vin,
+        )
+        return False
+
     def ensure_soc_tracking_entities(vin: str) -> None:
+        """Create SoC-related sensors only for electrified vehicles.
+
+        This avoids exposing fake EV sensors on pure ICE cars where BMW still
+        streams EV-related descriptors.
+        """
+        if not is_vin_electrified(vin):
+            _LOGGER.debug(
+                "Skipping SoC tracking entities for non-electric vehicle %s",
+                vin,
+            )
+            return
+
         new_entities = []
         if vin not in soc_estimate_entities:
             estimate = CardataSocEstimateSensor(coordinator, vin)
