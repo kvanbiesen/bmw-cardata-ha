@@ -161,7 +161,7 @@ async def async_perform_telematic_fetch(
             runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
         )
 
-    return True
+    return any_success
 
 
 async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:

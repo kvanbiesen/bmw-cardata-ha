@@ -87,6 +87,11 @@ async def async_handle_fetch_telematic(call) -> None:
     )
     if success:
         async_update_last_telematic_poll(hass, target_entry, time.time())
+    else:
+        _LOGGER.error(
+            "Cardata fetch_telematic_data: no data fetched for entry %s",
+            target_entry_id,
+        )
 
 
 async def async_handle_fetch_mappings(call) -> None:
