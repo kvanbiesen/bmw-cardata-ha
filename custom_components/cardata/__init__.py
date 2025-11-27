@@ -91,7 +91,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not isinstance(payload, dict):
                 continue
             try:
-                metadata = coordinator.apply_basic_data(vin, payload)
+                metadata = coordinator.apply_basic_data(vin, payload.get("raw_data", {}))
             except Exception:
                 _LOGGER.debug("Failed to restore metadata for %s", vin, exc_info=True)
                 continue
