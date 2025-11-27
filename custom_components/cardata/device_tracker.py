@@ -1,40 +1,48 @@
-"""Device tracker for BMW CarData vehicles with hybrid coordinate update logic."""
+"""Device tracker platform for BMW CarData."""
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.device_tracker import TrackerEntity
-
-try:
-    from homeassistant.components.device_tracker import SourceType
-except ImportError:  # Home Assistant < 2025.10
-    SourceType = str  # type: ignore[assignment]
-    try:
-        from homeassistant.components.device_tracker.const import SOURCE_TYPE_GPS as GPS_SOURCE  # type: ignore[attr-defined]
-    except ImportError:
-        GPS_SOURCE = "gps"
-else:
-    GPS_SOURCE = SourceType.GPS
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
+try:
+    from homeassistant.components.device_tracker import SourceType
+except ImportError:  # Home Assistant < 2025.10
+    SourceType = str  # type: ignore[assignment]
+    try:
+        from homeassistant.components.device_tracker.const import (
+            SOURCE_TYPE_GPS as GPS_SOURCE,
+        )  # type: ignore[attr-defined]
+    except ImportError:
+        GPS_SOURCE = "gps"
+else:
+    GPS_SOURCE = SourceType.GPS
+
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
+from .runtime import CardataRuntimeData
 
-PARALLEL_UPDATES = 0
+if TYPE_CHECKING:
+    pass
+
 _LOGGER = logging.getLogger(__name__)
 
-LOCATION_DESCRIPTORS = (
-    "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
-    "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
+PARALLEL_UPDATES = 0
+
+LOCATION_LATITUDE_DESCRIPTOR = (
+    "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
+)
+LOCATION_LONGITUDE_DESCRIPTOR = (
+    "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
 )
 
 
@@ -43,15 +51,18 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the BMW CarData tracker from config entry."""
-    runtime_data = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
+    """Set up BMW CarData device tracker from config entry."""
+    runtime_data: CardataRuntimeData = hass.data.get(DOMAIN, {}).get(
+        config_entry.entry_id
+    )
     if not runtime_data:
         return
 
     coordinator: CardataCoordinator = runtime_data.coordinator
-    trackers: Dict[str, CardataDeviceTracker] = {}
+    trackers: dict[str, CardataDeviceTracker] = {}
 
     def ensure_tracker(vin: str) -> None:
+        """Ensure device tracker exists for VIN."""
         if vin in trackers:
             return
         tracker = CardataDeviceTracker(coordinator, vin)
@@ -59,52 +70,57 @@ async def async_setup_entry(
         async_add_entities([tracker])
         _LOGGER.debug("Created device tracker for VIN: %s", vin)
 
+    # Create tracker for each known VIN
     for vin in coordinator.data.keys():
         ensure_tracker(vin)
 
-    async def handle_update(vin: str, descriptor: str) -> None:
-        if descriptor in LOCATION_DESCRIPTORS:
+    # Subscribe to location updates
+    async def handle_location_update(vin: str, descriptor: str) -> None:
+        if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
             ensure_tracker(vin)
 
     unsub = async_dispatcher_connect(
         hass,
         coordinator.signal_update,
-        handle_update,
+        handle_location_update,
     )
     config_entry.async_on_unload(unsub)
 
 
 class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
-    """BMW CarData device tracker with intelligent update handling."""
+    """BMW CarData device tracker with intelligent coordinate update logic."""
 
     _attr_force_update = False
     _attr_translation_key = "car"
     _attr_name = None
 
+    # Timing thresholds for coordinate pairing logic
+    _SHORT_DELAY = 3  # seconds for real-time update window
+    _MAX_DELAY = 180  # seconds (3 minutes) for delayed acceptance
+
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        """Initialize the tracker."""
+        """Initialize the device tracker."""
         super().__init__(coordinator, vin, "device_tracker")
         self._attr_unique_id = f"{vin}_tracker"
         self._unsubscribe = None
         self._base_name = "Location"
         self._update_name(write_state=False)
 
+        # Restored coordinates from last state
         self._restored_lat: float | None = None
         self._restored_lon: float | None = None
 
-        """Ensure both lat and long are updated"""
+        # Track timing of individual coordinate updates
         self._last_lat: float | None = None
         self._last_lon: float | None = None
         self._last_lat_time: float = 0
         self._last_lon_time: float = 0
 
-        """Thresholds"""
-        self._short_delay = 3       # seconds for real-time update window
-        self._max_delay = 180       # seconds (3 minutes) for delayed acceptance
-
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
         await super().async_added_to_hass()
+
+        # Restore last known location
         if (state := await self.async_get_last_state()) is not None:
             lat = state.attributes.get("latitude")
             lon = state.attributes.get("longitude")
@@ -113,14 +129,15 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     self._restored_lat = float(lat)
                     self._restored_lon = float(lon)
                     _LOGGER.debug(
-                        "Restored last known location for %s: %s, %s",
+                        "Restored last known location for %s: %.6f, %.6f",
                         self._vin,
-                        lat,
-                        lon,
+                        self._restored_lat,
+                        self._restored_lon,
                     )
                 except (TypeError, ValueError):
                     pass
 
+        # Subscribe to coordinator updates
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_update,
@@ -135,21 +152,26 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._unsubscribe = None
 
     def _handle_update(self, vin: str, descriptor: str) -> None:
-        """Handle updates from coordinator."""
-        if vin != self.vin or descriptor not in LOCATION_DESCRIPTORS:
+        """Handle location updates from coordinator."""
+        if vin != self.vin or descriptor not in (
+            LOCATION_LATITUDE_DESCRIPTOR,
+            LOCATION_LONGITUDE_DESCRIPTOR,
+        ):
             return
 
         now = time.monotonic()
         updated = False
 
-        if "latitude" in descriptor:
+        # Update latitude if descriptor matches
+        if descriptor == LOCATION_LATITUDE_DESCRIPTOR:
             lat = self._fetch_coordinate(descriptor)
             if lat is not None:
                 self._last_lat = lat
                 self._last_lat_time = now
                 updated = True
 
-        elif "longitude" in descriptor:
+        # Update longitude if descriptor matches
+        elif descriptor == LOCATION_LONGITUDE_DESCRIPTOR:
             lon = self._fetch_coordinate(descriptor)
             if lon is not None:
                 self._last_lon = lon
@@ -159,56 +181,64 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if not updated:
             return
 
-        lat, lon = self._last_lat, self._last_lon
-        lat_time, lon_time = self._last_lat_time, self._last_lon_time
+        self._process_coordinate_pair()
 
-        # Skip until both exist
+    def _process_coordinate_pair(self) -> None:
+        """Process coordinate pair with intelligent pairing logic."""
+        lat = self._last_lat
+        lon = self._last_lon
+        lat_time = self._last_lat_time
+        lon_time = self._last_lon_time
+
+        # Wait until both coordinates exist
         if lat is None or lon is None:
             return
 
         time_diff = abs(lat_time - lon_time)
 
-        # Near simultaneous update (real)
-        if time_diff <= self._short_delay:
+        # Near-simultaneous update (both arrived close together)
+        if time_diff <= self._SHORT_DELAY:
             self._apply_new_coordinates(lat, lon, "real-time pair")
+            return
 
-        # Delayed but both changed compared to tracker
-        elif (
-            time_diff <= self._max_delay
+        # Delayed but both changed (likely a real update just staggered)
+        if (
+            time_diff <= self._MAX_DELAY
             and self._restored_lat is not None
             and self._restored_lon is not None
             and lat != self._restored_lat
             and lon != self._restored_lon
         ):
             self._apply_new_coordinates(lat, lon, "delayed valid pair")
+            return
 
-        # Only one differs, interpolate only the older coordinate
-        elif self._restored_lat is not None and self._restored_lon is not None:
-            only_one_differs = (
-                (lat != self._restored_lat) ^ (lon != self._restored_lon)
+        # Only one differs—interpolate the older coordinate
+        if self._restored_lat is not None and self._restored_lon is not None:
+            only_one_differs = (lat != self._restored_lat) ^ (
+                lon != self._restored_lon
             )
             if only_one_differs:
                 if lat_time > lon_time:
-                    # Latitude is newer
+                    # Latitude is newer, interpolate older longitude
                     interp_lat = lat
                     interp_lon = (lon + self._restored_lon) / 2
                     reason = "interpolated (older lon)"
                 else:
-                    # Longitude is newer
+                    # Longitude is newer, interpolate older latitude
                     interp_lat = (lat + self._restored_lat) / 2
                     interp_lon = lon
                     reason = "interpolated (older lat)"
                 self._apply_new_coordinates(interp_lat, interp_lon, reason)
+                return
 
-        else:
-            _LOGGER.debug(
-                "Ignored update for %s (time diff %.1fs, unchanged coords)",
-                self._vin,
-                time_diff,
-            )
+        _LOGGER.debug(
+            "Ignored coordinate update for %s (time diff %.1fs, unchanged coords)",
+            self._vin,
+            time_diff,
+        )
 
     def _apply_new_coordinates(self, lat: float, lon: float, reason: str) -> None:
-        """Apply new coordinates and trigger HA state update."""
+        """Apply new coordinates and trigger Home Assistant state update."""
         self._restored_lat = lat
         self._restored_lon = lon
         self.schedule_update_ha_state()
@@ -220,25 +250,8 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon,
         )
 
-    @property
-    def source_type(self) -> SourceType | str:
-        """Return the source type of the device."""
-        return GPS_SOURCE
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return entity specific state attributes."""
-        attrs: dict[str, Any] = {}
-        metadata = self._coordinator.device_metadata.get(self._vin)
-        if metadata:
-            if extra := metadata.get("extra_attributes"):
-                attrs["vehicle_basic_data"] = dict(extra)
-            if raw := metadata.get("raw_data"):
-                attrs["vehicle_basic_data_raw"] = dict(raw)
-        return attrs
-
     def _fetch_coordinate(self, descriptor: str) -> float | None:
-        """Fetch coordinate from coordinator."""
+        """Fetch and validate coordinate value from coordinator."""
         state = self._coordinator.get_state(self._vin, descriptor)
         if state and state.value is not None:
             try:
@@ -253,6 +266,11 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         return None
 
     @property
+    def source_type(self) -> SourceType | str:
+        """Return the source type of the device."""
+        return GPS_SOURCE
+
+    @property
     def latitude(self) -> float | None:
         """Return last known latitude of the device."""
         return self._restored_lat
@@ -261,3 +279,15 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def longitude(self) -> float | None:
         """Return last known longitude of the device."""
         return self._restored_lon
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return entity-specific state attributes."""
+        attrs: dict[str, Any] = {}
+        metadata = self._coordinator.device_metadata.get(self._vin)
+        if metadata:
+            if extra := metadata.get("extra_attributes"):
+                attrs["vehicle_basic_data"] = dict(extra)
+            if raw := metadata.get("raw_data"):
+                attrs["vehicle_basic_data_raw"] = dict(raw)
+        return attrs

@@ -5,31 +5,22 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import logging
 import secrets
 import string
 import time
 from typing import Any, Dict, Optional
 
-import aiohttp
 import voluptuous as vol
-
-import logging
 
 from homeassistant import config_entries
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
-from . import async_manual_refresh_tokens
-from .container import CardataContainerError
-from .const import (
-    DEFAULT_SCOPE,
-    DOMAIN,
-    VEHICLE_METADATA,
-)
-from .device_flow import CardataAuthError, poll_for_tokens, request_device_code
+LOGGER = logging.getLogger(__name__)
 
-DATA_SCHEMA = vol.Schema({vol.Required("client_id"): str})
+# Note: Heavy imports like aiohttp are imported lazily inside methods to avoid blocking the event loop
 
 
 def _build_code_verifier() -> str:
@@ -42,7 +33,7 @@ def _generate_code_challenge(code_verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
-class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
     """Handle config flow for BMW CarData."""
 
     VERSION = 1
@@ -52,11 +43,14 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._device_data: Optional[Dict[str, Any]] = None
         self._code_verifier: Optional[str] = None
         self._token_data: Optional[Dict[str, Any]] = None
-        self._reauth_entry: Optional[ConfigEntry] = None
+        self._reauth_entry: Optional[config_entries.ConfigEntry] = None
 
     async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         if user_input is None:
-            return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA)
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({vol.Required("client_id"): str})
+            )
 
         client_id = user_input["client_id"].strip()
 
@@ -66,15 +60,14 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.hass.config_entries.async_remove(entry.entry_id)
 
         await self.async_set_unique_id(client_id)
-
         self._client_id = client_id
 
         try:
             await self._request_device_code()
-        except CardataAuthError as err:
+        except Exception as err:
             return self.async_show_form(
                 step_id="user",
-                data_schema=DATA_SCHEMA,
+                data_schema=vol.Schema({vol.Required("client_id"): str}),
                 errors={"base": "device_code_failed"},
                 description_placeholders={"error": str(err)},
             )
@@ -82,6 +75,10 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return await self.async_step_authorize()
 
     async def _request_device_code(self) -> None:
+        import aiohttp
+        from custom_components.cardata.device_flow import request_device_code
+        from custom_components.cardata.const import DEFAULT_SCOPE
+
         assert self._client_id is not None
         self._code_verifier = _build_code_verifier()
         async with aiohttp.ClientSession() as session:
@@ -113,6 +110,9 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         device_code = self._device_data["device_code"]
         interval = int(self._device_data.get("interval", 5))
 
+        import aiohttp
+        from custom_components.cardata.device_flow import poll_for_tokens, CardataAuthError
+
         async with aiohttp.ClientSession() as session:
             try:
                 token_data = await poll_for_tokens(
@@ -133,10 +133,16 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
         self._token_data = token_data
-        LOGGER.debug("Received token: scope=%s id_token_length=%s", token_data.get("scope"), len(token_data.get("id_token") or ""))
+        LOGGER.debug(
+            "Received token: scope=%s id_token_length=%s",
+            token_data.get("scope"),
+            len(token_data.get("id_token") or ""),
+        )
         return await self.async_step_tokens()
 
     async def async_step_tokens(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        from custom_components.cardata.const import DOMAIN, VEHICLE_METADATA
+
         assert self._client_id is not None
         token_data = self._token_data
 
@@ -181,6 +187,8 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
     async def async_step_reauth(self, entry_data: Dict[str, Any]) -> FlowResult:
+        from custom_components.cardata.device_flow import CardataAuthError
+
         entry_id = entry_data.get("entry_id")
         if entry_id:
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
@@ -197,6 +205,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 err,
             )
             if self._reauth_entry:
+                from custom_components.cardata.const import DOMAIN
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._reauth_entry.entry_id)
                 if runtime:
                     runtime.reauth_in_progress = False
@@ -209,10 +218,10 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
         return CardataOptionsFlowHandler(config_entry)
-
-LOGGER = logging.getLogger(__name__)
 
 
 class CardataOptionsFlowHandler(config_entries.OptionsFlow):
@@ -251,12 +260,12 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     def _get_runtime(self):
+        from custom_components.cardata.const import DOMAIN
         return self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
 
     async def async_step_action_refresh_tokens(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Refresh stored tokens now?"
         if user_input is None:
             return self._show_confirm(step_id="action_refresh_tokens")
         if not user_input.get("confirm"):
@@ -265,8 +274,9 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 errors={"confirm": "confirm"},
             )
         try:
+            from custom_components.cardata.auth import async_manual_refresh_tokens
             await async_manual_refresh_tokens(self.hass, self._config_entry)
-        except CardataAuthError as err:
+        except Exception as err:
             return self._show_confirm(
                 step_id="action_refresh_tokens",
                 errors={"base": "refresh_failed"},
@@ -312,7 +322,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_fetch_mappings(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Call the vehicles mapping API now?"
+        from custom_components.cardata.const import DOMAIN
+
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -335,6 +346,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data={})
 
     def _collect_vins(self) -> list[str]:
+        from custom_components.cardata.const import VEHICLE_METADATA
+
         runtime = self._get_runtime()
         vins = set()
         if runtime:
@@ -349,7 +362,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_fetch_basic(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Call the basic vehicle information API for all known VINs?"
+        from custom_components.cardata.const import DOMAIN
+
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -381,7 +395,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_fetch_telematic(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = "Call the telematics API now?"
+        from custom_components.cardata.const import DOMAIN
+
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -406,10 +421,9 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_reset_container(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        description = (
-            "Delete existing BMW CarData telemetry containers created by the integration "
-            "and recreate a fresh one?"
-        )
+        from custom_components.cardata.const import DOMAIN
+        from custom_components.cardata.container import CardataContainerError
+
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(
@@ -434,8 +448,9 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         access_token = entry.data.get("access_token")
         if not access_token:
             try:
+                from custom_components.cardata.auth import async_manual_refresh_tokens
                 await async_manual_refresh_tokens(self.hass, entry)
-            except CardataAuthError as err:
+            except Exception as err:
                 return self._show_confirm(
                     step_id="action_reset_container",
                     errors={"base": "refresh_failed"},
@@ -475,6 +490,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data={})
 
     async def _handle_reauth(self) -> FlowResult:
+        from custom_components.cardata.const import DOMAIN
+
         entry = self._config_entry
         if entry is None:
             return self.async_abort(reason="unknown")
@@ -502,8 +519,3 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 description_placeholders=flow_result.get("description_placeholders"),
             )
         return self.async_abort(reason="reauth_started")
-
-
-
-async def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
-    return CardataOptionsFlowHandler(config_entry)
