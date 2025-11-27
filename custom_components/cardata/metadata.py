@@ -25,12 +25,12 @@ async def async_fetch_and_store_basic_data(
     quota: QuotaManager | None,
     session: aiohttp.ClientSession,
 ) -> None:
-    """Fetch basic data for each VIN and store metadata."""
-    from homeassistant.helpers import device_registry as dr
-
+    """Fetch basic data for each VIN and store metadata.
+    
+    NOTE: Does NOT create devices. Entities create devices automatically.
+    """
     runtime = hass.data[DOMAIN][entry.entry_id]
     coordinator = runtime.coordinator
-    device_registry = dr.async_get(hass)
 
     for vin in vins:
         url = f"{API_BASE_URL}{BASIC_DATA_ENDPOINT.format(vin=vin)}"
@@ -83,15 +83,10 @@ async def async_fetch_and_store_basic_data(
 
         async_store_vehicle_metadata(hass, entry, vin, metadata.get("raw_data") or payload)
 
-        device_registry.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, vin)},
-            manufacturer=metadata.get("manufacturer", "BMW"),
-            name=metadata.get("name", vin),
-            model=metadata.get("model"),
-            sw_version=metadata.get("sw_version"),
-            hw_version=metadata.get("hw_version"),
-            serial_number=metadata.get("serial_number"),
+        _LOGGER.debug(
+            "Fetched and stored metadata for %s: %s",
+            vin,
+            metadata.get("name", vin),
         )
 
 
@@ -100,14 +95,14 @@ async def async_restore_vehicle_metadata(
     entry: ConfigEntry,
     coordinator,
 ) -> None:
-    """Restore persisted vehicle metadata on startup."""
-    from homeassistant.helpers import device_registry as dr
-
+    """Restore persisted vehicle metadata on startup.
+    
+    Only populates coordinator.names and coordinator.device_metadata.
+    Does NOT create devices - entities will create devices automatically.
+    """
     stored_metadata = entry.data.get(VEHICLE_METADATA, {})
     if not isinstance(stored_metadata, dict):
         return
-
-    device_registry = dr.async_get(hass)
 
     for vin, payload in stored_metadata.items():
         if not isinstance(payload, dict):
@@ -120,15 +115,10 @@ async def async_restore_vehicle_metadata(
             continue
 
         if metadata:
-            device_registry.async_get_or_create(
-                config_entry_id=entry.entry_id,
-                identifiers={(DOMAIN, vin)},
-                manufacturer=metadata.get("manufacturer", "BMW"),
-                name=metadata.get("name", vin),
-                model=metadata.get("model"),
-                sw_version=metadata.get("sw_version"),
-                hw_version=metadata.get("hw_version"),
-                serial_number=metadata.get("serial_number"),
+            _LOGGER.debug(
+                "Restored metadata for %s: %s",
+                vin,
+                metadata.get("name", vin),
             )
 
 

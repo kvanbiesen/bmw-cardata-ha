@@ -92,7 +92,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
     _attr_force_update = False
     _attr_translation_key = "car"
-    _attr_name = None
 
     # Timing thresholds for coordinate pairing logic
     _SHORT_DELAY = 3  # seconds for real-time update window
@@ -101,9 +100,12 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         """Initialize the device tracker."""
         super().__init__(coordinator, vin, "device_tracker")
-        self._attr_unique_id = f"{vin}_tracker"
+        # Don't override unique_id - let parent class set it properly
+        # unique_id is already set in CardataEntity.__init__ as: f"{vin}_device_tracker"
+        
         self._unsubscribe = None
         self._base_name = "Location"
+        # Update name to include vehicle name prefix
         self._update_name(write_state=False)
 
         # Restored coordinates from last state
@@ -212,7 +214,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._apply_new_coordinates(lat, lon, "delayed valid pair")
             return
 
-        # Only one differs—interpolate the older coordinate
+        # Only one differs–interpolate the older coordinate
         if self._restored_lat is not None and self._restored_lon is not None:
             only_one_differs = (lat != self._restored_lat) ^ (
                 lon != self._restored_lon

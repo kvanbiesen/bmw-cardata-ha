@@ -67,6 +67,12 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
 
 UNIT_DEVICE_CLASS_MAP = _build_unit_device_class_map()
 
+class CardataSensor(CardataEntity, SensorEntity):
+    def __init__(self, coordinator, vin, descriptor):
+        super().__init__(coordinator, vin, descriptor)
+        
+        if self._descriptor in BATTERY_DESCRIPTORS:
+            self._attr_device_class = SensorDeviceClass.BATTERY
 
 def normalize_unit(unit: str | None) -> str | None:
     """Normalize BMW unit strings to Home Assistant compatible units."""
@@ -93,7 +99,46 @@ def get_device_class_for_unit(
     """Get device class, with special handling for ambiguous units like 'm'."""
     if unit is None:
         return None
+    if descriptor:
+        descriptor_lower = descriptor.lower()
 
+        BATTERY_DESCRIPTORS = {
+            "vehicle.drivetrain.batteryManagement.header",
+            "vehicle.drivetrain.electricEngine.charging.level",
+            "vehicle.powertrain.electric.battery.stateOfCharge.target",
+            "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
+        }
+        
+        # Check if this is a battery-related descriptor with % unit
+        if descriptor and descriptor in BATTERY_DESCRIPTORS:
+            # Only apply battery class if unit is % (percentage)
+            normalized_unit = normalize_unit(unit)
+            if normalized_unit == "%":
+                return SensorDeviceClass.BATTERY
+
+        # Special case: 'm' can be meters OR minutes depending on context
+        if unit == "m":
+            distance_keywords = [
+                "altitude",
+                "elevation",
+                "sealevel",
+                "sea_level",
+                "height",
+                "position",
+                "location",
+                "distance",
+            ]
+            if any(keyword in descriptor_lower for keyword in distance_keywords):
+                return SensorDeviceClass.DISTANCE
+
+            duration_keywords = ["time", "duration", "minutes", "mins"]
+            if any(keyword in descriptor_lower for keyword in duration_keywords):
+                return SensorDeviceClass.DURATION
+
+    if unit is None:
+        return None
+
+    return UNIT_DEVICE_CLASS_MAP.get(unit)
     # Special case: 'm' can be meters OR minutes depending on context
     if unit == "m" and descriptor:
         descriptor_lower = descriptor.lower()

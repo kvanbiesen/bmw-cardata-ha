@@ -89,6 +89,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         await async_restore_vehicle_metadata(hass, entry, coordinator)
+        
+        # Check if metadata is already available from restoration
+        has_metadata = bool(coordinator.names)
+        _LOGGER.debug(
+            "Metadata restored for entry %s: %s (names: %s)",
+            entry.entry_id,
+            "yes" if has_metadata else "no",
+            list(coordinator.names.keys()) if has_metadata else "empty",
+        )
 
         # Set up quota manager
         quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
@@ -193,6 +202,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             domain_data["_service_registered"] = True
 
         # Forward setup to platforms
+        # If metadata was restored, coordinator.names will have car names
+        # If not (first time), entities will be created with VINs as names temporarily
+        # Bootstrap will update them with car names when it fetches metadata
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
         # Start bootstrap if needed

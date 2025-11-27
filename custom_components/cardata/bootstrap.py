@@ -60,30 +60,22 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await async_mark_bootstrap_complete(hass, entry)
         return
 
-    from homeassistant.helpers import device_registry as dr
     from .const import DOMAIN
-
-    device_registry = dr.async_get(hass)
-    coordinator = runtime.coordinator
-
-    for vin in vins:
-        coordinator.data.setdefault(vin, {})
-        device_registry.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, vin)},
-            manufacturer="BMW",
-            name=coordinator.names.get(vin, vin),
-        )
-
-    # IMPORTANT: Fetch metadata FIRST, before seeding telematic data
-    # This ensures coordinator.names is populated when sensors are created
     from .metadata import async_fetch_and_store_basic_data
 
+    coordinator = runtime.coordinator
+
+    # Initialize coordinator data for all VINs
+    for vin in vins:
+        coordinator.data.setdefault(vin, {})
+
+    # IMPORTANT: Fetch metadata FIRST
+    # This populates coordinator.device_metadata so entities have complete device_info
     await async_fetch_and_store_basic_data(
         hass, entry, headers, vins, quota, runtime.session
     )
 
-    # NOW seed telematic data (sensors will be created with names available)
+    # NOW seed telematic data (entities will be created with complete metadata)
     created_entities = False
     container_id = entry.data.get("hv_container_id")
     if container_id:
