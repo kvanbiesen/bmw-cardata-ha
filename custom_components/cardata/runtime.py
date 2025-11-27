@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 import aiohttp
 
-if TYPE_CHECKING:
-    from .coordinator import CardataCoordinator
-    from .quota import QuotaManager
-    from .stream import CardataStreamManager
-    from .container import CardataContainerManager
+from .container import CardataContainerManager
+from .coordinator import CardataCoordinator
+from .quota import QuotaManager
+from .stream import CardataStreamManager
 
 
 @dataclass
