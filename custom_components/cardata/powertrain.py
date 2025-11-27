@@ -24,10 +24,12 @@ def set_vehicle_powertrain_flags(
         info = {}
         setattr(coordinator, "vehicle_powertrain_info", info)
 
+    # Try to get fuel type from payload or metadata
     fuel_type = payload.get("fuelType") or payload.get("fuel_type")
     if metadata and fuel_type is None:
         fuel_type = metadata.get("fuel_type")
 
+    # Try to get drivetrain information from payload or metadata
     drive_train_data = (
         payload.get("driveTrain")
         or payload.get("drivetrain")
@@ -48,16 +50,31 @@ def set_vehicle_powertrain_flags(
     fuel_type_str = str(fuel_type).upper() if isinstance(fuel_type, str) else ""
     drive_train_str = str(drive_train_type).upper() if drive_train_type else ""
 
+    # Infer fuel_type when BMW does not provide it explicitly
+    if not fuel_type_str:
+        if "PHEV" in drive_train_str:
+            fuel_type_str = "PHEV"
+        elif "HYBRID" in drive_train_str:
+            fuel_type_str = "HYBRID"
+        elif "BEV" in drive_train_str or "ELECTRIC" in drive_train_str:
+            fuel_type_str = "ELECTRIC"
+
     is_electrified = False
     is_plugin_hybrid = False
 
+    # Full electric
     if any(token in drive_train_str for token in ("ELECTRIC", "BEV")):
         is_electrified = True
-    if "HYBRID" in drive_train_str:
-        is_electrified = True
-        if any(token in drive_train_str for token in ("PLUG_IN", "PHEV")):
-            is_plugin_hybrid = True
 
+    # Hybrids (HEV) and plug-in hybrids (PHEV)
+    if "HYBRID" in drive_train_str or "PHEV" in drive_train_str:
+        is_electrified = True
+
+    # Plug-in hybrid detection
+    if "PHEV" in drive_train_str or "PLUG" in drive_train_str:
+        is_plugin_hybrid = True
+
+    # Fuel-type based fallback (overrides when fuel_type is explicit)
     if fuel_type_str in ("ELECTRIC", "ELECTRIFIED", "HYBRID", "PLUG_IN_HYBRID", "PHEV"):
         is_electrified = True
         if fuel_type_str in ("PLUG_IN_HYBRID", "PHEV"):
