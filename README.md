@@ -5,6 +5,10 @@
 # BimmerData Streamline (BMW CarData for Home Assistant)
 
 ## This is experimental. 
+## Taken over since no response for original developper -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
+<a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+Tot required but appreciated :)
+
 I'm developing this on my free time with personal use cases as highest priority. Main goal was to get it running ASAP when BMW killed the old API, so the code quality wasn't priority at all. So far the plugin has been surprisingly stable even after bigger (AI Agent assisted) edits, but there's always a risk that something falls through, due to nonexistent automatic testing and me not doing a completely fresh install every time I test a new feature.
 
 
@@ -14,7 +18,7 @@ The Beta branch is used as a day to day development branch and can contain compl
 Please try to post only issues relevant to the integration itself on the [Issues](https://github.com/kvanbiesen/bmw-cardata-ha/issues) and keep all the outside discussion (problems with registration on BMWs side, asking for guidance, etc)
 
 ## Release Notes: 
-## Taken over since no response for original developper -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
+
  - Fixed unit conversions
  - REmeber location on reboot
  - Impelmented the re-auth for HA2025
