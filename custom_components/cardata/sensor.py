@@ -594,44 +594,18 @@ async def async_setup_entry(
     soc_estimate_testing_entities: Dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: Dict[str, CardataSocRateSensor] = {}
 
-    def is_vin_electrified(vin: str) -> bool:
-        """Return True if this VIN is BEV/PHEV per basic vehicle data.
-
-        Primary source: coordinator.vehicle_powertrain_info populated from REST
-        basic-data. Fallback: presence of HV battery descriptors in live data.
-        """
-        info = getattr(coordinator, "vehicle_powertrain_info", None)
-        if isinstance(info, dict) and vin in info:
-            details = info.get(vin) or {}
-            flag = details.get("is_electrified")
-            if isinstance(flag, bool):
-                return flag
-
-        # Fallback only if we have no metadata at all:
-        state_map = coordinator.data.get(vin) or {}
-        if any(descriptor in state_map for descriptor in HV_BATTERY_DESCRIPTORS):
-            _LOGGER.debug(
-                "No basic-data powertrain info for %s; inferring electrified=True "
-                "from HV descriptors",
-                vin,
-            )
-            return True
-
-        _LOGGER.debug(
-            "No basic-data powertrain info for %s; treating as non-electric by default",
-            vin,
-        )
-        return False
-
     def ensure_soc_tracking_entities(vin: str) -> None:
-        """Create SoC-related sensors only for electrified vehicles.
+        """Create SoC-related sensors only when HV battery descriptors exist.
 
-        This avoids exposing fake EV sensors on pure ICE cars where BMW still
-        streams EV-related descriptors.
+        We don't rely on guessed powertrain type; instead we check whether
+        any known HV battery descriptors have appeared for this VIN in the
+        coordinator data. This keeps behaviour consistent for hybrids and
+        avoids hiding sensors based on heuristics.
         """
-        if not is_vin_electrified(vin):
+        state_map = coordinator.data.get(vin) or {}
+        if not any(descriptor in state_map for descriptor in HV_BATTERY_DESCRIPTORS):
             _LOGGER.debug(
-                "Skipping SoC tracking entities for non-electric vehicle %s",
+                "Skipping SoC tracking entities for %s: no HV battery descriptors seen yet",
                 vin,
             )
             return
