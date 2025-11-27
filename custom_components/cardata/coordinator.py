@@ -343,7 +343,18 @@ class CardataCoordinator:
             is_new = descriptor not in vehicle_state
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
-                self.apply_basic_data(vin, value)
+                metadata = self.apply_basic_data(vin, value)
+                if metadata:
+                    # Persist updated metadata to config entry
+                    from .metadata import async_store_vehicle_metadata
+                    self.hass.async_create_task(
+                        async_store_vehicle_metadata(
+                            self.hass,
+                            self.hass.config_entries.async_get_entry(self.entry_id),
+                            vin,
+                            metadata.get("raw_data") or value,
+                        )
+                    )
             if is_new:
                 if isinstance(value, bool):
                     new_binary.append(descriptor)

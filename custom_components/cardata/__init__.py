@@ -90,23 +90,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for vin, payload in stored_metadata.items():
             if not isinstance(payload, dict):
                 continue
+
+            # If we stored the *applied* metadata, the original BMW mapping
+            # is under "raw_data"; otherwise fall back to the payload itself.
+            raw_payload = payload.get("raw_data", payload)
+
             try:
-                metadata = coordinator.apply_basic_data(vin, payload.get("raw_data", {}))
+                metadata = coordinator.apply_basic_data(vin, raw_payload)
             except Exception:
                 _LOGGER.debug("Failed to restore metadata for %s", vin, exc_info=True)
                 continue
-            if metadata:
-                set_vehicle_powertrain_flags(coordinator, vin, payload, metadata)
-                device_registry.async_get_or_create(
-                    config_entry_id=entry.entry_id,
-                    identifiers={(DOMAIN, vin)},
-                    manufacturer=metadata.get("manufacturer", "BMW"),
-                    name=metadata.get("name", vin),
-                    model=metadata.get("model"),
-                    sw_version=metadata.get("sw_version"),
-                    hw_version=metadata.get("hw_version"),
-                    serial_number=metadata.get("serial_number"),
-                )
+
+            if not metadata:
+                continue
+
+            # Powertrain flags depend on the original mapping payload.
+            set_vehicle_powertrain_flags(coordinator, vin, raw_payload, metadata)
+
+            device_registry.async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={(DOMAIN, vin)},
+                manufacturer=metadata.get("manufacturer", "BMW"),
+                name=metadata.get("name", vin),
+                model=metadata.get("model"),
+                sw_version=metadata.get("sw_version"),
+                hw_version=metadata.get("hw_version"),
+                serial_number=metadata.get("serial_number"),
+            )
 
     quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
     container_manager: Optional[CardataContainerManager] = CardataContainerManager(
