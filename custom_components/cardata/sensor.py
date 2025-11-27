@@ -156,26 +156,6 @@ class CardataSensor(CardataEntity, SensorEntity):
         if self._descriptor == "vehicle.vehicle.travelledDistance":
             self._attr_state_class = SensorStateClass.TOTAL_INCREASING
 
-    @property
-    def name(self) -> str | None:
-        """Return sensor name prefixed with car model to avoid duplicates."""
-        base_name = super().name
-
-        model_name: str | None = None
-        try:
-            info = self.device_info
-            model_name = getattr(info, "name", None)
-            if model_name is None and isinstance(info, dict):
-                model_name = info.get("name")
-        except Exception:  # pylint: disable=broad-except
-            model_name = None
-
-        if model_name and base_name:
-            if not str(base_name).startswith(str(model_name)):
-                return f"{model_name} {base_name}"
-
-        return base_name
-
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
         await super().async_added_to_hass()

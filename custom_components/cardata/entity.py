@@ -18,8 +18,13 @@ class CardataEntity(RestoreEntity):
         self._coordinator = coordinator
         self._vin = vin
         self._descriptor = descriptor
-        self._attr_unique_id = f"{vin}_{descriptor}"
         self._base_name = self._format_name()
+        # Set unique_id with vehicle name prefix for proper entity_id generation
+        vehicle_name = self._get_vehicle_name()
+        if vehicle_name:
+            self._attr_unique_id = f"{vehicle_name}_{descriptor}"
+        else:
+            self._attr_unique_id = f"{vin}_{descriptor}"
         self._attr_name = self._compute_full_name()
         self._attr_available = True
         self._name_unsub: Callable[[], None] | None = None
