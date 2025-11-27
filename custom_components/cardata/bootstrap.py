@@ -75,6 +75,15 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             name=coordinator.names.get(vin, vin),
         )
 
+    # IMPORTANT: Fetch metadata FIRST, before seeding telematic data
+    # This ensures coordinator.names is populated when sensors are created
+    from .metadata import async_fetch_and_store_basic_data
+
+    await async_fetch_and_store_basic_data(
+        hass, entry, headers, vins, quota, runtime.session
+    )
+
+    # NOW seed telematic data (sensors will be created with names available)
     created_entities = False
     container_id = entry.data.get("hv_container_id")
     if container_id:
@@ -88,18 +97,13 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
     if created_entities:
-        from .metadata import async_fetch_and_store_basic_data
-
-        await async_fetch_and_store_basic_data(
-            hass, entry, headers, vins, quota, runtime.session
-        )
         from .telematics import async_update_last_telematic_poll
         import time
 
         async_update_last_telematic_poll(hass, entry, time.time())
     else:
         _LOGGER.debug(
-            "Bootstrap did not seed new descriptors for entry %s; basic data fetch skipped",
+            "Bootstrap did not seed new descriptors for entry %s",
             entry.entry_id,
         )
 
