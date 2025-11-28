@@ -426,6 +426,18 @@ class CardataCoordinator:
             async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
         for descriptor in new_binary:
             async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
+        # If we have metadata for this VIN, send name signal to update entity names
+        # This ensures MQTT-created entities get proper vehicle name prefixes
+        if vin in self.names and (new_sensor or new_binary):
+            def send_name_signal():
+                async_dispatcher_send(
+                    self.hass,
+                    f"{DOMAIN}_{self.entry_id}_name",
+                    vin,
+                    self.names[vin],
+                )
+    
+            self.hass.loop.call_later(0.1, send_name_signal)
 
         self._apply_soc_estimate(vin, now)
 

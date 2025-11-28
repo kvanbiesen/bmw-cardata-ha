@@ -18,6 +18,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
 from .const import (
+    API_VERSION,
     BOOTSTRAP_COMPLETE,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STREAM_HOST,
@@ -48,6 +49,7 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.DEVICE_TRACKER,
+    Platform.IMAGE,
 ]
 
 
@@ -88,16 +90,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 last_poll_ts, timezone.utc
             )
 
-        await async_restore_vehicle_metadata(hass, entry, coordinator)
-        
-        # Check if metadata is already available from restoration
-        has_metadata = bool(coordinator.names)
-        _LOGGER.debug(
-            "Metadata restored for entry %s: %s (names: %s)",
-            entry.entry_id,
-            "yes" if has_metadata else "no",
-            list(coordinator.names.keys()) if has_metadata else "empty",
-        )
+        # ✅ CRITICAL: Restore vehicle metadata from entry data
+        # This populates coordinator.names BEFORE anything else happens
+        try:
+            await async_restore_vehicle_metadata(hass, entry, coordinator)
+            has_metadata = bool(coordinator.names)
+            if has_metadata:
+                _LOGGER.info(
+                    "Metadata restored for entry %s: %s",
+                    entry.entry_id,
+                    ", ".join(f"{vin[-6:]}={name}" for vin, name in coordinator.names.items()),
+                )
+            else:
+                _LOGGER.debug("No stored metadata for entry %s (first-time setup)", entry.entry_id)
+        except Exception as err:
+            _LOGGER.warning("Failed to restore metadata for entry %s: %s", entry.entry_id, err)
 
         # Set up quota manager
         quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
@@ -149,7 +156,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:
                 _LOGGER.warning("Unable to ensure HV container for entry %s: %s", entry.entry_id, err)
 
-        # Start MQTT connection
+        # Create runtime data BEFORE starting MQTT
+        # This allows bootstrap to access runtime data
+        refresh_task = None  # Will be created after bootstrap
+        
+        runtime_data = CardataRuntimeData(
+            stream=manager,
+            refresh_task=None,  # Temporary, will be set after bootstrap
+            session=session,
+            coordinator=coordinator,
+            container_manager=container_manager,
+            bootstrap_task=None,
+            quota_manager=quota_manager,
+            telematic_task=None,
+            reauth_in_progress=False,
+            reauth_flow_id=None,
+        )
+        hass.data[DOMAIN][entry.entry_id] = runtime_data
+
+        # Start coordinator watchdog
+        await coordinator.async_handle_connection_event("connecting")
+        await coordinator.async_start_watchdog()
+
+        # Register services if not already done
+        if not domain_data.get("_service_registered"):
+            async_register_services(hass)
+            domain_data["_service_registered"] = True
+
+        # ✅ CRITICAL: Run bootstrap BEFORE starting MQTT AND before setting up platforms
+        # This ensures coordinator.names is populated from API metadata
+        should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
+        if should_bootstrap:
+            _LOGGER.info("Running bootstrap for entry %s (will fetch metadata)", entry.entry_id)
+            await async_run_bootstrap(hass, entry)
+            
+            # Check if bootstrap populated vehicle names
+            if coordinator.names:
+                _LOGGER.info(
+                    "Bootstrap complete: vehicles: %s",
+                    ", ".join(f"{vin[-6:]}={name}" for vin, name in coordinator.names.items()),
+                )
+            else:
+                _LOGGER.warning("Bootstrap complete but no vehicle names found")
+
+        # ✅ NOW start MQTT connection
+        # coordinator.names is now populated (either from restored metadata or from bootstrap)
         if manager.client is None:
             try:
                 await manager.async_start()
@@ -176,45 +227,61 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 return
 
         refresh_task = hass.loop.create_task(refresh_loop())
+        runtime_data.refresh_task = refresh_task
 
-        # Create runtime data
-        runtime_data = CardataRuntimeData(
-            stream=manager,
-            refresh_task=refresh_task,
-            session=session,
-            coordinator=coordinator,
-            container_manager=container_manager,
-            bootstrap_task=None,
-            quota_manager=quota_manager,
-            telematic_task=None,
-            reauth_in_progress=False,
-            reauth_flow_id=None,
-        )
-        hass.data[DOMAIN][entry.entry_id] = runtime_data
-
-        # Start coordinator watchdog
-        await coordinator.async_handle_connection_event("connecting")
-        await coordinator.async_start_watchdog()
-
-        # Register services if not already done
-        if not domain_data.get("_service_registered"):
-            async_register_services(hass)
-            domain_data["_service_registered"] = True
-
-        # Forward setup to platforms
-        # If metadata was restored, coordinator.names will have car names
-        # If not (first time), entities will be created with VINs as names temporarily
-        # Bootstrap will update them with car names when it fetches metadata
+        # ✅ NOW forward setup to platforms
+        # At this point:
+        # - coordinator.names is populated (vehicle names available)
+        # - MQTT is running (may already have some messages)
+        # - When platforms set up their signal listeners, entities will be created with vehicle names
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-        # Start bootstrap if needed
-        should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
+        # ✅ FETCH IMAGES AFTER platforms are set up
         if should_bootstrap:
-            runtime_data.bootstrap_task = hass.loop.create_task(
-                async_run_bootstrap(hass, entry)
-            )
+            async def fetch_images_task():
+                """Background task to fetch vehicle images after entity setup."""
+                await asyncio.sleep(2)
+                
+                from .image import async_fetch_all_vehicle_images
+                
+                vins = list(coordinator.data.keys())
+                if not vins:
+                    _LOGGER.debug("Cardata: No VINs found for image fetch")
+                    return
+                
+                access_token = data.get("access_token")
+                if not access_token:
+                    _LOGGER.warning("Cardata: No access token available for image fetch")
+                    return
+                
+                headers = {
+                    "Authorization": f"Bearer {access_token}",
+                    "x-version": API_VERSION,
+                    "Accept": "application/json",
+                }
+                
+                _LOGGER.info("Cardata: Fetching vehicle images for %d vehicles", len(vins))
+                try:
+                    image_results = await async_fetch_all_vehicle_images(
+                        hass,
+                        entry,
+                        headers,
+                        vins,
+                        quota_manager,
+                        session,
+                    )
+                    success_count = sum(1 for v in image_results.values() if v)
+                    _LOGGER.info(
+                        "Cardata: Vehicle images fetched - %d/%d successful",
+                        success_count,
+                        len(vins),
+                    )
+                except Exception as err:
+                    _LOGGER.error("Cardata: Error fetching vehicle images: %s", err, exc_info=True)
+            
+            hass.async_create_task(fetch_images_task())
 
-        # Start telematic polling loop
+        # Start telematic polling loop (as a background task)
         runtime_data.telematic_task = hass.loop.create_task(
             async_telematic_poll_loop(hass, entry.entry_id)
         )
