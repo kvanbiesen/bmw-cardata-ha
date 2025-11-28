@@ -28,11 +28,16 @@ async def async_perform_telematic_fetch(
     runtime: CardataRuntimeData,
     *,
     vin_override: Optional[str] = None,
-) -> bool:
+) -> Optional[bool]:
     """Fetch telematic data for one or more VINs.
 
     If vin_override is provided: fetch only that VIN (service use case).
     Otherwise: fetch all known VINs (entry.data, coordinator state, metadata).
+
+    Returns:
+        True: Successfully fetched data for at least one VIN
+        False: No fatal errors, but failed to fetch any data (quota hit, all network errors)
+        None: Fatal/unrecoverable error (no VIN, no container, auth failure) - stop polling
     """
     target_entry_id = entry.entry_id
 
@@ -66,7 +71,7 @@ async def async_perform_telematic_fetch(
         _LOGGER.error(
             "Cardata fetch_telematic_data: no VIN available; provide vin parameter"
         )
-        return False
+        return None  # Fatal: can't proceed without VIN
 
     container_id = entry.data.get("hv_container_id")
     if not container_id:
@@ -74,7 +79,7 @@ async def async_perform_telematic_fetch(
             "Cardata fetch_telematic_data: no container_id stored for entry %s",
             target_entry_id,
         )
-        return False
+        return None  # Fatal: can't fetch without container
 
     try:
         from .auth import refresh_tokens_for_entry
@@ -91,12 +96,12 @@ async def async_perform_telematic_fetch(
             target_entry_id,
             err,
         )
-        return False
+        return None  # Fatal: can't proceed without valid token
 
     access_token = entry.data.get("access_token")
     if not access_token:
         _LOGGER.error("Cardata fetch_telematic_data: access token missing after refresh")
-        return False
+        return None  # Fatal: auth failed
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -107,6 +112,7 @@ async def async_perform_telematic_fetch(
     quota = runtime.quota_manager
 
     any_success = False
+    any_attempt = False
 
     for vin in vins:
         if quota:
@@ -118,11 +124,12 @@ async def async_perform_telematic_fetch(
                     vin,
                     err,
                 )
-                break
+                break  # Quota exhausted, stop trying
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
 
         try:
+            any_attempt = True
             async with runtime.session.get(url, headers=headers, params=params) as response:
                 text = await response.text()
                 if response.status != 200:
@@ -155,39 +162,85 @@ async def async_perform_telematic_fetch(
                 err,
             )
 
+    # Update timestamp and signal if we got any data
     if any_success:
         runtime.coordinator.last_telematic_api_at = datetime.now(timezone.utc)
         async_dispatcher_send(
             runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
         )
+        _LOGGER.info("Cardata telematic fetch succeeded for at least one VIN")
+        return True
 
-    return any_success
+    # If we tried but got no data, return False (temporary failure)
+    if any_attempt:
+        _LOGGER.warning("Cardata telematic fetch attempted but failed for all VINs")
+        return False
+
+    # Should not reach here, but be safe
+    return False
 
 
 async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
-    """Periodically fetch telematic data on a schedule."""
+    """Poll telematic data periodically (every 45 minutes)."""
+    from .const import DOMAIN
+
+    domain_entries = hass.data.get(DOMAIN, {})
+    runtime: CardataRuntimeData | None = (
+        domain_entries.get(entry_id)
+        if domain_entries
+        else None
+    )
+    if runtime is None:
+        return
+
+    _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
+
     try:
         while True:
+            # Get current entry and check if it still exists
             entry = hass.config_entries.async_get_entry(entry_id)
-            runtime: CardataRuntimeData | None = (
-                hass.data.get(DOMAIN, {}).get(entry_id)
-                if hass.data.get(DOMAIN)
-                else None
-            )
-            if entry is None or runtime is None:
+            if entry is None:
+                _LOGGER.debug("Entry %s removed, stopping telematic poll loop", entry_id)
                 return
 
+            # Check if we should poll based on last poll timestamp
             last_poll = entry.data.get("last_telematic_poll", 0.0)
             now = time.time()
             wait = TELEMATIC_POLL_INTERVAL - (now - last_poll)
+            
             if wait > 0:
+                # Not time to poll yet, sleep until next poll time
+                _LOGGER.debug(
+                    "Next telematic poll in %.1f seconds (%.1f minutes)",
+                    wait,
+                    wait / 60,
+                )
                 await asyncio.sleep(wait)
                 continue
 
-            await async_perform_telematic_fetch(hass, entry, runtime)
-            async_update_last_telematic_poll(hass, entry, time.time())
-            await asyncio.sleep(TELEMATIC_POLL_INTERVAL)
+            # Time to poll
+            success = await async_perform_telematic_fetch(hass, entry, runtime)
+
+            if success is None:
+                # Fatal error - stop polling
+                _LOGGER.error(
+                    "Fatal telematic error for entry %s — stopping poll loop",
+                    entry_id,
+                )
+                return
+
+            if success is True:
+                # Data fetched successfully
+                async_update_last_telematic_poll(hass, entry, time.time())
+                _LOGGER.debug("Telematic poll succeeded for entry %s", entry_id)
+            else:
+                # False: attempted but failed (temporary)
+                _LOGGER.debug("Telematic poll failed (temporary) for entry %s", entry_id)
+                # Still update timestamp so we don't retry immediately
+                async_update_last_telematic_poll(hass, entry, time.time())
+
     except asyncio.CancelledError:
+        _LOGGER.debug("Telematic poll loop cancelled for entry %s", entry_id)
         return
 
 

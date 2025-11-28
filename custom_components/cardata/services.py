@@ -85,11 +85,26 @@ async def async_handle_fetch_telematic(call) -> None:
         runtime,
         vin_override=call.data.get("vin"),
     )
-    if success:
-        async_update_last_telematic_poll(hass, target_entry, time.time())
-    else:
+
+    if success is None:
+        # Fatal error - don't update timestamp
         _LOGGER.error(
-            "Cardata fetch_telematic_data: no data fetched for entry %s",
+            "Cardata fetch_telematic_data: fatal error for entry %s",
+            target_entry_id,
+        )
+        return
+
+    if success is True:
+        # Data fetched successfully
+        async_update_last_telematic_poll(hass, target_entry, time.time())
+        _LOGGER.info(
+            "Cardata fetch_telematic_data: successfully fetched data for entry %s",
+            target_entry_id,
+        )
+    else:
+        # False: attempted but failed (temporary)
+        _LOGGER.warning(
+            "Cardata fetch_telematic_data: failed to fetch data for entry %s (temporary failure)",
             target_entry_id,
         )
 
