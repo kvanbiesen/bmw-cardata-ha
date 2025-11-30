@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from .const import DEBUG_LOG
 
 _LOGGER_NAMESPACE = "custom_components.cardata"
-_DEBUG_ENABLED = DEBUG_LOG
 
 
 def set_debug_enabled(value: bool) -> None:
@@ -21,5 +19,3 @@ def set_debug_enabled(value: bool) -> None:
 def debug_enabled() -> bool:
     """Return whether verbose debug logging is enabled."""
     return _DEBUG_ENABLED
-
-set_debug_enabled(DEBUG_LOG)

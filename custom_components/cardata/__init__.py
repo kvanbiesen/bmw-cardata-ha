@@ -90,6 +90,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         await async_restore_vehicle_metadata(hass, entry, coordinator)
         
+        # CRITICAL FIX: Pre-populate coordinator.names from restored device_metadata
+        # Entities check coordinator.names for the vehicle name prefix, so we must
+        # populate it BEFORE the MQTT stream starts and entities are created
+        for vin, metadata in coordinator.device_metadata.items():
+            if metadata and not coordinator.names.get(vin):
+                # Extract the name that was restored from metadata
+                vehicle_name = metadata.get("name")
+                if vehicle_name:
+                    coordinator.names[vin] = vehicle_name
+                    _LOGGER.debug(
+                        "Pre-populated coordinator.names for VIN %s with: %s (from restored metadata)",
+                        vin,
+                        vehicle_name,
+                    )
+        
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
         _LOGGER.debug(
