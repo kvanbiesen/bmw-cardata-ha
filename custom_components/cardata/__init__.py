@@ -288,3 +288,41 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.pop(DOMAIN, None)
 
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle removal of config entry - optionally clean up entities."""
+    
+    # Check if user chose to delete entities (set by config flow)
+    should_delete_entities = entry.data.get("_delete_entities_on_remove", False)
+    
+    if should_delete_entities:
+        from homeassistant.helpers import entity_registry as er
+        
+        entity_reg = er.async_get(hass)
+        
+        # Get all entities for this config entry
+        entities = er.async_entries_for_config_entry(entity_reg, entry.entry_id)
+        deleted_count = 0
+        
+        _LOGGER.info(
+            "Removing %s entities for config entry %s (user requested cleanup)",
+            len(entities),
+            entry.entry_id,
+        )
+        
+        # Delete each entity from registry (including their history)
+        for entity in entities:
+            entity_reg.async_remove(entity.entity_id)
+            deleted_count += 1
+        
+        _LOGGER.info(
+            "Successfully removed %s entities for config entry %s",
+            deleted_count,
+            entry.entry_id,
+        )
+    else:
+        _LOGGER.debug(
+            "Keeping entities for config entry %s (user did not request cleanup)",
+            entry.entry_id,
+        )

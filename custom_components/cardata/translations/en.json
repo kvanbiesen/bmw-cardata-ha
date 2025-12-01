@@ -8,6 +8,13 @@
       "authorize": {
         "title": "Authorize BMW CarData",
         "description": "Open {verification_url} and enter the user code {user_code} if asked. Once you've approved the device, click Submit. If approval already completed, click Submit again to continue."
+      },
+      "remove": {
+        "title": "Remove Integration",
+        "description": "⚠️ **Delete entities and history?**\n\nIf you check this box, ALL sensors for this integration will be permanently deleted from Home Assistant, including their historical data.\n\nOnly check this if you want to completely remove all traces, or if you have orphaned entities with wrong names.\n\n**Unchecked (default)**: Entities will be kept and can be reused if you re-add the integration later.\n\n**Checked**: Entities will be permanently deleted. They will be recreated fresh if you re-add the integration.",
+        "data": {
+          "delete_entities": "Delete all entities and their history"
+        }
       }
     },
     "error": {
@@ -17,7 +24,8 @@
     "abort": {
       "reauth_device_code_failed": "BMW rejected the device authorization request ({error}). Update the client ID under Configure > Start device authorization again, or remove and re-add the integration.",
       "reauth_missing_client_id": "Client ID is missing for this integration entry. Remove and re-add the integration to authorize again.",
-      "reauth_failed": "Reauthorization could not be started. Try again from the integration options."
+      "reauth_failed": "Reauthorization could not be started. Try again from the integration options.",
+      "user_remove_completed": "Integration will be removed. Entities will be cleaned up based on your selection."
     }
   },
   "options": {
@@ -25,6 +33,13 @@
       "init": {
         "title": "Manual actions",
         "description": "Select the action you want to run. Refresh tokens tries to just refresh the tokens without reauth. We suggest restarting HA after that if you have problems."
+      },
+      "action_cleanup_entities": {
+        "title": "Clean Up Orphaned Entities",
+        "description": "{warning}\n\n{success}",
+        "data": {
+          "confirm": "I understand this will delete all entities and their history"
+        }
       }
     },
     "error": {
@@ -32,7 +47,8 @@
       "runtime_missing": "Integration runtime is not ready. Try again after setup completes.",
       "no_vins": "No VINs are known yet. Wait for the stream to discover a vehicle or trigger it once manually.",
       "invalid_int": "Enter a positive integer",
-      "invalid_client_id": "Enter the BMW CarData client ID."
+      "invalid_client_id": "Enter the BMW CarData client ID.",
+      "cleanup_failed": "Failed to clean up entities: {error}"
     },
     "abort": {
       "reauth_started": "Authorization restarted. Complete the new login flow from the notification.",
