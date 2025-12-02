@@ -77,6 +77,15 @@ async def async_setup_entry(
 
     def ensure_entity(vin: str, descriptor: str, *, assume_binary: bool = False) -> None:
         """Ensure binary sensor entity exists for VIN + descriptor."""
+        # Don't create entity if vehicle name not yet available
+        if not coordinator.names.get(vin):
+            _LOGGER.debug(
+                "Skipping binary sensor creation for VIN %s descriptor %s - vehicle name not yet available",
+                vin,
+                descriptor
+            )
+            return
+        
         if (vin, descriptor) in entities:
             return
 

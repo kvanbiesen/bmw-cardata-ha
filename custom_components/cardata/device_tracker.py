@@ -65,6 +65,15 @@ async def async_setup_entry(
         """Ensure device tracker exists for VIN."""
         if vin in trackers:
             return
+        
+        # Don't create tracker if vehicle name not yet available
+        if not coordinator.names.get(vin):
+            _LOGGER.debug(
+                "Skipping device tracker creation for VIN %s - vehicle name not yet available",
+                vin
+            )
+            return
+        
         tracker = CardataDeviceTracker(coordinator, vin)
         trackers[vin] = tracker
         async_add_entities([tracker])

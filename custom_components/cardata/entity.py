@@ -30,7 +30,7 @@ class CardataEntity(RestoreEntity):
     def device_info(self) -> DeviceInfo:
         metadata = self._coordinator.device_metadata.get(self._vin, {})
         name = metadata.get("name") or self._coordinator.names.get(self._vin, self._vin)
-        manufacturer = metadata.get("manufacturer", "BMW")
+        manufacturer = metadata.get("manufacturer", "bmw")
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, self._vin)},
             "manufacturer": manufacturer,

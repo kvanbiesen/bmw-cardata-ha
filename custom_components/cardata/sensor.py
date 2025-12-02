@@ -320,8 +320,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         """Return device info."""
         return {
             "identifiers": {(DOMAIN, self._entry_id)},
-            "manufacturer": "BMW",
-            "name": "CarData Debug Device",
+            "name": "BMW CarData Diagnostics",
         }
 
     @property
@@ -571,6 +570,14 @@ async def async_setup_entry(
 
     def ensure_soc_tracking_entities(vin: str) -> None:
         """Ensure SOC tracking entities exist for VIN."""
+        # Don't create entities if vehicle name not yet available
+        if not coordinator.names.get(vin):
+            _LOGGER.debug(
+                "Skipping SOC tracking entities for VIN %s - vehicle name not yet available",
+                vin
+            )
+            return
+        
         new_entities = []
 
         if vin not in soc_estimate_entities:
@@ -591,6 +598,15 @@ async def async_setup_entry(
     def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False) -> None:
         """Ensure sensor entity exists for VIN + descriptor."""
         ensure_soc_tracking_entities(vin)
+
+        # Don't create entity if vehicle name not yet available
+        if not coordinator.names.get(vin):
+            _LOGGER.debug(
+                "Skipping sensor creation for VIN %s descriptor %s - vehicle name not yet available",
+                vin,
+                descriptor
+            )
+            return
 
         if (vin, descriptor) in entities:
             return
