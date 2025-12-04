@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -72,6 +73,11 @@ async def async_setup_entry(
     """Set up binary sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
+    stream_manager = runtime.stream
+    
+    # Wait for bootstrap to finish so VIN → name mapping exists
+    while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
+        await asyncio.sleep(0.1)
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +38,8 @@ from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .quota import QuotaManager
 
+_LOGGER = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     pass
 
@@ -67,12 +71,6 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
 
 UNIT_DEVICE_CLASS_MAP = _build_unit_device_class_map()
 
-class CardataSensor(CardataEntity, SensorEntity):
-    def __init__(self, coordinator, vin, descriptor):
-        super().__init__(coordinator, vin, descriptor)
-        
-        if self._descriptor in BATTERY_DESCRIPTORS:
-            self._attr_device_class = SensorDeviceClass.BATTERY
 
 def normalize_unit(unit: str | None) -> str | None:
     """Normalize BMW unit strings to Home Assistant compatible units."""
@@ -108,7 +106,7 @@ def get_device_class_for_unit(
             "vehicle.powertrain.electric.battery.stateOfCharge.target",
             "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
         }
-        
+
         # Check if this is a battery-related descriptor with % unit
         if descriptor and descriptor in BATTERY_DESCRIPTORS:
             # Only apply battery class if unit is % (percentage)
@@ -134,31 +132,6 @@ def get_device_class_for_unit(
             duration_keywords = ["time", "duration", "minutes", "mins"]
             if any(keyword in descriptor_lower for keyword in duration_keywords):
                 return SensorDeviceClass.DURATION
-
-    if unit is None:
-        return None
-
-    return UNIT_DEVICE_CLASS_MAP.get(unit)
-    # Special case: 'm' can be meters OR minutes depending on context
-    if unit == "m" and descriptor:
-        descriptor_lower = descriptor.lower()
-
-        distance_keywords = [
-            "altitude",
-            "elevation",
-            "sealevel",
-            "sea_level",
-            "height",
-            "position",
-            "location",
-            "distance",
-        ]
-        if any(keyword in descriptor_lower for keyword in distance_keywords):
-            return SensorDeviceClass.DISTANCE
-
-        duration_keywords = ["time", "duration", "minutes", "mins"]
-        if any(keyword in descriptor_lower for keyword in duration_keywords):
-            return SensorDeviceClass.DURATION
 
     return UNIT_DEVICE_CLASS_MAP.get(unit)
 
@@ -255,6 +228,7 @@ class CardataSensor(CardataEntity, SensorEntity):
         """Handle incoming data updates from coordinator."""
         if vin != self.vin or descriptor != self.descriptor:
             return
+        _LOGGER.debug("Updating sensor %s (%s)", self.entity_id, descriptor)
 
         state = self._coordinator.get_state(vin, descriptor)
         if not state:
@@ -320,8 +294,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         """Return device info."""
         return {
             "identifiers": {(DOMAIN, self._entry_id)},
-            "manufacturer": "BMW",
-            "name": "CarData Debug Device",
+            "name": "BMW CarData Diagnostics",
         }
 
     @property
@@ -431,7 +404,7 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
         )
 
         self._load_current_value()
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""
@@ -563,6 +536,11 @@ async def async_setup_entry(
     """Set up sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
+    stream_manager = runtime.stream
+
+    # Wait for bootstrap to finish so VIN → name mapping exists
+    while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
+        await asyncio.sleep(0.1)
 
     entities: dict[tuple[str, str], CardataSensor] = {}
     soc_estimate_entities: dict[str, CardataSocEstimateSensor] = {}
@@ -656,12 +634,17 @@ async def async_setup_entry(
     for vin, descriptor in coordinator.iter_descriptors(binary=False):
         ensure_entity(vin, descriptor)
 
-    # Ensure SOC entities for all known VINs
+    # Create SOC tracking entities for all known VINs
     for vin in list(coordinator.data.keys()):
         ensure_soc_tracking_entities(vin)
 
     # Subscribe to new sensor signals
     async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
+        _LOGGER.debug(
+            "New sensor signal received for VIN=%s, descriptor=%s",
+            vin,
+            descriptor,
+        )
         ensure_entity(vin, descriptor)
 
     entry.async_on_unload(

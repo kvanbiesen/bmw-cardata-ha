@@ -55,6 +55,23 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     headers = _build_headers(access_token)
 
+    # Ensure HV container exists (ONLY here, not in token refresh!)
+    from .auth import async_ensure_container_for_entry
+    
+    container_ready = await async_ensure_container_for_entry(
+        entry,
+        hass,
+        runtime.session,
+        runtime.container_manager,
+        force=False,  # Don't force recreation
+    )
+    
+    if not container_ready:
+        _LOGGER.warning(
+            "Bootstrap: Container not ready for entry %s. Continuing without container.",
+            entry.entry_id
+        )
+
     vins = await async_fetch_primary_vins(runtime.session, headers, entry.entry_id, quota)
     if not vins:
         await async_mark_bootstrap_complete(hass, entry)
@@ -74,6 +91,17 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await async_fetch_and_store_basic_data(
         hass, entry, headers, vins, quota, runtime.session
     )
+    
+    # CRITICAL: Apply metadata to populate coordinator.names!
+    # async_fetch_and_store_basic_data() populates device_metadata but NOT coordinator.names
+    # coordinator.names is ONLY populated by apply_basic_data()
+    # Without this, all bootstrap waits checking coordinator.names will fail
+    for vin in vins:
+        metadata = coordinator.device_metadata.get(vin)
+        if metadata and "raw_data" in metadata:
+            # Call apply_basic_data to populate coordinator.names
+            coordinator.apply_basic_data(vin, metadata["raw_data"])
+            _LOGGER.debug("Bootstrap populated name for VIN %s: %s", vin, coordinator.names.get(vin))
 
     # NOW seed telematic data (entities will be created with complete metadata)
     created_entities = False
@@ -126,6 +154,18 @@ async def async_fetch_primary_vins(
         async with session.get(url, headers=headers) as response:
             text = await response.text()
             if response.status != 200:
+                # Special handling for rate limit errors
+                if response.status == 429:
+                    _LOGGER.error(
+                        "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
+                        "BMW's daily quota (typically 500 calls/day) has been reached. "
+                        "The limit resets at midnight UTC. Please wait and try again later. "
+                        "Error details: %s",
+                        entry_id,
+                        text
+                    )
+                    return []
+                
                 _LOGGER.warning(
                     "Bootstrap mapping request failed for entry %s (status=%s): %s",
                     entry_id,
@@ -210,6 +250,18 @@ async def async_seed_telematic_data(
             async with session.get(url, headers=headers, params=params) as response:
                 text = await response.text()
                 if response.status != 200:
+                    # Special handling for rate limit errors
+                    if response.status == 429:
+                        _LOGGER.error(
+                            "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
+                            "BMW's daily quota (typically 500 calls/day) has been reached. "
+                            "The limit resets at midnight UTC. Skipping remaining vehicles. "
+                            "Error details: %s",
+                            vin,
+                            text
+                        )
+                        break  # Stop trying other VINs if we hit rate limit
+                    
                     _LOGGER.debug(
                         "Bootstrap telematic request failed for %s (status=%s): %s",
                         vin,

@@ -179,22 +179,31 @@ class CardataContainerManager:
         return containers
 
     def _matches_hv_container(self, container: Dict[str, Any]) -> bool:
+        """Check if container matches HV battery container criteria.
+        
+        CRITICAL: ALL conditions must match (not just any one)!
+        - Purpose must match
+        - Name must match  
+        - Signature must match
+        """
         if not isinstance(container, dict):
             return False
+        
         purpose = container.get("purpose")
         name = container.get("name")
         descriptors = container.get("technicalDescriptors")
         signature = None
+        
         if isinstance(descriptors, list):
             signature = self.compute_signature(
                 [item for item in descriptors if isinstance(item, str)]
             )
-        return any(
-            [
-                isinstance(purpose, str) and purpose == HV_BATTERY_CONTAINER_PURPOSE,
-                isinstance(name, str) and name == HV_BATTERY_CONTAINER_NAME,
-                signature == self._descriptor_signature,
-            ]
+        
+        # ALL conditions must be true (not any)!
+        return (
+            isinstance(purpose, str) and purpose == HV_BATTERY_CONTAINER_PURPOSE
+            and isinstance(name, str) and name == HV_BATTERY_CONTAINER_NAME
+            and signature == self._descriptor_signature
         )
 
     async def _delete_container(self, access_token: str, container_id: str) -> None:

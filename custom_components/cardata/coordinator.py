@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, DIAGNOSTIC_LOG_INTERVAL
@@ -158,6 +159,7 @@ class CardataCoordinator:
     last_telematic_api_at: Optional[datetime] = None
     connection_status: str = "connecting"
     last_disconnect_reason: Optional[str] = None
+    _LOGGER.debug("Init Coordinator Message")
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
     watchdog_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
     _soc_tracking: Dict[str, SocTracking] = field(default_factory=dict, init=False)
@@ -173,6 +175,14 @@ class CardataCoordinator:
     _ac_voltage_v: Dict[str, float] = field(default_factory=dict, init=False)
     _ac_current_a: Dict[str, float] = field(default_factory=dict, init=False)
     _ac_phase_count: Dict[str, int] = field(default_factory=dict, init=False)
+    
+    # Debouncing fields (NEW!)
+    _update_debounce_handle: Optional[asyncio.TimerHandle] = field(default=None, init=False)
+    _pending_updates: Dict[str, set[str]] = field(default_factory=dict, init=False)  # {vin: {descriptors}}
+    _pending_new_sensors: Dict[str, list[str]] = field(default_factory=dict, init=False)
+    _pending_new_binary: Dict[str, list[str]] = field(default_factory=dict, init=False)
+    _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
+    _MIN_CHANGE_THRESHOLD: float = 0.1  # Minimum change for numeric values
 
     @property
     def signal_new_sensor(self) -> str:
@@ -299,6 +309,7 @@ class CardataCoordinator:
         )
 
     async def async_handle_message(self, payload: Dict[str, Any]) -> None:
+        _LOGGER.debug("Init Handle Message")
         vin = payload.get("vin")
         data = payload.get("data") or {}
         if not vin or not isinstance(data, dict):
@@ -340,15 +351,25 @@ class CardataCoordinator:
                 elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
                     self._set_ac_phase(vin, None, parsed_ts)
                 continue
+            # Check if value actually changed significantly
+            value_changed = self._is_significant_change(vin, descriptor, value)
+            
             is_new = descriptor not in vehicle_state
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
+            
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
+            
             if is_new:
                 if isinstance(value, bool):
                     new_binary.append(descriptor)
                 else:
                     new_sensor.append(descriptor)
+            elif value_changed:
+                # Queue update for this descriptor (debounced)
+                if vin not in self._pending_updates:
+                    self._pending_updates[vin] = set()
+                self._pending_updates[vin].add(descriptor)
             if descriptor == "vehicle.drivetrain.batteryManagement.header":
                 try:
                     percent = float(value)
@@ -420,16 +441,90 @@ class CardataCoordinator:
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
                 self._set_ac_phase(vin, value, parsed_ts)
 
-            async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
-
-        for descriptor in new_sensor:
-            async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
-        for descriptor in new_binary:
-            async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
+        # Queue new entities for immediate notification
+        if new_sensor:
+            self._pending_new_sensors.setdefault(vin, []).extend(new_sensor)
+        if new_binary:
+            self._pending_new_binary.setdefault(vin, []).extend(new_binary)
 
         self._apply_soc_estimate(vin, now)
 
+        # Schedule debounced update instead of immediate dispatcher sends
+        self._schedule_debounced_update()
+    
+    def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
+        """Check if value changed significantly enough to warrant an update."""
+        current_state = self.get_state(vin, descriptor)
+        
+        # No previous state = always significant
+        if not current_state:
+            return True
+        
+        old_value = current_state.value
+        
+        # Same value = not significant
+        if old_value == new_value:
+            return False
+        
+        # For numeric values, check threshold
+        if isinstance(new_value, (int, float)) and isinstance(old_value, (int, float)):
+            # Percentage change
+            if old_value != 0:
+                percent_change = abs((new_value - old_value) / old_value)
+                if percent_change < 0.01:  # Less than 1% change
+                    return False
+            
+            # Absolute change
+            if abs(new_value - old_value) < self._MIN_CHANGE_THRESHOLD:
+                return False
+        
+        # Value changed significantly
+        return True
+    
+    def _schedule_debounced_update(self) -> None:
+        """Schedule a debounced coordinator update."""
+        # Cancel existing debounce timer if any
+        if self._update_debounce_handle:
+            self._update_debounce_handle()
+        
+        # Schedule new update
+        self._update_debounce_handle = async_call_later(
+            self.hass,
+            self._DEBOUNCE_SECONDS,
+            lambda _: self.hass.loop.call_soon_threadsafe(
+                asyncio.create_task,
+                self._execute_debounced_update()
+            )
+        )
+    
+    async def _execute_debounced_update(self) -> None:
+        """Execute the debounced batch update."""
+        self._update_debounce_handle = None
+        
+        # Send batched updates for changed descriptors
+        for vin, descriptors in self._pending_updates.items():
+            for descriptor in descriptors:
+                async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
+        
+        # Send new entity notifications
+        for vin, descriptors in self._pending_new_sensors.items():
+            for descriptor in descriptors:
+                async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
+        
+        for vin, descriptors in self._pending_new_binary.items():
+            for descriptor in descriptors:
+                async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
+        
+        # Send diagnostics update
         async_dispatcher_send(self.hass, self.signal_diagnostics)
+        
+        # Clear all pending updates
+        self._pending_updates.clear()
+        self._pending_new_sensors.clear()
+        self._pending_new_binary.clear()
+        
+        if debug_enabled():
+            _LOGGER.debug("Debounced coordinator update executed")
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         return self.data.get(vin, {}).get(descriptor)
@@ -576,6 +671,7 @@ class CardataCoordinator:
     ) -> None:
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
+        _LOGGER.debug("Restore Handle Message")
         if value is None:
             if descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
                 tracking = self._soc_tracking.setdefault(vin, SocTracking())

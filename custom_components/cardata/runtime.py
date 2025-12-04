@@ -11,6 +11,11 @@ import aiohttp
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .quota import QuotaManager
+from .ratelimit import (
+    RateLimitTracker,
+    UnauthorizedLoopProtection,
+    ContainerRateLimiter,
+)
 from .stream import CardataStreamManager
 
 
@@ -31,3 +36,23 @@ class CardataRuntimeData:
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
+    
+    # Rate limit protection (NEW!)
+    rate_limit_tracker: RateLimitTracker = None
+    unauthorized_protection: UnauthorizedLoopProtection = None
+    container_rate_limiter: ContainerRateLimiter = None
+    
+    def __post_init__(self):
+        """Initialize rate limiters if not provided."""
+        if self.rate_limit_tracker is None:
+            self.rate_limit_tracker = RateLimitTracker()
+        if self.unauthorized_protection is None:
+            self.unauthorized_protection = UnauthorizedLoopProtection(
+                max_attempts=3,
+                cooldown_hours=1
+            )
+        if self.container_rate_limiter is None:
+            self.container_rate_limiter = ContainerRateLimiter(
+                max_per_hour=3,
+                max_per_day=10
+            )

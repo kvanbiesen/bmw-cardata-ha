@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "BimmerData Streamline",
+        "title": "BMW Cardata",
         "description": "Enter your BMW CarData client ID."
       },
       "authorize": {

@@ -183,7 +183,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
             persistent_notification.async_dismiss(self.hass, notification_id)
             return self.async_abort(reason="reauth_successful")
 
-        friendly_title = f"BimmerData Streamline ({self._client_id[:8]})"
+        friendly_title = "BMW CarData"
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
     async def async_step_reauth(self, entry_data: Dict[str, Any]) -> FlowResult:

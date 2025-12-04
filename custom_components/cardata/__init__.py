@@ -41,6 +41,7 @@ from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .container import CardataContainerManager
+from .migrations import async_migrate_entity_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -140,6 +141,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)
+        
+        # CRITICAL: Prevent MQTT from auto-starting during token refresh
+        # Set a flag that we'll clear after bootstrap completes
+        manager._bootstrap_in_progress = True
 
         # Attempt initial token refresh
         refreshed_token = False
@@ -164,17 +169,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:
                 _LOGGER.warning("Unable to ensure HV container for entry %s: %s", entry.entry_id, err)
 
-        # Start MQTT connection
-        if manager.client is None:
-            try:
-                await manager.async_start()
-            except Exception as err:
-                await session.close()
-                if refreshed_token:
-                    raise ConfigEntryNotReady(
-                        f"Unable to connect to BMW MQTT after token refresh: {err}"
-                    ) from err
-                raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
+        # MQTT auto-start is now prevented by _bootstrap_in_progress flag
+        # We'll explicitly start it after bootstrap completes
 
         # Create refresh loop
         async def refresh_loop() -> None:
@@ -207,27 +203,67 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         hass.data[DOMAIN][entry.entry_id] = runtime_data
 
-        # Start coordinator watchdog
-        await coordinator.async_handle_connection_event("connecting")
-        await coordinator.async_start_watchdog()
-
         # Register services if not already done
         if not domain_data.get("_service_registered"):
             async_register_services(hass)
             domain_data["_service_registered"] = True
 
-        # Forward setup to platforms
-        # If metadata was restored, coordinator.names will have car names
-        # If not (first time), entities will be created with VINs as names temporarily
-        # Bootstrap will update them with car names when it fetches metadata
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-        # Start bootstrap if needed
+        # Start bootstrap FIRST (before MQTT and before setting up platforms)
+        # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
         if should_bootstrap:
+            _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
+            
             runtime_data.bootstrap_task = hass.loop.create_task(
                 async_run_bootstrap(hass, entry)
             )
+            
+            # Wait for bootstrap task to FULLY complete (including async_seed_telematic_data)
+            # This ensures coordinator.names is populated AND telematic data is seeded
+            # before we set up platforms (which create entities)
+            try:
+                await asyncio.wait_for(runtime_data.bootstrap_task, timeout=30.0)
+                _LOGGER.debug("Bootstrap completed successfully")
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "Bootstrap did not complete within 30 seconds. "
+                    "Devices will update names when metadata arrives."
+                )
+            except Exception as err:
+                _LOGGER.warning("Bootstrap failed: %s", err)
+
+        # NOW clear the bootstrap flag and start MQTT connection
+        # This ensures MQTT doesn't create entities before we have vehicle names
+        manager._bootstrap_in_progress = False
+        
+        if manager.client is None:
+            try:
+                _LOGGER.debug("Starting MQTT connection after bootstrap")
+                await manager.async_start()
+            except Exception as err:
+                await session.close()
+                if refreshed_token:
+                    raise ConfigEntryNotReady(
+                        f"Unable to connect to BMW MQTT after token refresh: {err}"
+                    ) from err
+                raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
+
+        # Start coordinator watchdog
+        await coordinator.async_handle_connection_event("connecting")
+        await coordinator.async_start_watchdog()
+
+        # --- NEW: Run safe migration of existing entity_ids to include model prefix
+        # Run this after bootstrap (so coordinator.names is populated) and before platforms
+        #try:
+        #    await async_migrate_entity_ids(hass, entry, coordinator)
+        #except Exception as err:
+        #    _LOGGER.debug("Entity id migration failed for entry %s: %s", entry.entry_id, err)
+
+        # NOW set up platforms - coordinator.names should be populated
+        # Forward setup to platforms
+        # If metadata was restored or fetched by bootstrap, coordinator.names will have car names
+        # If not (timeout), entities will be created with VINs temporarily and updated later
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
         # Start telematic polling loop
         runtime_data.telematic_task = hass.loop.create_task(
@@ -288,3 +324,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.pop(DOMAIN, None)
 
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle removal of config entry."""
+    # Home Assistant handles entity cleanup automatically
+    _LOGGER.debug("Config entry %s removed", entry.entry_id)
