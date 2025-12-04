@@ -353,6 +353,11 @@ class CardataCoordinator:
                 continue
             # Check if value actually changed significantly
             value_changed = self._is_significant_change(vin, descriptor, value)
+            # Safety: always treat GPS/location descriptors as changed so tracker receives updates.
+            # This covers cases where numeric comparison might miss changes due to formatting/timing.
+            desc_lower = descriptor.lower() if isinstance(descriptor, str) else ""
+            if any(tok in desc_lower for tok in ("latitude", "longitude", "navigation.currentlocation")):
+                value_changed = True
             
             is_new = descriptor not in vehicle_state
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
