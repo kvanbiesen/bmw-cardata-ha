@@ -1,4 +1,4 @@
-"""Config flow for BMW CarData integration."""
+﻿"""Config flow for BMW CarData integration."""
 
 from __future__ import annotations
 
@@ -183,7 +183,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
             persistent_notification.async_dismiss(self.hass, notification_id)
             return self.async_abort(reason="reauth_successful")
 
-        friendly_title = "BMW CarData"
+        friendly_title = f"BMW CarData ({self._client_id[:8]})"
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
     async def async_step_reauth(self, entry_data: Dict[str, Any]) -> FlowResult:
@@ -239,6 +239,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 "action_fetch_basic": "Get basic vehicle information (API)",
                 "action_fetch_telematic": "Get telematics data (API)",
                 "action_reset_container": "Reset telemetry container",
+                "action_cleanup_entities": "Clean up orphaned entities",
             },
         )
 
@@ -489,6 +490,68 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
         return self.async_create_entry(title="", data={})
 
+    async def async_step_action_cleanup_entities(
+        self, user_input: Optional[Dict[str, Any]] = None
+    ) -> FlowResult:
+        """Clean up orphaned entities for this integration."""
+        from homeassistant.helpers import entity_registry as er
+        
+        if user_input is None:
+            # Show warning form
+            return self.async_show_form(
+                step_id="action_cleanup_entities",
+                data_schema=vol.Schema({
+                    vol.Required("confirm", default=False): bool,
+                }),
+                description_placeholders={
+                    "warning": "⚠️ This will delete ALL entities for this integration from the entity registry, including their history! Only do this if you have orphaned entities with wrong names.",
+                },
+            )
+        
+        if not user_input.get("confirm"):
+            return self._show_confirm(
+                step_id="action_cleanup_entities",
+                errors={"confirm": "confirm"},
+            )
+        
+        try:
+            entity_reg = er.async_get(self.hass)
+            entry_id = self._config_entry.entry_id
+            
+            # Get all entities for this config entry
+            entities = er.async_entries_for_config_entry(entity_reg, entry_id)
+            deleted_count = 0
+            entity_ids_deleted = []
+            
+            # Delete each entity
+            for entity in entities:
+                entity_ids_deleted.append(entity.entity_id)
+                entity_reg.async_remove(entity.entity_id)
+                deleted_count += 1
+            
+            LOGGER.info(
+                "Cleaned up %s orphaned entities for entry %s: %s",
+                deleted_count,
+                entry_id,
+                ", ".join(entity_ids_deleted[:10]) + ("..." if deleted_count > 10 else ""),
+            )
+            
+            return self.async_show_form(
+                step_id="action_cleanup_entities",
+                data_schema=vol.Schema({}),
+                description_placeholders={
+                    "success": f"✅ Successfully deleted {deleted_count} entities! They will be recreated automatically. Restart Home Assistant or wait a few seconds.",
+                },
+            )
+            
+        except Exception as err:
+            LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
+            return self._show_confirm(
+                step_id="action_cleanup_entities",
+                errors={"base": "cleanup_failed"},
+                placeholders={"error": str(err)},
+            )
+
     async def _handle_reauth(self) -> FlowResult:
         from custom_components.cardata.const import DOMAIN
 
@@ -519,3 +582,42 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 description_placeholders=flow_result.get("description_placeholders"),
             )
         return self.async_abort(reason="reauth_started")
+
+    async def async_step_remove(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+        """Handle removal of config entry - prompt user about entity cleanup."""
+        
+        if user_input is not None:
+            # User made their choice
+            delete_entities = user_input.get("delete_entities", False)
+            
+            # Store the choice in entry data so async_remove_entry can read it
+            entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+            if entry:
+                updated_data = dict(entry.data)
+                updated_data["_delete_entities_on_remove"] = delete_entities
+                self.hass.config_entries.async_update_entry(entry, data=updated_data)
+                
+                if delete_entities:
+                    LOGGER.info(
+                        "User chose to delete entities for entry %s",
+                        entry.entry_id,
+                    )
+                else:
+                    LOGGER.debug(
+                        "User chose to keep entities for entry %s",
+                        entry.entry_id,
+                    )
+            
+            # Proceed with removal
+            return self.async_abort(reason="user_remove_completed")
+        
+        # Show form asking user's preference
+        return self.async_show_form(
+            step_id="remove",
+            data_schema=vol.Schema({
+                vol.Required("delete_entities", default=False): bool,
+            }),
+            description_placeholders={
+                "warning": "⚠️ **Delete entities and history?**\n\nIf you check this box, ALL sensors for this integration will be permanently deleted from Home Assistant, including their historical data.\n\nOnly check this if you want to completely remove all traces, or if you have orphaned entities with wrong names.\n\n**Unchecked (default)**: Entities will be kept and can be reused if you re-add the integration later.\n\n**Checked**: Entities will be permanently deleted. They will be recreated fresh if you re-add the integration.",
+            },
+        )

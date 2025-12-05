@@ -211,6 +211,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
+        bootstrap_error: Optional[str] = None
         if should_bootstrap:
             _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
             
@@ -231,7 +232,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
+                bootstrap_error = str(err)
 
+        # Check if we have vehicle names after bootstrap attempt
+        # If bootstrap was required but failed (e.g., due to rate limits), abort setup
+        if should_bootstrap and not coordinator.names:
+            error_message = bootstrap_error or "Unknown bootstrap error"
+            # Create a persistent notification in the UI for visibility
+            hass.async_create_persistent_notification(
+                title="BMW CarData Setup Failed",
+                message=f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
+                notification_id=f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+            )
+            await session.close()
+            raise ConfigEntryNotReady(
+                f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
+            )
         # NOW clear the bootstrap flag and start MQTT connection
         # This ensures MQTT doesn't create entities before we have vehicle names
         manager._bootstrap_in_progress = False

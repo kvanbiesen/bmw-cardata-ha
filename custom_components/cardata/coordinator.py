@@ -20,6 +20,10 @@ from .units import normalize_unit
 
 _LOGGER = logging.getLogger(__name__)
 
+# Location descriptors for immediate updates (no debouncing)
+LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
+LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
+
 
 @dataclass
 class DescriptorState:
@@ -159,7 +163,6 @@ class CardataCoordinator:
     last_telematic_api_at: Optional[datetime] = None
     connection_status: str = "connecting"
     last_disconnect_reason: Optional[str] = None
-    _LOGGER.debug("Init Coordinator Message")
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
     watchdog_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
     _soc_tracking: Dict[str, SocTracking] = field(default_factory=dict, init=False)
@@ -309,7 +312,6 @@ class CardataCoordinator:
         )
 
     async def async_handle_message(self, payload: Dict[str, Any]) -> None:
-        _LOGGER.debug("Init Handle Message")
         vin = payload.get("vin")
         data = payload.get("data") or {}
         if not vin or not isinstance(data, dict):
@@ -353,11 +355,6 @@ class CardataCoordinator:
                 continue
             # Check if value actually changed significantly
             value_changed = self._is_significant_change(vin, descriptor, value)
-            # Safety: always treat GPS/location descriptors as changed so tracker receives updates.
-            # This covers cases where numeric comparison might miss changes due to formatting/timing.
-            desc_lower = descriptor.lower() if isinstance(descriptor, str) else ""
-            if any(tok in desc_lower for tok in ("latitude", "longitude", "navigation.currentlocation")):
-                value_changed = True
             
             is_new = descriptor not in vehicle_state
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
@@ -371,10 +368,14 @@ class CardataCoordinator:
                 else:
                     new_sensor.append(descriptor)
             elif value_changed:
-                # Queue update for this descriptor (debounced)
-                if vin not in self._pending_updates:
-                    self._pending_updates[vin] = set()
-                self._pending_updates[vin].add(descriptor)
+                # GPS coordinates: send immediately without debouncing!
+                if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
+                    async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
+                else:
+                    # Non-GPS: queue for batched update
+                    if vin not in self._pending_updates:
+                        self._pending_updates[vin] = set()
+                    self._pending_updates[vin].add(descriptor)
             if descriptor == "vehicle.drivetrain.batteryManagement.header":
                 try:
                     percent = float(value)
@@ -487,19 +488,20 @@ class CardataCoordinator:
         return True
     
     def _schedule_debounced_update(self) -> None:
-        """Schedule a debounced coordinator update."""
+        """Schedule debounced coordinator update.
+        
+        Note: GPS coordinates are sent immediately inline in async_handle_message,
+        so this only handles non-GPS updates which are batched every 5 seconds.
+        """
         # Cancel existing debounce timer if any
         if self._update_debounce_handle:
             self._update_debounce_handle()
         
-        # Schedule new update
+        # Schedule new update with 5 second delay
         self._update_debounce_handle = async_call_later(
             self.hass,
             self._DEBOUNCE_SECONDS,
-            lambda _: self.hass.loop.call_soon_threadsafe(
-                asyncio.create_task,
-                self._execute_debounced_update()
-            )
+            lambda _: asyncio.create_task(self._execute_debounced_update())
         )
     
     async def _execute_debounced_update(self) -> None:
@@ -676,7 +678,6 @@ class CardataCoordinator:
     ) -> None:
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
-        _LOGGER.debug("Restore Handle Message")
         if value is None:
             if descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
                 tracking = self._soc_tracking.setdefault(vin, SocTracking())

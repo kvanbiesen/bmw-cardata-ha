@@ -102,15 +102,15 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     _attr_force_update = False
     _attr_translation_key = "car"
 
-    # Timing thresholds for coordinate pairing logic
-    _DEBOUNCE_DELAY = 0.2  # seconds - CRITICAL! Wait for both coordinates to arrive
-    _PAIR_WINDOW = 0.5  # seconds - max time difference for valid pairing
-    _MAX_DELAY = 30  # seconds - if waiting longer, use stale coordinate
-    _MAX_STALE_TIME = 300  # seconds (5 minutes) - discard coordinates older than this
+    # Timing thresholds for coordinate pairing logic  
+    _DEBOUNCE_DELAY = 0.05  # seconds - FAST! GPS already batched by coordinator
+    _PAIR_WINDOW = 2.0  # seconds - LENIENT! lat/lon come in separate messages with others in between
+    _MAX_DELAY = 60  # seconds - PATIENT! Use stale coordinate if needed
+    _MAX_STALE_TIME = 600  # seconds (10 minutes) - discard only very old coordinates
     
     # Movement filtering
-    _MIN_MOVEMENT_DISTANCE = 5  # meters - minimum distance to trigger update
-    _SMOOTHING_FACTOR = 0.15  # 0.0 = no smoothing, 1.0 = full smoothing (light smoothing)
+    _MIN_MOVEMENT_DISTANCE = 3  # meters - MORE SENSITIVE (was 5m)
+    _SMOOTHING_FACTOR = 0.0  # DISABLED - use raw GPS for responsive tracking
     
     # GPS precision
     _COORD_PRECISION = 0.000001  # degrees (~0.1 meter) - ignore smaller changes
