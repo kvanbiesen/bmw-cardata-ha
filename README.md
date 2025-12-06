@@ -97,7 +97,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 5. Now select Request access to CarData API and CarData Stream.
    Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for +30 seconds, then select the another one and wait agin.
 6. Don't press the button Authenticate device
-7. Scroll down to **CARDATA STREAMING** and press *Configure data stream** and on that new page, load all descriptors (keep clicking “Load more”).
+7. Scroll down to **CARDATA STREAMING** and press **Configure data stream** and on that new page, load all descriptors (keep clicking “Load more”).
 8. Manually check every descriptor you want to stream or optionally to automate this, open the browser console and run:
 ```js
 (() => {
