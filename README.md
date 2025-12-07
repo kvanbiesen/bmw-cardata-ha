@@ -43,9 +43,9 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 > **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
 
-> **Tested Environment:** The integration has only been verified on my own outdated Home Assistant instance (2024.12.5). Newer releases might require adjustments.
+> **Tested Environment:** since I adopted the project, I used the latest ha 2025.11 or 12.
 
-> **Heads-up:** I've tested this on 2022 i4 and 2016 i3. Both show up entities, i4 sends them instantly after locking/closing the car remotely using MyBMW app. i3 seems to send the data when it wants to. So far after reinstalling the plugin, I haven't seen anything for an hour, but received data multiple times earlier. So be patient, maybe go and drive around or something to trigger the data transfer :) 
+> **Heads-up:** I've tested this on 2020 330e. everythig show up entities, he sends them instantly after locking/closing the car remotely using Mybmw. BSo far after reinstalling the plugin, I haven't seen anything for an hour, but received data multiple times earlier. So be patient, maybe go and drive around or something to trigger the data transfer :) 
 
 ## BMW Portal Setup (DON'T SKIP, DO THIS FIRST)
 
@@ -107,12 +107,12 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 ## Installation (HACS)
 
 1. Add this repo to HACS as a **custom repository** (type: Integration).
-2. Install "BimmerData Streamline" from the Custom section.
+2. Install "Bmw cardata" from the Custom section.
 3. Restart Home Assistant.
 
 ## Configuration Flow
 
-1. Go to **Settings → Devices & Services → Add Integration** and pick **BimmerData Streamline**.
+1. Go to **Settings → Devices & Services → Add Integration** and pick **Bmw cardata**.
 2. Enter your CarData **client ID** (created in the BMW portal and seen under section CARDATA API and there copied to your clipboard).
 3. The flow displays a `verification_url` and `user_code`. Open the link, enter the code, and approve the device.
 4. Once the BMW portal confirms the approval, return to HA and click Submit. If you accidentally submit before finishing the BMW login, the flow will hang until the device-code exchange times out; cancel it and start over after completing the BMW login.
