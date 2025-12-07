@@ -1,4 +1,4 @@
-"""State coordinator for BMW CarData streaming payloads."""
+﻿"""State coordinator for BMW CarData streaming payloads."""
 
 from __future__ import annotations
 
@@ -185,7 +185,7 @@ class CardataCoordinator:
     _pending_new_sensors: Dict[str, list[str]] = field(default_factory=dict, init=False)
     _pending_new_binary: Dict[str, list[str]] = field(default_factory=dict, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
-    _MIN_CHANGE_THRESHOLD: float = 0.1  # Minimum change for numeric values
+    _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
 
     @property
     def signal_new_sensor(self) -> str:
@@ -353,10 +353,15 @@ class CardataCoordinator:
                 elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
                     self._set_ac_phase(vin, None, parsed_ts)
                 continue
-            # Check if value actually changed significantly
-            value_changed = self._is_significant_change(vin, descriptor, value)
-            
             is_new = descriptor not in vehicle_state
+            
+            # Check if value actually changed significantly (but always update if new)
+            # GPS coordinates ALWAYS update - bypass significance check
+            if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
+                value_changed = True
+            else:
+                value_changed = is_new or self._is_significant_change(vin, descriptor, value)
+            
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
             
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
@@ -367,15 +372,22 @@ class CardataCoordinator:
                     new_binary.append(descriptor)
                 else:
                     new_sensor.append(descriptor)
-            elif value_changed:
+            
+            if value_changed:
                 # GPS coordinates: send immediately without debouncing!
                 if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
                     async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
                 else:
-                    # Non-GPS: queue for batched update
+                    # Non-GPS: queue for batched update (includes new sensors for initial state)
                     if vin not in self._pending_updates:
                         self._pending_updates[vin] = set()
                     self._pending_updates[vin].add(descriptor)
+                    if debug_enabled():
+                        _LOGGER.debug(
+                            "✅ Added to pending: %s (total pending: %d)",
+                            descriptor.split('.')[-1],  # Just the last part
+                            len(self._pending_updates.get(vin, set()))
+                        )
             if descriptor == "vehicle.drivetrain.batteryManagement.header":
                 try:
                     percent = float(value)
@@ -459,7 +471,11 @@ class CardataCoordinator:
         self._schedule_debounced_update()
     
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
-        """Check if value changed significantly enough to warrant an update."""
+        """Check if value change is significant enough to send to sensors.
+     
+        Uses MODERATE filtering to reduce MQTT noise while ensuring sensors
+        can restore from 'unknown' state. Sensors do their own smart filtering!
+        """
         current_state = self.get_state(vin, descriptor)
         
         # No previous state = always significant
@@ -468,18 +484,12 @@ class CardataCoordinator:
         
         old_value = current_state.value
         
-        # Same value = not significant
+        # ALWAYS send same values - sensors might be 'unknown' and need them!
         if old_value == new_value:
-            return False
+            return True  # Let sensors decide!
         
         # For numeric values, check threshold
         if isinstance(new_value, (int, float)) and isinstance(old_value, (int, float)):
-            # Percentage change
-            if old_value != 0:
-                percent_change = abs((new_value - old_value) / old_value)
-                if percent_change < 0.01:  # Less than 1% change
-                    return False
-            
             # Absolute change
             if abs(new_value - old_value) < self._MIN_CHANGE_THRESHOLD:
                 return False
@@ -495,18 +505,35 @@ class CardataCoordinator:
         """
         # Cancel existing debounce timer if any
         if self._update_debounce_handle:
-            self._update_debounce_handle()
+            return
         
         # Schedule new update with 5 second delay
         self._update_debounce_handle = async_call_later(
             self.hass,
             self._DEBOUNCE_SECONDS,
-            lambda _: asyncio.create_task(self._execute_debounced_update())
+            self._execute_debounced_update
         )
     
-    async def _execute_debounced_update(self) -> None:
+    async def _execute_debounced_update(self, _now=None) -> None:
         """Execute the debounced batch update."""
         self._update_debounce_handle = None
+        if debug_enabled():
+            pending_count = sum(len(d) for d in self._pending_updates.values())
+            _LOGGER.debug("🔥 Timer firing! Pending items: %d", pending_count)
+            if pending_count > 0:
+                for vin, descriptors in self._pending_updates.items():
+                    _LOGGER.debug("   VIN %s: %s", vin[-4:], list(descriptors)[:5])
+        
+        if debug_enabled():
+            total_updates = sum(len(descriptors) for descriptors in self._pending_updates.values())
+            total_new_sensors = sum(len(descriptors) for descriptors in self._pending_new_sensors.values())
+            total_new_binary = sum(len(descriptors) for descriptors in self._pending_new_binary.values())
+            _LOGGER.debug(
+                "Debounced coordinator update executed: %d updates, %d new sensors, %d new binary",
+                total_updates,
+                total_new_sensors,
+                total_new_binary,
+            )
         
         # Send batched updates for changed descriptors
         for vin, descriptors in self._pending_updates.items():
@@ -529,9 +556,8 @@ class CardataCoordinator:
         self._pending_updates.clear()
         self._pending_new_sensors.clear()
         self._pending_new_binary.clear()
-        
-        if debug_enabled():
-            _LOGGER.debug("Debounced coordinator update executed")
+
+        self._schedule_debounced_update() #shedule new batch
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         return self.data.get(vin, {}).get(descriptor)

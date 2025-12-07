@@ -239,10 +239,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if should_bootstrap and not coordinator.names:
             error_message = bootstrap_error or "Unknown bootstrap error"
             # Create a persistent notification in the UI for visibility
-            hass.async_create_persistent_notification(
-                title="BMW CarData Setup Failed",
-                message=f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                notification_id=f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title":"BMW CarData Setup Failed",
+                    "message":f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
+                    "notification_id":f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
+                }
             )
             await session.close()
             raise ConfigEntryNotReady(

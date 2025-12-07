@@ -214,20 +214,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         if not updated:
             return
-
-        # CRITICAL: Debounce coordinate updates!
-        # Without this, _process_coordinate_pair() runs BEFORE the second coordinate arrives
-        # Coordinates typically arrive 50-300ms apart via MQTT
-        # Cancel any pending debounce
-        if self._debounce_handle is not None:
-            self._debounce_handle()
         
-        # Schedule processing after debounce delay
-        self._debounce_handle = async_call_later(
-            self.hass,
-            self._DEBOUNCE_DELAY,
-            lambda _: self._process_coordinate_pair()
-        )
+        # Process immediately - coordinator already batches!
+        self._process_coordinate_pair()
 
     def _process_coordinate_pair(self) -> None:
         """Process coordinate pair with intelligent pairing, smoothing, and movement threshold."""
