@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/kvanbiesen/bmw-cardata-ha/blob/671952bb075ac981528c2a206f73e57640091d62/logo.png" alt="BimmerData Streamline logo" width="240" />
+  <img src="logo.png" alt="BMW Cardata logo" width="240" />
 </p>
 
 # BMW CarData for Home Assistant
