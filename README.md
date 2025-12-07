@@ -93,10 +93,12 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 1. Select the vehicle you want to stream.
 2. Choose **BMW CarData** or **Mini CarData**.
 3. Generate a client ID as described here: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Technical-registration_Step-1
-4. Subscribe the client to both scopes: `cardata:api:read` (Request access to CarData API) and `cardata:streaming:read` (CarData Stream) and click authorize.
-   Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for +30 seconds, then select the another one and wait agin. 
-6. Scroll to the **Data Selection** section (`Datenauswahl ändern`) and load all descriptors (keep clicking “Load more”).
-7. Check every descriptor you want to stream. To automate this, open the browser console and run:
+4. Under section CARDATA API, you see **Client ID**. Copy this to your clipboard because you will need it during **Configuration Flow** in Home Assistant.
+5. Now select Request access to CarData API and CarData Stream.
+   Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for +30 seconds, then select the another one and wait agin.
+6. Don't press the button Authenticate device
+7. Scroll down to **CARDATA STREAMING** and press **Configure data stream** and on that new page, load all descriptors (keep clicking “Load more”).
+8. Manually check every descriptor you want to stream or optionally to automate this, open the browser console and run:
 ```js
 (() => {
   const labels = document.querySelectorAll('.css-k008qs label.chakra-checkbox');
@@ -125,11 +127,11 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 ```
    - If you want the "Extrapolated SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the extrapolated state of charge and calculate the charging slope between stream updates.
 
-7. Save the selection.
-8. Repeat for all the cars you want to support
-9. Install this integration via HACS.
-10. During the Home Assistant config flow, paste the client ID, visit the provided verification URL, enter the code (if asked), and approve. **Do not click Continue/Submit in Home Assistant until the BMW page confirms the approval**; submitting early leaves the flow stuck and requires a restart.
-11. Wait for the car to send data—triggering an action via the MyBMW app (lock/unlock doors) usually produces updates immediately.
+9. Save the selection.
+10. Repeat for all the cars you want to support
+11. In Home Assistant, install this integration via HACS (see below under Installation (HACS)) and still in Home Assistant, step trough the Configuration Flow also described here below.
+12. During the Home Assistant config flow, paste the client ID, visit the provided verification URL, enter the code (if asked), and approve. **Do not click Continue/Submit in Home Assistant until the BMW page confirms the approval**; submitting early leaves the flow stuck and requires a restart.
+13. Wait for the car to send data—triggering an action via the MyBMW app (lock/unlock doors) usually produces updates immediately.
 
 ## Installation (HACS)
 
@@ -140,7 +142,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 ## Configuration Flow
 
 1. Go to **Settings → Devices & Services → Add Integration** and pick **BimmerData Streamline**.
-2. Enter your CarData **client ID** (created in the BMW portal).
+2. Enter your CarData **client ID** (created in the BMW portal and seen under section CARDATA API and there copied to your clipboard).
 3. The flow displays a `verification_url` and `user_code`. Open the link, enter the code, and approve the device.
 4. Once the BMW portal confirms the approval, return to HA and click Submit. If you accidentally submit before finishing the BMW login, the flow will hang until the device-code exchange times out; cancel it and start over after completing the BMW login.
 5. If you remove the integration later, you can re-add it with the same client ID—the flow deletes the old entry automatically.
