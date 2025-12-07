@@ -141,6 +141,15 @@ class CardataStreamManager:
         self._circuit_open_until = None
 
     async def _async_start_locked(self) -> None:
+        # CRITICAL: Don't start MQTT if bootstrap is still in progress
+        # This blocks ALL paths that try to start MQTT (reconnects, retries, credential updates, etc)
+        if getattr(self, '_bootstrap_in_progress', False):
+            _LOGGER.debug(
+                "Skipping MQTT start - bootstrap still fetching vehicle metadata. "
+                "MQTT will start automatically when bootstrap completes."
+            )
+            return
+        
         # Check circuit breaker
         if self._check_circuit_breaker():
             _LOGGER.warning("BMW MQTT connection blocked by circuit breaker")

@@ -28,7 +28,12 @@ async def refresh_tokens_for_entry(
     manager: CardataStreamManager,
     container_manager: Optional[CardataContainerManager] = None,
 ) -> None:
-    """Refresh tokens and update entry data."""
+    """Refresh tokens and update entry data.
+    
+    CRITICAL: This function ONLY handles token refresh.
+    Container management is handled separately to avoid API hammering.
+    Creating containers during token refresh causes excessive API calls!
+    """
     hass = manager.hass
     data = dict(entry.data)
     refresh_token = data.get("refresh_token")
@@ -64,39 +69,12 @@ async def refresh_tokens_for_entry(
         }
     )
 
-    # Handle HV container updates
-    desired_signature = CardataContainerManager.compute_signature(HV_BATTERY_DESCRIPTORS)
-
+    # Sync existing container ID to manager (NO creation!)
     if container_manager:
         hv_container_id = data.get("hv_container_id")
-        stored_signature = data.get("hv_descriptor_signature")
-        access_token = data.get("access_token")
-
-        if hv_container_id and stored_signature == desired_signature:
+        if hv_container_id:
             container_manager.sync_from_entry(hv_container_id)
-        elif hv_container_id and stored_signature is None:
-            data["hv_descriptor_signature"] = desired_signature
-            container_manager.sync_from_entry(hv_container_id)
-        else:
-            container_manager.sync_from_entry(None)
-            try:
-                container_id = await container_manager.async_ensure_hv_container(
-                    access_token
-                )
-            except CardataContainerError as err:
-                _LOGGER.warning(
-                    "Unable to ensure HV container for entry %s: %s",
-                    entry.entry_id,
-                    err,
-                )
-            else:
-                if container_id:
-                    data["hv_container_id"] = container_id
-                    data["hv_descriptor_signature"] = desired_signature
-                    container_manager.sync_from_entry(container_id)
-                    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-                    if runtime and runtime.container_manager:
-                        runtime.container_manager.sync_from_entry(container_id)
+            _LOGGER.debug("Synced existing container %s to manager", hv_container_id)
 
     hass.config_entries.async_update_entry(entry, data=data)
     await manager.async_update_credentials(
@@ -183,7 +161,7 @@ async def handle_stream_error(
         persistent_notification.async_create(
             hass,
             "Authorization failed for BMW CarData. Please reauthorize the integration.",
-            title="BimmerData Streamline",
+            title="Bmw Cardata",
             notification_id=notification_id,
         )
 
@@ -222,3 +200,98 @@ async def async_manual_refresh_tokens(hass: HomeAssistant, entry: ConfigEntry) -
         runtime.stream,
         runtime.container_manager,
     )
+
+async def async_ensure_container_for_entry(
+    entry: ConfigEntry,
+    hass: HomeAssistant,
+    session: aiohttp.ClientSession,
+    container_manager: CardataContainerManager,
+    force: bool = False,
+) -> bool:
+    """Ensure HV container exists for entry.
+    
+    This function should ONLY be called:
+    1. During initial bootstrap
+    2. When user manually resets container
+    3. When signature changes AND user confirms recreation
+    
+    NOT during token refresh, MQTT reconnects, or unauthorized errors!
+    
+    Returns True if container is ready, False otherwise.
+    """
+    from .const import DOMAIN
+    from .container import CardataContainerError
+    
+    data = dict(entry.data)
+    hv_container_id = data.get("hv_container_id")
+    stored_signature = data.get("hv_descriptor_signature")
+    access_token = data.get("access_token")
+    
+    if not access_token:
+        _LOGGER.warning("Cannot ensure container - no access token available")
+        return False
+    
+    # Calculate desired signature
+    desired_signature = CardataContainerManager.compute_signature(HV_BATTERY_DESCRIPTORS)
+    
+    # If container exists and signature matches, we're done!
+    if hv_container_id and stored_signature == desired_signature and not force:
+        container_manager.sync_from_entry(hv_container_id)
+        _LOGGER.debug("Using existing container %s (signature matches)", hv_container_id)
+        return True
+    
+    # If container exists but signature doesn't match, log warning
+    if hv_container_id and stored_signature != desired_signature:
+        _LOGGER.warning(
+            "Container signature mismatch! Stored: %s, Expected: %s. "
+            "Keeping existing container to avoid API quota. "
+            "Use 'Reset Container' option if you need to recreate.",
+            stored_signature,
+            desired_signature
+        )
+        # Keep using existing container even with mismatch
+        # User can manually reset if needed
+        if not force:
+            container_manager.sync_from_entry(hv_container_id)
+            data["hv_descriptor_signature"] = desired_signature
+            hass.config_entries.async_update_entry(entry, data=data)
+            return True
+    
+    # Only create if forced or no container exists
+    _LOGGER.info(
+        "Creating HV container for entry %s (force=%s, exists=%s)",
+        entry.entry_id,
+        force,
+        hv_container_id is not None
+    )
+    
+    container_manager.sync_from_entry(None)
+    
+    try:
+        container_id = await container_manager.async_ensure_hv_container(access_token)
+    except CardataContainerError as err:
+        _LOGGER.error(
+            "Failed to create HV container for entry %s: %s",
+            entry.entry_id,
+            err,
+        )
+        return False
+    
+    if not container_id:
+        _LOGGER.error("Container creation returned no ID")
+        return False
+    
+    # Success! Update entry
+    data["hv_container_id"] = container_id
+    data["hv_descriptor_signature"] = desired_signature
+    container_manager.sync_from_entry(container_id)
+    
+    # Sync to runtime if available
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime and runtime.container_manager:
+        runtime.container_manager.sync_from_entry(container_id)
+    
+    hass.config_entries.async_update_entry(entry, data=data)
+    _LOGGER.info("Created HV container %s for entry %s", container_id, entry.entry_id)
+    
+    return True

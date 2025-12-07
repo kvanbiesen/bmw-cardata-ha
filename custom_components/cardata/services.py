@@ -1,5 +1,10 @@
-"""Service handlers for fetch_* operations."""
+﻿"""Service handlers for fetch_* operations and migration control (extended).
 
+Includes a developer service `cardata.clean_hv_containers` which can:
+ - list containers visible to the entry's access token
+ - delete a specific container by id
+ - delete all containers matching the HV battery container name/purpose
+"""
 from __future__ import annotations
 
 import json
@@ -11,9 +16,15 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 
-from .const import API_BASE_URL, API_VERSION, DOMAIN
+from .const import (
+    API_BASE_URL,
+    API_VERSION,
+    DOMAIN,
+    HV_BATTERY_CONTAINER_NAME,
+    HV_BATTERY_CONTAINER_PURPOSE,
+)
 from .runtime import CardataRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,12 +45,31 @@ BASIC_DATA_SERVICE_SCHEMA = vol.Schema(
     }
 )
 
+# Migration service schema: supports entry_id, force, dry_run
+MIGRATE_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): str,
+        vol.Optional("force", default=False): vol.Boolean(),
+        vol.Optional("dry_run", default=False): vol.Boolean(),
+    }
+)
+
+CLEAN_CONTAINERS_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): str,
+        vol.Optional("action", default="list"): vol.In(
+            ["list", "delete", "delete_all_matching"]
+        ),
+        vol.Optional("container_id"): str,
+    }
+)
+
 
 def _resolve_target(
     hass: HomeAssistant,
     call_data: dict,
 ) -> tuple[str, ConfigEntry, CardataRuntimeData] | None:
-    """Resolve target entry from service call data."""
+    """Resolve target entry from service call data (for fetch_* services)."""
     entries = {
         k: v
         for k, v in hass.data.get(DOMAIN, {}).items()
@@ -68,7 +98,7 @@ def _resolve_target(
     return target_entry_id, target_entry, runtime
 
 
-async def async_handle_fetch_telematic(call) -> None:
+async def async_handle_fetch_telematic(call: ServiceCall) -> None:
     """Handle fetch_telematic_data service call."""
     hass = call.hass
     resolved = _resolve_target(hass, call.data)
@@ -109,7 +139,7 @@ async def async_handle_fetch_telematic(call) -> None:
         )
 
 
-async def async_handle_fetch_mappings(call) -> None:
+async def async_handle_fetch_mappings(call: ServiceCall) -> None:
     """Handle fetch_vehicle_mappings service call."""
     hass = call.hass
     resolved = _resolve_target(hass, call.data)
@@ -176,7 +206,7 @@ async def async_handle_fetch_mappings(call) -> None:
         _LOGGER.error("Cardata fetch_vehicle_mappings: network error: %s", err)
 
 
-async def async_handle_fetch_basic_data(call) -> None:
+async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
     """Handle fetch_basic_data service call."""
     from .const import BASIC_DATA_ENDPOINT
     from homeassistant.helpers import device_registry as dr
@@ -278,6 +308,184 @@ async def async_handle_fetch_basic_data(call) -> None:
         _LOGGER.error("Cardata fetch_basic_data: network error for %s: %s", vin, err)
 
 
+async def async_handle_migrate(call: ServiceCall) -> None:
+    """Handle migrate_entity_ids service call (developer tool)."""
+    hass = call.hass
+    data = call.data or {}
+    entry_id = data.get("entry_id")
+    force = bool(data.get("force", False))
+    dry_run = bool(data.get("dry_run", False))
+
+    # Import migration function here to avoid import cycles at module load
+    from .migrations import async_migrate_entity_ids
+
+    domain_data = hass.data.get(DOMAIN, {}) or {}
+
+    async def _run_for_entry(eid: str) -> None:
+        entry = hass.config_entries.async_get_entry(eid)
+        if not entry:
+            _LOGGER.error("No config entry found with id %s", eid)
+            return
+        runtime = domain_data.get(eid)
+        if not runtime:
+            _LOGGER.error("No runtime data available for entry %s", eid)
+            return
+        coordinator = runtime.coordinator
+        try:
+            _LOGGER.debug("Running migration for entry %s (force=%s dry_run=%s)", eid, force, dry_run)
+            planned = await async_migrate_entity_ids(hass, entry, coordinator, force=force, dry_run=dry_run)
+            _LOGGER.debug("Migration planned actions for %s: %s", eid, planned)
+        except Exception as err:
+            _LOGGER.exception("Migration failed for entry %s: %s", eid, err)
+
+    if entry_id:
+        await _run_for_entry(entry_id)
+        return
+
+    # No specific entry_id -> run for all entries we have runtime for
+    for key in list(domain_data.keys()):
+        if not key or str(key).startswith("_"):
+            continue
+        await _run_for_entry(key)
+
+
+async def async_handle_clean_containers(call: ServiceCall) -> None:
+    """Developer service: list or delete HV containers for a config entry.
+
+    Service schema:
+      - entry_id: optional (if omitted and multiple entries exist, call will error)
+      - action: one of "list" (default), "delete", "delete_all_matching"
+      - container_id: required for action "delete"
+    """
+    hass = call.hass
+    data = call.data or {}
+    entry_id = data.get("entry_id")
+    action = data.get("action", "list")
+    container_id = data.get("container_id")
+
+    domain_data = hass.data.get(DOMAIN, {}) or {}
+
+    # Resolve runtime + config entry
+    if entry_id:
+        runtime = domain_data.get(entry_id)
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if not runtime or not entry:
+            _LOGGER.error("clean_hv_containers: unknown entry_id %s", entry_id)
+            return
+    else:
+        # no entry specified: if only one entry exists, use it; otherwise require entry_id
+        non_meta = {k: v for k, v in domain_data.items() if not str(k).startswith("_")}
+        if len(non_meta) == 1:
+            entry_id, runtime = next(iter(non_meta.items()))
+            entry = hass.config_entries.async_get_entry(entry_id)
+        else:
+            _LOGGER.error("clean_hv_containers: multiple entries configured; specify entry_id")
+            return
+
+    access_token = entry.data.get("access_token")
+    if not access_token:
+        _LOGGER.error("clean_hv_containers: no access token available for entry %s", entry.entry_id)
+        return
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "x-version": API_VERSION,
+        "Accept": "application/json",
+    }
+
+    session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession()
+
+    # Helper: fetch list of containers
+    async def _list_containers() -> list[dict[str, Any]]:
+        url = f"{API_BASE_URL}/customers/containers"
+        try:
+            async with session.get(url, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    _LOGGER.warning(
+                        "clean_hv_containers: list containers failed (HTTP %s): %s",
+                        resp.status,
+                        text,
+                    )
+                    return []
+                try:
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    _LOGGER.debug("clean_hv_containers: non-JSON list response: %s", text)
+                    return []
+                if isinstance(payload, list):
+                    return payload
+                if isinstance(payload, dict):
+                    return payload.get("containers") or payload.get("items") or []
+                return []
+        except aiohttp.ClientError as err:
+            _LOGGER.exception("clean_hv_containers: network error listing containers: %s", err)
+            return []
+
+    # Helper: delete a single container id
+    async def _delete_container(cid: str) -> tuple[bool, int, str]:
+        url = f"{API_BASE_URL}/customers/containers/{cid}"
+        try:
+            async with session.delete(url, headers=headers) as resp:
+                text = await resp.text()
+                if resp.status in (200, 204):
+                    _LOGGER.info("clean_hv_containers: deleted container %s for entry %s", cid, entry.entry_id)
+                    return True, resp.status, text
+                _LOGGER.warning(
+                    "clean_hv_containers: failed deleting container %s (HTTP %s): %s",
+                    cid,
+                    resp.status,
+                    text,
+                )
+                return False, resp.status, text
+        except aiohttp.ClientError as err:
+            _LOGGER.exception("clean_hv_containers: network error deleting container %s: %s", cid, err)
+            return False, 0, str(err)
+
+    # Perform requested action
+    if action == "list":
+        containers = await _list_containers()
+        if not containers:
+            _LOGGER.info("clean_hv_containers: no containers found (entry %s)", entry.entry_id)
+            return
+        # Log a compact listing
+        for c in containers:
+            cid = c.get("containerId") or c.get("containerId")
+            name = c.get("name")
+            purpose = c.get("purpose")
+            _LOGGER.info("clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
+        return
+
+    if action == "delete":
+        if not container_id:
+            _LOGGER.error("clean_hv_containers: 'delete' action requires container_id")
+            return
+        ok, status, text = await _delete_container(container_id)
+        if not ok:
+            _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
+        return
+
+    if action == "delete_all_matching":
+        containers = await _list_containers()
+        if not containers:
+            _LOGGER.info("clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
+            return
+        deleted_any = False
+        for c in containers:
+            cid = c.get("containerId")
+            name = c.get("name")
+            purpose = c.get("purpose")
+            if cid and name == HV_BATTERY_CONTAINER_NAME and purpose == HV_BATTERY_CONTAINER_PURPOSE:
+                ok, status, text = await _delete_container(cid)
+                if ok:
+                    deleted_any = True
+        if not deleted_any:
+            _LOGGER.info("clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
+        return
+
+    _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
+
+
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all Cardata services."""
     hass.services.async_register(
@@ -299,9 +507,35 @@ def async_register_services(hass: HomeAssistant) -> None:
         schema=BASIC_DATA_SERVICE_SCHEMA,
     )
 
+    # Developer migration service
+    if not hass.services.has_service(DOMAIN, "migrate_entity_ids"):
+        hass.services.async_register(
+            DOMAIN,
+            "migrate_entity_ids",
+            async_handle_migrate,
+            schema=MIGRATE_SERVICE_SCHEMA,
+        )
+
+    # Developer HV container cleanup service
+    if not hass.services.has_service(DOMAIN, "clean_hv_containers"):
+        hass.services.async_register(
+            DOMAIN,
+            "clean_hv_containers",
+            async_handle_clean_containers,
+            schema=CLEAN_CONTAINERS_SCHEMA,
+        )
+        _LOGGER.debug("Registered service %s.%s", DOMAIN, "clean_hv_containers")
+
 
 def async_unregister_services(hass: HomeAssistant) -> None:
     """Unregister all Cardata services."""
-    for service in ("fetch_telematic_data", "fetch_vehicle_mappings", "fetch_basic_data"):
+    for service in (
+        "fetch_telematic_data",
+        "fetch_vehicle_mappings",
+        "fetch_basic_data",
+        "migrate_entity_ids",
+        "clean_hv_containers",
+    ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
+            _LOGGER.debug("Unregistered service %s.%s", DOMAIN, service)
