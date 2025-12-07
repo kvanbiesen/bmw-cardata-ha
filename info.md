@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="BimmerData Streamline logo" width="240" />
+  <img src="https://github.com/kvanbiesen/bmw-cardata-ha/blob/main/logo.png?raw=true" alt="BimmerData Streamline logo" width="240" />
 </p>
 
 # BMW CarData for Home Assistant
