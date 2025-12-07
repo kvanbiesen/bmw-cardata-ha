@@ -85,7 +85,7 @@ class CardataContainerManager:
         
         Matching criteria (when reuse enabled):
         - Purpose: "High voltage battery telemetry"
-        - Name: "BimmerData HV Battery"  
+        - Name: "Bmw Cardata HV Battery"  
         - Descriptors: SHA1 signature of descriptor list
         """
         from .const import CONTAINER_REUSE_EXISTING

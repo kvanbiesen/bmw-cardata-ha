@@ -161,7 +161,7 @@ async def handle_stream_error(
         persistent_notification.async_create(
             hass,
             "Authorization failed for BMW CarData. Please reauthorize the integration.",
-            title="BimmerData Streamline",
+            title="Bmw Cardata",
             notification_id=notification_id,
         )
 

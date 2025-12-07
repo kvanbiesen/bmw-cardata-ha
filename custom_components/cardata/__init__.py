@@ -56,7 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CarData from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
 
-    _LOGGER.debug("Setting up BimmerData Streamline entry %s", entry.entry_id)
+    _LOGGER.debug("Setting up Bmw Cardata Streamline entry %s", entry.entry_id)
 
     session = aiohttp.ClientSession()
 
