@@ -2,4 +2,5 @@
   "name": "BMW Cardata",
   "domain": "cardata",
   "repository": "kvanbiesen/bmw-cardata-ha",
+  "zip_release": false
 }
