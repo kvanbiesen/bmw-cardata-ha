@@ -1,5 +1,16 @@
 {
-  "name": "BMW Cardata",
-  "domain": "cardata",
+  "name": "BMW CarData",
+  "repository": "kvanbiesen/bmw-cardata-ha",
+  "content_in_root": false,
+  "homeassistant": "2022.6.0",
   "zip_release": true,
+  "render_readme": true,
+  "changelog": "CHANGELOG.md",
+  "domains": [
+    "sensor",
+    "binary_sensor",
+    "device_tracker"
+  ],
+  "category": "integration",
+  "version": "4.1.0"
 }
