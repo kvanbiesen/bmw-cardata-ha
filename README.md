@@ -2,7 +2,7 @@
   <img src="logo.png" alt="BimmerData Streamline logo" width="240" />
 </p>
 
-# BimmerData Streamline (BMW CarData for Home Assistant)
+# (BMW CarData for Home Assistant)
 
 ## This is experimental. 
 ## Taken over since no response for original developper -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
@@ -23,35 +23,6 @@ The Beta branch is used as a day to day development branch and can contain compl
 
 ## Issues / Discussion
 Please try to post only issues relevant to the integration itself on the [Issues](https://github.com/kvanbiesen/bmw-cardata-ha/issues) and keep all the outside discussion (problems with registration on BMWs side, asking for guidance, etc)
-
-## Release Notes: 
-
- - Fixed unit conversions
- - REmeber location on reboot
- - Impelmented the re-auth for HA2025
- - Squashed a lot of bug and mentioned in the original one
-
-#### 14.10.2025
-- Added device tracker entities per VIN, including dynamic creation when navigation coordinates appear and richer vehicle metadata exposure.
-- Improved reauthorization flow: configuration now asks for (and remembers) the client ID, surfaces BMW errors without crashing, and avoids transient “Missing GCID or ID token” retries.
-- Distance-based sensors declare `device_class: distance`, so Home Assistant honours your preferred km/mi units.
-- Mileage/odometer data now uses `state_class: total_increasing`, unlocking long-term statistics and utility meters.
-- Cleaned stray hidden characters in `descriptor_titles.py`, fixing duplicate keys and improving sensor title mapping.
-- Normalizes BMW-reported unit strings (for example, mapping `"percent"` to `%`) so entities display consistent units across stream and API payloads.
-- Ensures the MQTT stream restarts automatically after a token refresh even when BMW issues the same `id_token`, preventing long-lived unauthorized states after connectivity hiccups.
-- Added an options-flow tool to purge legacy CarData containers and recreate a single fresh telemetry container when BMW reports too many collections.
-- Restored compatibility with Home Assistant 2025.10+ device tracker changes by adapting to the new `SourceType` enum.
-
-#### 30.9.2025
-### CarData API implemented
-In addition to the stream, we now also poll the API every 40 minutes. There is still some space to make this higher resolution and I will also plan to make it so, that we wont poll at the same time as stream is online to save some quota for later.
-
-### Better names to entities and sensors
-Vehicles should now be named after their actual model. You can still see the VIN briefly in some situations
-Sensor friendly names are also revamped to be CarModel - SensorName. Sensor names are AI generated from the BMW catalogue. Please report or create a PR if you see something stupid. The sensor names are available in custom_components/cardata/descriptor_titles.py
-
-### More stable stream implementation
-Stream shouldn't reconnect every 70 seconds anymore. However, reconnection every 45 minutes is needed since BMW tokens are pretty shortlived. 
 
 ### Configure button actions
 On the integration main page, there is now "Configure" button. You can use it to:
@@ -166,6 +137,7 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload.
 - `cardata.fetch_vehicle_mappings` calls `GET /customers/vehicles/mappings` and logs the mapping details (including PRIMARY or SECONDARY status). Only primary mappings return data; some vehicles do not support secondary users, in which case the mapped user is considered the primary one.
 - `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN.
+- `migrations` call for proper renaming the sensors from old installations
 
 ## Requirements
 
