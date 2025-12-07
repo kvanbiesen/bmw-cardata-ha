@@ -3,7 +3,7 @@
   "repository": "kvanbiesen/bmw-cardata-ha",
   "content_in_root": false,
   "homeassistant": "2024.6.0",
-  "zip_release": true,
+  "zip_release": false,
   "domains": [
     "sensor",
     "binary_sensor",
