@@ -2,7 +2,7 @@
   "name": "BMW CarData",
   "repository": "kvanbiesen/bmw-cardata-ha",
   "content_in_root": false,
-  "homeassistant": "2022.6.0",
+  "homeassistant": "2024.6.0",
   "zip_release": true,
   "domains": [
     "sensor",
