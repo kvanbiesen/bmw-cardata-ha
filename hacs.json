@@ -4,8 +4,6 @@
   "content_in_root": false,
   "homeassistant": "2022.6.0",
   "zip_release": true,
-  "render_readme": true,
-  "changelog": "CHANGELOG.md",
   "domains": [
     "sensor",
     "binary_sensor",
