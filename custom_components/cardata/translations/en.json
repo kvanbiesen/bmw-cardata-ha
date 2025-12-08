@@ -8,6 +8,17 @@
       "authorize": {
         "title": "Authorize BMW CarData",
         "description": "Open {verification_url} and enter the user code {user_code} if asked. Once you've approved the device, click Submit. If approval already completed, click Submit again to continue."
+      },
+      "blocked": {
+        "title": "Bootstrap disabled due to API rate limit",
+        "description": "The integration previously hit the BMW API daily rate limit and automatic bootstrap (container creation and mapping) has been temporarily disabled for {entry_title} until {until}. You can either wait until that time and try again, or clear the flag below to retry immediately (you may hit the rate limit again)."
+      },
+      "cleared": {
+        "title": "Bootstrap retry scheduled",
+        "description": "You have cleared the temporary disable flag for {entry_title}. The integration will attempt bootstrap again. If it still hits the BMW API rate limit, the integration will disable bootstrap until the reset time again. Alternatively, use the developer service `cardata.clean_hv_containers` to list/delete old containers (be mindful of API rate limits)."
+      },
+      "blocked_fallback": {
+        "description": "Automatic bootstrap is disabled until {until}. Clear the flag to retry now, or cancel and try again after the reset."
       }
     },
     "error": {
@@ -17,7 +28,8 @@
     "abort": {
       "reauth_device_code_failed": "BMW rejected the device authorization request ({error}). Update the client ID under Configure > Start device authorization again, or remove and re-add the integration.",
       "reauth_missing_client_id": "Client ID is missing for this integration entry. Remove and re-add the integration to authorize again.",
-      "reauth_failed": "Reauthorization could not be started. Try again from the integration options."
+      "reauth_failed": "Reauthorization could not be started. Try again from the integration options.",
+      "user_remove_completed": "Integration will be removed. Entities will be cleaned up based on your selection."
     }
   },
   "options": {
@@ -25,6 +37,13 @@
       "init": {
         "title": "Manual actions",
         "description": "Select the action you want to run. Refresh tokens tries to just refresh the tokens without reauth. We suggest restarting HA after that if you have problems."
+      },
+      "action_cleanup_entities": {
+        "title": "Clean Up Orphaned Entities",
+        "description": "{warning}\n\n{success}",
+        "data": {
+          "confirm": "I understand this will delete all entities and their history"
+        }
       }
     },
     "error": {
@@ -32,7 +51,8 @@
       "runtime_missing": "Integration runtime is not ready. Try again after setup completes.",
       "no_vins": "No VINs are known yet. Wait for the stream to discover a vehicle or trigger it once manually.",
       "invalid_int": "Enter a positive integer",
-      "invalid_client_id": "Enter the BMW CarData client ID."
+      "invalid_client_id": "Enter the BMW CarData client ID.",
+      "cleanup_failed": "Failed to clean up entities: {error}"
     },
     "abort": {
       "reauth_started": "Authorization restarted. Complete the new login flow from the notification.",

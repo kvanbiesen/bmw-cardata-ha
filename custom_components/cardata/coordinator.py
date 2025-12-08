@@ -1,4 +1,4 @@
-"""State coordinator for BMW CarData streaming payloads."""
+﻿"""State coordinator for BMW CarData streaming payloads."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, DIAGNOSTIC_LOG_INTERVAL
@@ -18,6 +19,10 @@ from .debug import debug_enabled
 from .units import normalize_unit
 
 _LOGGER = logging.getLogger(__name__)
+
+# Location descriptors for immediate updates (no debouncing)
+LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
+LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
 
 
 @dataclass
@@ -173,6 +178,14 @@ class CardataCoordinator:
     _ac_voltage_v: Dict[str, float] = field(default_factory=dict, init=False)
     _ac_current_a: Dict[str, float] = field(default_factory=dict, init=False)
     _ac_phase_count: Dict[str, int] = field(default_factory=dict, init=False)
+    
+    # Debouncing fields (NEW!)
+    _update_debounce_handle: Optional[asyncio.TimerHandle] = field(default=None, init=False)
+    _pending_updates: Dict[str, set[str]] = field(default_factory=dict, init=False)  # {vin: {descriptors}}
+    _pending_new_sensors: Dict[str, list[str]] = field(default_factory=dict, init=False)
+    _pending_new_binary: Dict[str, list[str]] = field(default_factory=dict, init=False)
+    _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
+    _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
 
     @property
     def signal_new_sensor(self) -> str:
@@ -351,14 +364,40 @@ class CardataCoordinator:
                     self._set_ac_phase(vin, None, parsed_ts)
                 continue
             is_new = descriptor not in vehicle_state
+            
+            # Check if value actually changed significantly (but always update if new)
+            # GPS coordinates ALWAYS update - bypass significance check
+            if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
+                value_changed = True
+            else:
+                value_changed = is_new or self._is_significant_change(vin, descriptor, value)
+            
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
+            
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
+            
             if is_new:
                 if isinstance(value, bool):
                     new_binary.append(descriptor)
                 else:
                     new_sensor.append(descriptor)
+            
+            if value_changed:
+                # GPS coordinates: send immediately without debouncing!
+                if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
+                    async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
+                else:
+                    # Non-GPS: queue for batched update (includes new sensors for initial state)
+                    if vin not in self._pending_updates:
+                        self._pending_updates[vin] = set()
+                    self._pending_updates[vin].add(descriptor)
+                    if debug_enabled():
+                        _LOGGER.debug(
+                            "✅ Added to pending: %s (total pending: %d)",
+                            descriptor.split('.')[-1],  # Just the last part
+                            len(self._pending_updates.get(vin, set()))
+                        )
             if descriptor == "vehicle.drivetrain.batteryManagement.header":
                 try:
                     percent = float(value)
@@ -430,16 +469,105 @@ class CardataCoordinator:
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
                 self._set_ac_phase(vin, value, parsed_ts)
 
-            async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
-
-        for descriptor in new_sensor:
-            async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
-        for descriptor in new_binary:
-            async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
+        # Queue new entities for immediate notification
+        if new_sensor:
+            self._pending_new_sensors.setdefault(vin, []).extend(new_sensor)
+        if new_binary:
+            self._pending_new_binary.setdefault(vin, []).extend(new_binary)
 
         self._apply_soc_estimate(vin, now)
 
+        # Schedule debounced update instead of immediate dispatcher sends
+        self._schedule_debounced_update()
+    
+    def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
+        """Check if value change is significant enough to send to sensors.
+     
+        Uses MODERATE filtering to reduce MQTT noise while ensuring sensors
+        can restore from 'unknown' state. Sensors do their own smart filtering!
+        """
+        current_state = self.get_state(vin, descriptor)
+        
+        # No previous state = always significant
+        if not current_state:
+            return True
+        
+        old_value = current_state.value
+        
+        # ALWAYS send same values - sensors might be 'unknown' and need them!
+        if old_value == new_value:
+            return True  # Let sensors decide!
+        
+        # For numeric values, check threshold
+        if isinstance(new_value, (int, float)) and isinstance(old_value, (int, float)):
+            # Absolute change
+            if abs(new_value - old_value) < self._MIN_CHANGE_THRESHOLD:
+                return False
+        
+        # Value changed significantly
+        return True
+    
+    def _schedule_debounced_update(self) -> None:
+        """Schedule debounced coordinator update.
+        
+        Note: GPS coordinates are sent immediately inline in async_handle_message,
+        so this only handles non-GPS updates which are batched every 5 seconds.
+        """
+        # Cancel existing debounce timer if any
+        if self._update_debounce_handle:
+            return
+        
+        # Schedule new update with 5 second delay
+        self._update_debounce_handle = async_call_later(
+            self.hass,
+            self._DEBOUNCE_SECONDS,
+            self._execute_debounced_update
+        )
+    
+    async def _execute_debounced_update(self, _now=None) -> None:
+        """Execute the debounced batch update."""
+        self._update_debounce_handle = None
+        if debug_enabled():
+            pending_count = sum(len(d) for d in self._pending_updates.values())
+            _LOGGER.debug("🔥 Timer firing! Pending items: %d", pending_count)
+            if pending_count > 0:
+                for vin, descriptors in self._pending_updates.items():
+                    _LOGGER.debug("   VIN %s: %s", vin[-4:], list(descriptors)[:5])
+        
+        if debug_enabled():
+            total_updates = sum(len(descriptors) for descriptors in self._pending_updates.values())
+            total_new_sensors = sum(len(descriptors) for descriptors in self._pending_new_sensors.values())
+            total_new_binary = sum(len(descriptors) for descriptors in self._pending_new_binary.values())
+            _LOGGER.debug(
+                "Debounced coordinator update executed: %d updates, %d new sensors, %d new binary",
+                total_updates,
+                total_new_sensors,
+                total_new_binary,
+            )
+        
+        # Send batched updates for changed descriptors
+        for vin, descriptors in self._pending_updates.items():
+            for descriptor in descriptors:
+                async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
+        
+        # Send new entity notifications
+        for vin, descriptors in self._pending_new_sensors.items():
+            for descriptor in descriptors:
+                async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
+        
+        for vin, descriptors in self._pending_new_binary.items():
+            for descriptor in descriptors:
+                async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
+        
+        # Send diagnostics update
         async_dispatcher_send(self.hass, self.signal_diagnostics)
+        
+        # Clear all pending updates
+        self._pending_updates.clear()
+        self._pending_new_sensors.clear()
+        self._pending_new_binary.clear()
+
+        self._schedule_debounced_update() #shedule new batch
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         return self.data.get(vin, {}).get(descriptor)

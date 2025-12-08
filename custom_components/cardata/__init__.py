@@ -1,4 +1,4 @@
-﻿"""BMW CarData integration for Home Assistant."""
+"""BMW CarData integration for Home Assistant."""
 
 from __future__ import annotations
 
@@ -41,6 +41,7 @@ from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .container import CardataContainerManager
+from .migrations import async_migrate_entity_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CarData from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
 
-    _LOGGER.debug("Setting up BimmerData Streamline entry %s", entry.entry_id)
+    _LOGGER.debug("Setting up Bmw Cardata Streamline entry %s", entry.entry_id)
 
     session = aiohttp.ClientSession()
 
@@ -210,6 +211,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
+        bootstrap_error: Optional[str] = None
         if should_bootstrap:
             _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
             
@@ -230,7 +232,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
+                bootstrap_error = str(err)
 
+        # Check if we have vehicle names after bootstrap attempt
+        # If bootstrap was required but failed (e.g., due to rate limits), abort setup
+        if should_bootstrap and not coordinator.names:
+            error_message = bootstrap_error or "Unknown bootstrap error"
+            # Create a persistent notification in the UI for visibility
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title":"BMW CarData Setup Failed",
+                    "message":f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
+                    "notification_id":f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
+                }
+            )
+            await session.close()
+            raise ConfigEntryNotReady(
+                f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
+            )
         # NOW clear the bootstrap flag and start MQTT connection
         # This ensures MQTT doesn't create entities before we have vehicle names
         manager._bootstrap_in_progress = False
@@ -250,6 +271,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start coordinator watchdog
         await coordinator.async_handle_connection_event("connecting")
         await coordinator.async_start_watchdog()
+
+        # --- NEW: Run safe migration of existing entity_ids to include model prefix
+        # Run this after bootstrap (so coordinator.names is populated) and before platforms
+        #try:
+        #    await async_migrate_entity_ids(hass, entry, coordinator)
+        #except Exception as err:
+        #    _LOGGER.debug("Entity id migration failed for entry %s: %s", entry.entry_id, err)
 
         # NOW set up platforms - coordinator.names should be populated
         # Forward setup to platforms

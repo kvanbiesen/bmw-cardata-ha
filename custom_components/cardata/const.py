@@ -11,18 +11,29 @@ DEFAULT_STREAM_HOST = "customer.streaming-cardata.bmwgroup.com"
 DEFAULT_STREAM_PORT = 9000
 DEFAULT_REFRESH_INTERVAL = 45 * 60  #How often to refresh the auth tokens in seconds
 MQTT_KEEPALIVE = 30
+DEBUG_LOG = False
 DIAGNOSTIC_LOG_INTERVAL = 30 # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
 REQUEST_LOG = "request_log"
 REQUEST_LOG_VERSION = 1
-REQUEST_LIMIT = 50 # API Quota
-REQUEST_WINDOW_SECONDS = 24 * 60 * 60 # How long API Quota is reserved after API Call in seconds
+REQUEST_LIMIT = 400  # API Quota - 80% of BMW's ~500/day limit (leaves safety margin)
+REQUEST_WINDOW_SECONDS = 24 * 60 * 60  # How long API Quota is reserved after API Call in seconds
+
+# Quota thresholds for warnings
+QUOTA_WARNING_THRESHOLD = 350  # Warn at 70% usage
+QUOTA_CRITICAL_THRESHOLD = 450  # Critical at 90% usage
 TELEMATIC_POLL_INTERVAL = 40 * 60 # How often to call the Telematic API in seconds
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
+OPTION_DEBUG_LOG = "debug_log"
 OPTION_DIAGNOSTIC_INTERVAL = "diagnostic_log_interval"
 
-HV_BATTERY_CONTAINER_NAME = "BimmerData HV Battery"
+# Container Management
+CONTAINER_REUSE_EXISTING = True  # If True, search for existing containers to reuse (prevents accumulation)
+                                  # If False, always create new container (saves 1 API call but may accumulate containers)
+                                  # Set to False for testing if you frequently change descriptors
+
+HV_BATTERY_CONTAINER_NAME = "BMW CarData HV Battery"
 HV_BATTERY_CONTAINER_PURPOSE = "High voltage battery telemetry"
 HV_BATTERY_DESCRIPTORS = [
     # Current high-voltage battery state of charge

@@ -1,7 +1,8 @@
-"""Binary sensor platform for BMW CarData."""
+﻿"""Binary sensor platform for BMW CarData."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -54,7 +55,12 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
             self._unsubscribe = None
 
     def _handle_update(self, vin: str, descriptor: str) -> None:
-        """Handle incoming data updates from coordinator."""
+        """Handle incoming data updates from coordinator.
+        
+        SMART FILTERING: Only updates Home Assistant if the binary sensor's
+        state actually changed. This prevents HA spam while ensuring sensors
+        restore from 'unknown' state after reload.
+        """
         if vin != self.vin or descriptor != self.descriptor:
             return
 
@@ -62,7 +68,22 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         if not state or not isinstance(state.value, bool):
             return
 
-        self._attr_is_on = state.value
+        new_value = state.value
+        
+        # SMART FILTERING: Check if sensor's current state differs from new value
+        current_value = getattr(self, '_attr_is_on', None)
+        
+        # Only update HA if state actually changed or sensor is unknown
+        if current_value == new_value:
+            # Binary sensor already has this state - skip HA update!
+            # Example: Door lock stays "locked" for hours
+            # - Coordinator sends "locked" every 5 seconds
+            # - Binary sensor: "I'm already 'locked' → SKIP"
+            # - Result: No HA spam! ✅
+            return
+        
+        # State changed or sensor is unknown - update it!
+        self._attr_is_on = new_value
         self.schedule_update_ha_state()
 
 
@@ -72,6 +93,11 @@ async def async_setup_entry(
     """Set up binary sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
+    stream_manager = runtime.stream
+    
+    # Wait for bootstrap to finish so VIN → name mapping exists
+    while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
+        await asyncio.sleep(0.1)
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
 

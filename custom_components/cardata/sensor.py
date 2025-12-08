@@ -67,12 +67,6 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
 
 UNIT_DEVICE_CLASS_MAP = _build_unit_device_class_map()
 
-class CardataSensor(CardataEntity, SensorEntity):
-    def __init__(self, coordinator, vin, descriptor):
-        super().__init__(coordinator, vin, descriptor)
-        
-        if self._descriptor in BATTERY_DESCRIPTORS:
-            self._attr_device_class = SensorDeviceClass.BATTERY
 
 def normalize_unit(unit: str | None) -> str | None:
     """Normalize BMW unit strings to Home Assistant compatible units."""
@@ -91,6 +85,7 @@ def normalize_unit(unit: str | None) -> str | None:
     }
 
     return unit_mapping.get(unit, unit)
+
 
 
 def get_device_class_for_unit(
@@ -252,7 +247,15 @@ class CardataSensor(CardataEntity, SensorEntity):
             self._unsubscribe = None
 
     def _handle_update(self, vin: str, descriptor: str) -> None:
-        """Handle incoming data updates from coordinator."""
+        """Handle incoming data updates from coordinator.
+
+        SMART FILTERING: Only updates Home Assistant if the sensor's value
+        actually changed. This prevents HA spam while ensuring sensors restore
+        from 'unknown' state after reload.
+
+        Logic: Check MY current state (not coordinator's!) and only update HA
+        if value/unit changed or if I'm currently unknown.
+        """
         if vin != self.vin or descriptor != self.descriptor:
             return
 
@@ -263,7 +266,20 @@ class CardataSensor(CardataEntity, SensorEntity):
         original_unit = state.unit
         normalized_unit = normalize_unit(state.unit)
         converted_value = convert_value_for_unit(state.value, original_unit, normalized_unit)
+        # SMART FILTERING: Check if sensor's current state differs from new value
+        current_value = getattr(self, '_attr_native_value', None)
+        current_unit = getattr(self, '_attr_native_unit_of_measurement', None)
 
+        # Determine if update is needed
+        value_changed = current_value != converted_value
+        unit_changed = current_unit != normalized_unit
+        is_unknown = current_value is None
+
+        if not (value_changed or unit_changed or is_unknown):
+            # Sensor already has this exact value - skip HA update!
+            return
+
+        # Value/unit changed OR sensor is unknown - update it!
         self._attr_native_value = converted_value
         self._attr_native_unit_of_measurement = normalized_unit
 
@@ -445,10 +461,25 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
         """Load current value from coordinator. Override in subclass."""
 
     def _handle_update(self, vin: str) -> None:
-        """Handle updates from coordinator."""
+        """Handle updates from coordinator.
+    
+        SMART FILTERING: Only updates Home Assistant if the SOC value
+        actually changed. This prevents HA spam while ensuring sensors
+        restore from 'unknown' state after reload.
+        """
         if vin != self.vin:
             return
+    
+        # Get new value from coordinator
+        old_value = self._attr_native_value
         self._load_current_value()
+        new_value = self._attr_native_value
+    
+        # SMART FILTERING: Only update if value changed or sensor is unknown
+        if old_value == new_value:
+            return  # Skip HA update - no change
+    
+        # Value changed or sensor was unknown - update HA!
         self.schedule_update_ha_state()
 
 
@@ -613,8 +644,9 @@ async def async_setup_entry(
 
         # Skip location descriptors (used by device_tracker)
         if descriptor in (
-            "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
-            "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
+            #force oldschool coodinates
+            #"vehicle.cabin.infotainment.navigation.currentLocation.latitude",
+            #"vehicle.cabin.infotainment.navigation.currentLocation.longitude",
         ):
             return
 
