@@ -317,16 +317,6 @@ class CardataCoordinator:
         if not vin or not isinstance(data, dict):
             return
 
-        # CRITICAL SAFETY CHECK: Don't create entity descriptors if vehicle name not available
-        # This prevents entities from being created without the vehicle name prefix
-        if not self.names.get(vin):
-            _LOGGER.debug(
-                "Skipping message for VIN %s - vehicle name not yet available. "
-                "Message will be processed when bootstrap completes.",
-                vin
-            )
-            return
-
         vehicle_state = self.data.setdefault(vin, {})
         new_binary: list[str] = []
         new_sensor: list[str] = []
