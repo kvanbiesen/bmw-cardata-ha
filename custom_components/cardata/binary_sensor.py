@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorEntity,
+    BinarySensorDeviceClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -30,6 +33,16 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
+        descriptor_lower = descriptor.lower()
+        DOOR_DESCRIPTORS = (
+            "vehicle.cabin.door.row1.driver.isopen",
+            "vehicle.cabin.door.row1.passenger.isopen",
+            "vehicle.cabin.door.row2.driver.isopen",
+            "vehicle.cabin.door.row2.passenger.isopen",
+        )
+        if descriptor_lower and descriptor_lower in DOOR_DESCRIPTORS:
+            self._attr_device_class = BinarySensorDeviceClass.DOOR
+            self._attr_icon = "mdi:car-door"
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""

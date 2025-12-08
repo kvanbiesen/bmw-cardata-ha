@@ -506,6 +506,12 @@ def async_register_services(hass: HomeAssistant) -> None:
         async_handle_fetch_basic_data,
         schema=BASIC_DATA_SERVICE_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN,
+        "fetch_vehicle_images",
+        async_fetch_vehicle_images_service,
+        schema=vol.Schema({}),
+    )
 
     # Developer migration service
     if not hass.services.has_service(DOMAIN, "migrate_entity_ids"):
@@ -535,7 +541,45 @@ def async_unregister_services(hass: HomeAssistant) -> None:
         "fetch_basic_data",
         "migrate_entity_ids",
         "clean_hv_containers",
+        "fetch_vehicle_images",
     ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
             _LOGGER.debug("Unregistered service %s.%s", DOMAIN, service)
+
+async def async_fetch_vehicle_images_service(call) -> None:
+    """Service to manually fetch vehicle images."""
+    hass = call.hass
+    domain_data = hass.data.get(DOMAIN, {})
+    
+    for entry_id, runtime_data in domain_data.items():
+        if entry_id.startswith("_"):
+            continue
+            
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if not entry:
+            continue
+        
+        coordinator = runtime_data.coordinator
+        session = runtime_data.session
+        quota = runtime_data.quota_manager
+        vins = list(coordinator.data.keys())
+        access_token = entry.data.get("access_token")
+        
+        if not access_token or not vins:
+            continue
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "x-version": "v1",
+            "Accept": "*/*",
+        }
+        
+        from .metadata import async_fetch_and_store_vehicle_images
+        
+        _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
+        await async_fetch_and_store_vehicle_images(
+            hass, entry, headers, vins, quota, session
+        )
+
+

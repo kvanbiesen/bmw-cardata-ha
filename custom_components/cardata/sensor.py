@@ -39,6 +39,21 @@ from .quota import QuotaManager
 if TYPE_CHECKING:
     pass
 
+WINDOW_DESCRIPTORS = (
+    "vehicle.cabin.window.row1.driver.status",
+    "vehicle.cabin.window.row1.passenger.status",
+    "vehicle.cabin.window.row2.driver.status",
+    "vehicle.cabin.window.row2.passenger.status",
+    "vehicle.body.trunk.window.isOpen",
+)
+
+        
+BATTERY_DESCRIPTORS = {
+    "vehicle.drivetrain.batteryManagement.header",
+    "vehicle.drivetrain.electricEngine.charging.level",
+    "vehicle.powertrain.electric.battery.stateOfCharge.target",
+    "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
+}
 
 # Build unit-to-device-class mapping
 def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
@@ -92,18 +107,10 @@ def get_device_class_for_unit(
     unit: str | None, descriptor: str | None = None
 ) -> SensorDeviceClass | None:
     """Get device class, with special handling for ambiguous units like 'm'."""
-    if unit is None:
-        return None
     if descriptor:
         descriptor_lower = descriptor.lower()
-
-        BATTERY_DESCRIPTORS = {
-            "vehicle.drivetrain.batteryManagement.header",
-            "vehicle.drivetrain.electricEngine.charging.level",
-            "vehicle.powertrain.electric.battery.stateOfCharge.target",
-            "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
-        }
-        
+        if unit is None:
+            return None
         # Check if this is a battery-related descriptor with % unit
         if descriptor and descriptor in BATTERY_DESCRIPTORS:
             # Only apply battery class if unit is % (percentage)
@@ -132,28 +139,6 @@ def get_device_class_for_unit(
 
     if unit is None:
         return None
-
-    return UNIT_DEVICE_CLASS_MAP.get(unit)
-    # Special case: 'm' can be meters OR minutes depending on context
-    if unit == "m" and descriptor:
-        descriptor_lower = descriptor.lower()
-
-        distance_keywords = [
-            "altitude",
-            "elevation",
-            "sealevel",
-            "sea_level",
-            "height",
-            "position",
-            "location",
-            "distance",
-        ]
-        if any(keyword in descriptor_lower for keyword in distance_keywords):
-            return SensorDeviceClass.DISTANCE
-
-        duration_keywords = ["time", "duration", "minutes", "mins"]
-        if any(keyword in descriptor_lower for keyword in duration_keywords):
-            return SensorDeviceClass.DURATION
 
     return UNIT_DEVICE_CLASS_MAP.get(unit)
 
@@ -195,6 +180,10 @@ class CardataSensor(CardataEntity, SensorEntity):
         # Special handling for mileage sensor
         if self._descriptor == "vehicle.vehicle.travelledDistance":
             self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+        #special for window Sensor
+        if descriptor and descriptor in WINDOW_DESCRIPTORS:
+            self._attr_icon = "mdi:window-closed-variant"
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -290,7 +279,23 @@ class CardataSensor(CardataEntity, SensorEntity):
             )
 
         self.schedule_update_ha_state()
-
+    
+    @property
+    def icon(self) -> str | None:
+        """Return dynamic icon based on state."""
+        # Window sensors - dynamic icon based on state
+        descriptor_lower = self._descriptor.lower()
+        if self.descriptor and self.descriptor in WINDOW_DESCRIPTORS:
+            value = str(self._attr_native_value).lower() if self._attr_native_value else ""
+            if "open" in value:
+                return "mdi:window-open-variant"
+            elif "closed" in value:
+                return "mdi:window-closed-variant"
+            else:
+                return "mdi:window-shutter"  # intermediate or unknown
+    
+        # Return existing icon attribute if set
+        return getattr(self, "_attr_icon", None)
 
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
     """Diagnostic sensor for connection, quota, and polling info."""
@@ -557,6 +562,7 @@ class CardataSocRateSensor(_SocTrackerBase):
 
     _attr_native_unit_of_measurement = "%/h"
     _attr_icon = "mdi:battery-clock"
+    _attr_device_class = None
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(
