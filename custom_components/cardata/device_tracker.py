@@ -387,7 +387,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         """Apply new coordinates and trigger Home Assistant state update."""
         self._current_lat = lat
         self._current_lon = lon
-        self.async_write_ha_state()
+        self.schedule_update_ha_state()
         _LOGGER.debug(
             "Location updated for %s (%s): lat=%.6f lon=%.6f",
             self._vin,
