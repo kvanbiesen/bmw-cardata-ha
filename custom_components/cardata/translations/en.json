@@ -2,12 +2,23 @@
   "config": {
     "step": {
       "user": {
-        "title": "BimmerData Streamline",
+        "title": "BMW Cardata",
         "description": "Enter your BMW CarData client ID."
       },
       "authorize": {
         "title": "Authorize BMW CarData",
         "description": "Open {verification_url} and enter the user code {user_code} if asked. Once you've approved the device, click Submit. If approval already completed, click Submit again to continue."
+      },
+      "blocked": {
+        "title": "Bootstrap disabled due to API rate limit",
+        "description": "The integration previously hit the BMW API daily rate limit and automatic bootstrap (container creation and mapping) has been temporarily disabled for {entry_title} until {until}. You can either wait until that time and try again, or clear the flag below to retry immediately (you may hit the rate limit again)."
+      },
+      "cleared": {
+        "title": "Bootstrap retry scheduled",
+        "description": "You have cleared the temporary disable flag for {entry_title}. The integration will attempt bootstrap again. If it still hits the BMW API rate limit, the integration will disable bootstrap until the reset time again. Alternatively, use the developer service `cardata.clean_hv_containers` to list/delete old containers (be mindful of API rate limits)."
+      },
+      "blocked_fallback": {
+        "description": "Automatic bootstrap is disabled until {until}. Clear the flag to retry now, or cancel and try again after the reset."
       }
     },
     "error": {
