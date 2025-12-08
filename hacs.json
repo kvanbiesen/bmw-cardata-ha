@@ -1,4 +1,7 @@
 {
-  "name": "BimmerData Streamline",
-  "domain": "cardata"
+  "name": "BMW CarData",
+  "repository": "kvanbiesen/bmw-cardata-ha",
+  "homeassistant": "2024.6.0",
+  "zip_release": false,
+  "version": "4.1.4"
 }

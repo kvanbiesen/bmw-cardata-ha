@@ -89,10 +89,33 @@ class QuotaManager:
         async with self._lock:
             now = time.time()
             self._prune(now)
-            if len(self._timestamps) >= REQUEST_LIMIT:
+            
+            current_usage = len(self._timestamps)
+            
+            if current_usage >= REQUEST_LIMIT:
                 raise CardataQuotaError(
-                    "BMW CarData API limit reached; try again after quota resets"
+                    f"BMW CarData API limit reached ({REQUEST_LIMIT} calls/day); try again after quota resets"
                 )
+            
+            # Import thresholds
+            from .const import QUOTA_WARNING_THRESHOLD, QUOTA_CRITICAL_THRESHOLD
+            
+            # Warn when approaching limits
+            if current_usage == QUOTA_WARNING_THRESHOLD:
+                _LOGGER.warning(
+                    "BMW API quota at 70%% (%d/%d calls used). "
+                    "Consider reducing polling frequency or restarting less often.",
+                    current_usage,
+                    REQUEST_LIMIT
+                )
+            elif current_usage == QUOTA_CRITICAL_THRESHOLD:
+                _LOGGER.error(
+                    "BMW API quota at 90%% (%d/%d calls used)! "
+                    "Approaching daily limit. Integration may stop working soon.",
+                    current_usage,
+                    REQUEST_LIMIT
+                )
+            
             self._timestamps.append(now)
             await self._async_save_locked()
 

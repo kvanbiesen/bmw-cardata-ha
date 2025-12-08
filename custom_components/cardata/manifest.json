@@ -1,6 +1,6 @@
 {
   "domain": "cardata",
-  "name": "BimmerData Streamline",
+  "name": "BMW Cardata",
   "codeowners": [
     "@kvanbiesen"
   ],
@@ -9,6 +9,6 @@
   "documentation": "https://github.com/kvanbiesen/bmw-cardata-ha/",
   "iot_class": "cloud_push",
   "requirements": [],
-  "version": "4.1.0-pre",
+  "version": "4.1.4",
   "integration_type": "device"
 }
