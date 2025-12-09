@@ -228,19 +228,13 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         # Wait until both coordinates exist
         if lat is None or lon is None:
-            _LOGGER.debug(
-                "Waiting for coordinate pair for %s (lat=%s, lon=%s)",
-                self._vin,
-                "present" if lat is not None else "missing",
-                "present" if lon is not None else "missing"
-            )
             return
 
         # Calculate time difference and ages
         time_diff = abs(lat_time - lon_time)
         lat_age = now - lat_time
         lon_age = now - lon_time
-        
+    
         # Discard if both coordinates are very stale
         if lat_age > self._MAX_STALE_TIME and lon_age > self._MAX_STALE_TIME:
             _LOGGER.debug(
@@ -251,78 +245,39 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             )
             return
 
-        # Determine which coordinate is fresher
-        lat_is_newer = lat_time > lon_time
-        newer_age = lat_age if lat_is_newer else lon_age
-        older_age = lon_age if lat_is_newer else lat_age
-        
+        # CRITICAL: Only accept coordinates that arrived close together
+        if time_diff > self._PAIR_WINDOW:
+            _LOGGER.debug(
+                "Coordinates too far apart for %s (Δt=%.1fs > %.1fs window) - waiting for pair",
+                self._vin,
+                time_diff,
+                self._PAIR_WINDOW
+            )
+            return
+    
+        # Final coordinates (may be smoothed)
+        final_lat = lat
+        final_lon = lon
+    
         # Check if coordinates changed from previous position
-        lat_changed = False
-        lon_changed = False
+        lat_changed = True
+        lon_changed = True
         if self._current_lat is not None and self._current_lon is not None:
             lat_changed = abs(lat - self._current_lat) > self._COORD_PRECISION
             lon_changed = abs(lon - self._current_lon) > self._COORD_PRECISION
         
-        # Decide how to handle the coordinate pair
-        final_lat = lat
-        final_lon = lon
-        update_reason = None
-        
-        # Case 1: Both coordinates arrived close together (ideal case)
-        if time_diff <= self._PAIR_WINDOW:
-            if lat_changed or lon_changed:
-                update_reason = f"paired update (Δt={time_diff:.1f}s)"
-            else:
+            if not lat_changed and not lon_changed:
                 _LOGGER.debug("Ignoring update for %s - no movement detected", self._vin)
                 return
-        
-        # Case 2: Coordinates arrived far apart - handle stale coordinate
-        elif time_diff <= self._MAX_DELAY:
-            # One coordinate is fresher, the other is stale but not too old
-            if lat_changed and lon_changed:
-                # Both changed - accept the pair even though timing is off
-                update_reason = f"delayed pair (Δt={time_diff:.1f}s, both changed)"
-            elif lat_changed and not lon_changed:
-                # Only lat changed - use new lat with old lon (keep last known lon)
-                update_reason = f"lat update (lon unchanged, Δt={time_diff:.1f}s)"
-            elif lon_changed and not lat_changed:
-                # Only lon changed - use new lon with old lat (keep last known lat)
-                update_reason = f"lon update (lat unchanged, Δt={time_diff:.1f}s)"
-            else:
-                _LOGGER.debug("Ignoring update for %s - no movement detected", self._vin)
-                return
-        
-        # Case 3: One coordinate is too stale (> _MAX_DELAY)
-        else:
-            # Use the fresher coordinate with the last known value of the stale one
-            if self._current_lat is not None and self._current_lon is not None:
-                if lat_is_newer:
-                    if lat_changed:
-                        # Use new lat, keep old lon from restored position
-                        final_lon = self._current_lon
-                        update_reason = f"lat update (lon stale {older_age:.1f}s, using last known)"
-                    else:
-                        _LOGGER.debug("Ignoring update for %s - lat unchanged and lon too stale", self._vin)
-                        return
-                else:
-                    if lon_changed:
-                        # Use new lon, keep old lat from restored position
-                        final_lat = self._current_lat
-                        update_reason = f"lon update (lat stale {older_age:.1f}s, using last known)"
-                    else:
-                        _LOGGER.debug("Ignoring update for %s - lon unchanged and lat too stale", self._vin)
-                        return
-            else:
-                # No previous position - accept even with stale coordinate
-                update_reason = f"initial position (Δt={time_diff:.1f}s)"
-        
+    
         # Apply movement threshold check
-        if self._current_lat is not None and self._current_lon is not None and update_reason:
+        update_reason = None
+        if self._current_lat is not None and self._current_lon is not None:
             distance = self._calculate_distance(
                 self._current_lat, self._current_lon,
                 final_lat, final_lon
             )
-            
+        
             if distance < self._MIN_MOVEMENT_DISTANCE:
                 _LOGGER.debug(
                     "Ignoring update for %s - movement too small (%.1fm < %dm threshold)",
@@ -331,37 +286,30 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     self._MIN_MOVEMENT_DISTANCE
                 )
                 return
-            
-            # Add distance to update reason for logging
-            update_reason = f"{update_reason}, moved {distance:.1f}m"
         
-        # Apply smoothing to reduce GPS jitter (optional)
-        if (self._SMOOTHING_FACTOR > 0 and 
-            self._current_lat is not None and 
-            self._current_lon is not None and
-            update_reason and "initial" not in update_reason):
-            
-            # Weighted average: new_value = (1 - factor) * new + factor * old
-            # factor=0 means no smoothing (use new value)
-            # factor=1 means full smoothing (keep old value)
-            smoothed_lat = (1 - self._SMOOTHING_FACTOR) * final_lat + self._SMOOTHING_FACTOR * self._current_lat
-            smoothed_lon = (1 - self._SMOOTHING_FACTOR) * final_lon + self._SMOOTHING_FACTOR * self._current_lon
-            
-            _LOGGER.debug(
-                "Applying smoothing for %s (factor=%.1f): raw=(%.6f, %.6f) -> smoothed=(%.6f, %.6f)",
-                self._vin,
-                self._SMOOTHING_FACTOR,
-                final_lat, final_lon,
-                smoothed_lat, smoothed_lon
-            )
-            
-            final_lat = smoothed_lat
-            final_lon = smoothed_lon
-            update_reason = f"{update_reason}, smoothed"
+            update_reason = f"paired update (Δt={time_diff:.1f}s, moved {distance:.1f}m)"
         
+            # Apply smoothing to reduce GPS jitter (optional)
+            if self._SMOOTHING_FACTOR > 0:
+                smoothed_lat = (1 - self._SMOOTHING_FACTOR) * final_lat + self._SMOOTHING_FACTOR * self._current_lat
+                smoothed_lon = (1 - self._SMOOTHING_FACTOR) * final_lon + self._SMOOTHING_FACTOR * self._current_lon
+            
+                _LOGGER.debug(
+                    "Applying smoothing for %s (factor=%.1f): raw=(%.6f, %.6f) -> smoothed=(%.6f, %.6f)",
+                    self._vin,
+                    self._SMOOTHING_FACTOR,
+                    final_lat, final_lon,
+                    smoothed_lat, smoothed_lon
+                )
+            
+                final_lat = smoothed_lat
+                final_lon = smoothed_lon
+                update_reason = f"{update_reason}, smoothed"
+        else:
+            update_reason = f"initial position (Δt={time_diff:.1f}s)"
+    
         # Update the tracker position
-        if update_reason:
-            self._apply_new_coordinates(final_lat, final_lon, update_reason)
+        self._apply_new_coordinates(final_lat, final_lon, update_reason)
     
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two GPS coordinates in meters using Haversine formula."""

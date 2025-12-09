@@ -283,8 +283,14 @@ class CardataSensor(CardataEntity, SensorEntity):
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
+        if self.descriptor and self.descriptor =="vehicle.cabin.door.status":
+            value = str(self._attr_native_value).lower() if self._attr_native_value else ""
+            if "unlocked" in value:
+                return "mdi:lock-open-variant-outline"
+            else:
+                return "mdi:lock-outline"
+
         # Window sensors - dynamic icon based on state
-        descriptor_lower = self._descriptor.lower()
         if self.descriptor and self.descriptor in WINDOW_DESCRIPTORS:
             value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "open" in value:
@@ -296,6 +302,26 @@ class CardataSensor(CardataEntity, SensorEntity):
     
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)
+
+    ''' For future options and colors
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        attrs = super().extra_state_attributes or {}
+    
+        # Add color hint for window sensors
+        descriptor_lower = self._descriptor.lower()
+        if "window" in descriptor_lower:
+            value = str(self._attr_native_value).lower() if self._attr_native_value else ""
+            if "open" in value:
+                attrs["color_hint"] = "red"
+            elif "closed" in value:
+                attrs["color_hint"] = "green"
+            else:
+                attrs["color_hint"] = "orange"
+    
+        return attrs
+    '''
 
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
     """Diagnostic sensor for connection, quota, and polling info."""
