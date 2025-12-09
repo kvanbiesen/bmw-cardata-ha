@@ -27,7 +27,7 @@ def get_images_directory(hass: HomeAssistant) -> Path:
     Returns Path to: /config/media/cardata/
     Creates directory if it doesn't exist.
     """
-    images_dir = Path(hass.config.path("media", "cardata"))
+    images_dir = Path(hass.config.path("www/community/cardata"))
     images_dir.mkdir(parents=True, exist_ok=True)
     return images_dir
 
