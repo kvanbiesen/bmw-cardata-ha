@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import suppress
@@ -128,7 +129,7 @@ async def handle_stream_error(
                 runtime.last_reauth_attempt = 0.0
                 runtime.reauth_pending = False
                 return
-            except CardataAuthError as err:
+            except (CardataAuthError, aiohttp.ClientError, asyncio.TimeoutError) as err:
                 _LOGGER.warning(
                     "Token refresh after unauthorized failed for entry %s: %s",
                     entry.entry_id,
