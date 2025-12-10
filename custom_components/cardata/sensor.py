@@ -498,7 +498,7 @@ class CardataVehicleMetadataSensor(SensorEntity, RestoreEntity):
         self._coordinator = coordinator
         self._vin = vin
         self._attr_name = "Vehicle Metadata"
-        self._attr_unique_id = f"{vin}_metadata"
+        self._attr_unique_id = f"{vin}_diagnostics_vehicle_metadata"
         self._unsub = None
 
     @property
@@ -852,6 +852,17 @@ async def async_setup_entry(
     # add all metadata into metadata to reduce bloat
     metadata_entities: list[CardataVehicleMetadataSensor] = []
     for vin in coordinator.data.keys():
+        unique_id = f"{vin}_diagnostics_vehicle_metadata"
+        
+        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id:
+            entity_entry = entity_registry.async_get(entity_id)
+            if entity_entry and entity_entry.disabled_by is not None:
+                continue
+            existing_state = hass.states.get(entity_id)
+            if existing_state and not existing_state.attributes.get("restored", False):
+                continue
+        
         metadata_entities.append(CardataVehicleMetadataSensor(coordinator, vin))
 
     if metadata_entities:
