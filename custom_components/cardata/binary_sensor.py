@@ -1,4 +1,4 @@
-﻿"""Binary sensor platform for BMW CarData."""
+"""Binary sensor platform for BMW CarData."""
 
 from __future__ import annotations
 
