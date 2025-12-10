@@ -126,7 +126,7 @@ async def async_handle_fetch_telematic(call: ServiceCall) -> None:
 
     if success is True:
         # Data fetched successfully
-        async_update_last_telematic_poll(hass, target_entry, time.time())
+        await async_update_last_telematic_poll(hass, target_entry, time.time())
         _LOGGER.info(
             "Cardata fetch_telematic_data: successfully fetched data for entry %s",
             target_entry_id,
@@ -283,11 +283,11 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
             _LOGGER.info("Cardata basic data for %s: %s", vin, payload)
 
             if isinstance(payload, dict):
-                metadata = runtime.coordinator.apply_basic_data(vin, payload)
+                metadata = await runtime.coordinator.async_apply_basic_data(vin, payload)
                 if metadata:
                     from .metadata import async_store_vehicle_metadata
 
-                    async_store_vehicle_metadata(
+                    await async_store_vehicle_metadata(
                         hass,
                         target_entry,
                         vin,

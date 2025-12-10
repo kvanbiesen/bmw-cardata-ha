@@ -11,7 +11,8 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, HTTP_TIMEOUT, VEHICLE_METADATA
+from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
 
@@ -104,8 +105,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     for vin in vins:
         metadata = coordinator.device_metadata.get(vin)
         if metadata and "raw_data" in metadata:
-            # Call apply_basic_data to populate coordinator.names
-            coordinator.apply_basic_data(vin, metadata["raw_data"])
+            # Call async_apply_basic_data to populate coordinator.names (thread-safe)
+            await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
             _LOGGER.debug("Bootstrap populated name for VIN %s: %s", vin, coordinator.names.get(vin))
 
     # NOW seed telematic data (entities will be created with complete metadata)
@@ -125,7 +126,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         from .telematics import async_update_last_telematic_poll
         import time
 
-        async_update_last_telematic_poll(hass, entry, time.time())
+        await async_update_last_telematic_poll(hass, entry, time.time())
     else:
         _LOGGER.debug(
             "Bootstrap did not seed new descriptors for entry %s",
@@ -155,8 +156,9 @@ async def async_fetch_primary_vins(
             )
             return []
 
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
     try:
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, timeout=timeout) as response:
             text = await response.text()
             if response.status != 200:
                 # Special handling for rate limit errors
@@ -251,8 +253,9 @@ async def async_seed_telematic_data(
                 break
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
         try:
-            async with session.get(url, headers=headers, params=params) as response:
+            async with session.get(url, headers=headers, params=params, timeout=timeout) as response:
                 text = await response.text()
                 if response.status != 200:
                     # Special handling for rate limit errors
@@ -310,9 +313,7 @@ async def async_mark_bootstrap_complete(hass: HomeAssistant, entry: ConfigEntry)
     if entry.data.get(BOOTSTRAP_COMPLETE):
         return
 
-    updated = dict(entry.data)
-    updated[BOOTSTRAP_COMPLETE] = True
-    hass.config_entries.async_update_entry(entry, data=updated)
+    await async_update_entry_data(hass, entry, {BOOTSTRAP_COMPLETE: True})
 
 
 def _build_headers(access_token: str) -> dict[str, str]:
