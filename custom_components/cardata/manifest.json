@@ -5,7 +5,6 @@
     "@kvanbiesen"
   ],
   "config_flow": true,
-  "options_flow": true,
   "documentation": "https://github.com/kvanbiesen/bmw-cardata-ha/",
   "issue_tracker": "https://github.com/kvanbiesen/bmw-cardata-ha/issues",
   "iot_class": "cloud_push",
