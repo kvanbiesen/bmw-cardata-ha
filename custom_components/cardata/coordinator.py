@@ -595,7 +595,7 @@ class CardataCoordinator:
             self.last_disconnect_reason = reason
         elif status == "connected":
             self.last_disconnect_reason = None
-        self._log_diagnostics()
+        await self._async_log_diagnostics()
 
     async def async_start_watchdog(self) -> None:
         if self.watchdog_task:
