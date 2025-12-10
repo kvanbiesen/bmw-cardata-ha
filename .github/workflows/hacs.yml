@@ -1,0 +1,24 @@
+name: "Validate with HACS"
+
+on:
+  push:
+    paths:
+      - ".github/workflows/hacs.yml"
+      - "custom_components/**"
+      - "hacs.json"
+  pull_request:
+    paths:
+      - ".github/workflows/hacs.yml"
+      - "custom_components/**"
+      - "hacs.json"
+
+jobs:
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
