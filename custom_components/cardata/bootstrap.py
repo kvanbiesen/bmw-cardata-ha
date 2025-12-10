@@ -78,7 +78,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
 
     from .const import DOMAIN
-    from .metadata import async_fetch_and_store_basic_data
+    from .metadata import async_fetch_and_store_basic_data, async_fetch_and_store_vehicle_images
 
     coordinator = runtime.coordinator
 
@@ -89,6 +89,11 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # IMPORTANT: Fetch metadata FIRST
     # This populates coordinator.device_metadata so entities have complete device_info
     await async_fetch_and_store_basic_data(
+        hass, entry, headers, vins, quota, runtime.session
+    )
+
+    _LOGGER.debug("Fetching vehicle images for entry %s", entry.entry_id)
+    await async_fetch_and_store_vehicle_images(
         hass, entry, headers, vins, quota, runtime.session
     )
     

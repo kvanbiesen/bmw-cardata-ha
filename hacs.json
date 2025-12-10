@@ -2,6 +2,8 @@
   "name": "BMW CarData",
   "repository": "kvanbiesen/bmw-cardata-ha",
   "homeassistant": "2024.6.0",
-  "zip_release": false,
-  "version": "4.1.5"
+  "content_in_root": false, 
+  "zip_release": true,
+  "filename": "bmw-cardata-ha.zip",
+  "version": "4.1.6"
 }
