@@ -55,6 +55,18 @@ BATTERY_DESCRIPTORS = {
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
 }
 
+# Measurement types that should have state_class
+MEASUREMENT_CLASSES = {
+    SensorDeviceClass.POWER,   # watts, kilowatts
+    SensorDeviceClass.CURRENT, # amps
+    SensorDeviceClass.VOLTAGE, # volts
+    SensorDeviceClass.TEMPERATURE,     # celsius, fahrenheit
+    SensorDeviceClass.PRESSURE,# kPa, bar
+    SensorDeviceClass.BATTERY, # percentage
+    SensorDeviceClass.ENERGY,  # kWh (might be total)
+    SensorDeviceClass.DISTANCE,# meters (altitude, not mileage)
+}
+
 # Build unit-to-device-class mapping
 def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
     """Build mapping of unit values to sensor device classes."""
@@ -177,13 +189,9 @@ class CardataSensor(CardataEntity, SensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
-        # Special handling for mileage sensor
-        if self._descriptor == "vehicle.vehicle.travelledDistance":
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-
-        #special for window Sensor
-        if descriptor and descriptor in WINDOW_DESCRIPTORS:
-            self._attr_icon = "mdi:window-closed-variant"
+        state_class = self._determine_state_class()
+        if state_class:
+            self._attr_state_class = state_class
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -207,6 +215,7 @@ class CardataSensor(CardataEntity, SensorEntity):
                         self._attr_device_class = get_device_class_for_unit(
                             unit, self._descriptor
                         )
+                    
                     self._attr_native_unit_of_measurement = unit
 
                 timestamp = last_state.attributes.get("timestamp")
@@ -220,6 +229,12 @@ class CardataSensor(CardataEntity, SensorEntity):
                     unit,
                     timestamp,
                 )
+
+                # Set state class AFTER unit is restored
+                if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:
+                    state_class = self._determine_state_class()
+                    if state_class:
+                        self._attr_state_class = state_class
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
@@ -277,9 +292,36 @@ class CardataSensor(CardataEntity, SensorEntity):
             self._attr_device_class = get_device_class_for_unit(
                 normalized_unit, self._descriptor
             )
+        
+        # Set state class if not already set (for new entities)
+        if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:
+            state_class = self._determine_state_class()
+            if state_class:
+                self._attr_state_class = state_class
 
         self.schedule_update_ha_state()
+
+    def _determine_state_class(self) -> SensorStateClass | None:
+        """Automatically determine state class based on unit."""
+        # Special case: mileage
+        if self._descriptor == "vehicle.vehicle.travelledDistance":
+            return SensorStateClass.TOTAL_INCREASING
     
+        # Check unit of measurement
+        unit = getattr(self, "_attr_native_unit_of_measurement", None)
+    
+        if unit in (
+            UnitOfPower.WATT, UnitOfPower.KILO_WATT,
+            UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT,
+            UnitOfPressure.KPA, UnitOfPressure.BAR, UnitOfPressure.PSI,
+            UnitOfElectricCurrent.AMPERE, UnitOfElectricCurrent.MILLIAMPERE,
+            UnitOfElectricPotential.VOLT,
+            "%",  # Battery percentage
+        ):
+            return SensorStateClass.MEASUREMENT
+    
+        return None
+
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
