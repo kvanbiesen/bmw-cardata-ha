@@ -60,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Setting up Bmw Cardata Streamline entry %s", entry.entry_id)
 
     session = aiohttp.ClientSession()
+    refresh_task: asyncio.Task | None = None
 
     try:
         # Prepare configuration
@@ -294,6 +295,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     except Exception as err:
+        if refresh_task:
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         await session.close()
         raise
 

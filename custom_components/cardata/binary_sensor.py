@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import TYPE_CHECKING
 
 from homeassistant.components.binary_sensor import (
@@ -21,6 +23,8 @@ from .runtime import CardataRuntimeData
 
 if TYPE_CHECKING:
     pass
+
+_LOGGER = logging.getLogger(__name__)
 
 DOOR_NON_DOOR_DESCRIPTORS = (
     "vehicle.body.trunk.isOpen",
@@ -154,8 +158,14 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = runtime.coordinator
     stream_manager = runtime.stream
     
-    # Wait for bootstrap to finish so VIN → name mapping exists
+    # Wait briefly for bootstrap to finish so VIN → name mapping exists.
+    wait_start = time.monotonic()
     while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
+        if time.monotonic() - wait_start > 15:
+            _LOGGER.debug(
+                "Binary sensor setup continuing without vehicle names after 15s wait"
+            )
+            break
         await asyncio.sleep(0.1)
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}

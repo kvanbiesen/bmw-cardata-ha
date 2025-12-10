@@ -557,8 +557,6 @@ class CardataCoordinator:
         self._pending_new_sensors.clear()
         self._pending_new_binary.clear()
 
-        self._schedule_debounced_update() #shedule new batch
-
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         return self.data.get(vin, {}).get(descriptor)
 
