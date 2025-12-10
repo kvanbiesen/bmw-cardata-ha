@@ -283,7 +283,7 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
             _LOGGER.info("Cardata basic data for %s: %s", vin, payload)
 
             if isinstance(payload, dict):
-                metadata = runtime.coordinator.apply_basic_data(vin, payload)
+                metadata = await runtime.coordinator.async_apply_basic_data(vin, payload)
                 if metadata:
                     from .metadata import async_store_vehicle_metadata
 

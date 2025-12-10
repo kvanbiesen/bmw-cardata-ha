@@ -104,8 +104,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     for vin in vins:
         metadata = coordinator.device_metadata.get(vin)
         if metadata and "raw_data" in metadata:
-            # Call apply_basic_data to populate coordinator.names
-            coordinator.apply_basic_data(vin, metadata["raw_data"])
+            # Call async_apply_basic_data to populate coordinator.names (thread-safe)
+            await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
             _LOGGER.debug("Bootstrap populated name for VIN %s: %s", vin, coordinator.names.get(vin))
 
     # NOW seed telematic data (entities will be created with complete metadata)

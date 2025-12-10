@@ -101,7 +101,7 @@ async def async_fetch_and_store_basic_data(
         if not isinstance(payload, dict):
             continue
 
-        metadata = coordinator.apply_basic_data(vin, payload)
+        metadata = await coordinator.async_apply_basic_data(vin, payload)
         if not metadata:
             continue
 
@@ -341,7 +341,7 @@ async def async_restore_vehicle_metadata(
             continue
 
         try:
-            metadata = coordinator.apply_basic_data(vin, payload)
+            metadata = await coordinator.async_apply_basic_data(vin, payload)
         except Exception:
             _LOGGER.debug("Failed to restore metadata for %s", vin, exc_info=True)
             continue

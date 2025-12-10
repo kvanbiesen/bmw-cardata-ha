@@ -165,6 +165,8 @@ class CardataCoordinator:
     last_disconnect_reason: Optional[str] = None
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
     watchdog_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
+    # Lock to protect concurrent access to data, names, device_metadata, and SOC tracking dicts
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _soc_tracking: Dict[str, SocTracking] = field(default_factory=dict, init=False)
     _soc_rate: Dict[str, float] = field(default_factory=dict, init=False)
     _soc_estimate: Dict[str, float] = field(default_factory=dict, init=False)
@@ -317,6 +319,13 @@ class CardataCoordinator:
         if not vin or not isinstance(data, dict):
             return
 
+        async with self._lock:
+            await self._async_handle_message_locked(payload, vin, data)
+
+    async def _async_handle_message_locked(
+        self, payload: Dict[str, Any], vin: str, data: Dict[str, Any]
+    ) -> None:
+        """Handle message while holding the lock."""
         vehicle_state = self.data.setdefault(vin, {})
         new_binary: list[str] = []
         new_sensor: list[str] = []
@@ -558,13 +567,25 @@ class CardataCoordinator:
         self._pending_new_binary.clear()
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
-        return self.data.get(vin, {}).get(descriptor)
+        """Get state for a descriptor. Returns a copy to avoid race conditions."""
+        vehicle_data = self.data.get(vin)
+        if vehicle_data is None:
+            return None
+        state = vehicle_data.get(descriptor)
+        if state is None:
+            return None
+        # Return a copy to avoid mutations during read
+        return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
-    def iter_descriptors(self, *, binary: bool) -> Iterable[tuple[str, str]]:
-        for vin, descriptors in self.data.items():
-            for descriptor, descriptor_state in descriptors.items():
+    def iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
+        """Iterate over descriptors. Returns a snapshot list to avoid race conditions."""
+        # Take a snapshot of the data to avoid iteration issues during concurrent modification
+        result: list[tuple[str, str]] = []
+        for vin, descriptors in list(self.data.items()):
+            for descriptor, descriptor_state in list(descriptors.items()):
                 if isinstance(descriptor_state.value, bool) == binary:
-                    yield vin, descriptor
+                    result.append((vin, descriptor))
+        return result
 
     async def async_handle_connection_event(
         self, status: str, *, reason: Optional[str] = None
@@ -595,11 +616,12 @@ class CardataCoordinator:
         try:
             while True:
                 await asyncio.sleep(self.diagnostic_interval)
-                self._log_diagnostics()
+                await self._async_log_diagnostics()
         except asyncio.CancelledError:
             return
 
-    def _log_diagnostics(self) -> None:
+    async def _async_log_diagnostics(self) -> None:
+        """Thread-safe async version of diagnostics logging."""
         if debug_enabled():
             _LOGGER.debug(
                 "Stream heartbeat: status=%s last_reason=%s last_message=%s",
@@ -609,9 +631,10 @@ class CardataCoordinator:
             )
         now = datetime.now(timezone.utc)
         updated_vins: list[str] = []
-        for vin in list(self._soc_tracking.keys()):
-            if self._apply_soc_estimate(vin, now, notify=False):
-                updated_vins.append(vin)
+        async with self._lock:
+            for vin in list(self._soc_tracking.keys()):
+                if self._apply_soc_estimate(vin, now, notify=False):
+                    updated_vins.append(vin)
         for vin in updated_vins:
             async_dispatcher_send(self.hass, self.signal_soc_estimate, vin)
         async_dispatcher_send(self.hass, self.signal_diagnostics)
@@ -881,6 +904,41 @@ class CardataCoordinator:
         tracking.last_estimate_time = reference_time
         self._testing_soc_estimate[vin] = round(estimate, 2)
 
+    async def async_restore_descriptor_state(
+        self,
+        vin: str,
+        descriptor: str,
+        value: Any,
+        unit: Optional[str],
+        timestamp: Optional[str],
+    ) -> None:
+        """Thread-safe async version of restore_descriptor_state."""
+        async with self._lock:
+            self.restore_descriptor_state(vin, descriptor, value, unit, timestamp)
+
+    async def async_restore_soc_cache(
+        self,
+        vin: str,
+        *,
+        estimate: Optional[float] = None,
+        rate: Optional[float] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        """Thread-safe async version of restore_soc_cache."""
+        async with self._lock:
+            self.restore_soc_cache(vin, estimate=estimate, rate=rate, timestamp=timestamp)
+
+    async def async_restore_testing_soc_cache(
+        self,
+        vin: str,
+        *,
+        estimate: Optional[float] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        """Thread-safe async version of restore_testing_soc_cache."""
+        async with self._lock:
+            self.restore_testing_soc_cache(vin, estimate=estimate, timestamp=timestamp)
+
     @staticmethod
     def _build_device_metadata(vin: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -930,6 +988,7 @@ class CardataCoordinator:
         return metadata
 
     def apply_basic_data(self, vin: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Apply basic data to coordinator. Must be called while holding _lock or from locked context."""
         metadata = self._build_device_metadata(vin, payload)
         if not metadata:
             return None
@@ -945,3 +1004,10 @@ class CardataCoordinator:
                 new_name,
             )
         return metadata
+
+    async def async_apply_basic_data(
+        self, vin: str, payload: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Thread-safe async version of apply_basic_data."""
+        async with self._lock:
+            return self.apply_basic_data(vin, payload)
