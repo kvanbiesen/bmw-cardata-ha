@@ -1,4 +1,4 @@
-﻿"""Config flow for BMW CarData integration."""
+"""Config flow for BMW CarData integration."""
 
 from __future__ import annotations
 
