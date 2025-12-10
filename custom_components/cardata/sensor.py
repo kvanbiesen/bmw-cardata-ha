@@ -660,9 +660,9 @@ async def async_setup_entry(
 
         # Skip location descriptors (used by device_tracker)
         if descriptor in (
-            #force oldschool coodinates
-            #"vehicle.cabin.infotainment.navigation.currentLocation.latitude",
-            #"vehicle.cabin.infotainment.navigation.currentLocation.longitude",
+            #not needed since device tracker is working
+            "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
+            "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
         ):
             return
 
