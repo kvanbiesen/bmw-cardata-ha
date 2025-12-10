@@ -483,6 +483,74 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         """Return native value."""
         return self._attr_native_value
 
+class CardataVehicleMetadataSensor(SensorEntity, RestoreEntity):
+    """Diagnostic sensor for vehicle metadata (stored once per vehicle)."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:car-info"
+
+    def __init__(
+        self,
+        coordinator: CardataCoordinator,
+        vin: str,
+    ) -> None:
+        self._coordinator = coordinator
+        self._vin = vin
+        self._attr_name = "Vehicle Metadata"
+        self._attr_unique_id = f"{vin}_metadata"
+        self._unsub = None
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        return {
+            "identifiers": {(DOMAIN, self._vin)},
+        }
+
+    @property
+    def native_value(self) -> str:
+        """Return metadata status."""
+        metadata = self._coordinator.device_metadata.get(self._vin)
+        if metadata:
+            return "available"
+        return "unavailable"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return all vehicle metadata as attributes."""
+        metadata = self._coordinator.device_metadata.get(self._vin, {})
+        attrs = {}
+        
+        if extra := metadata.get("extra_attributes"):
+            attrs["vehicle_basic_data"] = dict(extra)
+        
+        if raw := metadata.get("raw_data"):
+            attrs["vehicle_basic_data_raw"] = dict(raw)
+        
+        return attrs
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates."""
+        await super().async_added_to_hass()
+        
+        self._unsub = async_dispatcher_connect(
+            self.hass,
+            self._coordinator.signal_update,
+            self._handle_update,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from updates."""
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
+
+    def _handle_update(self, vin: str, descriptor: str) -> None:
+        """Handle metadata updates."""
+        if vin == self._vin:
+            self.schedule_update_ha_state()
+
 
 class _SocTrackerBase(CardataEntity, SensorEntity):
     """Base class for SoC estimation sensors."""
@@ -781,6 +849,14 @@ async def async_setup_entry(
         async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
     )
 
+    # add all metadata into metadata to reduce bloat
+    metadata_entities: list[CardataVehicleMetadataSensor] = []
+    for vin in coordinator.data.keys():
+        metadata_entities.append(CardataVehicleMetadataSensor(coordinator, vin))
+
+    if metadata_entities:
+        async_add_entities(metadata_entities, True)
+    
     # Add diagnostic sensors
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
     stream_manager = runtime.stream

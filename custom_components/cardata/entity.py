@@ -105,14 +105,6 @@ class CardataEntity(RestoreEntity):
         attrs = {}
         if getattr(state, "timestamp", None):
             attrs["timestamp"] = state.timestamp
-        metadata = self._coordinator.device_metadata.get(resolved_vin)
-        if metadata:
-            extra = metadata.get("extra_attributes")
-            if extra:
-                attrs.setdefault("vehicle_basic_data", dict(extra))
-            raw = metadata.get("raw_data")
-            if raw:
-                attrs.setdefault("vehicle_basic_data_raw", dict(raw))
         return attrs
 
     @property
