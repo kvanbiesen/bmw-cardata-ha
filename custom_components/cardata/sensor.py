@@ -55,18 +55,6 @@ BATTERY_DESCRIPTORS = {
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
 }
 
-# Measurement types that should have state_class
-MEASUREMENT_CLASSES = {
-    SensorDeviceClass.POWER,   # watts, kilowatts
-    SensorDeviceClass.CURRENT, # amps
-    SensorDeviceClass.VOLTAGE, # volts
-    SensorDeviceClass.TEMPERATURE,     # celsius, fahrenheit
-    SensorDeviceClass.PRESSURE,# kPa, bar
-    SensorDeviceClass.BATTERY, # percentage
-    SensorDeviceClass.ENERGY,  # kWh (might be total)
-    SensorDeviceClass.DISTANCE,# meters (altitude, not mileage)
-}
-
 # Build unit-to-device-class mapping
 def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
     """Build mapping of unit values to sensor device classes."""
