@@ -12,6 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, HTTP_TIMEOUT, VEHICLE_METADATA
+from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
 
@@ -125,7 +126,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         from .telematics import async_update_last_telematic_poll
         import time
 
-        async_update_last_telematic_poll(hass, entry, time.time())
+        await async_update_last_telematic_poll(hass, entry, time.time())
     else:
         _LOGGER.debug(
             "Bootstrap did not seed new descriptors for entry %s",
@@ -312,9 +313,7 @@ async def async_mark_bootstrap_complete(hass: HomeAssistant, entry: ConfigEntry)
     if entry.data.get(BOOTSTRAP_COMPLETE):
         return
 
-    updated = dict(entry.data)
-    updated[BOOTSTRAP_COMPLETE] = True
-    hass.config_entries.async_update_entry(entry, data=updated)
+    await async_update_entry_data(hass, entry, {BOOTSTRAP_COMPLETE: True})
 
 
 def _build_headers(access_token: str) -> dict[str, str]:

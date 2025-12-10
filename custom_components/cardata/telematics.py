@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import API_BASE_URL, API_VERSION, DOMAIN, HTTP_TIMEOUT, TELEMATIC_POLL_INTERVAL, VEHICLE_METADATA
+from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
 
@@ -232,20 +233,20 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             if success is True:
                 # Data fetched successfully
-                async_update_last_telematic_poll(hass, entry, time.time())
+                await async_update_last_telematic_poll(hass, entry, time.time())
                 _LOGGER.debug("Telematic poll succeeded for entry %s", entry_id)
             else:
                 # False: attempted but failed (temporary)
                 _LOGGER.debug("Telematic poll failed (temporary) for entry %s", entry_id)
                 # Still update timestamp so we don't retry immediately
-                async_update_last_telematic_poll(hass, entry, time.time())
+                await async_update_last_telematic_poll(hass, entry, time.time())
 
     except asyncio.CancelledError:
         _LOGGER.debug("Telematic poll loop cancelled for entry %s", entry_id)
         return
 
 
-def async_update_last_telematic_poll(
+async def async_update_last_telematic_poll(
     hass: HomeAssistant, entry: ConfigEntry, timestamp: float
 ) -> None:
     """Update the last telematic poll timestamp."""
@@ -253,6 +254,4 @@ def async_update_last_telematic_poll(
     if existing and abs(existing - timestamp) < 1:
         return
 
-    updated = dict(entry.data)
-    updated["last_telematic_poll"] = timestamp
-    hass.config_entries.async_update_entry(entry, data=updated)
+    await async_update_entry_data(hass, entry, {"last_telematic_poll": timestamp})

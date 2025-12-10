@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import API_BASE_URL, API_VERSION, BASIC_DATA_ENDPOINT, DOMAIN, HTTP_TIMEOUT, VEHICLE_METADATA
+from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ async def async_fetch_and_store_basic_data(
         if not metadata:
             continue
 
-        async_store_vehicle_metadata(hass, entry, vin, metadata.get("raw_data") or payload)
+        await async_store_vehicle_metadata(hass, entry, vin, metadata.get("raw_data") or payload)
 
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -362,7 +363,7 @@ async def async_restore_vehicle_metadata(
     await async_restore_vehicle_images(hass, entry, coordinator)
 
 
-def async_store_vehicle_metadata(
+async def async_store_vehicle_metadata(
     hass: HomeAssistant,
     entry: ConfigEntry,
     vin: str,
@@ -377,8 +378,7 @@ def async_store_vehicle_metadata(
     if current == payload:
         return
 
-    updated = dict(entry.data)
+    # Build updated metadata dict - will be merged with current entry.data by helper
     new_metadata = dict(existing_metadata)
     new_metadata[vin] = payload
-    updated[VEHICLE_METADATA] = new_metadata
-    hass.config_entries.async_update_entry(entry, data=updated)
+    await async_update_entry_data(hass, entry, {VEHICLE_METADATA: new_metadata})
