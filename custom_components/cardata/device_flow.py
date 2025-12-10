@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
-from .const import DEVICE_CODE_URL, TOKEN_URL
+from .const import DEVICE_CODE_URL, HTTP_TIMEOUT, TOKEN_URL
 
 
 class CardataAuthError(Exception):
@@ -32,7 +32,8 @@ async def request_device_code(
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
     }
-    async with session.post(DEVICE_CODE_URL, data=data) as resp:
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+    async with session.post(DEVICE_CODE_URL, data=data, timeout=timeout) as resp:
         if resp.status != 200:
             text = await resp.text()
             raise CardataAuthError(f"Device code request failed ({resp.status}): {text}")
@@ -58,12 +59,13 @@ async def poll_for_tokens(
         "device_code": device_code,
         "code_verifier": code_verifier,
     }
+    request_timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
 
     while True:
         if time.monotonic() - start > timeout:
             raise CardataAuthError("Timed out waiting for device authorization")
 
-        async with session.post(token_url, data=payload) as resp:
+        async with session.post(token_url, data=payload, timeout=request_timeout) as resp:
             data = await resp.json(content_type=None)
             if resp.status == 200:
                 return data
@@ -94,7 +96,8 @@ async def refresh_tokens(
     if scope:
         payload["scope"] = scope
 
-    async with session.post(token_url, data=payload) as resp:
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+    async with session.post(token_url, data=payload, timeout=timeout) as resp:
         data = await resp.json(content_type=None)
         if resp.status != 200:
             raise CardataAuthError(f"Token refresh failed ({resp.status}): {data}")

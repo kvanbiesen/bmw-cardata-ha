@@ -11,7 +11,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, HTTP_TIMEOUT, VEHICLE_METADATA
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
 
@@ -155,8 +155,9 @@ async def async_fetch_primary_vins(
             )
             return []
 
+    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
     try:
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, timeout=timeout) as response:
             text = await response.text()
             if response.status != 200:
                 # Special handling for rate limit errors
@@ -251,8 +252,9 @@ async def async_seed_telematic_data(
                 break
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
         try:
-            async with session.get(url, headers=headers, params=params) as response:
+            async with session.get(url, headers=headers, params=params, timeout=timeout) as response:
                 text = await response.text()
                 if response.status != 200:
                     # Special handling for rate limit errors

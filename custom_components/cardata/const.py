@@ -23,6 +23,7 @@ REQUEST_WINDOW_SECONDS = 24 * 60 * 60  # How long API Quota is reserved after AP
 QUOTA_WARNING_THRESHOLD = 350  # Warn at 70% usage
 QUOTA_CRITICAL_THRESHOLD = 450  # Critical at 90% usage
 TELEMATIC_POLL_INTERVAL = 40 * 60 # How often to call the Telematic API in seconds
+HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"

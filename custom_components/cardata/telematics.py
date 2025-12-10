@@ -15,7 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import API_BASE_URL, API_VERSION, DOMAIN, TELEMATIC_POLL_INTERVAL, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, DOMAIN, HTTP_TIMEOUT, TELEMATIC_POLL_INTERVAL, VEHICLE_METADATA
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
 
@@ -127,10 +127,11 @@ async def async_perform_telematic_fetch(
                 break  # Quota exhausted, stop trying
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
 
         try:
             any_attempt = True
-            async with runtime.session.get(url, headers=headers, params=params) as response:
+            async with runtime.session.get(url, headers=headers, params=params, timeout=timeout) as response:
                 text = await response.text()
                 if response.status != 200:
                     _LOGGER.error(

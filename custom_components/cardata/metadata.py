@@ -12,7 +12,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_VERSION, BASIC_DATA_ENDPOINT, DOMAIN, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, BASIC_DATA_ENDPOINT, DOMAIN, HTTP_TIMEOUT, VEHICLE_METADATA
 from .quota import CardataQuotaError, QuotaManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,8 +69,9 @@ async def async_fetch_and_store_basic_data(
                 )
                 break
 
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
         try:
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, timeout=timeout) as response:
                 text = await response.text()
                 if response.status != 200:
                     _LOGGER.debug(
@@ -189,8 +190,9 @@ async def async_fetch_and_store_vehicle_images(
                 )
                 break
 
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
         try:
-            async with session.get(url, headers=headers) as response:
+            async with session.get(url, headers=headers, timeout=timeout) as response:
                 if response.status == 404:
                     _LOGGER.debug("No vehicle image available for %s (404)", vin)
                     # Create empty marker file to prevent repeated 404 attempts
