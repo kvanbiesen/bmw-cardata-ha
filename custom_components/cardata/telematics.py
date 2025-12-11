@@ -15,7 +15,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import API_BASE_URL, API_VERSION, DOMAIN, HTTP_TIMEOUT, TELEMATIC_POLL_INTERVAL, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, DOMAIN, TELEMATIC_POLL_INTERVAL, VEHICLE_METADATA
+from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
@@ -128,41 +129,49 @@ async def async_perform_telematic_fetch(
                 break  # Quota exhausted, stop trying
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
-        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+        any_attempt = True
 
-        try:
-            any_attempt = True
-            async with runtime.session.get(url, headers=headers, params=params, timeout=timeout) as response:
-                text = await response.text()
-                if response.status != 200:
-                    _LOGGER.error(
-                        "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
-                        response.status,
-                        vin,
-                        text,
-                    )
-                    continue
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    payload = text
+        response, error = await async_request_with_retry(
+            runtime.session,
+            "GET",
+            url,
+            headers=headers,
+            params=params,
+            context=f"Telematic data fetch for {vin}",
+        )
 
-                _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
-                telematic_payload = None
-                if isinstance(payload, dict):
-                    telematic_payload = payload.get("telematicData") or payload.get("data")
-
-                if isinstance(telematic_payload, dict):
-                    await runtime.coordinator.async_handle_message(
-                        {"vin": vin, "data": telematic_payload}
-                    )
-                    any_success = True
-        except aiohttp.ClientError as err:
+        if error:
             _LOGGER.error(
                 "Cardata fetch_telematic_data: network error for %s: %s",
                 vin,
-                err,
+                error,
             )
+            continue
+
+        if response is None or not response.is_success:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
+                response.status if response else "no response",
+                vin,
+                response.text[:200] if response else "",
+            )
+            continue
+
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError:
+            payload = response.text
+
+        _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
+        telematic_payload = None
+        if isinstance(payload, dict):
+            telematic_payload = payload.get("telematicData") or payload.get("data")
+
+        if isinstance(telematic_payload, dict):
+            await runtime.coordinator.async_handle_message(
+                {"vin": vin, "data": telematic_payload}
+            )
+            any_success = True
 
     # Update timestamp and signal if we got any data
     if any_success:
