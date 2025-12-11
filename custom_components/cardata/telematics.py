@@ -115,6 +115,7 @@ async def async_perform_telematic_fetch(
 
     any_success = False
     any_attempt = False
+    auth_failure = False
 
     for vin in vins:
         if quota:
@@ -148,12 +149,37 @@ async def async_perform_telematic_fetch(
             )
             continue
 
-        if response is None or not response.is_success:
+        if response is None:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: no response for %s",
+                vin,
+            )
+            continue
+
+        # Check for auth errors - these are fatal and require reauth
+        if response.is_auth_error:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: auth error (%s) for %s - token may be expired",
+                response.status,
+                vin,
+            )
+            auth_failure = True
+            break  # Stop trying other VINs, auth is broken
+
+        # Check for rate limiting
+        if response.is_rate_limited:
+            _LOGGER.warning(
+                "Cardata fetch_telematic_data: rate limited for %s",
+                vin,
+            )
+            break  # Stop trying other VINs
+
+        if not response.is_success:
             _LOGGER.error(
                 "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
-                response.status if response else "no response",
+                response.status,
                 vin,
-                response.text[:200] if response else "",
+                response.text[:200],
             )
             continue
 
@@ -172,6 +198,11 @@ async def async_perform_telematic_fetch(
                 {"vin": vin, "data": telematic_payload}
             )
             any_success = True
+
+    # Auth failure is fatal - return None to signal reauth needed
+    if auth_failure:
+        _LOGGER.error("Cardata telematic fetch failed due to auth error - reauth may be required")
+        return None
 
     # Update timestamp and signal if we got any data
     if any_success:
