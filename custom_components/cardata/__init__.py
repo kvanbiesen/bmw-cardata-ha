@@ -78,6 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gcid = data.get("gcid")
         id_token = data.get("id_token")
         if not gcid or not id_token:
+            await session.close()
             raise ConfigEntryNotReady("Missing GCID or ID token")
 
         # Set up coordinator
