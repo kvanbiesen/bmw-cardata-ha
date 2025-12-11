@@ -402,15 +402,3 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def longitude(self) -> float | None:
         """Return last known longitude of the device."""
         return self._current_lon
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return entity-specific state attributes."""
-        attrs: dict[str, Any] = {}
-        metadata = self._coordinator.device_metadata.get(self._vin)
-        if metadata:
-            if extra := metadata.get("extra_attributes"):
-                attrs["vehicle_basic_data"] = dict(extra)
-            if raw := metadata.get("raw_data"):
-                attrs["vehicle_basic_data_raw"] = dict(raw)
-        return attrs

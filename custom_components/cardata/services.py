@@ -18,6 +18,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
+
 from .const import (
     API_BASE_URL,
     API_VERSION,
@@ -26,6 +27,8 @@ from .const import (
     HV_BATTERY_CONTAINER_PURPOSE,
 )
 from .runtime import CardataRuntimeData
+
+import homeassistant.helpers.entity_registry as er
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -485,7 +488,6 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
 
     _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
 
-
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all Cardata services."""
     hass.services.async_register(
@@ -531,7 +533,6 @@ def async_register_services(hass: HomeAssistant) -> None:
             schema=CLEAN_CONTAINERS_SCHEMA,
         )
         _LOGGER.debug("Registered service %s.%s", DOMAIN, "clean_hv_containers")
-
 
 def async_unregister_services(hass: HomeAssistant) -> None:
     """Unregister all Cardata services."""
@@ -581,5 +582,4 @@ async def async_fetch_vehicle_images_service(call) -> None:
         await async_fetch_and_store_vehicle_images(
             hass, entry, headers, vins, quota, session
         )
-
 

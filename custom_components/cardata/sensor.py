@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+import logging
+
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -36,6 +38,8 @@ from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .quota import QuotaManager
 
+_LOGGER = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     pass
 
@@ -54,6 +58,7 @@ BATTERY_DESCRIPTORS = {
     "vehicle.powertrain.electric.battery.stateOfCharge.target",
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
 }
+
 
 # Build unit-to-device-class mapping
 def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
@@ -353,6 +358,7 @@ class CardataSensor(CardataEntity, SensorEntity):
         return attrs
     '''
 
+
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
     """Diagnostic sensor for connection, quota, and polling info."""
 
@@ -470,6 +476,90 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
     def native_value(self):
         """Return native value."""
         return self._attr_native_value
+
+
+class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
+    """Diagnostic sensor for vehicle metadata (stored once per vehicle)."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:car-info"
+
+    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin, "diagnostics_vehicle_metadata")
+        self._base_name = "Vehicle Metadata"
+        self._update_name(write_state=False)
+        self._unsubscribe = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore state and subscribe to updates."""
+        await super().async_added_to_hass()
+
+        # Restore last state if available
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in ("unknown", "unavailable"):
+            self._attr_native_value = last_state.state
+
+        # Subscribe to coordinator updates
+        self._unsubscribe = async_dispatcher_connect(
+            self.hass,
+            self._coordinator.signal_update,
+            self._handle_update,
+        )
+
+        # Load current value
+        self._load_current_value()
+        self.schedule_update_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from updates."""
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+
+    def _load_current_value(self) -> None:
+        """Load current metadata status from coordinator."""
+        metadata = self._coordinator.device_metadata.get(self._vin)
+        if metadata:
+            self._attr_native_value = "available"
+        else:
+            self._attr_native_value = "unavailable"
+
+    def _handle_update(self, vin: str, descriptor: str) -> None:
+        """Handle metadata updates with smart filtering."""
+        if vin != self._vin:
+            return
+
+        # Get new value
+        old_value = self._attr_native_value
+        self._load_current_value()
+        new_value = self._attr_native_value
+
+        # SMART FILTERING: Only update if changed
+        if old_value == new_value:
+            return  # Skip HA update - no change
+
+        # Value changed - update HA!
+        self.schedule_update_ha_state()
+
+    @property
+    def native_value(self) -> str:
+        """Return metadata status."""
+        return self._attr_native_value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return all vehicle metadata as attributes."""
+        metadata = self._coordinator.device_metadata.get(self._vin, {})
+        attrs = {}
+        
+        if extra := metadata.get("extra_attributes"):
+            attrs["vehicle_basic_data"] = dict(extra)
+        
+        if raw := metadata.get("raw_data"):
+            attrs["vehicle_basic_data_raw"] = dict(raw)
+        
+        return attrs
 
 
 class _SocTrackerBase(CardataEntity, SensorEntity):
@@ -661,6 +751,7 @@ async def async_setup_entry(
     soc_estimate_entities: dict[str, CardataSocEstimateSensor] = {}
     soc_testing_entities: dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: dict[str, CardataSocRateSensor] = {}
+    metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
 
     def ensure_soc_tracking_entities(vin: str) -> None:
         """Ensure SOC tracking entities exist for VIN."""
@@ -677,6 +768,10 @@ async def async_setup_entry(
         if vin not in soc_rate_entities:
             soc_rate_entities[vin] = CardataSocRateSensor(coordinator, vin)
             new_entities.append(soc_rate_entities[vin])
+
+        if vin not in metadata_entities:
+            metadata_entities[vin] = CardataVehicleMetadataSensor(coordinator, vin)
+            new_entities.append(metadata_entities[vin])
 
         if new_entities:
             async_add_entities(new_entities, True)
