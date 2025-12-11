@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, Dict, Optional
 
 import aiohttp
 
 from .const import DEVICE_CODE_URL, HTTP_TIMEOUT, TOKEN_URL
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class CardataAuthError(Exception):
@@ -85,9 +88,12 @@ async def refresh_tokens(
     refresh_token: str,
     scope: Optional[str] = None,
     token_url: str = TOKEN_URL,
+    max_retries: int = 3,
 ) -> Dict[str, Any]:
-    """Refresh access/ID tokens using the stored refresh token."""
+    """Refresh access/ID tokens using the stored refresh token.
 
+    Includes retry logic for transient network failures.
+    """
     payload = {
         "client_id": client_id,
         "grant_type": "refresh_token",
@@ -97,8 +103,64 @@ async def refresh_tokens(
         payload["scope"] = scope
 
     timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
-    async with session.post(token_url, data=payload, timeout=timeout) as resp:
-        data = await resp.json(content_type=None)
-        if resp.status != 200:
-            raise CardataAuthError(f"Token refresh failed ({resp.status}): {data}")
-        return data
+    backoff = 1.0
+    last_error: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            async with session.post(token_url, data=payload, timeout=timeout) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status == 200:
+                    if attempt > 0:
+                        _LOGGER.debug("Token refresh succeeded after %d retries", attempt)
+                    return data
+
+                # Auth errors (401, 403) - don't retry
+                if resp.status in (401, 403):
+                    raise CardataAuthError(f"Token refresh failed ({resp.status}): {data}")
+
+                # Server errors - retry
+                if 500 <= resp.status < 600 and attempt < max_retries:
+                    _LOGGER.debug(
+                        "Token refresh got %d, retrying in %.1fs (attempt %d/%d)",
+                        resp.status,
+                        backoff,
+                        attempt + 1,
+                        max_retries + 1,
+                    )
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 30.0)
+                    continue
+
+                # Other errors - fail
+                raise CardataAuthError(f"Token refresh failed ({resp.status}): {data}")
+
+        except asyncio.TimeoutError as err:
+            last_error = err
+            if attempt < max_retries:
+                _LOGGER.debug(
+                    "Token refresh timed out, retrying in %.1fs (attempt %d/%d)",
+                    backoff,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+                continue
+
+        except aiohttp.ClientError as err:
+            last_error = err
+            if attempt < max_retries:
+                _LOGGER.debug(
+                    "Token refresh network error: %s, retrying in %.1fs (attempt %d/%d)",
+                    err,
+                    backoff,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+                continue
+
+    # All retries exhausted
+    raise CardataAuthError(f"Token refresh failed after {max_retries + 1} attempts: {last_error}")

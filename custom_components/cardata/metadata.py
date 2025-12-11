@@ -12,7 +12,8 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_VERSION, BASIC_DATA_ENDPOINT, DOMAIN, HTTP_TIMEOUT, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, BASIC_DATA_ENDPOINT, DOMAIN, VEHICLE_METADATA
+from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 
@@ -70,32 +71,38 @@ async def async_fetch_and_store_basic_data(
                 )
                 break
 
-        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
-        try:
-            async with session.get(url, headers=headers, timeout=timeout) as response:
-                text = await response.text()
-                if response.status != 200:
-                    _LOGGER.debug(
-                        "Basic data request failed for %s (status=%s): %s",
-                        vin,
-                        response.status,
-                        text,
-                    )
-                    continue
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    _LOGGER.debug(
-                        "Basic data payload invalid for %s: %s",
-                        vin,
-                        text,
-                    )
-                    continue
-        except aiohttp.ClientError as err:
+        response, error = await async_request_with_retry(
+            session,
+            "GET",
+            url,
+            headers=headers,
+            context=f"Basic data request for {vin}",
+        )
+
+        if error:
             _LOGGER.warning(
                 "Basic data request errored for %s: %s",
                 vin,
-                err,
+                error,
+            )
+            continue
+
+        if response is None or not response.is_success:
+            _LOGGER.debug(
+                "Basic data request failed for %s (status=%s): %s",
+                vin,
+                response.status if response else "no response",
+                response.text[:200] if response else "",
+            )
+            continue
+
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError:
+            _LOGGER.debug(
+                "Basic data payload invalid for %s: %s",
+                vin,
+                response.text[:200],
             )
             continue
 

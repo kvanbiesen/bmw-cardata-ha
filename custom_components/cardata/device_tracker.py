@@ -172,6 +172,22 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._handle_update,
         )
 
+        # Fetch initial coordinates from coordinator (may have arrived before we subscribed)
+        initial_lat = self._fetch_coordinate(LOCATION_LATITUDE_DESCRIPTOR)
+        initial_lon = self._fetch_coordinate(LOCATION_LONGITUDE_DESCRIPTOR)
+        if initial_lat is not None and initial_lon is not None:
+            # Only use coordinator data if we don't have restored state
+            if self._current_lat is None or self._current_lon is None:
+                self._current_lat = initial_lat
+                self._current_lon = initial_lon
+                _LOGGER.debug(
+                    "Initialized location from coordinator for %s: %.6f, %.6f",
+                    self._vin,
+                    self._current_lat,
+                    self._current_lon,
+                )
+                self.async_write_ha_state()
+
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
         await super().async_will_remove_from_hass()

@@ -11,7 +11,8 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, HTTP_TIMEOUT, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, VEHICLE_METADATA
+from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
@@ -156,44 +157,56 @@ async def async_fetch_primary_vins(
             )
             return []
 
-    timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
-    try:
-        async with session.get(url, headers=headers, timeout=timeout) as response:
-            text = await response.text()
-            if response.status != 200:
-                # Special handling for rate limit errors
-                if response.status == 429:
-                    _LOGGER.error(
-                        "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
-                        "BMW's daily quota (typically 500 calls/day) has been reached. "
-                        "The limit resets at midnight UTC. Please wait and try again later. "
-                        "Error details: %s",
-                        entry_id,
-                        text
-                    )
-                    return []
-                
-                _LOGGER.warning(
-                    "Bootstrap mapping request failed for entry %s (status=%s): %s",
-                    entry_id,
-                    response.status,
-                    text,
-                )
-                return []
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                _LOGGER.warning(
-                    "Bootstrap mapping response malformed for entry %s: %s",
-                    entry_id,
-                    text,
-                )
-                return []
-    except aiohttp.ClientError as err:
+    response, error = await async_request_with_retry(
+        session,
+        "GET",
+        url,
+        headers=headers,
+        context=f"Bootstrap mapping request for entry {entry_id}",
+    )
+
+    if error:
         _LOGGER.warning(
             "Bootstrap mapping request errored for entry %s: %s",
             entry_id,
-            err,
+            error,
+        )
+        return []
+
+    if response is None:
+        _LOGGER.warning(
+            "Bootstrap mapping request failed for entry %s: no response",
+            entry_id,
+        )
+        return []
+
+    if response.is_rate_limited:
+        _LOGGER.error(
+            "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
+            "BMW's daily quota (typically 500 calls/day) has been reached. "
+            "The limit resets at midnight UTC. Please wait and try again later. "
+            "Error details: %s",
+            entry_id,
+            response.text[:200],
+        )
+        return []
+
+    if not response.is_success:
+        _LOGGER.warning(
+            "Bootstrap mapping request failed for entry %s (status=%s): %s",
+            entry_id,
+            response.status,
+            response.text[:200],
+        )
+        return []
+
+    try:
+        payload = json.loads(response.text)
+    except json.JSONDecodeError:
+        _LOGGER.warning(
+            "Bootstrap mapping response malformed for entry %s: %s",
+            entry_id,
+            response.text[:200],
         )
         return []
 
@@ -253,44 +266,58 @@ async def async_seed_telematic_data(
                 break
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
-        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
-        try:
-            async with session.get(url, headers=headers, params=params, timeout=timeout) as response:
-                text = await response.text()
-                if response.status != 200:
-                    # Special handling for rate limit errors
-                    if response.status == 429:
-                        _LOGGER.error(
-                            "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
-                            "BMW's daily quota (typically 500 calls/day) has been reached. "
-                            "The limit resets at midnight UTC. Skipping remaining vehicles. "
-                            "Error details: %s",
-                            vin,
-                            text
-                        )
-                        break  # Stop trying other VINs if we hit rate limit
-                    
-                    _LOGGER.debug(
-                        "Bootstrap telematic request failed for %s (status=%s): %s",
-                        vin,
-                        response.status,
-                        text,
-                    )
-                    continue
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    _LOGGER.debug(
-                        "Bootstrap telematic payload invalid for %s: %s",
-                        vin,
-                        text,
-                    )
-                    continue
-        except aiohttp.ClientError as err:
+
+        response, error = await async_request_with_retry(
+            session,
+            "GET",
+            url,
+            headers=headers,
+            params=params,
+            context=f"Bootstrap telematic request for {vin}",
+        )
+
+        if error:
             _LOGGER.warning(
                 "Bootstrap telematic request errored for %s: %s",
                 vin,
-                err,
+                error,
+            )
+            continue
+
+        if response is None:
+            _LOGGER.debug(
+                "Bootstrap telematic request failed for %s: no response",
+                vin,
+            )
+            continue
+
+        if response.is_rate_limited:
+            _LOGGER.error(
+                "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
+                "BMW's daily quota (typically 500 calls/day) has been reached. "
+                "The limit resets at midnight UTC. Skipping remaining vehicles. "
+                "Error details: %s",
+                vin,
+                response.text[:200],
+            )
+            break  # Stop trying other VINs if we hit rate limit
+
+        if not response.is_success:
+            _LOGGER.debug(
+                "Bootstrap telematic request failed for %s (status=%s): %s",
+                vin,
+                response.status,
+                response.text[:200],
+            )
+            continue
+
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError:
+            _LOGGER.debug(
+                "Bootstrap telematic payload invalid for %s: %s",
+                vin,
+                response.text[:200],
             )
             continue
 

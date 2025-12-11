@@ -56,6 +56,7 @@ class CardataStreamManager:
         self._error_callback = error_callback
         self._reauth_notified = False
         self._unauthorized_retry_in_progress = False
+        self._unauthorized_lock = asyncio.Lock()  # Protects _unauthorized_retry_in_progress
         self._awaiting_new_credentials = False
         self._status_callback: Optional[
             Callable[[str, Optional[str]], Awaitable[None]]
@@ -454,9 +455,11 @@ class CardataStreamManager:
             self._reconnect_backoff = 5
 
     async def _handle_unauthorized(self) -> None:
-        if self._unauthorized_retry_in_progress:
-            return
-        self._unauthorized_retry_in_progress = True
+        async with self._unauthorized_lock:
+            if self._unauthorized_retry_in_progress:
+                return
+            self._unauthorized_retry_in_progress = True
+
         try:
             self._awaiting_new_credentials = True
             if not self._reauth_notified:
@@ -467,7 +470,8 @@ class CardataStreamManager:
             if self._status_callback:
                 await self._status_callback("unauthorized", reason="MQTT rc=5")
         finally:
-            self._unauthorized_retry_in_progress = False
+            async with self._unauthorized_lock:
+                self._unauthorized_retry_in_progress = False
 
     async def _notify_error(self, reason: str) -> None:
         await self.async_stop()

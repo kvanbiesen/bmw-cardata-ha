@@ -29,8 +29,11 @@ _LOGGER = logging.getLogger(__name__)
 DOOR_NON_DOOR_DESCRIPTORS = (
     "vehicle.body.trunk.isOpen",
     "vehicle.body.hood.isOpen",
-    "vehicle.body.trunk.isOpen",
     "vehicle.body.trunk.door.isOpen",
+    "vehicle.body.trunk.left.door.isOpen",
+    "vehicle.body.trunk.lower.door.isOpen",
+    "vehicle.body.trunk.right.door.isOpen",
+    "vehicle.body.trunk.upper.door.isOpen",
 ) 
 
 DOOR_DESCRIPTORS = (
