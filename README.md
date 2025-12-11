@@ -5,7 +5,7 @@
 # (BMW CarData for Home Assistant)
 
 ## This is experimental. 
-## Taken over since no response for original developper -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
+## Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha) -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 
