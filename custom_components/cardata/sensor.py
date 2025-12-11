@@ -933,7 +933,7 @@ async def async_setup_entry(
     )
 
     # add all metadata into metadata to reduce bloat
-    metadata_entities: list[CardataVehicleMetadataSensor] = []
+    metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
     for vin in coordinator.data.keys():
         unique_id = f"{vin}_diagnostics_vehicle_metadata"
         
