@@ -214,6 +214,10 @@ class CardataCoordinator:
     def signal_telematic_api(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_telematic_api"
 
+    @property
+    def signal_new_image(self) -> str:
+        return f"{DOMAIN}_{self.entry_id}_new_image"
+
     def _get_testing_tracking(self, vin: str) -> SocTracking:
         return self._testing_soc_tracking.setdefault(vin, SocTracking())
 

@@ -9,6 +9,7 @@ from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
@@ -36,18 +37,34 @@ async def async_setup_entry(
         return
 
     coordinator: CardataCoordinator = runtime_data.coordinator
-    
-    # Create image entity for each vehicle that has image data
-    entities: list[CardataImage] = []
-    for vin in coordinator.data.keys():
-        # Check if vehicle has image data
+
+    entities: dict[str, CardataImage] = {}
+
+    def ensure_entity(vin: str) -> None:
+        """Create an image entity for the VIN if image bytes are available."""
+        if vin in entities:
+            entities[vin].async_write_ha_state()
+            return
+
         metadata = coordinator.device_metadata.get(vin)
-        if metadata and metadata.get("vehicle_image"):
-            entities.append(CardataImage(coordinator, vin))
-            _LOGGER.debug("Created image entity for VIN: %s", vin)
-    
-    if entities:
-        async_add_entities(entities)
+        if not metadata or not metadata.get("vehicle_image"):
+            return
+
+        entity = CardataImage(coordinator, vin)
+        entities[vin] = entity
+        async_add_entities([entity])
+        _LOGGER.debug("Created image entity for VIN: %s", vin)
+
+    initial_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
+    for vin in initial_vins:
+        ensure_entity(vin)
+
+    async def async_handle_new_image(vin: str) -> None:
+        ensure_entity(vin)
+
+    config_entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_new_image, async_handle_new_image)
+    )
 
 
 class CardataImage(CardataEntity, ImageEntity):

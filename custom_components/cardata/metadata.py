@@ -11,8 +11,16 @@ import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import API_BASE_URL, API_VERSION, BASIC_DATA_ENDPOINT, DOMAIN, VEHICLE_METADATA
+from .const import (
+    API_BASE_URL,
+    API_VERSION,
+    BASIC_DATA_ENDPOINT,
+    DOMAIN,
+    HTTP_TIMEOUT,
+    VEHICLE_METADATA,
+)
 from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
@@ -170,6 +178,7 @@ async def async_fetch_and_store_vehicle_images(
                     coordinator.device_metadata[vin] = {}
                 coordinator.device_metadata[vin]["vehicle_image"] = image_bytes
                 coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
+                async_dispatcher_send(hass, coordinator.signal_new_image, vin)
                 _LOGGER.debug(
                     "Loaded vehicle image from file for %s (%d bytes)",
                     vin,
@@ -254,6 +263,7 @@ async def async_fetch_and_store_vehicle_images(
                     coordinator.device_metadata[vin] = {}
                 coordinator.device_metadata[vin]["vehicle_image"] = image_data
                 coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
+                async_dispatcher_send(hass, coordinator.signal_new_image, vin)
                 
         except aiohttp.ClientError as err:
             _LOGGER.debug(
