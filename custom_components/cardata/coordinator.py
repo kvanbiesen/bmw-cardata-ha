@@ -183,6 +183,7 @@ class CardataCoordinator:
     
     # Debouncing fields (NEW!)
     _update_debounce_handle: Optional[asyncio.TimerHandle] = field(default=None, init=False)
+    _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _pending_updates: Dict[str, set[str]] = field(default_factory=dict, init=False)  # {vin: {descriptors}}
     _pending_new_sensors: Dict[str, list[str]] = field(default_factory=dict, init=False)
     _pending_new_binary: Dict[str, list[str]] = field(default_factory=dict, init=False)
@@ -477,7 +478,7 @@ class CardataCoordinator:
         self._apply_soc_estimate(vin, now)
 
         # Schedule debounced update instead of immediate dispatcher sends
-        self._schedule_debounced_update()
+        await self._async_schedule_debounced_update()
     
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
         """Check if value change is significant enough to send to sensors.
@@ -506,26 +507,28 @@ class CardataCoordinator:
         # Value changed significantly
         return True
     
-    def _schedule_debounced_update(self) -> None:
+    async def _async_schedule_debounced_update(self) -> None:
         """Schedule debounced coordinator update.
-        
+
         Note: GPS coordinates are sent immediately inline in async_handle_message,
         so this only handles non-GPS updates which are batched every 5 seconds.
         """
-        # Cancel existing debounce timer if any
-        if self._update_debounce_handle:
-            return
-        
-        # Schedule new update with 5 second delay
-        self._update_debounce_handle = async_call_later(
-            self.hass,
-            self._DEBOUNCE_SECONDS,
-            self._execute_debounced_update
-        )
-    
+        async with self._debounce_lock:
+            # Cancel existing debounce timer if any
+            if self._update_debounce_handle:
+                return
+
+            # Schedule new update with 5 second delay
+            self._update_debounce_handle = async_call_later(
+                self.hass,
+                self._DEBOUNCE_SECONDS,
+                self._execute_debounced_update
+            )
+
     async def _execute_debounced_update(self, _now=None) -> None:
         """Execute the debounced batch update."""
-        self._update_debounce_handle = None
+        async with self._debounce_lock:
+            self._update_debounce_handle = None
         if debug_enabled():
             pending_count = sum(len(d) for d in self._pending_updates.values())
             _LOGGER.debug("🔥 Timer firing! Pending items: %d", pending_count)
