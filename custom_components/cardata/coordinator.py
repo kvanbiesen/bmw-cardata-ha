@@ -24,6 +24,11 @@ _LOGGER = logging.getLogger(__name__)
 LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
 LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
 
+# Descriptors that are string-valued but should be treated as binary sensors
+BINARY_STRING_DESCRIPTORS = {
+    "vehicle.body.chargingPort.status",
+}
+
 
 @dataclass
 class DescriptorState:
@@ -382,7 +387,8 @@ class CardataCoordinator:
                 self.apply_basic_data(vin, value)
             
             if is_new:
-                if isinstance(value, bool):
+                # Some descriptors are string-valued but represent binary states
+                if isinstance(value, bool) or descriptor in BINARY_STRING_DESCRIPTORS:
                     new_binary.append(descriptor)
                 else:
                     new_sensor.append(descriptor)
@@ -590,8 +596,15 @@ class CardataCoordinator:
         result: list[tuple[str, str]] = []
         for vin, descriptors in list(self.data.items()):
             for descriptor, descriptor_state in list(descriptors.items()):
-                if isinstance(descriptor_state.value, bool) == binary:
-                    result.append((vin, descriptor))
+                val = descriptor_state.value
+                is_bool = isinstance(val, bool)
+                is_override = descriptor in BINARY_STRING_DESCRIPTORS
+                if binary:
+                    if is_bool or is_override:
+                        result.append((vin, descriptor))
+                else:
+                    if not is_bool and not is_override:
+                        result.append((vin, descriptor))
         return result
 
     async def async_handle_connection_event(

@@ -17,7 +17,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 
 from .const import DOMAIN
-from .coordinator import CardataCoordinator
+from .coordinator import CardataCoordinator, BINARY_STRING_DESCRIPTORS
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 
@@ -42,6 +42,9 @@ DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row2.driver.isOpen",
     "vehicle.cabin.door.row2.passenger.isOpen",
 )
+PLUG_DESCRIPTORS = (
+    "vehicle.body.chargingPort.status",
+)
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 
@@ -58,6 +61,14 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         
         if descriptor and descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR
+        
+        # Charging port plug state should appear as a plug-type binary sensor
+        if descriptor and descriptor in PLUG_DESCRIPTORS:
+            # Use enum if available, otherwise fall back to the string
+            try:
+                self._attr_device_class = BinarySensorDeviceClass.PLUG
+            except Exception:
+                self._attr_device_class = "plug"
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -66,7 +77,16 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         if getattr(self, "_attr_is_on", None) is None:
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
-                self._attr_is_on = last_state.state.lower() == "on"
+                s = last_state.state.strip().lower()
+                if s in ("on", "true"):
+                    self._attr_is_on = True
+                elif s in ("off", "false"):
+                    self._attr_is_on = False
+                elif self.descriptor in BINARY_STRING_DESCRIPTORS:
+                    if s == "connected":
+                        self._attr_is_on = True
+                    elif s == "disconnected":
+                        self._attr_is_on = False
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
@@ -93,10 +113,24 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
             return
 
         state = self._coordinator.get_state(vin, descriptor)
-        if not state or not isinstance(state.value, bool):
+        if not state:
             return
 
-        new_value = state.value
+        # Determine boolean value. Accept actual booleans or string overrides
+        # defined in BINARY_STRING_DESCRIPTORS (e.g. 'connected'/'disconnected').
+        new_value: bool | None = None
+        if isinstance(state.value, bool):
+            new_value = state.value
+        elif isinstance(state.value, str) and descriptor in BINARY_STRING_DESCRIPTORS:
+            sval = state.value.strip().lower()
+            if sval == "connected":
+                new_value = True
+            elif sval == "disconnected":
+                new_value = False
+            else:
+                return
+        else:
+            return
         
         # SMART FILTERING: Check if sensor's current state differs from new value
         current_value = getattr(self, '_attr_is_on', None)
@@ -180,7 +214,7 @@ async def async_setup_entry(
 
         state = coordinator.get_state(vin, descriptor)
         if state:
-            if not isinstance(state.value, bool):
+            if not isinstance(state.value, bool) and descriptor not in BINARY_STRING_DESCRIPTORS:
                 return
         elif not assume_binary:
             return
