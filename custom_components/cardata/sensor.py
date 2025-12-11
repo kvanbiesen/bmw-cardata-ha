@@ -984,3 +984,4 @@ async def async_setup_entry(
 
     if diagnostic_entities:
         async_add_entities(diagnostic_entities, True)
+        
