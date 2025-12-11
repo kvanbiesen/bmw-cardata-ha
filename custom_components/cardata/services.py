@@ -1,4 +1,4 @@
-﻿"""Service handlers for fetch_* operations and migration control (extended).
+"""Service handlers for fetch_* operations and migration control (extended).
 
 Includes a developer service `cardata.clean_hv_containers` which can:
  - list containers visible to the entry's access token

@@ -55,6 +55,18 @@ BATTERY_DESCRIPTORS = {
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
 }
 
+# Measurement types that should have state_class
+MEASUREMENT_CLASSES = {
+    SensorDeviceClass.POWER,   # watts, kilowatts
+    SensorDeviceClass.CURRENT, # amps
+    SensorDeviceClass.VOLTAGE, # volts
+    SensorDeviceClass.TEMPERATURE,     # celsius, fahrenheit
+    SensorDeviceClass.PRESSURE,# kPa, bar
+    SensorDeviceClass.BATTERY, # percentage
+    SensorDeviceClass.ENERGY,  # kWh (might be total)
+    SensorDeviceClass.DISTANCE,# meters (altitude, not mileage)
+}
+
 # Build unit-to-device-class mapping
 def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
     """Build mapping of unit values to sensor device classes."""
@@ -177,13 +189,9 @@ class CardataSensor(CardataEntity, SensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
-        # Special handling for mileage sensor
-        if self._descriptor == "vehicle.vehicle.travelledDistance":
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-
-        #special for window Sensor
-        if descriptor and descriptor in WINDOW_DESCRIPTORS:
-            self._attr_icon = "mdi:window-closed-variant"
+        state_class = self._determine_state_class()
+        if state_class:
+            self._attr_state_class = state_class
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -207,6 +215,7 @@ class CardataSensor(CardataEntity, SensorEntity):
                         self._attr_device_class = get_device_class_for_unit(
                             unit, self._descriptor
                         )
+                    
                     self._attr_native_unit_of_measurement = unit
 
                 timestamp = last_state.attributes.get("timestamp")
@@ -220,6 +229,12 @@ class CardataSensor(CardataEntity, SensorEntity):
                     unit,
                     timestamp,
                 )
+
+                # Set state class AFTER unit is restored
+                if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:
+                    state_class = self._determine_state_class()
+                    if state_class:
+                        self._attr_state_class = state_class
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
@@ -277,9 +292,36 @@ class CardataSensor(CardataEntity, SensorEntity):
             self._attr_device_class = get_device_class_for_unit(
                 normalized_unit, self._descriptor
             )
+        
+        # Set state class if not already set (for new entities)
+        if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:
+            state_class = self._determine_state_class()
+            if state_class:
+                self._attr_state_class = state_class
 
         self.schedule_update_ha_state()
+
+    def _determine_state_class(self) -> SensorStateClass | None:
+        """Automatically determine state class based on unit."""
+        # Special case: mileage
+        if self._descriptor == "vehicle.vehicle.travelledDistance":
+            return SensorStateClass.TOTAL_INCREASING
     
+        # Check unit of measurement
+        unit = getattr(self, "_attr_native_unit_of_measurement", None)
+    
+        if unit in (
+            UnitOfPower.WATT, UnitOfPower.KILO_WATT,
+            UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT,
+            UnitOfPressure.KPA, UnitOfPressure.BAR, UnitOfPressure.PSI,
+            UnitOfElectricCurrent.AMPERE, UnitOfElectricCurrent.MILLIAMPERE,
+            UnitOfElectricPotential.VOLT,
+            "%",  # Battery percentage
+        ):
+            return SensorStateClass.MEASUREMENT
+    
+        return None
+
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
@@ -440,6 +482,74 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
     def native_value(self):
         """Return native value."""
         return self._attr_native_value
+
+class CardataVehicleMetadataSensor(SensorEntity, RestoreEntity):
+    """Diagnostic sensor for vehicle metadata (stored once per vehicle)."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:car-info"
+
+    def __init__(
+        self,
+        coordinator: CardataCoordinator,
+        vin: str,
+    ) -> None:
+        self._coordinator = coordinator
+        self._vin = vin
+        self._attr_name = "Vehicle Metadata"
+        self._attr_unique_id = f"{vin}_diagnostics_vehicle_metadata"
+        self._unsub = None
+
+    @property
+    def device_info(self):
+        """Return device info."""
+        return {
+            "identifiers": {(DOMAIN, self._vin)},
+        }
+
+    @property
+    def native_value(self) -> str:
+        """Return metadata status."""
+        metadata = self._coordinator.device_metadata.get(self._vin)
+        if metadata:
+            return "available"
+        return "unavailable"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return all vehicle metadata as attributes."""
+        metadata = self._coordinator.device_metadata.get(self._vin, {})
+        attrs = {}
+        
+        if extra := metadata.get("extra_attributes"):
+            attrs["vehicle_basic_data"] = dict(extra)
+        
+        if raw := metadata.get("raw_data"):
+            attrs["vehicle_basic_data_raw"] = dict(raw)
+        
+        return attrs
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to updates."""
+        await super().async_added_to_hass()
+        
+        self._unsub = async_dispatcher_connect(
+            self.hass,
+            self._coordinator.signal_update,
+            self._handle_update,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from updates."""
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
+
+    def _handle_update(self, vin: str, descriptor: str) -> None:
+        """Handle metadata updates."""
+        if vin == self._vin:
+            self.schedule_update_ha_state()
 
 
 class _SocTrackerBase(CardataEntity, SensorEntity):
@@ -739,6 +849,25 @@ async def async_setup_entry(
         async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
     )
 
+    # add all metadata into metadata to reduce bloat
+    metadata_entities: list[CardataVehicleMetadataSensor] = []
+    for vin in coordinator.data.keys():
+        unique_id = f"{vin}_diagnostics_vehicle_metadata"
+        
+        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        if entity_id:
+            entity_entry = entity_registry.async_get(entity_id)
+            if entity_entry and entity_entry.disabled_by is not None:
+                continue
+            existing_state = hass.states.get(entity_id)
+            if existing_state and not existing_state.attributes.get("restored", False):
+                continue
+        
+        metadata_entities.append(CardataVehicleMetadataSensor(coordinator, vin))
+
+    if metadata_entities:
+        async_add_entities(metadata_entities, True)
+    
     # Add diagnostic sensors
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
     stream_manager = runtime.stream

@@ -1,4 +1,4 @@
-﻿"""State coordinator for BMW CarData streaming payloads."""
+"""State coordinator for BMW CarData streaming payloads."""
 
 from __future__ import annotations
 

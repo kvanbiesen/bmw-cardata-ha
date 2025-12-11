@@ -5,11 +5,10 @@
     "@kvanbiesen"
   ],
   "config_flow": true,
-  "options_flow": true,
   "documentation": "https://github.com/kvanbiesen/bmw-cardata-ha/",
-  "issue_tracker": "https://github.com/kvanbiesen/bmw-cardata-ha/issues",
+  "integration_type": "device",
   "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/kvanbiesen/bmw-cardata-ha/issues",
   "requirements": [],
-  "version": "4.1.7",
-  "integration_type": "device"
+  "version": "4.1.9"
 }

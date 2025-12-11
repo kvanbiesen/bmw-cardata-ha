@@ -1,4 +1,3 @@
-
 """Image platform for BMW CarData."""
 
 from __future__ import annotations
