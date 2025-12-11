@@ -295,10 +295,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     except Exception as err:
+        # Clean up all tasks and resources on setup failure
         if refresh_task:
             refresh_task.cancel()
             with suppress(asyncio.CancelledError):
                 await refresh_task
+
+        # Clean up runtime data tasks if they were created
+        runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if runtime:
+            if runtime.bootstrap_task:
+                runtime.bootstrap_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await runtime.bootstrap_task
+
+            if runtime.telematic_task:
+                runtime.telematic_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await runtime.telematic_task
+
+            # Stop coordinator watchdog if started
+            await runtime.coordinator.async_stop_watchdog()
+
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         await session.close()
         raise
