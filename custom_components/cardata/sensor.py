@@ -903,7 +903,7 @@ async def async_setup_entry(
 
         vin, descriptor = unique_id.split("_", 1)
 
-        if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing"):
+        if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing","diagnostics_vehicle_metadata"):
             ensure_soc_tracking_entities(vin)
             continue
 

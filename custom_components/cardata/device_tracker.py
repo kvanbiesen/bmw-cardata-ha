@@ -110,7 +110,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     
     # Movement filtering
     _MIN_MOVEMENT_DISTANCE = 3  # meters - MORE SENSITIVE (was 5m)
-    _SMOOTHING_FACTOR = 0.0  # DISABLED - use raw GPS for responsive tracking
     
     # GPS precision
     _COORD_PRECISION = 0.000001  # degrees (~0.1 meter) - ignore smaller changes
@@ -305,22 +304,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         
             update_reason = f"paired update (Δt={time_diff:.1f}s, moved {distance:.1f}m)"
         
-            # Apply smoothing to reduce GPS jitter (optional)
-            if self._SMOOTHING_FACTOR > 0:
-                smoothed_lat = (1 - self._SMOOTHING_FACTOR) * final_lat + self._SMOOTHING_FACTOR * self._current_lat
-                smoothed_lon = (1 - self._SMOOTHING_FACTOR) * final_lon + self._SMOOTHING_FACTOR * self._current_lon
-            
-                _LOGGER.debug(
-                    "Applying smoothing for %s (factor=%.1f): raw=(%.6f, %.6f) -> smoothed=(%.6f, %.6f)",
-                    self._vin,
-                    self._SMOOTHING_FACTOR,
-                    final_lat, final_lon,
-                    smoothed_lat, smoothed_lon
-                )
-            
-                final_lat = smoothed_lat
-                final_lon = smoothed_lon
-                update_reason = f"{update_reason}, smoothed"
         else:
             update_reason = f"initial position (Δt={time_diff:.1f}s)"
     
