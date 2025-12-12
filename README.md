@@ -4,32 +4,32 @@
   &nbsp;
 
   <a href="https://github.com/kvanbiesen/bmw-cardata-ha">
-    <img src="https://img.shields.io/badge/Maintainer-<your-username>-green?style=for-the-badge">
+    <img src="https://img.shields.io/badge/Maintainer-kvanbiesen-green?style=for-the-badge">
   </a>
   &nbsp;
 
   <a href="https://github.com/kvanbiesen/bmw-cardata-ha/releases">
-    <img src="https://img.shields.io/github/v/release/<your-username>/<your-repo>?style=for-the-badge">
+    <img src="https://img.shields.io/github/v/release/kvanbiesen/bmw-cardata-ha?style=for-the-badge">
   </a>
   &nbsp;
 
   <a href="https://github.com/kvanbiesen/bmw-cardata-ha/releases/latest">
-    <img src="https://img.shields.io/github/downloads/<your-username>/<your-repo>/latest/total?style=for-the-badge">
+    <img src="https://img.shields.io/github/downloads/kvanbiesen/bmw-cardata-ha/latest/total?style=for-the-badge">
   </a>
   &nbsp;
 
   <a href="https://github.com/kvanbiesen/bmw-cardata-ha/releases">
-    <img src="https://img.shields.io/github/downloads/<your-username>/<your-repo>/total?style=for-the-badge">
+    <img src="https://img.shields.io/github/downloads/kvanbiesen/bmw-cardata-ha/total?style=for-the-badge">
   </a>
   &nbsp;
 
   <a href="https://github.com/kvanbiesen/bmw-cardata-ha/issues">
-    <img src="https://img.shields.io/github/issues/<your-username>/<your-repo>?style=for-the-badge">
+    <img src="https://img.shields.io/github/issues/kvanbiesen/bmw-cardata-ha?style=for-the-badge">
   </a>
   &nbsp;
 
   <a href="https://github.com/kvanbiesen/bmw-cardata-ha/stargazers">
-    <img src="https://img.shields.io/github/stars/<your-username>/<your-repo>?style=for-the-badge">
+    <img src="https://img.shields.io/github/stars/kvanbiesen/bmw-cardata-ha?style=for-the-badge">
   </a>
   &nbsp;
 
