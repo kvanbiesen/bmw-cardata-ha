@@ -246,6 +246,9 @@ class CardataStreamManager:
     def debug_info(self) -> dict[str, str | int | bool]:
         """Return connection parameters for diagnostics."""
 
+        # Redact sensitive token - show only first 10 chars for debugging
+        redacted_token = f"{self._password[:10]}..." if self._password else None
+
         return {
             "client_id": self._client_id,
             "gcid": self._gcid,
@@ -255,7 +258,7 @@ class CardataStreamManager:
             "topic": f"{self._gcid}/+",
             "clean_session": True,
             "protocol": "MQTTv311",
-            "id_token": self._password,
+            "id_token": redacted_token,
         }
 
     def _start_client(self) -> None:
