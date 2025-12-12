@@ -1,3 +1,44 @@
+<p align="left">
+
+  <img src="https://img.shields.io/badge/BMW%20CarData-Integration-blue?style=for-the-badge">
+  &nbsp;
+
+  <a href="https://github.com/kvanbiesen/bmw-cardata-ha">
+    <img src="https://img.shields.io/badge/Maintainer-<your-username>-green?style=for-the-badge">
+  </a>
+  &nbsp;
+
+  <a href="https://github.com/kvanbiesen/bmw-cardata-ha/releases">
+    <img src="https://img.shields.io/github/v/release/<your-username>/<your-repo>?style=for-the-badge">
+  </a>
+  &nbsp;
+
+  <a href="https://github.com/kvanbiesen/bmw-cardata-ha/releases/latest">
+    <img src="https://img.shields.io/github/downloads/<your-username>/<your-repo>/latest/total?style=for-the-badge">
+  </a>
+  &nbsp;
+
+  <a href="https://github.com/kvanbiesen/bmw-cardata-ha/releases">
+    <img src="https://img.shields.io/github/downloads/<your-username>/<your-repo>/total?style=for-the-badge">
+  </a>
+  &nbsp;
+
+  <a href="https://github.com/kvanbiesen/bmw-cardata-ha/issues">
+    <img src="https://img.shields.io/github/issues/<your-username>/<your-repo>?style=for-the-badge">
+  </a>
+  &nbsp;
+
+  <a href="https://github.com/kvanbiesen/bmw-cardata-ha/stargazers">
+    <img src="https://img.shields.io/github/stars/<your-username>/<your-repo>?style=for-the-badge">
+  </a>
+  &nbsp;
+
+  <a href="https://www.buymeacoffee.com/sadisticpandabear">
+    <img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-FFDD00?style=for-the-badge&logo=buymeacoffee">
+  </a>
+
+</p>
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/kvanbiesen/bmw-cardata-ha/refs/heads/main/images/icon.png" alt="BMW Cardata logo" width="240" />
 </p>
