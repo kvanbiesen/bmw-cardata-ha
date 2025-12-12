@@ -28,6 +28,22 @@ def _build_code_verifier() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(86))
 
 
+def _validate_client_id(client_id: str) -> bool:
+    """Validate client ID format to prevent injection attacks.
+
+    BMW client IDs are uppercase hexadecimal with hyphens (UUID format).
+    Example: 31C3B263-A9B7-4C8E-B123-456789ABCDEF
+    """
+    if not client_id or not isinstance(client_id, str):
+        return False
+    # Length check (UUID with hyphens is 36 chars, allow some flexibility)
+    if len(client_id) < 8 or len(client_id) > 64:
+        return False
+    # Character whitelist: uppercase hex digits and hyphens only
+    allowed = set(string.hexdigits.upper() + "-")
+    return all(c in allowed for c in client_id)
+
+
 def _generate_code_challenge(code_verifier: str) -> str:
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
@@ -53,6 +69,14 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
             )
 
         client_id = user_input["client_id"].strip()
+
+        # Validate client ID format to prevent injection
+        if not _validate_client_id(client_id):
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({vol.Required("client_id"): str}),
+                errors={"base": "invalid_client_id"},
+            )
 
         for entry in list(self._async_current_entries()):
             existing_client_id = entry.data.get("client_id") if hasattr(entry, "data") else None
@@ -307,7 +331,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         else:
             client_id = ""
         errors: Dict[str, str] = {}
-        if not client_id:
+        if not client_id or not _validate_client_id(client_id):
             errors["client_id"] = "invalid_client_id"
         if not user_input.get("confirm"):
             errors["confirm"] = "confirm"
