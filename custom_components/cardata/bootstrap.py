@@ -16,6 +16,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
+from .utils import redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if metadata and "raw_data" in metadata:
             # Call async_apply_basic_data to populate coordinator.names (thread-safe)
             await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
-            _LOGGER.debug("Bootstrap populated name for VIN %s: %s", vin, coordinator.names.get(vin))
+            _LOGGER.debug("Bootstrap populated name for VIN %s: %s", redact_vin(vin), coordinator.names.get(vin))
 
     # NOW seed telematic data (entities will be created with complete metadata)
     created_entities = False
@@ -181,32 +182,35 @@ async def async_fetch_primary_vins(
         return []
 
     if response.is_rate_limited:
+        error_excerpt = redact_vin_in_text(response.text[:200])
         _LOGGER.error(
             "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
             "BMW's daily quota (typically 500 calls/day) has been reached. "
             "The limit resets at midnight UTC. Please wait and try again later. "
             "Error details: %s",
             entry_id,
-            response.text[:200],
+            error_excerpt,
         )
         return []
 
     if not response.is_success:
+        error_excerpt = redact_vin_in_text(response.text[:200])
         _LOGGER.warning(
             "Bootstrap mapping request failed for entry %s (status=%s): %s",
             entry_id,
             response.status,
-            response.text[:200],
+            error_excerpt,
         )
         return []
 
     try:
         payload = json.loads(response.text)
     except json.JSONDecodeError:
+        error_excerpt = redact_vin_in_text(response.text[:200])
         _LOGGER.warning(
             "Bootstrap mapping response malformed for entry %s: %s",
             entry_id,
-            response.text[:200],
+            error_excerpt,
         )
         return []
 
@@ -251,6 +255,7 @@ async def async_seed_telematic_data(
     params = {"containerId": container_id}
 
     for vin in vins:
+        redacted_vin = redact_vin(vin)
         if coordinator.data.get(vin):
             continue
 
@@ -260,7 +265,7 @@ async def async_seed_telematic_data(
             except CardataQuotaError as err:
                 _LOGGER.warning(
                     "Bootstrap telematic request skipped for %s: %s",
-                    vin,
+                    redacted_vin,
                     err,
                 )
                 break
@@ -273,13 +278,13 @@ async def async_seed_telematic_data(
             url,
             headers=headers,
             params=params,
-            context=f"Bootstrap telematic request for {vin}",
+            context=f"Bootstrap telematic request for {redacted_vin}",
         )
 
         if error:
             _LOGGER.warning(
                 "Bootstrap telematic request errored for %s: %s",
-                vin,
+                redacted_vin,
                 error,
             )
             continue
@@ -287,37 +292,40 @@ async def async_seed_telematic_data(
         if response is None:
             _LOGGER.debug(
                 "Bootstrap telematic request failed for %s: no response",
-                vin,
+                redacted_vin,
             )
             continue
 
         if response.is_rate_limited:
+            error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.error(
                 "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
                 "BMW's daily quota (typically 500 calls/day) has been reached. "
                 "The limit resets at midnight UTC. Skipping remaining vehicles. "
                 "Error details: %s",
-                vin,
-                response.text[:200],
+                redacted_vin,
+                error_excerpt,
             )
             break  # Stop trying other VINs if we hit rate limit
 
         if not response.is_success:
+            error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.debug(
                 "Bootstrap telematic request failed for %s (status=%s): %s",
-                vin,
+                redacted_vin,
                 response.status,
-                response.text[:200],
+                error_excerpt,
             )
             continue
 
         try:
             payload = json.loads(response.text)
         except json.JSONDecodeError:
+            error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.debug(
                 "Bootstrap telematic payload invalid for %s: %s",
-                vin,
-                response.text[:200],
+                redacted_vin,
+                error_excerpt,
             )
             continue
 

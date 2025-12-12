@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .debug import debug_enabled
+from .utils import redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -315,7 +316,7 @@ class CardataStreamManager:
             if topic:
                 result = client.subscribe(topic)
                 if debug_enabled():
-                    _LOGGER.debug("Subscribed to %s result=%s", topic, result)
+                    _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
             if self._reauth_notified:
                 self._reauth_notified = False
                 self._awaiting_new_credentials = False
@@ -367,7 +368,11 @@ class CardataStreamManager:
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
         payload = msg.payload.decode(errors="ignore")
         if debug_enabled():
-            _LOGGER.debug("BMW MQTT message on %s: %s", msg.topic, payload)
+            _LOGGER.debug(
+                "BMW MQTT message on %s: %s",
+                redact_vin_in_text(msg.topic),
+                redact_vin_payload(payload),
+            )
         if not self._message_callback:
             return
         try:

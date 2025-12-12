@@ -17,6 +17,7 @@ from .const import (
     HV_BATTERY_DESCRIPTORS,
 )
 from .debug import debug_enabled
+from .utils import redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -311,8 +312,9 @@ class CardataContainerManager:
                 if response.status == 204:
                     return {}
                 text = await response.text()
+                safe_text = redact_vin_in_text(text.strip())
                 raise CardataContainerError(
-                    f"HTTP {response.status}: {text.strip() or 'no response body'}",
+                    f"HTTP {response.status}: {safe_text or 'no response body'}",
                     status=response.status,
                 )
         except aiohttp.ClientError as err:

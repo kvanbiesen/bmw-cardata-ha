@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_registry import async_entries_for_config_entry
 from homeassistant.util import slugify
 
 from .descriptor_titles import DESCRIPTOR_TITLES
+from .utils import redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,12 +78,13 @@ async def async_migrate_entity_ids(
     planned: List[Dict[str, Any]] = []
 
     for ent in entries:
+        redacted_entity_id = redact_vin_in_text(ent.entity_id)
         if ent.domain not in _ALLOWED_DOMAINS:
             continue
 
         unique = ent.unique_id or ""
         if "_" not in unique:
-            _LOGGER.debug("Skipping %s: unique_id missing expected '_'", ent.entity_id)
+            _LOGGER.debug("Skipping %s: unique_id missing expected '_'", redacted_entity_id)
             planned.append({"entity": ent.entity_id, "action": "skip", "reason": "no_unique_pattern"})
             continue
         vin_part, descriptor = unique.split("_", 1)
@@ -97,7 +99,7 @@ async def async_migrate_entity_ids(
             coordinator.device_metadata.get(resolved_vin) or {}
         ).get("name")
         if not model:
-            _LOGGER.debug("Skipping %s: no model/name available for VIN %s", ent.entity_id, resolved_vin)
+            _LOGGER.debug("Skipping %s: no model/name available for VIN %s", redacted_entity_id, redact_vin(resolved_vin))
             planned.append({"entity": ent.entity_id, "action": "skip", "reason": "no_model"})
             continue
 
@@ -125,7 +127,8 @@ async def async_migrate_entity_ids(
 
         # If already equals desired target, nothing to do
         if ent.entity_id == new_entity_id:
-            _LOGGER.debug("Skipping %s: already equals target %s", ent.entity_id, new_entity_id)
+            safe_new_entity_id = redact_vin_in_text(new_entity_id)
+            _LOGGER.debug("Skipping %s: already equals target %s", redacted_entity_id, safe_new_entity_id)
             planned.append({"entity": ent.entity_id, "action": "skip", "reason": "already_target"})
             continue
 
@@ -146,7 +149,7 @@ async def async_migrate_entity_ids(
         if not safe_to_migrate:
             _LOGGER.debug(
                 "Skipping migration for %s: heuristic no match (obj='%s' stripped='%s')",
-                ent.entity_id,
+                redacted_entity_id,
                 current_obj,
                 stripped_obj,
             )
@@ -156,17 +159,19 @@ async def async_migrate_entity_ids(
         # If target exists and is not this entry, skip (collision)
         existing = entity_registry.async_get(new_entity_id)
         if existing is not None and existing.entity_id != ent.entity_id:
-            _LOGGER.warning("Cannot migrate %s -> %s because target already exists", ent.entity_id, new_entity_id)
+            safe_new_entity_id = redact_vin_in_text(new_entity_id)
+            _LOGGER.warning("Cannot migrate %s -> %s because target already exists", redacted_entity_id, safe_new_entity_id)
             planned.append({"entity": ent.entity_id, "action": "collision", "target": new_entity_id})
             continue
 
+        safe_new_entity_id = redact_vin_in_text(new_entity_id)
         planned.append({"entity": ent.entity_id, "action": "rename", "target": new_entity_id, "force": force})
         if not dry_run:
             try:
                 entity_registry.async_update_entity(ent.entity_id, new_entity_id=new_entity_id)
-                _LOGGER.info("Migrated entity_id %s -> %s", ent.entity_id, new_entity_id)
+                _LOGGER.info("Migrated entity_id %s -> %s", redacted_entity_id, safe_new_entity_id)
             except Exception as err:
-                _LOGGER.exception("Failed migrating %s -> %s: %s", ent.entity_id, new_entity_id, err)
+                _LOGGER.exception("Failed migrating %s -> %s: %s", redacted_entity_id, safe_new_entity_id, redact_vin_in_text(str(err)))
                 planned[-1]["error"] = str(err)
 
     return planned

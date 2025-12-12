@@ -32,6 +32,7 @@ from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
+from .utils import redact_vin
 
 if TYPE_CHECKING:
     pass
@@ -77,7 +78,7 @@ async def async_setup_entry(
         tracker = CardataDeviceTracker(coordinator, vin)
         trackers[vin] = tracker
         async_add_entities([tracker])
-        _LOGGER.debug("Created device tracker for VIN: %s", vin)
+        _LOGGER.debug("Created device tracker for VIN: %s", redact_vin(vin))
 
     # Create trackers for all known VINs
     for vin in coordinator.data.keys():
@@ -117,6 +118,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         """Initialize the device tracker."""
         super().__init__(coordinator, vin, "device_tracker")
+        self._redacted_vin = redact_vin(vin)
         # Don't override unique_id - let parent class set it properly
         # unique_id is already set in CardataEntity.__init__ as: f"{vin}_device_tracker"
         
@@ -157,7 +159,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     self._current_lon = float(lon)
                     _LOGGER.debug(
                         "Restored last known location for %s: %.6f, %.6f",
-                        self._vin,
+                        self._redacted_vin,
                         self._current_lat,
                         self._current_lon,
                     )
@@ -181,7 +183,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 self._current_lon = initial_lon
                 _LOGGER.debug(
                     "Initialized location from coordinator for %s: %.6f, %.6f",
-                    self._vin,
+                    self._redacted_vin,
                     self._current_lat,
                     self._current_lon,
                 )
@@ -240,6 +242,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         lat_time = self._last_lat_time
         lon_time = self._last_lon_time
         now = time.monotonic()
+        redacted_vin = self._redacted_vin
 
         # Wait until both coordinates exist
         if lat is None or lon is None:
@@ -254,7 +257,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if lat_age > self._MAX_STALE_TIME and lon_age > self._MAX_STALE_TIME:
             _LOGGER.debug(
                 "Discarding stale coordinates for %s (lat age: %.1fs, lon age: %.1fs)",
-                self._vin,
+                redacted_vin,
                 lat_age,
                 lon_age
             )
@@ -264,7 +267,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if time_diff > self._PAIR_WINDOW:
             _LOGGER.debug(
                 "Coordinates too far apart for %s (Δt=%.1fs > %.1fs window) - waiting for pair",
-                self._vin,
+                redacted_vin,
                 time_diff,
                 self._PAIR_WINDOW
             )
@@ -282,7 +285,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon_changed = abs(lon - self._current_lon) > self._COORD_PRECISION
         
             if not lat_changed and not lon_changed:
-                _LOGGER.debug("Ignoring update for %s - no movement detected", self._vin)
+                _LOGGER.debug("Ignoring update for %s - no movement detected", redacted_vin)
                 return
     
         # Apply movement threshold check
@@ -296,7 +299,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             if distance < self._MIN_MOVEMENT_DISTANCE:
                 _LOGGER.debug(
                     "Ignoring update for %s - movement too small (%.1fm < %dm threshold)",
-                    self._vin,
+                    redacted_vin,
                     distance,
                     self._MIN_MOVEMENT_DISTANCE
                 )
@@ -304,6 +307,22 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         
             update_reason = f"paired update (Δt={time_diff:.1f}s, moved {distance:.1f}m)"
         
+            # Apply smoothing to reduce GPS jitter (optional)
+            if self._SMOOTHING_FACTOR > 0:
+                smoothed_lat = (1 - self._SMOOTHING_FACTOR) * final_lat + self._SMOOTHING_FACTOR * self._current_lat
+                smoothed_lon = (1 - self._SMOOTHING_FACTOR) * final_lon + self._SMOOTHING_FACTOR * self._current_lon
+            
+                _LOGGER.debug(
+                    "Applying smoothing for %s (factor=%.1f): raw=(%.6f, %.6f) -> smoothed=(%.6f, %.6f)",
+                    redacted_vin,
+                    self._SMOOTHING_FACTOR,
+                    final_lat, final_lon,
+                    smoothed_lat, smoothed_lon
+                )
+            
+                final_lat = smoothed_lat
+                final_lon = smoothed_lon
+                update_reason = f"{update_reason}, smoothed"
         else:
             update_reason = f"initial position (Δt={time_diff:.1f}s)"
     
@@ -337,7 +356,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self.schedule_update_ha_state()
         _LOGGER.debug(
             "Location updated for %s (%s): lat=%.6f lon=%.6f",
-            self._vin,
+            self._redacted_vin,
             reason,
             lat,
             lon,
@@ -355,7 +374,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     if not (-90 <= value <= 90):
                         _LOGGER.warning(
                             "Invalid latitude for %s: %.6f (must be -90 to 90)",
-                            self._vin,
+                            self._redacted_vin,
                             value
                         )
                         return None
@@ -363,7 +382,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     if not (-180 <= value <= 180):
                         _LOGGER.warning(
                             "Invalid longitude for %s: %.6f (must be -180 to 180)",
-                            self._vin,
+                            self._redacted_vin,
                             value
                         )
                         return None
@@ -372,7 +391,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 if value == 0.0:
                     _LOGGER.debug(
                         "Rejecting zero coordinate for %s (likely invalid GPS)",
-                        self._vin
+                        self._redacted_vin
                     )
                     return None
                 
@@ -381,7 +400,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             except (ValueError, TypeError):
                 _LOGGER.debug(
                     "Unable to parse coordinate for %s from descriptor %s: %s",
-                    self._vin,
+                    self._redacted_vin,
                     descriptor,
                     state.value,
                 )

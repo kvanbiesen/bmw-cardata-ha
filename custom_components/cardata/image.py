@@ -15,6 +15,7 @@ from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
+from .utils import redact_vin
 
 if TYPE_CHECKING:
     pass
@@ -53,7 +54,7 @@ async def async_setup_entry(
         entity = CardataImage(coordinator, vin)
         entities[vin] = entity
         async_add_entities([entity])
-        _LOGGER.debug("Created image entity for VIN: %s", vin)
+        _LOGGER.debug("Created image entity for VIN: %s", redact_vin(vin))
 
     initial_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
     for vin in initial_vins:
@@ -109,7 +110,7 @@ class CardataImage(CardataEntity, ImageEntity):
         if self._image_data:
             _LOGGER.debug(
                 "Vehicle image loaded for %s (%d bytes)",
-                self._vin,
+                redact_vin(self._vin),
                 len(self._image_data)
             )
     @property
