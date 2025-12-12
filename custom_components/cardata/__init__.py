@@ -42,6 +42,7 @@ from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .container import CardataContainerManager
 from .migrations import async_migrate_entity_ids
+from .utils import redact_vin, redact_vins
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -105,17 +106,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     coordinator.names[vin] = vehicle_name
                     _LOGGER.debug(
                         "Pre-populated coordinator.names for VIN %s with: %s (from restored metadata)",
-                        vin,
+                        redact_vin(vin),
                         vehicle_name,
                     )
         
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
+        redacted_names = redact_vins(coordinator.names.keys()) if has_metadata else "empty"
         _LOGGER.debug(
             "Metadata restored for entry %s: %s (names: %s)",
             entry.entry_id,
             "yes" if has_metadata else "no",
-            list(coordinator.names.keys()) if has_metadata else "empty",
+            redacted_names,
         )
 
         # Set up quota manager

@@ -15,6 +15,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
+from .utils import redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -194,7 +195,8 @@ class CardataEntity(RestoreEntity):
         try:
             self._update_name(write_state=True)
         except Exception:
-            _LOGGER.exception("Failed to update name for entity %s", getattr(self, "entity_id", "<unknown>"))
+            entity_id = getattr(self, "entity_id", "<unknown>")
+            _LOGGER.exception("Failed to update name for entity %s", redact_vin_in_text(entity_id))
 
     async def async_will_remove_from_hass(self) -> None:
         if self._name_unsub:

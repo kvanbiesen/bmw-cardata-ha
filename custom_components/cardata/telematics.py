@@ -20,6 +20,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
+from .utils import redact_vin, redact_vin_payload, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -118,13 +119,14 @@ async def async_perform_telematic_fetch(
     auth_failure = False
 
     for vin in vins:
+        redacted_vin = redact_vin(vin)
         if quota:
             try:
                 await quota.async_claim()
             except CardataQuotaError as err:
                 _LOGGER.warning(
                     "Cardata fetch_telematic_data blocked for %s: %s",
-                    vin,
+                    redacted_vin,
                     err,
                 )
                 break  # Quota exhausted, stop trying
@@ -138,13 +140,13 @@ async def async_perform_telematic_fetch(
             url,
             headers=headers,
             params=params,
-            context=f"Telematic data fetch for {vin}",
+            context=f"Telematic data fetch for {redacted_vin}",
         )
 
         if error:
             _LOGGER.error(
                 "Cardata fetch_telematic_data: network error for %s: %s",
-                vin,
+                redacted_vin,
                 error,
             )
             continue
@@ -152,7 +154,7 @@ async def async_perform_telematic_fetch(
         if response is None:
             _LOGGER.error(
                 "Cardata fetch_telematic_data: no response for %s",
-                vin,
+                redacted_vin,
             )
             continue
 
@@ -161,7 +163,7 @@ async def async_perform_telematic_fetch(
             _LOGGER.error(
                 "Cardata fetch_telematic_data: auth error (%s) for %s - token may be expired",
                 response.status,
-                vin,
+                redacted_vin,
             )
             auth_failure = True
             break  # Stop trying other VINs, auth is broken
@@ -170,16 +172,17 @@ async def async_perform_telematic_fetch(
         if response.is_rate_limited:
             _LOGGER.warning(
                 "Cardata fetch_telematic_data: rate limited for %s",
-                vin,
+                redacted_vin,
             )
             break  # Stop trying other VINs
 
         if not response.is_success:
+            error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.error(
                 "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
                 response.status,
-                vin,
-                response.text[:200],
+                redacted_vin,
+                error_excerpt,
             )
             continue
 
@@ -187,8 +190,9 @@ async def async_perform_telematic_fetch(
             payload = json.loads(response.text)
         except json.JSONDecodeError:
             payload = response.text
+        safe_payload = redact_vin_payload(payload)
 
-        _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
+        _LOGGER.info("Cardata telematic data for %s: %s", redacted_vin, safe_payload)
         telematic_payload = None
         if isinstance(payload, dict):
             telematic_payload = payload.get("telematicData") or payload.get("data")

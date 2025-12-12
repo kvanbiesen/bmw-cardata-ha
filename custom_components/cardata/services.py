@@ -27,6 +27,7 @@ from .const import (
     HV_BATTERY_CONTAINER_PURPOSE,
 )
 from .runtime import CardataRuntimeData
+from .utils import redact_vin, redact_vin_in_text, redact_vin_payload
 
 import homeassistant.helpers.entity_registry as er
 
@@ -193,18 +194,19 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
     try:
         async with runtime.session.get(url, headers=headers) as response:
             text = await response.text()
+            log_text = redact_vin_in_text(text)
             if response.status != 200:
                 _LOGGER.error(
                     "Cardata fetch_vehicle_mappings: request failed (status=%s): %s",
                     response.status,
-                    text,
+                    log_text,
                 )
                 return
             try:
                 payload = json.loads(text)
             except json.JSONDecodeError:
                 payload = text
-            _LOGGER.info("Cardata vehicle mappings: %s", payload)
+            _LOGGER.info("Cardata vehicle mappings: %s", redact_vin_payload(payload))
     except aiohttp.ClientError as err:
         _LOGGER.error("Cardata fetch_vehicle_mappings: network error: %s", err)
 
@@ -227,6 +229,7 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
             "Cardata fetch_basic_data: no VIN available; provide vin parameter"
         )
         return
+    redacted_vin = redact_vin(vin)
 
     try:
         from .auth import refresh_tokens_for_entry
@@ -264,18 +267,19 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
         try:
             await quota.async_claim()
         except CardataQuotaError as err:
-            _LOGGER.warning("Cardata fetch_basic_data blocked for %s: %s", vin, err)
+            _LOGGER.warning("Cardata fetch_basic_data blocked for %s: %s", redacted_vin, err)
             return
 
     try:
         async with runtime.session.get(url, headers=headers) as response:
             text = await response.text()
+            log_text = redact_vin_in_text(text)
             if response.status != 200:
                 _LOGGER.error(
                     "Cardata fetch_basic_data: request failed (status=%s) for %s: %s",
                     response.status,
-                    vin,
-                    text,
+                    redacted_vin,
+                    log_text,
                 )
                 return
             try:
@@ -283,7 +287,11 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
             except json.JSONDecodeError:
                 payload = text
 
-            _LOGGER.info("Cardata basic data for %s: %s", vin, payload)
+            _LOGGER.info(
+                "Cardata basic data for %s: %s",
+                redacted_vin,
+                redact_vin_payload(payload),
+            )
 
             if isinstance(payload, dict):
                 metadata = await runtime.coordinator.async_apply_basic_data(vin, payload)
@@ -308,7 +316,7 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
                         serial_number=metadata.get("serial_number"),
                     )
     except aiohttp.ClientError as err:
-        _LOGGER.error("Cardata fetch_basic_data: network error for %s: %s", vin, err)
+        _LOGGER.error("Cardata fetch_basic_data: network error for %s: %s", redacted_vin, err)
 
 
 async def async_handle_migrate(call: ServiceCall) -> None:
@@ -582,4 +590,3 @@ async def async_fetch_vehicle_images_service(call) -> None:
         await async_fetch_and_store_vehicle_images(
             hass, entry, headers, vins, quota, session
         )
-

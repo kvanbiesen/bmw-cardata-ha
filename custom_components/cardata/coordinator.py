@@ -16,6 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, DIAGNOSTIC_LOG_INTERVAL
 from .debug import debug_enabled
+from .utils import redact_vin
 from .units import normalize_unit
 
 _LOGGER = logging.getLogger(__name__)
@@ -331,6 +332,7 @@ class CardataCoordinator:
         self, payload: Dict[str, Any], vin: str, data: Dict[str, Any]
     ) -> None:
         """Handle message while holding the lock."""
+        redacted_vin = redact_vin(vin)
         vehicle_state = self.data.setdefault(vin, {})
         new_binary: list[str] = []
         new_sensor: list[str] = []
@@ -338,7 +340,7 @@ class CardataCoordinator:
         self.last_message_at = datetime.now(timezone.utc)
 
         if debug_enabled():
-            _LOGGER.debug("Processing message for VIN %s: %s", vin, list(data.keys()))
+            _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
 
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         testing_tracking = self._get_testing_tracking(vin)
@@ -538,7 +540,7 @@ class CardataCoordinator:
             _LOGGER.debug("🔥 Timer firing! Pending items: %d", pending_count)
             if pending_count > 0:
                 for vin, descriptors in self._pending_updates.items():
-                    _LOGGER.debug("   VIN %s: %s", vin[-4:], list(descriptors)[:5])
+                    _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
         
         if debug_enabled():
             total_updates = sum(len(descriptors) for descriptors in self._pending_updates.values())

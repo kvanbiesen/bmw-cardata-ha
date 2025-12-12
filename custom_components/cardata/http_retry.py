@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 import aiohttp
 
 from .const import HTTP_TIMEOUT
+from .utils import redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ async def async_request_with_retry(
 
             async with session.request(method, url, **request_kwargs) as response:
                 text = await response.text()
+                log_excerpt = redact_vin_in_text(text[:200]) if text else text
                 http_response = HttpResponse(
                     status=response.status,
                     text=text,
@@ -149,7 +151,7 @@ async def async_request_with_retry(
                     _LOGGER.warning(
                         "%s rate limited (429): %s",
                         context,
-                        text[:200],
+                        log_excerpt,
                     )
                     return http_response, None
 
@@ -159,7 +161,7 @@ async def async_request_with_retry(
                         "%s auth error (%d): %s",
                         context,
                         response.status,
-                        text[:200],
+                        log_excerpt,
                     )
                     return http_response, None
 
@@ -169,7 +171,7 @@ async def async_request_with_retry(
                         "%s failed with status %d: %s",
                         context,
                         response.status,
-                        text[:200],
+                        log_excerpt,
                     )
                     return http_response, None
 
