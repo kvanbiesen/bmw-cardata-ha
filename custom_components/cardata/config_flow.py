@@ -40,7 +40,7 @@ def _validate_client_id(client_id: str) -> bool:
     if len(client_id) < 8 or len(client_id) > 64:
         return False
     # Character whitelist: uppercase hex digits and hyphens only
-    allowed = set(string.hexdigits.upper() + "-")
+    allowed = set(string.hexdigits + "-")
     return all(c in allowed for c in client_id)
 
 
@@ -118,9 +118,19 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
         assert self._device_data is not None
         assert self._code_verifier is not None
 
+        verification_url = self._device_data.get("verification_uri_complete")
+
+        if not verification_url:
+            base_url = self._device_data.get("verification_uri")
+            user_code = self._device_data.get("user_code", "")
+            if base_url and user_code:
+                # Append user code automatically
+                verification_url = f"{base_url}?user_code={user_code}"
+            else:
+                verification_url = base_url  # Fallback
+
         placeholders = {
-            "verification_url": self._device_data.get("verification_uri_complete")
-            or self._device_data.get("verification_uri"),
+            "verification_url": verification_url,
             "user_code": self._device_data.get("user_code", ""),
         }
 

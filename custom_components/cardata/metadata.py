@@ -317,6 +317,9 @@ async def async_restore_vehicle_images(
             
             coordinator.device_metadata[vin]["vehicle_image"] = image_bytes
             coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_file)
+
+            async_dispatcher_send(hass, coordinator.signal_new_image, vin)
+
             restored_count += 1
             
             _LOGGER.debug(

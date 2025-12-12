@@ -862,25 +862,6 @@ async def async_setup_entry(
     entry.async_on_unload(
         async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
     )
-
-    # add all metadata into metadata to reduce bloat
-    metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
-    for vin in coordinator.data.keys():
-        unique_id = f"{vin}_diagnostics_vehicle_metadata"
-        
-        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-        if entity_id:
-            entity_entry = entity_registry.async_get(entity_id)
-            if entity_entry and entity_entry.disabled_by is not None:
-                continue
-            existing_state = hass.states.get(entity_id)
-            if existing_state and not existing_state.attributes.get("restored", False):
-                continue
-        
-        metadata_entities.append(CardataVehicleMetadataSensor(coordinator, vin))
-
-    if metadata_entities:
-        async_add_entities(metadata_entities, True)
     
     # Add diagnostic sensors
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
