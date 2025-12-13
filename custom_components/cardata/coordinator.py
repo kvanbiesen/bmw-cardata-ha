@@ -504,7 +504,7 @@ class CardataCoordinator:
                     self._pending_updates[vin].add(descriptor)
                     if debug_enabled():
                         _LOGGER.debug(
-                            "✅ Added to pending: %s (total pending: %d)",
+                            "Added to pending: %s (total pending: %d)",
                             descriptor.split('.')[-1],  # Just the last part
                             len(self._pending_updates.get(vin, set()))
                         )
@@ -574,7 +574,7 @@ class CardataCoordinator:
             self._update_debounce_handle = None
         if debug_enabled():
             pending_count = sum(len(d) for d in self._pending_updates.values())
-            _LOGGER.debug("🔥 Timer firing! Pending items: %d", pending_count)
+            _LOGGER.debug("Debounce timer fired, pending items: %d", pending_count)
             if pending_count > 0:
                 for vin, descriptors in self._pending_updates.items():
                     _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
