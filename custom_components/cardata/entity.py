@@ -45,6 +45,11 @@ class CardataEntity(RestoreEntity):
         self._attr_available = True
         self._name_unsub: Optional[Callable[[], None]] = None
 
+    def _resolve_vin(self) -> str:
+        """Resolve VIN alias if coordinator provides resolver."""
+        resolver = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)
+        return resolver(self._vin)
+
     def _format_name(self) -> str:
         """Return a human-friendly title for a descriptor.
 
@@ -72,8 +77,7 @@ class CardataEntity(RestoreEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        # Resolve VIN alias if coordinator provides resolver
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin, {})
         name = metadata.get("name") or self._coordinator.names.get(resolved_vin, resolved_vin)
         manufacturer = metadata.get("manufacturer", "bmw")
@@ -98,8 +102,7 @@ class CardataEntity(RestoreEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        # Use resolved vin for attribute lookups
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         state = self._coordinator.get_state(resolved_vin, self._descriptor)
         if not state:
             return {}
@@ -116,7 +119,7 @@ class CardataEntity(RestoreEntity):
         return self._vin
 
     def _get_vehicle_name(self) -> Optional[str]:
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin)
         if metadata and metadata.get("name"):
             return metadata["name"]
@@ -206,7 +209,7 @@ class CardataEntity(RestoreEntity):
 
     def _handle_vehicle_name(self, vin: str, name: str) -> None:
         # Coordinator sends canonical VIN; resolve our vin and compare
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         if vin != resolved_vin:
             return
         # Update name (do not force writing to registry again)

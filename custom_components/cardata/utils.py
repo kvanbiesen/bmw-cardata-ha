@@ -5,6 +5,19 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+# Valid VIN pattern: 17 alphanumeric chars (excludes I, O, Q to avoid confusion)
+_VALID_VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$", re.IGNORECASE)
+
+
+def is_valid_vin(vin: str | None) -> bool:
+    """Check if a VIN has valid format (17 alphanumeric chars, no I/O/Q).
+
+    Used for security validation before using VIN in file paths.
+    """
+    if not isinstance(vin, str):
+        return False
+    return bool(_VALID_VIN_PATTERN.match(vin))
+
 
 def redact_vin(vin: str | None) -> str:
     """Return a redacted VIN suitable for logs (first 3 + last 4 characters)."""

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 import logging
 
 
@@ -32,32 +32,13 @@ from homeassistant.helpers.entity_registry import async_entries_for_config_entry
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, WINDOW_DESCRIPTORS, BATTERY_DESCRIPTORS
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .quota import QuotaManager
 
 _LOGGER = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    pass
-
-WINDOW_DESCRIPTORS = (
-    "vehicle.cabin.window.row1.driver.status",
-    "vehicle.cabin.window.row1.passenger.status",
-    "vehicle.cabin.window.row2.driver.status",
-    "vehicle.cabin.window.row2.passenger.status",
-    "vehicle.body.trunk.window.isOpen",
-)
-
-        
-BATTERY_DESCRIPTORS = {
-    "vehicle.drivetrain.batteryManagement.header",
-    "vehicle.drivetrain.electricEngine.charging.level",
-    "vehicle.powertrain.electric.battery.stateOfCharge.target",
-    "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
-}
 
 
 # Build unit-to-device-class mapping
@@ -378,7 +359,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         self._entry_id = entry_id
         self._sensor_type = sensor_type
         self._quota = quota_manager
-        self._unsub = None
+        self._unsubscribe = None
 
         # Configure based on sensor type
         if sensor_type == "last_message":
@@ -444,7 +425,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
                 else:
                     self._attr_native_value = last_state.state
 
-        self._unsub = async_dispatcher_connect(
+        self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_diagnostics,
             self._handle_update,
@@ -453,9 +434,9 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""
-        if self._unsub:
-            self._unsub()
-            self._unsub = None
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
 
     def _handle_update(self) -> None:
         """Handle updates from coordinator."""

@@ -24,7 +24,7 @@ from .const import (
 from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
-from .utils import redact_vin, redact_vin_in_text
+from .utils import is_valid_vin, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,11 +43,16 @@ def get_images_directory(hass: HomeAssistant) -> Path:
     return images_dir
 
 
-def get_image_path(hass: HomeAssistant, vin: str) -> Path:
+def get_image_path(hass: HomeAssistant, vin: str) -> Path | None:
     """Get the file path for a specific vehicle image.
-    
-    Returns: /config/media/cardata/{vin}.png
+
+    Returns: /config/media/cardata/{vin}.png, or None if VIN is invalid.
+
+    Security: Validates VIN format to prevent path traversal attacks.
     """
+    if not is_valid_vin(vin):
+        _LOGGER.warning("Invalid VIN format rejected: %s", redact_vin(vin))
+        return None
     return get_images_directory(hass) / f"{vin}.png"
 
 
@@ -165,7 +170,11 @@ async def async_fetch_and_store_vehicle_images(
     for vin in vins:
         redacted_vin = redact_vin(vin)
         image_path = get_image_path(hass, vin)
-        
+
+        # Skip if VIN validation failed
+        if image_path is None:
+            continue
+
         # CRITICAL: Check if file already exists
         if image_path.exists():
             file_size = image_path.stat().st_size

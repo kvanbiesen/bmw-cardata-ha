@@ -14,16 +14,17 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, DIAGNOSTIC_LOG_INTERVAL
+from .const import (
+    DOMAIN,
+    DIAGNOSTIC_LOG_INTERVAL,
+    LOCATION_LATITUDE_DESCRIPTOR,
+    LOCATION_LONGITUDE_DESCRIPTOR,
+)
 from .debug import debug_enabled
 from .utils import redact_vin
 from .units import normalize_unit
 
 _LOGGER = logging.getLogger(__name__)
-
-# Location descriptors for immediate updates (no debouncing)
-LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
-LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
 
 
 @dataclass
@@ -237,6 +238,124 @@ class CardataCoordinator:
             self._adjust_power_for_testing(vin, raw_power), timestamp
         )
 
+    def _update_soc_tracking_for_descriptor(
+        self,
+        vin: str,
+        descriptor: str,
+        value: Any,
+        unit: Optional[str],
+        parsed_ts: Optional[datetime],
+    ) -> bool:
+        """Update SOC tracking for a descriptor. Returns True if tracking was updated."""
+        tracking = self._soc_tracking.setdefault(vin, SocTracking())
+        testing_tracking = self._get_testing_tracking(vin)
+
+        # Handle None values
+        if value is None:
+            if descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
+                tracking.update_target_soc(None, parsed_ts)
+                testing_tracking.update_target_soc(None, parsed_ts)
+                return True
+            elif descriptor == "vehicle.vehicle.avgAuxPower":
+                self._avg_aux_power_w.pop(vin, None)
+                self._update_testing_power(vin, parsed_ts)
+                return True
+            elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
+                self._set_direct_power(vin, None, parsed_ts)
+                return True
+            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
+                self._set_ac_voltage(vin, None, parsed_ts)
+                return True
+            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
+                self._set_ac_current(vin, None, parsed_ts)
+                return True
+            elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
+                self._set_ac_phase(vin, None, parsed_ts)
+                return True
+            return False
+
+        # Handle actual values
+        if descriptor == "vehicle.drivetrain.batteryManagement.header":
+            try:
+                percent = float(value)
+            except (TypeError, ValueError):
+                return False
+            tracking.update_actual_soc(percent, parsed_ts)
+            testing_tracking.update_actual_soc(percent, parsed_ts)
+            return True
+        elif descriptor == "vehicle.drivetrain.batteryManagement.maxEnergy":
+            try:
+                max_energy = float(value)
+            except (TypeError, ValueError):
+                return False
+            tracking.update_max_energy(max_energy)
+            testing_tracking.update_max_energy(max_energy)
+            return True
+        elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
+            try:
+                power_w = float(value)
+            except (TypeError, ValueError):
+                self._set_direct_power(vin, None, parsed_ts)
+            else:
+                self._set_direct_power(vin, power_w, parsed_ts)
+            return True
+        elif descriptor == "vehicle.drivetrain.electricEngine.charging.status":
+            if isinstance(value, str):
+                tracking.update_status(value)
+                testing_tracking.update_status(value)
+                return True
+            return False
+        elif descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
+            try:
+                target = float(value)
+            except (TypeError, ValueError):
+                tracking.update_target_soc(None, parsed_ts)
+                testing_tracking.update_target_soc(None, parsed_ts)
+            else:
+                tracking.update_target_soc(target, parsed_ts)
+                testing_tracking.update_target_soc(target, parsed_ts)
+            return True
+        elif descriptor == "vehicle.vehicle.avgAuxPower":
+            aux_w: Optional[float] = None
+            try:
+                aux_value = float(value)
+            except (TypeError, ValueError):
+                pass
+            else:
+                if isinstance(unit, str) and unit.lower() == "w":
+                    aux_w = aux_value
+                else:
+                    aux_w = aux_value * 1000.0
+            if aux_w is not None:
+                aux_w = max(aux_w, 0.0)
+            if aux_w is None:
+                self._avg_aux_power_w.pop(vin, None)
+            else:
+                self._avg_aux_power_w[vin] = aux_w
+            self._update_testing_power(vin, parsed_ts)
+            return True
+        elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
+            try:
+                voltage_v = float(value)
+            except (TypeError, ValueError):
+                self._set_ac_voltage(vin, None, parsed_ts)
+            else:
+                self._set_ac_voltage(vin, voltage_v, parsed_ts)
+            return True
+        elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
+            try:
+                current_a = float(value)
+            except (TypeError, ValueError):
+                self._set_ac_current(vin, None, parsed_ts)
+            else:
+                self._set_ac_current(vin, current_a, parsed_ts)
+            return True
+        elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
+            self._set_ac_phase(vin, value, parsed_ts)
+            return True
+
+        return False
+
     def _set_direct_power(
         self, vin: str, power_w: Optional[float], timestamp: Optional[datetime]
     ) -> None:
@@ -342,8 +461,6 @@ class CardataCoordinator:
         if debug_enabled():
             _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
 
-        tracking = self._soc_tracking.setdefault(vin, SocTracking())
-        testing_tracking = self._get_testing_tracking(vin)
         now = datetime.now(timezone.utc)
 
         for descriptor, descriptor_payload in data.items():
@@ -354,41 +471,28 @@ class CardataCoordinator:
             timestamp = descriptor_payload.get("timestamp")
             parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
             if value is None:
-                if descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
-                    tracking.update_target_soc(None, parsed_ts)
-                    testing_tracking.update_target_soc(None, parsed_ts)
-                elif descriptor == "vehicle.vehicle.avgAuxPower":
-                    self._avg_aux_power_w.pop(vin, None)
-                    self._update_testing_power(vin, parsed_ts)
-                elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                    self._set_direct_power(vin, None, parsed_ts)
-                elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
-                    self._set_ac_voltage(vin, None, parsed_ts)
-                elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
-                    self._set_ac_current(vin, None, parsed_ts)
-                elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
-                    self._set_ac_phase(vin, None, parsed_ts)
+                self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
                 continue
             is_new = descriptor not in vehicle_state
-            
+
             # Check if value actually changed significantly (but always update if new)
             # GPS coordinates ALWAYS update - bypass significance check
             if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
                 value_changed = True
             else:
                 value_changed = is_new or self._is_significant_change(vin, descriptor, value)
-            
+
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
-            
+
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
-            
+
             if is_new:
                 if isinstance(value, bool):
                     new_binary.append(descriptor)
                 else:
                     new_sensor.append(descriptor)
-            
+
             if value_changed:
                 # GPS coordinates: send immediately without debouncing!
                 if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
@@ -400,80 +504,13 @@ class CardataCoordinator:
                     self._pending_updates[vin].add(descriptor)
                     if debug_enabled():
                         _LOGGER.debug(
-                            "✅ Added to pending: %s (total pending: %d)",
+                            "Added to pending: %s (total pending: %d)",
                             descriptor.split('.')[-1],  # Just the last part
                             len(self._pending_updates.get(vin, set()))
                         )
-            if descriptor == "vehicle.drivetrain.batteryManagement.header":
-                try:
-                    percent = float(value)
-                except (TypeError, ValueError):
-                    pass
-                else:
-                    tracking.update_actual_soc(percent, parsed_ts)
-                    testing_tracking.update_actual_soc(percent, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.batteryManagement.maxEnergy":
-                try:
-                    max_energy = float(value)
-                except (TypeError, ValueError):
-                    pass
-                else:
-                    tracking.update_max_energy(max_energy)
-                    testing_tracking.update_max_energy(max_energy)
-            elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                try:
-                    power_w = float(value)
-                except (TypeError, ValueError):
-                    self._set_direct_power(vin, None, parsed_ts)
-                else:
-                    self._set_direct_power(vin, power_w, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.status":
-                if isinstance(value, str):
-                    tracking.update_status(value)
-                    testing_tracking.update_status(value)
-            elif descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
-                try:
-                    target = float(value)
-                except (TypeError, ValueError):
-                    tracking.update_target_soc(None, parsed_ts)
-                    testing_tracking.update_target_soc(None, parsed_ts)
-                else:
-                    tracking.update_target_soc(target, parsed_ts)
-                    testing_tracking.update_target_soc(target, parsed_ts)
-            elif descriptor == "vehicle.vehicle.avgAuxPower":
-                aux_w: Optional[float] = None
-                try:
-                    aux_value = float(value)
-                except (TypeError, ValueError):
-                    pass
-                else:
-                    if isinstance(unit, str) and unit.lower() == "w":
-                        aux_w = aux_value
-                    else:
-                        aux_w = aux_value * 1000.0
-                if aux_w is not None:
-                    aux_w = max(aux_w, 0.0)
-                if aux_w is None:
-                    self._avg_aux_power_w.pop(vin, None)
-                else:
-                    self._avg_aux_power_w[vin] = aux_w
-                self._update_testing_power(vin, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
-                try:
-                    voltage_v = float(value)
-                except (TypeError, ValueError):
-                    self._set_ac_voltage(vin, None, parsed_ts)
-                else:
-                    self._set_ac_voltage(vin, voltage_v, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
-                try:
-                    current_a = float(value)
-                except (TypeError, ValueError):
-                    self._set_ac_current(vin, None, parsed_ts)
-                else:
-                    self._set_ac_current(vin, current_a, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
-                self._set_ac_phase(vin, value, parsed_ts)
+
+            # Update SOC tracking for relevant descriptors
+            self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
 
         # Queue new entities for immediate notification
         if new_sensor:
@@ -537,7 +574,7 @@ class CardataCoordinator:
             self._update_debounce_handle = None
         if debug_enabled():
             pending_count = sum(len(d) for d in self._pending_updates.values())
-            _LOGGER.debug("🔥 Timer firing! Pending items: %d", pending_count)
+            _LOGGER.debug("Debounce timer fired, pending items: %d", pending_count)
             if pending_count > 0:
                 for vin, descriptors in self._pending_updates.items():
                     _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
@@ -734,24 +771,13 @@ class CardataCoordinator:
     ) -> None:
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
+
+        # Handle None values
         if value is None:
-            if descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
-                tracking = self._soc_tracking.setdefault(vin, SocTracking())
-                testing_tracking = self._get_testing_tracking(vin)
-                tracking.update_target_soc(None, parsed_ts)
-                testing_tracking.update_target_soc(None, parsed_ts)
-            elif descriptor == "vehicle.vehicle.avgAuxPower":
-                self._avg_aux_power_w.pop(vin, None)
-                self._update_testing_power(vin, parsed_ts)
-            elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                self._set_direct_power(vin, None, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
-                self._set_ac_voltage(vin, None, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
-                self._set_ac_current(vin, None, parsed_ts)
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
-                self._set_ac_phase(vin, None, parsed_ts)
+            self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
             return
+
+        # Store descriptor state
         vehicle_state = self.data.setdefault(vin, {})
         stored_value: Any = value
         if descriptor in {
@@ -770,101 +796,28 @@ class CardataCoordinator:
             unit=unit,
             timestamp=timestamp,
         )
-        tracking = self._soc_tracking.setdefault(vin, SocTracking())
-        testing_tracking = self._get_testing_tracking(vin)
 
-        updated = False
-        if descriptor == "vehicle.drivetrain.batteryManagement.header":
-            try:
-                percent = float(value)
-            except (TypeError, ValueError):
-                return
-            tracking.update_actual_soc(percent, parsed_ts)
-            testing_tracking.update_actual_soc(percent, parsed_ts)
-            updated = True
-        elif descriptor == "vehicle.drivetrain.batteryManagement.maxEnergy":
-            try:
-                max_energy = float(value)
-            except (TypeError, ValueError):
-                return
-            tracking.update_max_energy(max_energy)
-            testing_tracking.update_max_energy(max_energy)
-            updated = True
-        elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-            try:
-                power_w = float(value)
-            except (TypeError, ValueError):
-                self._set_direct_power(vin, None, parsed_ts)
-            else:
-                self._set_direct_power(vin, power_w, parsed_ts)
-            updated = True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.status":
-            if isinstance(value, str):
-                tracking.update_status(value)
-                testing_tracking.update_status(value)
-                updated = True
-        elif descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
-            try:
-                target = float(value)
-            except (TypeError, ValueError):
-                tracking.update_target_soc(None, parsed_ts)
-                testing_tracking.update_target_soc(None, parsed_ts)
-                updated = True
-            else:
-                tracking.update_target_soc(target, parsed_ts)
-                testing_tracking.update_target_soc(target, parsed_ts)
-                updated = True
-        elif descriptor == "vehicle.vehicle.avgAuxPower":
-            aux_w: Optional[float] = None
-            try:
-                aux_value = float(value)
-            except (TypeError, ValueError):
-                pass
-            else:
-                if isinstance(unit, str) and unit.lower() == "w":
-                    aux_w = aux_value
-                else:
-                    aux_w = aux_value * 1000.0
-            if aux_w is not None:
-                aux_w = max(aux_w, 0.0)
-            if aux_w is None:
-                self._avg_aux_power_w.pop(vin, None)
-            else:
-                self._avg_aux_power_w[vin] = aux_w
-            self._update_testing_power(vin, parsed_ts)
-            updated = True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
-            try:
-                voltage_v = float(value)
-            except (TypeError, ValueError):
-                self._set_ac_voltage(vin, None, parsed_ts)
-            else:
-                self._set_ac_voltage(vin, voltage_v, parsed_ts)
-            updated = True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
-            try:
-                current_a = float(value)
-            except (TypeError, ValueError):
-                self._set_ac_current(vin, None, parsed_ts)
-            else:
-                self._set_ac_current(vin, current_a, parsed_ts)
-            updated = True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
-            self._set_ac_phase(vin, value, parsed_ts)
-            updated = True
+        # Update SOC tracking
+        updated = self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
 
         if not updated:
             return
-        if tracking.estimated_percent is not None:
-            self._soc_estimate[vin] = round(tracking.estimated_percent, 2)
-        elif tracking.last_soc_percent is not None:
-            self._soc_estimate[vin] = round(tracking.last_soc_percent, 2)
-        if tracking.rate_per_hour not in (None, 0):
-            self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
-        else:
-            self._soc_rate.pop(vin, None)
 
-        if testing_tracking.estimated_percent is not None:
+        # Update SOC estimates from tracking state
+        tracking = self._soc_tracking.get(vin)
+        testing_tracking = self._testing_soc_tracking.get(vin)
+
+        if tracking:
+            if tracking.estimated_percent is not None:
+                self._soc_estimate[vin] = round(tracking.estimated_percent, 2)
+            elif tracking.last_soc_percent is not None:
+                self._soc_estimate[vin] = round(tracking.last_soc_percent, 2)
+            if tracking.rate_per_hour not in (None, 0):
+                self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
+            else:
+                self._soc_rate.pop(vin, None)
+
+        if testing_tracking and testing_tracking.estimated_percent is not None:
             self._testing_soc_estimate[vin] = round(
                 testing_tracking.estimated_percent, 2
             )
