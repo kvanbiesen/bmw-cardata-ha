@@ -108,9 +108,12 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     
     # Movement filtering
     _MIN_MOVEMENT_DISTANCE = 3  # meters - MORE SENSITIVE (was 5m)
-    
+
     # GPS precision
     _COORD_PRECISION = 0.000001  # degrees (~0.1 meter) - ignore smaller changes
+
+    # GPS smoothing (0 = disabled, 0.1-0.3 = light smoothing to reduce jitter)
+    _SMOOTHING_FACTOR = 0
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         """Initialize the device tracker."""
