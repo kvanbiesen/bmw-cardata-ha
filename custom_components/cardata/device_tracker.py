@@ -45,7 +45,6 @@ _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
 
-
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -112,7 +111,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     # GPS precision
     _COORD_PRECISION = 0.000001  # degrees (~0.1 meter) - ignore smaller changes
 
-
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         """Initialize the device tracker."""
         super().__init__(coordinator, vin, "device_tracker")
@@ -170,6 +168,22 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._coordinator.signal_update,
             self._handle_update,
         )
+
+        # Fetch initial coordinates from coordinator (may have arrived before we subscribed)
+        initial_lat = self._fetch_coordinate(LOCATION_LATITUDE_DESCRIPTOR)
+        initial_lon = self._fetch_coordinate(LOCATION_LONGITUDE_DESCRIPTOR)
+        if initial_lat is not None and initial_lon is not None:
+            # Only use coordinator data if we don't have restored state
+            if self._current_lat is None or self._current_lon is None:
+                self._current_lat = initial_lat
+                self._current_lon = initial_lon
+                _LOGGER.debug(
+                    "Initialized location from coordinator for %s: %.6f, %.6f",
+                    self._redacted_vin,
+                    self._current_lat,
+                    self._current_lon,
+                )
+                self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
@@ -386,4 +400,3 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def longitude(self) -> float | None:
         """Return last known longitude of the device."""
         return self._current_lon
-        
