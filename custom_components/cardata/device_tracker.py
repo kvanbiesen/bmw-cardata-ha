@@ -173,22 +173,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._handle_update,
         )
 
-        # Fetch initial coordinates from coordinator (may have arrived before we subscribed)
-        initial_lat = self._fetch_coordinate(LOCATION_LATITUDE_DESCRIPTOR)
-        initial_lon = self._fetch_coordinate(LOCATION_LONGITUDE_DESCRIPTOR)
-        if initial_lat is not None and initial_lon is not None:
-            # Only use coordinator data if we don't have restored state
-            if self._current_lat is None or self._current_lon is None:
-                self._current_lat = initial_lat
-                self._current_lon = initial_lon
-                _LOGGER.debug(
-                    "Initialized location from coordinator for %s: %.6f, %.6f",
-                    self._redacted_vin,
-                    self._current_lat,
-                    self._current_lon,
-                )
-                self.async_write_ha_state()
-
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
         await super().async_will_remove_from_hass()
@@ -307,22 +291,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         
             update_reason = f"paired update (Δt={time_diff:.1f}s, moved {distance:.1f}m)"
         
-            # Apply smoothing to reduce GPS jitter (optional)
-            if self._SMOOTHING_FACTOR > 0:
-                smoothed_lat = (1 - self._SMOOTHING_FACTOR) * final_lat + self._SMOOTHING_FACTOR * self._current_lat
-                smoothed_lon = (1 - self._SMOOTHING_FACTOR) * final_lon + self._SMOOTHING_FACTOR * self._current_lon
-            
-                _LOGGER.debug(
-                    "Applying smoothing for %s (factor=%.1f): raw=(%.6f, %.6f) -> smoothed=(%.6f, %.6f)",
-                    redacted_vin,
-                    self._SMOOTHING_FACTOR,
-                    final_lat, final_lon,
-                    smoothed_lat, smoothed_lon
-                )
-            
-                final_lat = smoothed_lat
-                final_lon = smoothed_lon
-                update_reason = f"{update_reason}, smoothed"
         else:
             update_reason = f"initial position (Δt={time_diff:.1f}s)"
     
