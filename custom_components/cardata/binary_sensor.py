@@ -53,10 +53,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
         
-        if descriptor and descriptor in DOOR_NON_DOOR_DESCRIPTORS:
-            self._attr_device_class = BinarySensorDeviceClass.DOOR
-        
-        if descriptor and descriptor in DOOR_DESCRIPTORS:
+        if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR
 
     async def async_added_to_hass(self) -> None:
