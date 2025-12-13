@@ -28,7 +28,11 @@ except ImportError:  # Home Assistant < 2025.10
 else:
     GPS_SOURCE = SourceType.GPS
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    LOCATION_LATITUDE_DESCRIPTOR,
+    LOCATION_LONGITUDE_DESCRIPTOR,
+)
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
@@ -40,13 +44,6 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
-
-LOCATION_LATITUDE_DESCRIPTOR = (
-    "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
-)
-LOCATION_LONGITUDE_DESCRIPTOR = (
-    "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
-)
 
 
 async def async_setup_entry(

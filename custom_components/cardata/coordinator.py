@@ -14,16 +14,17 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, DIAGNOSTIC_LOG_INTERVAL
+from .const import (
+    DOMAIN,
+    DIAGNOSTIC_LOG_INTERVAL,
+    LOCATION_LATITUDE_DESCRIPTOR,
+    LOCATION_LONGITUDE_DESCRIPTOR,
+)
 from .debug import debug_enabled
 from .utils import redact_vin
 from .units import normalize_unit
 
 _LOGGER = logging.getLogger(__name__)
-
-# Location descriptors for immediate updates (no debouncing)
-LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
-LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
 
 
 @dataclass
