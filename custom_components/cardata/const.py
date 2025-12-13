@@ -41,9 +41,9 @@ REQUEST_LOG_VERSION = 1
 REQUEST_LIMIT = 400  # API Quota - 80% of BMW's ~500/day limit (leaves safety margin)
 REQUEST_WINDOW_SECONDS = 24 * 60 * 60  # How long API Quota is reserved after API Call in seconds
 
-# Quota thresholds for warnings
-QUOTA_WARNING_THRESHOLD = 350  # Warn at 70% usage
-QUOTA_CRITICAL_THRESHOLD = 450  # Critical at 90% usage
+# Quota thresholds for warnings (percentages of REQUEST_LIMIT)
+QUOTA_WARNING_THRESHOLD = 280   # Warn at 70% of REQUEST_LIMIT
+QUOTA_CRITICAL_THRESHOLD = 360  # Critical at 90% of REQUEST_LIMIT
 TELEMATIC_POLL_INTERVAL = 40 * 60 # How often to call the Telematic API in seconds
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 VEHICLE_METADATA = "vehicle_metadata"
