@@ -5,6 +5,24 @@ DOMAIN = "cardata"
 # Location descriptors
 LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
 LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
+
+# Window descriptors for sensor icons
+WINDOW_DESCRIPTORS = (
+    "vehicle.cabin.window.row1.driver.status",
+    "vehicle.cabin.window.row1.passenger.status",
+    "vehicle.cabin.window.row2.driver.status",
+    "vehicle.cabin.window.row2.passenger.status",
+    "vehicle.body.trunk.window.isOpen",
+)
+
+# Battery descriptors for device class detection
+BATTERY_DESCRIPTORS = {
+    "vehicle.drivetrain.batteryManagement.header",
+    "vehicle.drivetrain.electricEngine.charging.level",
+    "vehicle.powertrain.electric.battery.stateOfCharge.target",
+    "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
+}
+
 DEFAULT_SCOPE = "authenticate_user openid cardata:api:read cardata:streaming:read"
 DEVICE_CODE_URL = "https://customer.bmwgroup.com/gcdm/oauth/device/code"
 TOKEN_URL = "https://customer.bmwgroup.com/gcdm/oauth/token"

@@ -32,29 +32,13 @@ from homeassistant.helpers.entity_registry import async_entries_for_config_entry
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, WINDOW_DESCRIPTORS, BATTERY_DESCRIPTORS
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .quota import QuotaManager
 
 _LOGGER = logging.getLogger(__name__)
-
-WINDOW_DESCRIPTORS = (
-    "vehicle.cabin.window.row1.driver.status",
-    "vehicle.cabin.window.row1.passenger.status",
-    "vehicle.cabin.window.row2.driver.status",
-    "vehicle.cabin.window.row2.passenger.status",
-    "vehicle.body.trunk.window.isOpen",
-)
-
-        
-BATTERY_DESCRIPTORS = {
-    "vehicle.drivetrain.batteryManagement.header",
-    "vehicle.drivetrain.electricEngine.charging.level",
-    "vehicle.powertrain.electric.battery.stateOfCharge.target",
-    "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
-}
 
 
 # Build unit-to-device-class mapping
