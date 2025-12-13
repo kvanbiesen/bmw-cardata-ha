@@ -375,7 +375,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         self._entry_id = entry_id
         self._sensor_type = sensor_type
         self._quota = quota_manager
-        self._unsub = None
+        self._unsubscribe = None
 
         # Configure based on sensor type
         if sensor_type == "last_message":
@@ -441,7 +441,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
                 else:
                     self._attr_native_value = last_state.state
 
-        self._unsub = async_dispatcher_connect(
+        self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_diagnostics,
             self._handle_update,
@@ -450,9 +450,9 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""
-        if self._unsub:
-            self._unsub()
-            self._unsub = None
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
 
     def _handle_update(self) -> None:
         """Handle updates from coordinator."""
