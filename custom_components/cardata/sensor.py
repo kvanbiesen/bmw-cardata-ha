@@ -88,8 +88,8 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
 UNIT_DEVICE_CLASS_MAP = _build_unit_device_class_map()
 
 
-def normalize_unit(unit: str | None) -> str | None:
-    """Normalize BMW unit strings to Home Assistant compatible units."""
+def map_unit_to_ha(unit: str | None) -> str | None:
+    """Map BMW unit strings to Home Assistant compatible units."""
     if unit is None:
         return None
 
@@ -119,7 +119,7 @@ def get_device_class_for_unit(
         # Check if this is a battery-related descriptor with % unit
         if descriptor and descriptor in BATTERY_DESCRIPTORS:
             # Only apply battery class if unit is % (percentage)
-            normalized_unit = normalize_unit(unit)
+            normalized_unit = map_unit_to_ha(unit)
             if normalized_unit == "%":
                 return SensorDeviceClass.BATTERY
 
@@ -198,7 +198,7 @@ class CardataSensor(CardataEntity, SensorEntity):
 
                 if unit is not None:
                     original_unit = unit
-                    unit = normalize_unit(unit)
+                    unit = map_unit_to_ha(unit)
                     self._attr_native_value = convert_value_for_unit(
                         self._attr_native_value, original_unit, unit
                     )
@@ -261,7 +261,7 @@ class CardataSensor(CardataEntity, SensorEntity):
             return
 
         original_unit = state.unit
-        normalized_unit = normalize_unit(state.unit)
+        normalized_unit = map_unit_to_ha(state.unit)
         converted_value = convert_value_for_unit(state.value, original_unit, normalized_unit)
         # SMART FILTERING: Check if sensor's current state differs from new value
         current_value = getattr(self, '_attr_native_value', None)
