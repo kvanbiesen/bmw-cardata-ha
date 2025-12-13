@@ -362,8 +362,7 @@ class CardataStreamManager:
 
     def _handle_subscribe(self, client: mqtt.Client, userdata, mid, granted_qos) -> None:
         if debug_enabled():
-            if debug_enabled():
-                _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
+            _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
 
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
         payload = msg.payload.decode(errors="ignore")
