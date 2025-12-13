@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 import logging
 
 
@@ -39,9 +39,6 @@ from .runtime import CardataRuntimeData
 from .quota import QuotaManager
 
 _LOGGER = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    pass
 
 WINDOW_DESCRIPTORS = (
     "vehicle.cabin.window.row1.driver.status",
