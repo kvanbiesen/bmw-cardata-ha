@@ -32,7 +32,15 @@ from homeassistant.helpers.entity_registry import async_entries_for_config_entry
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, WINDOW_DESCRIPTORS, BATTERY_DESCRIPTORS
+from .const import (
+    DOMAIN, 
+    WINDOW_DESCRIPTORS, 
+    BATTERY_DESCRIPTORS,
+    LOCATION_LATITUDE_DESCRIPTOR,
+    LOCATION_LONGITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
+    LOCATION_ALTITUDE_DESCRIPTOR,
+)
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
@@ -764,10 +772,11 @@ async def async_setup_entry(
             return
 
         # Skip location descriptors (used by device_tracker)
-        if descriptor in (
-            #not needed since device tracker is working
-            "vehicle.cabin.infotainment.navigation.currentLocation.latitude",
-            "vehicle.cabin.infotainment.navigation.currentLocation.longitude",
+        #not needed since device tracker is working
+        if descriptor in (LOCATION_LATITUDE_DESCRIPTOR,
+            LOCATION_LONGITUDE_DESCRIPTOR,
+            LOCATION_ALTITUDE_DESCRIPTOR,
+            LOCATION_HEADING_DESCRIPTOR
         ):
             return
 

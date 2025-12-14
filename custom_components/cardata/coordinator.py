@@ -19,6 +19,8 @@ from .const import (
     DIAGNOSTIC_LOG_INTERVAL,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
+    LOCATION_ALTITUDE_DESCRIPTOR,
 )
 from .debug import debug_enabled
 from .utils import redact_vin

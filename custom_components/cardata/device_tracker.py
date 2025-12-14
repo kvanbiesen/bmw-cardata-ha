@@ -32,6 +32,8 @@ from .const import (
     DOMAIN,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
+    LOCATION_ALTITUDE_DESCRIPTOR,
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
@@ -79,7 +81,12 @@ async def async_setup_entry(
 
     # Subscribe to location updates
     async def handle_location_update(vin: str, descriptor: str) -> None:
-        if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
+        if descriptor in (
+            LOCATION_LATITUDE_DESCRIPTOR,
+            LOCATION_LONGITUDE_DESCRIPTOR,
+            LOCATION_HEADING_DESCRIPTOR,
+            LOCATION_ALTITUDE_DESCRIPTOR,
+        ):
             ensure_tracker(vin)
 
     unsub = async_dispatcher_connect(
@@ -121,6 +128,8 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # Current known good coordinates (renamed from _restored for clarity)
         self._current_lat: float | None = None
         self._current_lon: float | None = None
+        self._heading: float | None = None
+        self._altitude: float | None = None
 
         # Track timing of individual coordinate updates
         self._last_lat: float | None = None
@@ -141,6 +150,10 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if (state := await self.async_get_last_state()) is not None:
             lat = state.attributes.get("latitude")
             lon = state.attributes.get("longitude")
+            alt = state.attributes.get("gps_altitude")
+            heading = state.attributes.get("gps_heading_deg")
+            #havent decided yet to Restore altitude and heading
+
             if lat is not None and lon is not None:
                 try:
                     self._current_lat = float(lat)
@@ -195,6 +208,8 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if vin != self.vin or descriptor not in (
             LOCATION_LATITUDE_DESCRIPTOR,
             LOCATION_LONGITUDE_DESCRIPTOR,
+            LOCATION_HEADING_DESCRIPTOR,
+            LOCATION_ALTITUDE_DESCRIPTOR,
         ):
             return
 
@@ -216,6 +231,27 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 self._last_lon = lon
                 self._last_lon_time = now
                 updated = True
+        
+        elif descriptor == LOCATION_HEADING_DESCRIPTOR:
+            state = self._coordinator.get_state(self._vin, descriptor)
+            if state and state.value is not None:
+                try:
+                    self._heading = float(state.value)
+                    self.schedule_update_ha_state()
+                except (ValueError, TypeError):
+                    pass
+                return
+ 
+        elif descriptor == LOCATION_ALTITUDE_DESCRIPTOR:
+            state = self._coordinator.get_state(self._vin, descriptor)
+            if state and state.value is not None:
+                try:
+                    self._altitude = float(state.value)
+                    self._altitude_unit = state.unit
+                    self.schedule_update_ha_state()
+                except (ValueError, TypeError):
+                    pass
+                return
 
         if not updated:
             return
@@ -392,3 +428,16 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def longitude(self) -> float | None:
         """Return last known longitude of the device."""
         return self._current_lon
+    
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        attrs = {}
+    
+        if self._heading is not None:
+            attrs["gps_heading_deg"] = round(self._heading, 1)  # Degrees, 1 decimal
+    
+        if self._altitude is not None:
+            attrs["gps_altitude"] = round(self._altitude, 1)
+            attrs["gps_altitude_unit"] = self._altitude_unit
+    
+        return attrs if attrs else None
