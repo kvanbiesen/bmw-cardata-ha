@@ -109,6 +109,7 @@ class CardataEntity(RestoreEntity):
         attrs = {}
         if getattr(state, "timestamp", None):
             attrs["timestamp"] = state.timestamp
+        return attrs
 
     @property
     def descriptor(self) -> str:
