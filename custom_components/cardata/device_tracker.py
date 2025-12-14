@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
@@ -37,9 +37,6 @@ from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .utils import redact_vin
-
-if TYPE_CHECKING:
-    pass
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,11 +96,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     _attr_force_update = False
     _attr_translation_key = "car"
 
-    # Timing thresholds for coordinate pairing logic  
-    _DEBOUNCE_DELAY = 0.05  # seconds - FAST! GPS already batched by coordinator
-    _PAIR_WINDOW = 2.0  # seconds - LENIENT! lat/lon come in separate messages with others in between
-    _MAX_DELAY = 60  # seconds - PATIENT! Use stale coordinate if needed
-    _MAX_STALE_TIME = 600  # seconds (10 minutes) - discard only very old coordinates
+    # Timing thresholds for coordinate pairing logic
+    _PAIR_WINDOW = 2.0  # seconds - lat/lon come in separate messages
+    _MAX_STALE_TIME = 600  # seconds (10 minutes) - discard very old coordinates
     
     # Movement filtering
     _MIN_MOVEMENT_DISTANCE = 3  # meters - MORE SENSITIVE (was 5m)
@@ -132,9 +127,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self._last_lon: float | None = None
         self._last_lat_time: float = 0
         self._last_lon_time: float = 0
-        
-        # Debounce mechanism for coordinate pairing
-        self._debounce_handle = None
 
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
