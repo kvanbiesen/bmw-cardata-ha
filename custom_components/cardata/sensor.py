@@ -44,6 +44,7 @@ from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .quota import QuotaManager
+from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -762,21 +763,9 @@ async def async_setup_entry(
         _electric_vehicle_cache[vin] = is_electric
     
         _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
-                     vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
-    
-    return is_electric
+                     redact_vin(vin), "electric/hybrid" if is_electric else "NOT electric", drive_train)
 
-    def is_electric_vehicle(vin: str) -> bool:
-        """Check if vehicle is electric/hybrid based on metadata."""
-        metadata = coordinator.device_metadata.get(vin, {})
-        extra = metadata.get("extra_attributes", {})
-    
-        drive_train = extra.get("drive_train", "").lower()
-    
-        if any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"]):
-            return True
-    
-        return False
+        return is_electric
 
     def ensure_metadata_sensor(vin: str) -> None:
         """Ensure metadata sensor exists for VIN (all vehicles)."""
