@@ -44,6 +44,7 @@ from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .quota import QuotaManager
+from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -761,9 +762,8 @@ async def async_setup_entry(
         # Cache the result
         _electric_vehicle_cache[vin] = is_electric
     
-        _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
-                     vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
-    
+            _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
+                         redact_vin(vin), "electric/hybrid" if is_electric else "NOT electric", drive_train)    
     return is_electric
 
     def is_electric_vehicle(vin: str) -> bool:
