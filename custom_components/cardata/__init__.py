@@ -19,6 +19,7 @@ from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
 from .const import (
     BOOTSTRAP_COMPLETE,
+    ConnectionState,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
@@ -274,7 +275,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
 
         # Start coordinator watchdog
-        await coordinator.async_handle_connection_event("connecting")
+        await coordinator.async_handle_connection_event(ConnectionState.CONNECTING.value)
         await coordinator.async_start_watchdog()
 
         # --- NEW: Run safe migration of existing entity_ids to include model prefix

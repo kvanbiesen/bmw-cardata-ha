@@ -7,27 +7,17 @@ import json
 import logging
 import ssl
 import time
-from enum import Enum
 from typing import Awaitable, Callable, Optional
 
 import paho.mqtt.client as mqtt
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import DOMAIN, ConnectionState
 from .debug import debug_enabled
 from .utils import redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class ConnectionState(Enum):
-    """MQTT connection states."""
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    DISCONNECTING = "disconnecting"
-    FAILED = "failed"
 
 
 class CardataStreamManager:

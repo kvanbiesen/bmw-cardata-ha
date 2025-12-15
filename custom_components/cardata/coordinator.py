@@ -15,6 +15,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ConnectionState,
     DOMAIN,
     DIAGNOSTIC_LOG_INTERVAL,
     LOCATION_LATITUDE_DESCRIPTOR,
@@ -165,7 +166,7 @@ class CardataCoordinator:
     device_metadata: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     last_message_at: Optional[datetime] = None
     last_telematic_api_at: Optional[datetime] = None
-    connection_status: str = "connecting"
+    connection_status: str = ConnectionState.CONNECTING.value
     last_disconnect_reason: Optional[str] = None
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
     watchdog_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
@@ -641,7 +642,7 @@ class CardataCoordinator:
         self.connection_status = status
         if reason:
             self.last_disconnect_reason = reason
-        elif status == "connected":
+        elif status == ConnectionState.CONNECTED.value:
             self.last_disconnect_reason = None
         await self._async_log_diagnostics()
 

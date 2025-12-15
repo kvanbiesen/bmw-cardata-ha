@@ -1,5 +1,17 @@
 """Constants for the BMW CarData integration."""
 
+from enum import Enum
+
+
+class ConnectionState(Enum):
+    """MQTT connection states."""
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    DISCONNECTING = "disconnecting"
+    FAILED = "failed"
+
+
 DOMAIN = "cardata"
 
 # Location descriptors
