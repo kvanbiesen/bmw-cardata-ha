@@ -764,7 +764,7 @@ class CardataCoordinator:
     def get_testing_soc_estimate(self, vin: str) -> float | None:
         return self._testing_soc_estimate.get(vin)
 
-    def restore_descriptor_state(
+    def _restore_descriptor_state(
         self,
         vin: str,
         descriptor: str,
@@ -772,6 +772,7 @@ class CardataCoordinator:
         unit: str | None,
         timestamp: str | None,
     ) -> None:
+        """Internal implementation - use async_restore_descriptor_state instead."""
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
 
@@ -827,7 +828,7 @@ class CardataCoordinator:
         elif vin in self._testing_soc_estimate:
             self._testing_soc_estimate.pop(vin, None)
 
-    def restore_soc_cache(
+    def _restore_soc_cache(
         self,
         vin: str,
         *,
@@ -835,6 +836,7 @@ class CardataCoordinator:
         rate: float | None = None,
         timestamp: datetime | None = None,
     ) -> None:
+        """Internal implementation - use async_restore_soc_cache instead."""
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         reference_time = timestamp or datetime.now(timezone.utc)
         if estimate is not None:
@@ -854,13 +856,14 @@ class CardataCoordinator:
             else:
                 self._soc_rate.pop(vin, None)
 
-    def restore_testing_soc_cache(
+    def _restore_testing_soc_cache(
         self,
         vin: str,
         *,
         estimate: float | None = None,
         timestamp: datetime | None = None,
     ) -> None:
+        """Internal implementation - use async_restore_testing_soc_cache instead."""
         tracking = self._get_testing_tracking(vin)
         reference_time = timestamp or datetime.now(timezone.utc)
         if estimate is None:
@@ -877,9 +880,9 @@ class CardataCoordinator:
         unit: str | None,
         timestamp: str | None,
     ) -> None:
-        """Thread-safe async version of restore_descriptor_state."""
+        """Thread-safe restore of descriptor state."""
         async with self._lock:
-            self.restore_descriptor_state(vin, descriptor, value, unit, timestamp)
+            self._restore_descriptor_state(vin, descriptor, value, unit, timestamp)
 
     async def async_restore_soc_cache(
         self,
@@ -889,9 +892,9 @@ class CardataCoordinator:
         rate: float | None = None,
         timestamp: datetime | None = None,
     ) -> None:
-        """Thread-safe async version of restore_soc_cache."""
+        """Thread-safe restore of SOC cache."""
         async with self._lock:
-            self.restore_soc_cache(vin, estimate=estimate, rate=rate, timestamp=timestamp)
+            self._restore_soc_cache(vin, estimate=estimate, rate=rate, timestamp=timestamp)
 
     async def async_restore_testing_soc_cache(
         self,
@@ -900,9 +903,9 @@ class CardataCoordinator:
         estimate: float | None = None,
         timestamp: datetime | None = None,
     ) -> None:
-        """Thread-safe async version of restore_testing_soc_cache."""
+        """Thread-safe restore of testing SOC cache."""
         async with self._lock:
-            self.restore_testing_soc_cache(vin, estimate=estimate, timestamp=timestamp)
+            self._restore_testing_soc_cache(vin, estimate=estimate, timestamp=timestamp)
 
     @staticmethod
     def _build_device_metadata(vin: str, payload: Dict[str, Any]) -> Dict[str, Any]:
