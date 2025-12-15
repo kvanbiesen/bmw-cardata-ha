@@ -137,6 +137,10 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self._last_lat_time: float = 0
         self._last_lon_time: float = 0
 
+        # Debounce and altitude tracking
+        self._debounce_handle = None
+        self._altitude_unit: str | None = None
+
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
         await super().async_added_to_hass()
