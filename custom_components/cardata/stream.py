@@ -13,7 +13,21 @@ import paho.mqtt.client as mqtt
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, ConnectionState
+from .const import (
+    ConnectionState,
+    DOMAIN,
+    MQTT_AUTH_ERROR_CODES,
+    MQTT_CIRCUIT_BREAKER_DURATION,
+    MQTT_CIRCUIT_BREAKER_THRESHOLD,
+    MQTT_CIRCUIT_BREAKER_WINDOW,
+    MQTT_MIN_RECONNECT_INTERVAL,
+    MQTT_RECONNECT_BACKOFF_INITIAL,
+    MQTT_RECONNECT_BACKOFF_MAX,
+    MQTT_RECONNECT_DELAY_MAX,
+    MQTT_RECONNECT_DELAY_MIN,
+    MQTT_RETRY_BACKOFF,
+    MQTT_UNAUTHORIZED_RETRY_WINDOW,
+)
 from .debug import debug_enabled
 from .utils import redact_vin_in_text, redact_vin_payload
 
@@ -50,13 +64,13 @@ class CardataStreamManager:
         self._unauthorized_lock = asyncio.Lock()  # Protects _unauthorized_retry_in_progress
         self._awaiting_new_credentials = False
         self._status_callback: Callable[[str, str | None], Awaitable[None]] | None = None
-        self._reconnect_backoff = 5
-        self._max_backoff = 300
+        self._reconnect_backoff = MQTT_RECONNECT_BACKOFF_INITIAL
+        self._max_backoff = MQTT_RECONNECT_BACKOFF_MAX
         self._last_disconnect: float | None = None
         self._disconnect_future: asyncio.Future[None] | None = None
-        self._retry_backoff = 3
+        self._retry_backoff = MQTT_RETRY_BACKOFF
         self._retry_task: asyncio.Task | None = None
-        self._min_reconnect_interval = 10.0
+        self._min_reconnect_interval = MQTT_MIN_RECONNECT_INTERVAL
         self._connect_lock = asyncio.Lock()
         self._connection_state = ConnectionState.DISCONNECTED
         self._intentional_disconnect = False
@@ -65,9 +79,9 @@ class CardataStreamManager:
         self._failure_window_start: float | None = None
         self._circuit_open = False
         self._circuit_open_until: float | None = None
-        self._max_failures_per_window = 10
-        self._failure_window_seconds = 60
-        self._circuit_breaker_duration = 300  # 5 minutes
+        self._max_failures_per_window = MQTT_CIRCUIT_BREAKER_THRESHOLD
+        self._failure_window_seconds = MQTT_CIRCUIT_BREAKER_WINDOW
+        self._circuit_breaker_duration = MQTT_CIRCUIT_BREAKER_DURATION
 
     async def async_start(self) -> None:
         async with self._connect_lock:
@@ -285,7 +299,7 @@ class CardataStreamManager:
                 context.maximum_version = ssl.TLSVersion.TLSv1_2
         client.tls_set_context(context)
         client.tls_insecure_set(False)
-        client.reconnect_delay_set(min_delay=5, max_delay=60)
+        client.reconnect_delay_set(min_delay=MQTT_RECONNECT_DELAY_MIN, max_delay=MQTT_RECONNECT_DELAY_MAX)
 
         try:
             client.connect(self._host, self._port, keepalive=self._keepalive)
@@ -311,20 +325,20 @@ class CardataStreamManager:
                 asyncio.run_coroutine_threadsafe(self._notify_recovered(), self.hass.loop)
             self._cancel_retry()
             self._last_disconnect = None
-            self._retry_backoff = 3
+            self._retry_backoff = MQTT_RETRY_BACKOFF
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
                     self._status_callback("connected"),
                     self.hass.loop,
                 )
-        elif rc in (4, 5):  # bad credentials / not authorized
+        elif rc in MQTT_AUTH_ERROR_CODES:  # bad credentials / not authorized
             self._connection_state = ConnectionState.FAILED
             self._record_failure()
             now = time.monotonic()
             if (
                 rc == 5
                 and self._last_disconnect is not None
-                and now - self._last_disconnect < 10
+                and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
             ):
                 if debug_enabled():
                     _LOGGER.debug(
@@ -332,7 +346,7 @@ class CardataStreamManager:
                     )
                 client.loop_stop(force=True)
                 self._client = None
-                self._schedule_retry(3)
+                self._schedule_retry(MQTT_RETRY_BACKOFF)
                 return
             _LOGGER.error("BMW MQTT connection failed: rc=%s", rc)
             asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
@@ -414,13 +428,13 @@ class CardataStreamManager:
             if (
                 rc == 5
                 and self._last_disconnect is not None
-                and now - self._last_disconnect < 10
+                and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
             ):
                 if debug_enabled():
                     _LOGGER.debug(
                         "Ignoring transient MQTT rc=5; scheduling retry instead"
                     )
-                self._schedule_retry(3)
+                self._schedule_retry(MQTT_RETRY_BACKOFF)
                 return
             asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
             self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)

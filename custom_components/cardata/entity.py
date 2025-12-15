@@ -12,17 +12,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DOMAIN
+from .const import DOMAIN, ENTITY_NAME_WAIT_TIMEOUT
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
 from .utils import redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
-
-# How long (seconds) an entity will wait for coordinator-provided vehicle name
-# before writing its original_name into the registry. Short default avoids long
-# startup delays while still giving bootstrap a chance to populate metadata.
-_ENTITY_NAME_WAIT = 2.0
 
 
 class CardataEntity(RestoreEntity):
@@ -187,7 +182,7 @@ class CardataEntity(RestoreEntity):
         # Wait briefly for the coordinator to supply vehicle name for our VIN so original_name
         # (written below) will include the correct vehicle prefix. This is a small, non-blocking
         # wait to avoid racing with bootstrap/telemetry.
-        deadline = time.monotonic() + _ENTITY_NAME_WAIT
+        deadline = time.monotonic() + ENTITY_NAME_WAIT_TIMEOUT
         while time.monotonic() < deadline:
             if self._get_vehicle_name():
                 break

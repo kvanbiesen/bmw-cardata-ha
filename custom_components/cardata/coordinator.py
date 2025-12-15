@@ -16,12 +16,14 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     ConnectionState,
-    DOMAIN,
+    COORDINATOR_DEBOUNCE_SECONDS,
+    COORDINATOR_MIN_CHANGE_THRESHOLD,
     DIAGNOSTIC_LOG_INTERVAL,
+    DOMAIN,
+    LOCATION_ALTITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    LOCATION_HEADING_DESCRIPTOR,
-    LOCATION_ALTITUDE_DESCRIPTOR,
 )
 from .debug import debug_enabled
 from .utils import redact_vin
@@ -192,8 +194,6 @@ class CardataCoordinator:
     _pending_updates: Dict[str, set[str]] = field(default_factory=dict, init=False)  # {vin: {descriptors}}
     _pending_new_sensors: Dict[str, list[str]] = field(default_factory=dict, init=False)
     _pending_new_binary: Dict[str, list[str]] = field(default_factory=dict, init=False)
-    _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
-    _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
 
     @property
     def signal_new_sensor(self) -> str:
@@ -547,7 +547,7 @@ class CardataCoordinator:
         # For numeric values, check threshold
         if isinstance(new_value, (int, float)) and isinstance(old_value, (int, float)):
             # Absolute change
-            if abs(new_value - old_value) < self._MIN_CHANGE_THRESHOLD:
+            if abs(new_value - old_value) < COORDINATOR_MIN_CHANGE_THRESHOLD:
                 return False
         
         # Value changed significantly
@@ -567,7 +567,7 @@ class CardataCoordinator:
             # Schedule new update with 5 second delay
             self._update_debounce_handle = async_call_later(
                 self.hass,
-                self._DEBOUNCE_SECONDS,
+                COORDINATOR_DEBOUNCE_SECONDS,
                 self._execute_debounced_update
             )
 

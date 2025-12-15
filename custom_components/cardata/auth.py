@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry, SOURCE_REAUTH
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
+from .const import DOMAIN, HV_BATTERY_DESCRIPTORS, TOKEN_REFRESH_RETRY_WINDOW
 from .device_flow import CardataAuthError, refresh_tokens
 from .container import CardataContainerError, CardataContainerManager
 from .stream import CardataStreamManager
@@ -109,7 +109,7 @@ async def handle_stream_error(
                 "Reauth pending for entry %s after failed refresh; starting flow",
                 entry.entry_id,
             )
-        elif now - runtime.last_refresh_attempt >= 30:
+        elif now - runtime.last_refresh_attempt >= TOKEN_REFRESH_RETRY_WINDOW:
             runtime.last_refresh_attempt = now
             try:
                 _LOGGER.info(
@@ -139,7 +139,7 @@ async def handle_stream_error(
                 entry.entry_id,
             )
 
-        if now - runtime.last_reauth_attempt < 30:
+        if now - runtime.last_reauth_attempt < TOKEN_REFRESH_RETRY_WINDOW:
             _LOGGER.debug(
                 "Recent reauth already attempted for entry %s; skipping new flow",
                 entry.entry_id,
