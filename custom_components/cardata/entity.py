@@ -6,23 +6,18 @@ import asyncio
 import logging
 import re
 import time
-from typing import Callable, Optional
+from typing import Callable
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DOMAIN
+from .const import DOMAIN, ENTITY_NAME_WAIT_TIMEOUT
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
 from .utils import redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
-
-# How long (seconds) an entity will wait for coordinator-provided vehicle name
-# before writing its original_name into the registry. Short default avoids long
-# startup delays while still giving bootstrap a chance to populate metadata.
-_ENTITY_NAME_WAIT = 2.0
 
 
 class CardataEntity(RestoreEntity):
@@ -43,7 +38,7 @@ class CardataEntity(RestoreEntity):
         self._attr_name = self._compute_full_name()
 
         self._attr_available = True
-        self._name_unsub: Optional[Callable[[], None]] = None
+        self._name_unsub: Callable[[], None] | None = None
 
     def _resolve_vin(self) -> str:
         """Resolve VIN alias if coordinator provides resolver."""
@@ -119,7 +114,7 @@ class CardataEntity(RestoreEntity):
     def vin(self) -> str:
         return self._vin
 
-    def _get_vehicle_name(self) -> Optional[str]:
+    def _get_vehicle_name(self) -> str | None:
         resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin)
         if metadata and metadata.get("name"):
@@ -187,7 +182,7 @@ class CardataEntity(RestoreEntity):
         # Wait briefly for the coordinator to supply vehicle name for our VIN so original_name
         # (written below) will include the correct vehicle prefix. This is a small, non-blocking
         # wait to avoid racing with bootstrap/telemetry.
-        deadline = time.monotonic() + _ENTITY_NAME_WAIT
+        deadline = time.monotonic() + ENTITY_NAME_WAIT_TIMEOUT
         while time.monotonic() < deadline:
             if self._get_vehicle_name():
                 break

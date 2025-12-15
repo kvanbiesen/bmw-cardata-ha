@@ -6,7 +6,6 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Optional
 
 import aiohttp
 
@@ -19,6 +18,7 @@ from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
 from .const import (
     BOOTSTRAP_COMPLETE,
+    ConnectionState,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
@@ -124,7 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
 
         # Set up container manager
-        container_manager: Optional[CardataContainerManager] = CardataContainerManager(
+        container_manager: CardataContainerManager | None = CardataContainerManager(
             session=session,
             entry_id=entry.entry_id,
             initial_container_id=data.get("hv_container_id"),
@@ -216,7 +216,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
-        bootstrap_error: Optional[str] = None
+        bootstrap_error: str | None = None
         if should_bootstrap:
             _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
             
@@ -274,7 +274,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
 
         # Start coordinator watchdog
-        await coordinator.async_handle_connection_event("connecting")
+        await coordinator.async_handle_connection_event(ConnectionState.CONNECTING.value)
         await coordinator.async_start_watchdog()
 
         # --- NEW: Run safe migration of existing entity_ids to include model prefix
