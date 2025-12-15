@@ -600,6 +600,16 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
     def _load_current_value(self) -> None:
         """Load current value from coordinator. Override in subclass."""
 
+    def _parse_restore_timestamp(self, last_state) -> datetime | None:
+        """Parse timestamp from restored state for cache restoration."""
+        restored_ts = last_state.attributes.get("timestamp")
+        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
+        if reference is None:
+            reference = last_state.last_changed
+        if reference is not None:
+            reference = dt_util.as_utc(reference)
+        return reference
+
     def _handle_update(self, vin: str) -> None:
         """Handle updates from coordinator.
     
@@ -636,17 +646,11 @@ class CardataSocEstimateSensor(_SocTrackerBase):
 
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore SOC estimate cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
         if self._coordinator.get_soc_estimate(self.vin) is None:
             await self._coordinator.async_restore_soc_cache(
                 self.vin,
                 estimate=self._attr_native_value,
-                timestamp=reference,
+                timestamp=self._parse_restore_timestamp(last_state),
             )
 
     def _load_current_value(self) -> None:
@@ -671,17 +675,11 @@ class CardataTestingSocEstimateSensor(_SocTrackerBase):
 
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore testing SOC cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
         if self._coordinator.get_testing_soc_estimate(self.vin) is None:
             await self._coordinator.async_restore_testing_soc_cache(
                 self.vin,
                 estimate=self._attr_native_value,
-                timestamp=reference,
+                timestamp=self._parse_restore_timestamp(last_state),
             )
 
     def _load_current_value(self) -> None:
@@ -708,17 +706,11 @@ class CardataSocRateSensor(_SocTrackerBase):
 
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore SOC rate cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
         if self._coordinator.get_soc_rate(self.vin) is None:
             await self._coordinator.async_restore_soc_cache(
                 self.vin,
                 rate=self._attr_native_value,
-                timestamp=reference,
+                timestamp=self._parse_restore_timestamp(last_state),
             )
 
     def _load_current_value(self) -> None:
