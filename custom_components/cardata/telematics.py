@@ -7,7 +7,6 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 import aiohttp
 
@@ -30,8 +29,8 @@ async def async_perform_telematic_fetch(
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
     *,
-    vin_override: Optional[str] = None,
-) -> Optional[bool]:
+    vin_override: str | None = None,
+) -> bool | None:
     """Fetch telematic data for one or more VINs.
 
     If vin_override is provided: fetch only that VIN (service use case).

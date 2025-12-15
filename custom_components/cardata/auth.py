@@ -6,7 +6,6 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
-from typing import Optional
 
 import aiohttp
 
@@ -27,7 +26,7 @@ async def refresh_tokens_for_entry(
     entry: ConfigEntry,
     session: aiohttp.ClientSession,
     manager: CardataStreamManager,
-    container_manager: Optional[CardataContainerManager] = None,
+    container_manager: CardataContainerManager | None = None,
 ) -> None:
     """Refresh tokens and update entry data.
     

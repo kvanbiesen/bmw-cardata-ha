@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, TYPE_CHECKING
 
 import aiohttp
 
@@ -31,12 +31,12 @@ class CardataRuntimeData:
     refresh_task: asyncio.Task
     session: aiohttp.ClientSession
     coordinator: CardataCoordinator
-    container_manager: Optional[CardataContainerManager]
-    bootstrap_task: Optional[asyncio.Task] = None
-    quota_manager: Optional[QuotaManager] = None
-    telematic_task: Optional[asyncio.Task] = None
+    container_manager: CardataContainerManager | None
+    bootstrap_task: asyncio.Task | None = None
+    quota_manager: QuotaManager | None = None
+    telematic_task: asyncio.Task | None = None
     reauth_in_progress: bool = False
-    reauth_flow_id: Optional[str] = None
+    reauth_flow_id: str | None = None
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False

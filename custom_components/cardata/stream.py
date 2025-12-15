@@ -7,7 +7,7 @@ import json
 import logging
 import ssl
 import time
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 import paho.mqtt.client as mqtt
 
@@ -33,7 +33,7 @@ class CardataStreamManager:
         host: str,
         port: int,
         keepalive: int,
-        error_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+        error_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.hass = hass
         self._client_id = client_id
@@ -42,31 +42,29 @@ class CardataStreamManager:
         self._host = host
         self._port = port
         self._keepalive = keepalive
-        self._client: Optional[mqtt.Client] = None
-        self._message_callback: Optional[Callable[[dict], Awaitable[None]]] = None
+        self._client: mqtt.Client | None = None
+        self._message_callback: Callable[[dict], Awaitable[None]] | None = None
         self._error_callback = error_callback
         self._reauth_notified = False
         self._unauthorized_retry_in_progress = False
         self._unauthorized_lock = asyncio.Lock()  # Protects _unauthorized_retry_in_progress
         self._awaiting_new_credentials = False
-        self._status_callback: Optional[
-            Callable[[str, Optional[str]], Awaitable[None]]
-        ] = None
+        self._status_callback: Callable[[str, str | None], Awaitable[None]] | None = None
         self._reconnect_backoff = 5
         self._max_backoff = 300
-        self._last_disconnect: Optional[float] = None
-        self._disconnect_future: Optional[asyncio.Future[None]] = None
+        self._last_disconnect: float | None = None
+        self._disconnect_future: asyncio.Future[None] | None = None
         self._retry_backoff = 3
-        self._retry_task: Optional[asyncio.Task] = None
+        self._retry_task: asyncio.Task | None = None
         self._min_reconnect_interval = 10.0
         self._connect_lock = asyncio.Lock()
         self._connection_state = ConnectionState.DISCONNECTED
         self._intentional_disconnect = False
         # Circuit breaker for runaway reconnections
         self._failure_count = 0
-        self._failure_window_start: Optional[float] = None
+        self._failure_window_start: float | None = None
         self._circuit_open = False
-        self._circuit_open_until: Optional[float] = None
+        self._circuit_open_until: float | None = None
         self._max_failures_per_window = 10
         self._failure_window_seconds = 60
         self._circuit_breaker_duration = 300  # 5 minutes
@@ -188,7 +186,7 @@ class CardataStreamManager:
         self._intentional_disconnect = True
         self._connection_state = ConnectionState.DISCONNECTING
         
-        disconnect_future: Optional[asyncio.Future[None]] = None
+        disconnect_future: asyncio.Future[None] | None = None
         client = self._client
         self._client = None
         if client is not None:
@@ -222,14 +220,14 @@ class CardataStreamManager:
         self._cancel_retry()
 
     @property
-    def client(self) -> Optional[mqtt.Client]:
+    def client(self) -> mqtt.Client | None:
         return self._client
 
     def set_message_callback(self, callback: Callable[[dict], Awaitable[None]]) -> None:
         self._message_callback = callback
 
     def set_status_callback(
-        self, callback: Callable[[str, Optional[str]], Awaitable[None]]
+        self, callback: Callable[[str, str | None], Awaitable[None]]
     ) -> None:
         self._status_callback = callback
 
@@ -482,8 +480,8 @@ class CardataStreamManager:
     async def async_update_credentials(
         self,
         *,
-        gcid: Optional[str] = None,
-        id_token: Optional[str] = None,
+        gcid: str | None = None,
+        id_token: str | None = None,
     ) -> None:
         if not gcid and not id_token:
             return
@@ -533,7 +531,7 @@ class CardataStreamManager:
         except Exception as err:
             _LOGGER.error("BMW MQTT reconnect failed after credential update: %s", err)
 
-    async def async_update_token(self, id_token: Optional[str]) -> None:
+    async def async_update_token(self, id_token: str | None) -> None:
         await self.async_update_credentials(id_token=id_token)
 
     def _cancel_retry(self) -> None:

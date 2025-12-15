@@ -6,7 +6,6 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Optional
 
 import aiohttp
 
@@ -125,7 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
 
         # Set up container manager
-        container_manager: Optional[CardataContainerManager] = CardataContainerManager(
+        container_manager: CardataContainerManager | None = CardataContainerManager(
             session=session,
             entry_id=entry.entry_id,
             initial_container_id=data.get("hv_container_id"),
@@ -217,7 +216,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
-        bootstrap_error: Optional[str] = None
+        bootstrap_error: str | None = None
         if should_bootstrap:
             _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
             
