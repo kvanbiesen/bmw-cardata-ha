@@ -773,7 +773,7 @@ async def async_setup_entry(
         _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
                      vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
     
-    return is_electric
+        return is_electric
 
     def is_electric_vehicle(vin: str) -> bool:
         """Check if vehicle is electric/hybrid based on metadata."""
