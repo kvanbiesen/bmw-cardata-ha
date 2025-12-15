@@ -171,6 +171,15 @@ class CardataSensor(CardataEntity, SensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
+        #Mayfe for later settings the GPS available
+        #if descriptor in GPS_DESCRIPTORS = (
+        #    LOCATION_LATITUDE_DESCRIPTOR,
+        #    LOCATION_LONGITUDE_DESCRIPTOR,
+        #    LOCATION_ALTITUDE_DESCRIPTOR,
+        #    LOCATION_HEADING_DESCRIPTOR,
+        #):
+        #    self._attr_entity_registry_enabled_default = False
+
         state_class = self._determine_state_class()
         if state_class:
             self._attr_state_class = state_class
@@ -243,6 +252,9 @@ class CardataSensor(CardataEntity, SensorEntity):
         if value/unit changed or if I'm currently unknown.
         """
         if vin != self.vin or descriptor != self.descriptor:
+            return
+
+        if not self.enabled:
             return
 
         state = self._coordinator.get_state(vin, descriptor)
@@ -740,9 +752,56 @@ async def async_setup_entry(
     soc_testing_entities: dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: dict[str, CardataSocRateSensor] = {}
     metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
+    _electric_vehicle_cache: dict[str, bool] = {}
+    
+    def is_electric_vehicle(vin: str) -> bool:
+        """Check if vehicle is electric/hybrid based on metadata (cached)."""
+        # Return cached result if available
+        if vin in _electric_vehicle_cache:
+            return _electric_vehicle_cache[vin]
+    
+        metadata = coordinator.device_metadata.get(vin, {})
+        extra = metadata.get("extra_attributes", {})
+    
+        drive_train = extra.get("drive_train", "").lower()
+    
+        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"])
+    
+        # Cache the result
+        _electric_vehicle_cache[vin] = is_electric
+    
+        _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
+                     vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
+    
+    return is_electric
+
+    def is_electric_vehicle(vin: str) -> bool:
+        """Check if vehicle is electric/hybrid based on metadata."""
+        metadata = coordinator.device_metadata.get(vin, {})
+        extra = metadata.get("extra_attributes", {})
+    
+        drive_train = extra.get("drive_train", "").lower()
+    
+        if any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"]):
+            return True
+    
+        return False
+
+    def ensure_metadata_sensor(vin: str) -> None:
+        """Ensure metadata sensor exists for VIN (all vehicles)."""
+        if vin in metadata_entities:
+            return
+    
+        metadata_entities[vin] = CardataVehicleMetadataSensor(coordinator, vin)
+        async_add_entities([metadata_entities[vin]], True)
 
     def ensure_soc_tracking_entities(vin: str) -> None:
-        """Ensure SOC tracking entities exist for VIN."""
+        ensure_metadata_sensor(vin)
+    
+        # Skip SOC sensors for non-electric vehicles
+        if not is_electric_vehicle(vin):
+            return
+    
         new_entities = []
 
         if vin not in soc_estimate_entities:
@@ -756,10 +815,6 @@ async def async_setup_entry(
         if vin not in soc_rate_entities:
             soc_rate_entities[vin] = CardataSocRateSensor(coordinator, vin)
             new_entities.append(soc_rate_entities[vin])
-
-        if vin not in metadata_entities:
-            metadata_entities[vin] = CardataVehicleMetadataSensor(coordinator, vin)
-            new_entities.append(metadata_entities[vin])
 
         if new_entities:
             async_add_entities(new_entities, True)
@@ -779,6 +834,14 @@ async def async_setup_entry(
             LOCATION_HEADING_DESCRIPTOR
         ):
             return
+
+        if not is_electric_vehicle(vin):
+            descriptor_lower = descriptor.lower()
+            if any(keyword in descriptor_lower for keyword in [
+                "charging", "electricengine", "battery", "soc", "hvbattery"
+            ]):
+                _LOGGER.debug("Skipping electric sensor for non-electric %s", descriptor)
+                return
 
         # Skip boolean values (they're binary sensors)
         state = coordinator.get_state(vin, descriptor)
