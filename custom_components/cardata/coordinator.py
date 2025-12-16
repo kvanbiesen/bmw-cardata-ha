@@ -572,48 +572,55 @@ class CardataCoordinator:
             )
 
     async def _execute_debounced_update(self, _now=None) -> None:
-        """Execute the debounced batch update."""
+        """Execute the debounced batch update.
+
+        Uses atomic swap pattern: swap pending dicts with empty ones before
+        processing, so new updates during processing go to fresh dicts.
+        """
+        # Atomically swap pending dicts with empty ones under lock
+        # This ensures updates arriving during processing aren't lost
         async with self._debounce_lock:
             self._update_debounce_handle = None
+            updates_to_process = self._pending_updates
+            new_sensors_to_process = self._pending_new_sensors
+            new_binary_to_process = self._pending_new_binary
+            self._pending_updates = {}
+            self._pending_new_sensors = {}
+            self._pending_new_binary = {}
+
         if debug_enabled():
-            pending_count = sum(len(d) for d in self._pending_updates.values())
+            pending_count = sum(len(d) for d in updates_to_process.values())
             _LOGGER.debug("Debounce timer fired, pending items: %d", pending_count)
             if pending_count > 0:
-                for vin, descriptors in self._pending_updates.items():
+                for vin, descriptors in updates_to_process.items():
                     _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
-        
-        if debug_enabled():
-            total_updates = sum(len(descriptors) for descriptors in self._pending_updates.values())
-            total_new_sensors = sum(len(descriptors) for descriptors in self._pending_new_sensors.values())
-            total_new_binary = sum(len(descriptors) for descriptors in self._pending_new_binary.values())
+
+            total_updates = sum(len(descriptors) for descriptors in updates_to_process.values())
+            total_new_sensors = sum(len(descriptors) for descriptors in new_sensors_to_process.values())
+            total_new_binary = sum(len(descriptors) for descriptors in new_binary_to_process.values())
             _LOGGER.debug(
                 "Debounced coordinator update executed: %d updates, %d new sensors, %d new binary",
                 total_updates,
                 total_new_sensors,
                 total_new_binary,
             )
-        
+
         # Send batched updates for changed descriptors
-        for vin, descriptors in self._pending_updates.items():
+        for vin, descriptors in updates_to_process.items():
             for descriptor in descriptors:
                 async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
-        
+
         # Send new entity notifications
-        for vin, descriptors in self._pending_new_sensors.items():
+        for vin, descriptors in new_sensors_to_process.items():
             for descriptor in descriptors:
                 async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
-        
-        for vin, descriptors in self._pending_new_binary.items():
+
+        for vin, descriptors in new_binary_to_process.items():
             for descriptor in descriptors:
                 async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
-        
+
         # Send diagnostics update
         async_dispatcher_send(self.hass, self.signal_diagnostics)
-        
-        # Clear all pending updates
-        self._pending_updates.clear()
-        self._pending_new_sensors.clear()
-        self._pending_new_binary.clear()
 
     def get_state(self, vin: str, descriptor: str) -> DescriptorState | None:
         """Get state for a descriptor. Returns a copy to avoid race conditions."""
