@@ -175,7 +175,7 @@ class CardataSensor(CardataEntity, SensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
-        #Mayfe for later settings the GPS available
+        # Maybe for later: setting GPS available
         #if descriptor in GPS_DESCRIPTORS = (
         #    LOCATION_LATITUDE_DESCRIPTOR,
         #    LOCATION_LONGITUDE_DESCRIPTOR,
