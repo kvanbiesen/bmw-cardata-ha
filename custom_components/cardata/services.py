@@ -27,7 +27,7 @@ from .const import (
     HV_BATTERY_CONTAINER_PURPOSE,
 )
 from .runtime import CardataRuntimeData
-from .utils import redact_vin, redact_vin_in_text, redact_vin_payload
+from .utils import is_valid_vin, redact_vin, redact_vin_in_text, redact_vin_payload
 
 import homeassistant.helpers.entity_registry as er
 
@@ -111,13 +111,19 @@ async def async_handle_fetch_telematic(call: ServiceCall) -> None:
 
     target_entry_id, target_entry, runtime = resolved
 
+    # Validate VIN if provided
+    vin_override = call.data.get("vin")
+    if vin_override and not is_valid_vin(vin_override):
+        _LOGGER.error("Cardata fetch_telematic_data: invalid VIN format")
+        return
+
     from .telematics import async_perform_telematic_fetch, async_update_last_telematic_poll
 
     success = await async_perform_telematic_fetch(
         hass,
         target_entry,
         runtime,
-        vin_override=call.data.get("vin"),
+        vin_override=vin_override,
     )
 
     if success is None:
@@ -227,6 +233,11 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
     if not vin:
         _LOGGER.error(
             "Cardata fetch_basic_data: no VIN available; provide vin parameter"
+        )
+        return
+    if not is_valid_vin(vin):
+        _LOGGER.error(
+            "Cardata fetch_basic_data: invalid VIN format"
         )
         return
     redacted_vin = redact_vin(vin)
