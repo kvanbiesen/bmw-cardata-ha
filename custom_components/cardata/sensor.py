@@ -138,9 +138,13 @@ def get_device_class_for_unit(
 
 
 def convert_value_for_unit(
-    value: float | str | int, original_unit: str | None, normalized_unit: str | None
-) -> float | str | int:
-    """Convert value when unit normalization requires it."""
+    value: float | str | int | None, original_unit: str | None, normalized_unit: str | None
+) -> float | str | int | None:
+    """Convert value when unit normalization requires it.
+
+    Returns the value unchanged if units match or value is None.
+    Converts numeric values when unit conversion is needed (e.g., weeks to days).
+    """
     if original_unit == normalized_unit or value is None:
         return value
 
