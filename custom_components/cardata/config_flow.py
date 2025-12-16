@@ -486,6 +486,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 from custom_components.cardata.auth import async_manual_refresh_tokens
                 await async_manual_refresh_tokens(self.hass, entry)
             except Exception as err:
+                _LOGGER.exception("Token refresh failed during container reset: %s", err)
                 return self._show_confirm(
                     step_id="action_reset_container",
                     errors={"base": "refresh_failed"},
@@ -507,6 +508,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         try:
             new_id = await runtime.container_manager.async_reset_hv_container(access_token)
         except CardataContainerError as err:
+            _LOGGER.exception("Container reset failed: %s", err)
             return self._show_confirm(
                 step_id="action_reset_container",
                 errors={"base": "reset_failed"},
