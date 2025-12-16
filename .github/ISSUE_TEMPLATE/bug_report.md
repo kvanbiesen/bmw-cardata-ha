@@ -1,11 +1,9 @@
 ---
-
-name: 🐞 Bug Report
+name: Bug Report
 about: Report a problem with the BMW CarData Home Assistant integration
 title: "[Bug]: "
-labels: [bug]
-assignees: []
--------------
+labels: bug
+---
 
 # 🐞 Bug Report – BMW CarData Home Assistant Integration
 
