@@ -60,7 +60,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.debug("Setting up Bmw Cardata Streamline entry %s", entry.entry_id)
 
-    session = aiohttp.ClientSession()
+    session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=30)
+    )
     refresh_task: asyncio.Task | None = None
 
     try:

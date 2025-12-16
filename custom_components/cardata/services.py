@@ -404,7 +404,9 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         "Accept": "application/json",
     }
 
-    session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession()
+    session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=30)
+    )
 
     # Helper: fetch list of containers
     async def _list_containers() -> list[dict[str, Any]]:
