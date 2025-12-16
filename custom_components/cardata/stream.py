@@ -12,6 +12,7 @@ from typing import Awaitable, Callable
 import paho.mqtt.client as mqtt
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 
 from .const import (
     ConnectionState,
@@ -29,9 +30,19 @@ from .const import (
     MQTT_UNAUTHORIZED_RETRY_WINDOW,
 )
 from .debug import debug_enabled
-from .utils import redact_vin_in_text, redact_vin_payload
+from .utils import (
+    redact_vin_in_text,
+    redact_vin_payload,
+    safe_json_loads,
+    JSONSizeError,
+    JSONDepthError,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+# Storage version and key for circuit breaker state
+CIRCUIT_BREAKER_STORAGE_VERSION = 1
+CIRCUIT_BREAKER_STORAGE_KEY = "circuit_breaker"
 
 
 class CardataStreamManager:
@@ -47,6 +58,7 @@ class CardataStreamManager:
         host: str,
         port: int,
         keepalive: int,
+        entry_id: str | None = None,
         error_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.hass = hass
@@ -56,6 +68,7 @@ class CardataStreamManager:
         self._host = host
         self._port = port
         self._keepalive = keepalive
+        self._entry_id = entry_id
         self._client: mqtt.Client | None = None
         self._message_callback: Callable[[dict], Awaitable[None]] | None = None
         self._error_callback = error_callback
@@ -82,6 +95,73 @@ class CardataStreamManager:
         self._max_failures_per_window = MQTT_CIRCUIT_BREAKER_THRESHOLD
         self._failure_window_seconds = MQTT_CIRCUIT_BREAKER_WINDOW
         self._circuit_breaker_duration = MQTT_CIRCUIT_BREAKER_DURATION
+        # Storage for circuit breaker persistence
+        self._circuit_breaker_store: Store | None = None
+        if entry_id:
+            self._circuit_breaker_store = Store(
+                hass,
+                CIRCUIT_BREAKER_STORAGE_VERSION,
+                f"{DOMAIN}_{entry_id}_{CIRCUIT_BREAKER_STORAGE_KEY}",
+            )
+
+    async def async_load_circuit_breaker_state(self) -> None:
+        """Load persisted circuit breaker state from storage."""
+        if not self._circuit_breaker_store:
+            return
+
+        try:
+            data = await self._circuit_breaker_store.async_load()
+            if not data:
+                return
+
+            # Check if circuit breaker was open and still should be
+            open_until_ts = data.get("open_until_timestamp")
+            if open_until_ts:
+                now_ts = time.time()
+                if now_ts < open_until_ts:
+                    # Circuit breaker should still be open
+                    remaining = open_until_ts - now_ts
+                    self._circuit_open = True
+                    self._circuit_open_until = time.monotonic() + remaining
+                    self._failure_count = data.get("failure_count", self._max_failures_per_window)
+                    _LOGGER.warning(
+                        "Restored circuit breaker state: open for %.0f more seconds",
+                        remaining,
+                    )
+                else:
+                    # Circuit breaker has expired, clear the stored state
+                    await self._async_clear_circuit_breaker_state()
+        except Exception as err:
+            _LOGGER.debug("Failed to load circuit breaker state: %s", err)
+
+    async def _async_save_circuit_breaker_state(self) -> None:
+        """Save circuit breaker state to storage."""
+        if not self._circuit_breaker_store:
+            return
+
+        try:
+            if self._circuit_open and self._circuit_open_until:
+                # Convert monotonic time to absolute timestamp for persistence
+                remaining = self._circuit_open_until - time.monotonic()
+                open_until_ts = time.time() + remaining
+                await self._circuit_breaker_store.async_save({
+                    "open_until_timestamp": open_until_ts,
+                    "failure_count": self._failure_count,
+                })
+            else:
+                await self._async_clear_circuit_breaker_state()
+        except Exception as err:
+            _LOGGER.debug("Failed to save circuit breaker state: %s", err)
+
+    async def _async_clear_circuit_breaker_state(self) -> None:
+        """Clear persisted circuit breaker state."""
+        if not self._circuit_breaker_store:
+            return
+
+        try:
+            await self._circuit_breaker_store.async_remove()
+        except Exception:
+            pass  # Ignore errors when clearing
 
     async def async_start(self) -> None:
         async with self._connect_lock:
@@ -90,7 +170,7 @@ class CardataStreamManager:
     def _check_circuit_breaker(self) -> bool:
         """Check if circuit breaker is open. Returns True if connection should be blocked."""
         now = time.monotonic()
-        
+
         # Check if circuit breaker timeout has expired
         if self._circuit_open and self._circuit_open_until:
             if now >= self._circuit_open_until:
@@ -99,6 +179,10 @@ class CardataStreamManager:
                 self._circuit_open_until = None
                 self._failure_count = 0
                 self._failure_window_start = None
+                # Clear persisted state
+                asyncio.run_coroutine_threadsafe(
+                    self._async_clear_circuit_breaker_state(), self.hass.loop
+                )
                 return False
             else:
                 remaining = int(self._circuit_open_until - now)
@@ -108,24 +192,24 @@ class CardataStreamManager:
                         remaining,
                     )
                 return True
-        
+
         # Reset failure window if expired
         if self._failure_window_start and (now - self._failure_window_start) > self._failure_window_seconds:
             self._failure_count = 0
             self._failure_window_start = None
-        
+
         return False
 
     def _record_failure(self) -> None:
         """Record a connection failure and potentially open circuit breaker."""
         now = time.monotonic()
-        
+
         if self._failure_window_start is None:
             self._failure_window_start = now
             self._failure_count = 1
         else:
             self._failure_count += 1
-        
+
         if self._failure_count >= self._max_failures_per_window:
             self._circuit_open = True
             self._circuit_open_until = now + self._circuit_breaker_duration
@@ -136,13 +220,23 @@ class CardataStreamManager:
                 int(now - self._failure_window_start),
                 self._circuit_breaker_duration,
             )
+            # Persist circuit breaker state
+            asyncio.run_coroutine_threadsafe(
+                self._async_save_circuit_breaker_state(), self.hass.loop
+            )
 
     def _record_success(self) -> None:
         """Record a successful connection."""
+        was_open = self._circuit_open
         self._failure_count = 0
         self._failure_window_start = None
         self._circuit_open = False
         self._circuit_open_until = None
+        # Clear persisted state if circuit breaker was open
+        if was_open:
+            asyncio.run_coroutine_threadsafe(
+                self._async_clear_circuit_breaker_state(), self.hass.loop
+            )
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress
@@ -219,6 +313,8 @@ class CardataStreamManager:
                 try:
                     await asyncio.wait_for(disconnect_future, timeout=5)
                 except asyncio.TimeoutError:
+                    # Cancel the orphaned future to prevent late resolution issues
+                    disconnect_future.cancel()
                     if debug_enabled():
                         _LOGGER.debug("Timeout waiting for BMW MQTT disconnect acknowledgement")
                 finally:
@@ -311,146 +407,158 @@ class CardataStreamManager:
         self._client = client
 
     def _handle_connect(self, client: mqtt.Client, userdata, flags, rc) -> None:
-        if rc == 0:
-            self._connection_state = ConnectionState.CONNECTED
-            self._record_success()
-            topic = userdata.get("topic")
-            if topic:
-                result = client.subscribe(topic)
-                if debug_enabled():
-                    _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
-            if self._reauth_notified:
-                self._reauth_notified = False
-                self._awaiting_new_credentials = False
-                asyncio.run_coroutine_threadsafe(self._notify_recovered(), self.hass.loop)
-            self._cancel_retry()
-            self._last_disconnect = None
-            self._retry_backoff = MQTT_RETRY_BACKOFF
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("connected"),
-                    self.hass.loop,
-                )
-        elif rc in MQTT_AUTH_ERROR_CODES:  # bad credentials / not authorized
-            self._connection_state = ConnectionState.FAILED
-            self._record_failure()
-            now = time.monotonic()
-            if (
-                rc == 5
-                and self._last_disconnect is not None
-                and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
-            ):
-                if debug_enabled():
-                    _LOGGER.debug(
-                        "BMW MQTT connection refused shortly after disconnect; scheduling retry"
+        try:
+            if rc == 0:
+                self._connection_state = ConnectionState.CONNECTED
+                self._record_success()
+                topic = userdata.get("topic")
+                if topic:
+                    result = client.subscribe(topic)
+                    if debug_enabled():
+                        _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
+                if self._reauth_notified:
+                    self._reauth_notified = False
+                    self._awaiting_new_credentials = False
+                    asyncio.run_coroutine_threadsafe(self._notify_recovered(), self.hass.loop)
+                self._cancel_retry()
+                self._last_disconnect = None
+                self._retry_backoff = MQTT_RETRY_BACKOFF
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("connected"),
+                        self.hass.loop,
                     )
-                client.loop_stop(force=True)
+            elif rc in MQTT_AUTH_ERROR_CODES:  # bad credentials / not authorized
+                self._connection_state = ConnectionState.FAILED
+                self._record_failure()
+                now = time.monotonic()
+                if (
+                    rc == 5
+                    and self._last_disconnect is not None
+                    and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
+                ):
+                    if debug_enabled():
+                        _LOGGER.debug(
+                            "BMW MQTT connection refused shortly after disconnect; scheduling retry"
+                        )
+                    client.loop_stop(force=True)
+                    self._client = None
+                    self._schedule_retry(MQTT_RETRY_BACKOFF)
+                    return
+                _LOGGER.error("BMW MQTT connection failed: rc=%s", rc)
+                asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
+                client.loop_stop()
                 self._client = None
-                self._schedule_retry(MQTT_RETRY_BACKOFF)
                 return
-            _LOGGER.error("BMW MQTT connection failed: rc=%s", rc)
-            asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
-            client.loop_stop()
-            self._client = None
-            return
-        else:
-            self._connection_state = ConnectionState.FAILED
-            self._record_failure()
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("connection_failed", reason=str(rc)),
-                    self.hass.loop,
-                )
+            else:
+                self._connection_state = ConnectionState.FAILED
+                self._record_failure()
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("connection_failed", reason=str(rc)),
+                        self.hass.loop,
+                    )
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_connect callback")
 
     def _handle_subscribe(self, client: mqtt.Client, userdata, mid, granted_qos) -> None:
-        if debug_enabled():
-            _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
+        try:
+            if debug_enabled():
+                _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_subscribe callback")
 
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
-        payload = msg.payload.decode(errors="ignore")
-        if debug_enabled():
-            _LOGGER.debug(
-                "BMW MQTT message on %s: %s",
-                redact_vin_in_text(msg.topic),
-                redact_vin_payload(payload),
-            )
-        if not self._message_callback:
-            return
         try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            return
-        if self._message_callback:
-            asyncio.run_coroutine_threadsafe(self._message_callback(data), self.hass.loop)
+            payload = msg.payload.decode(errors="ignore")
+            if debug_enabled():
+                _LOGGER.debug(
+                    "BMW MQTT message on %s: %s",
+                    redact_vin_in_text(msg.topic),
+                    redact_vin_payload(payload),
+                )
+            if not self._message_callback:
+                return
+            try:
+                data = safe_json_loads(payload)
+            except (json.JSONDecodeError, JSONSizeError, JSONDepthError):
+                return
+            if self._message_callback:
+                asyncio.run_coroutine_threadsafe(self._message_callback(data), self.hass.loop)
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_message callback")
 
     def _handle_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
-        reason = {
-            1: "Unacceptable protocol version",
-            2: "Identifier rejected",
-            3: "Server unavailable",
-            4: "Bad username or password",
-            5: "Not authorized",
-        }.get(rc, "Unknown")
-        
-        # Only log if not an intentional disconnect
-        if not self._intentional_disconnect:
-            _LOGGER.warning("BMW MQTT disconnected rc=%s (%s)", rc, reason)
-        elif debug_enabled():
-            _LOGGER.debug("BMW MQTT intentional disconnect rc=%s", rc)
-        
-        self._last_disconnect = time.monotonic()
-        
-        # Update connection state
-        if self._connection_state != ConnectionState.DISCONNECTING:
-            self._connection_state = ConnectionState.DISCONNECTED
-            if rc != 0:
-                self._record_failure()
-        
-        disconnect_future = self._disconnect_future
-        if disconnect_future and not disconnect_future.done():
-            def _set_disconnect() -> None:
-                if not disconnect_future.done():
-                    disconnect_future.set_result(None)
+        try:
+            reason = {
+                1: "Unacceptable protocol version",
+                2: "Identifier rejected",
+                3: "Server unavailable",
+                4: "Bad username or password",
+                5: "Not authorized",
+            }.get(rc, "Unknown")
 
-            self.hass.loop.call_soon_threadsafe(_set_disconnect)
-        
-        # Don't reconnect if this was intentional
-        if self._intentional_disconnect:
-            return
-        
-        should_reconnect = True
-        if isinstance(userdata, dict):
-            should_reconnect = userdata.get("reconnect", True)
-            userdata["reconnect"] = True
-        
-        if rc in (4, 5):
-            now = time.monotonic()
-            if (
-                rc == 5
-                and self._last_disconnect is not None
-                and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
-            ):
-                if debug_enabled():
-                    _LOGGER.debug(
-                        "Ignoring transient MQTT rc=5; scheduling retry instead"
-                    )
-                self._schedule_retry(MQTT_RETRY_BACKOFF)
+            # Only log if not an intentional disconnect
+            if not self._intentional_disconnect:
+                _LOGGER.warning("BMW MQTT disconnected rc=%s (%s)", rc, reason)
+            elif debug_enabled():
+                _LOGGER.debug("BMW MQTT intentional disconnect rc=%s", rc)
+
+            self._last_disconnect = time.monotonic()
+
+            # Update connection state
+            if self._connection_state != ConnectionState.DISCONNECTING:
+                self._connection_state = ConnectionState.DISCONNECTED
+                if rc != 0:
+                    self._record_failure()
+
+            disconnect_future = self._disconnect_future
+            if disconnect_future and not disconnect_future.done():
+                def _set_disconnect() -> None:
+                    if not disconnect_future.done():
+                        disconnect_future.set_result(None)
+
+                self.hass.loop.call_soon_threadsafe(_set_disconnect)
+
+            # Don't reconnect if this was intentional
+            if self._intentional_disconnect:
                 return
-            asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
-            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("unauthorized", reason=reason),
-                    self.hass.loop,
-                )
-        else:
-            if should_reconnect and not self._check_circuit_breaker():
-                asyncio.run_coroutine_threadsafe(self._async_reconnect(), self.hass.loop)
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("disconnected", reason=reason),
-                    self.hass.loop,
-                )
+
+            should_reconnect = True
+            if isinstance(userdata, dict):
+                should_reconnect = userdata.get("reconnect", True)
+                userdata["reconnect"] = True
+
+            if rc in (4, 5):
+                now = time.monotonic()
+                if (
+                    rc == 5
+                    and self._last_disconnect is not None
+                    and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
+                ):
+                    if debug_enabled():
+                        _LOGGER.debug(
+                            "Ignoring transient MQTT rc=5; scheduling retry instead"
+                        )
+                    self._schedule_retry(MQTT_RETRY_BACKOFF)
+                    return
+                asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
+                self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("unauthorized", reason=reason),
+                        self.hass.loop,
+                    )
+            else:
+                if should_reconnect and not self._check_circuit_breaker():
+                    asyncio.run_coroutine_threadsafe(self._async_reconnect(), self.hass.loop)
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("disconnected", reason=reason),
+                        self.hass.loop,
+                    )
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_disconnect callback")
 
     async def _async_reconnect(self) -> None:
         await self.async_stop()

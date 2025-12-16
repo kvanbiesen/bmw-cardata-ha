@@ -72,9 +72,15 @@ class CardataEntity(RestoreEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
+        """Return device info for this entity.
+
+        Note: Snapshots coordinator data at entry for consistency.
+        """
         resolved_vin = self._resolve_vin()
+        # Snapshot coordinator data at entry for consistency
         metadata = self._coordinator.device_metadata.get(resolved_vin, {})
-        name = metadata.get("name") or self._coordinator.names.get(resolved_vin, resolved_vin)
+        names_fallback = self._coordinator.names.get(resolved_vin, resolved_vin)
+        name = metadata.get("name") or names_fallback
         manufacturer = metadata.get("manufacturer", "bmw")
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, resolved_vin)},
@@ -115,11 +121,20 @@ class CardataEntity(RestoreEntity):
         return self._vin
 
     def _get_vehicle_name(self) -> str | None:
+        """Get vehicle name from coordinator metadata or names.
+
+        Note: Snapshots both sources at method entry for consistency.
+        In asyncio, sync methods run atomically, but this pattern is
+        defensive against future refactoring.
+        """
         resolved_vin = self._resolve_vin()
+        # Snapshot both sources at entry for consistency
         metadata = self._coordinator.device_metadata.get(resolved_vin)
+        names_fallback = self._coordinator.names.get(resolved_vin)
+
         if metadata and metadata.get("name"):
             return metadata["name"]
-        return self._coordinator.names.get(resolved_vin)
+        return names_fallback
 
     def _strip_leading_vehicle_name(self, base: str, vehicle_name: str) -> str:
         """Remove a leading vehicle name from base to avoid double-prefixing.

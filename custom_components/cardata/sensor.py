@@ -16,7 +16,6 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
-    UnitOfEnergyDistance,
     UnitOfLength,
     UnitOfPower,
     UnitOfPressure,
@@ -58,7 +57,6 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
         (SensorDeviceClass.DISTANCE, UnitOfLength),
         (SensorDeviceClass.PRESSURE, UnitOfPressure),
         (SensorDeviceClass.ENERGY, UnitOfEnergy),
-        (SensorDeviceClass.ENERGY_DISTANCE, UnitOfEnergyDistance),
         (SensorDeviceClass.POWER, UnitOfPower),
         (SensorDeviceClass.CURRENT, UnitOfElectricCurrent),
         (SensorDeviceClass.DURATION, UnitOfTime),
@@ -70,6 +68,10 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
     for device_class, unit_enum in units_and_classes:
         for unit in unit_enum:
             mapping[unit.value] = device_class
+
+    # Manual mapping for Energy Distance (Enum removed in recent HA)
+    if hasattr(SensorDeviceClass, "ENERGY_DISTANCE"):
+        mapping["kWh/100km"] = SensorDeviceClass.ENERGY_DISTANCE
 
     return mapping
 
@@ -138,9 +140,13 @@ def get_device_class_for_unit(
 
 
 def convert_value_for_unit(
-    value: float | str | int, original_unit: str | None, normalized_unit: str | None
-) -> float | str | int:
-    """Convert value when unit normalization requires it."""
+    value: float | str | int | None, original_unit: str | None, normalized_unit: str | None
+) -> float | str | int | None:
+    """Convert value when unit normalization requires it.
+
+    Returns the value unchanged if units match or value is None.
+    Converts numeric values when unit conversion is needed (e.g., weeks to days).
+    """
     if original_unit == normalized_unit or value is None:
         return value
 
@@ -171,7 +177,7 @@ class CardataSensor(CardataEntity, SensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
-        #Mayfe for later settings the GPS available
+        # Maybe for later: setting GPS available
         #if descriptor in GPS_DESCRIPTORS = (
         #    LOCATION_LATITUDE_DESCRIPTOR,
         #    LOCATION_LONGITUDE_DESCRIPTOR,

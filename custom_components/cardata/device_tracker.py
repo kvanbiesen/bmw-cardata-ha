@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
@@ -64,8 +65,14 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = runtime_data.coordinator
     stream_manager = runtime_data.stream
     
-    # Wait for bootstrap to finish so VIN → name mapping exists
+    # Wait briefly for bootstrap to finish so VIN → name mapping exists
+    wait_start = time.monotonic()
     while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
+        if time.monotonic() - wait_start > 15:
+            _LOGGER.debug(
+                "Device tracker setup continuing without vehicle names after 15s wait"
+            )
+            break
         await asyncio.sleep(0.1)
     
     trackers: dict[str, CardataDeviceTracker] = {}
@@ -151,7 +158,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon = state.attributes.get("longitude")
             alt = state.attributes.get("gps_altitude")
             heading = state.attributes.get("gps_heading_deg")
-            #havent decided yet to Restore altitude and heading
+            # TODO: Restore altitude and heading
 
             if lat is not None and lon is not None:
                 try:
@@ -374,7 +381,16 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if state and state.value is not None:
             try:
                 value = float(state.value)
-                
+
+                # Reject NaN and Infinity
+                if not math.isfinite(value):
+                    _LOGGER.warning(
+                        "Invalid coordinate for %s: %s (NaN or Infinity)",
+                        self._redacted_vin,
+                        state.value
+                    )
+                    return None
+
                 # Validate coordinate ranges
                 if "latitude" in descriptor.lower():
                     if not (-90 <= value <= 90):

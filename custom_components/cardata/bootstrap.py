@@ -16,7 +16,14 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
-from .utils import redact_vin, redact_vin_in_text
+from .utils import (
+    is_valid_vin,
+    redact_vin,
+    redact_vin_in_text,
+    safe_json_loads,
+    JSONSizeError,
+    JSONDepthError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -204,13 +211,14 @@ async def async_fetch_primary_vins(
         return []
 
     try:
-        payload = json.loads(response.text)
-    except json.JSONDecodeError:
+        payload = safe_json_loads(response.text)
+    except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
         error_excerpt = redact_vin_in_text(response.text[:200])
         _LOGGER.warning(
-            "Bootstrap mapping response malformed for entry %s: %s",
+            "Bootstrap mapping response malformed for entry %s: %s (error: %s)",
             entry_id,
             error_excerpt,
+            type(err).__name__,
         )
         return []
 
@@ -229,8 +237,12 @@ async def async_fetch_primary_vins(
         if mapping_type and mapping_type.upper() != "PRIMARY":
             continue
         vin = mapping.get("vin")
-        if isinstance(vin, str):
+        if isinstance(vin, str) and is_valid_vin(vin):
             vins.append(vin)
+        elif isinstance(vin, str):
+            _LOGGER.warning(
+                "Bootstrap skipping invalid VIN format from API response"
+            )
 
     if not vins:
         _LOGGER.info("Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
@@ -255,6 +267,11 @@ async def async_seed_telematic_data(
     params = {"containerId": container_id}
 
     for vin in vins:
+        # Validate VIN format before using in URL (defense in depth)
+        if not is_valid_vin(vin):
+            _LOGGER.warning("Skipping invalid VIN format in telematic seed")
+            continue
+
         redacted_vin = redact_vin(vin)
         if coordinator.data.get(vin):
             continue
@@ -319,13 +336,14 @@ async def async_seed_telematic_data(
             continue
 
         try:
-            payload = json.loads(response.text)
-        except json.JSONDecodeError:
+            payload = safe_json_loads(response.text)
+        except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
             error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.debug(
-                "Bootstrap telematic payload invalid for %s: %s",
+                "Bootstrap telematic payload invalid for %s: %s (error: %s)",
                 redacted_vin,
                 error_excerpt,
+                type(err).__name__,
             )
             continue
 

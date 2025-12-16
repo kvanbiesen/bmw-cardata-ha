@@ -105,7 +105,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
 
         assert self._client_id is not None
         self._code_verifier = _build_code_verifier()
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             self._device_data = await request_device_code(
                 session,
                 client_id=self._client_id,
@@ -147,7 +147,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
         import aiohttp
         from custom_components.cardata.device_flow import poll_for_tokens, CardataAuthError
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             try:
                 token_data = await poll_for_tokens(
                     session,
@@ -486,6 +486,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 from custom_components.cardata.auth import async_manual_refresh_tokens
                 await async_manual_refresh_tokens(self.hass, entry)
             except Exception as err:
+                _LOGGER.exception("Token refresh failed during container reset: %s", err)
                 return self._show_confirm(
                     step_id="action_reset_container",
                     errors={"base": "refresh_failed"},
@@ -507,6 +508,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         try:
             new_id = await runtime.container_manager.async_reset_hv_container(access_token)
         except CardataContainerError as err:
+            _LOGGER.exception("Container reset failed: %s", err)
             return self._show_confirm(
                 step_id="action_reset_container",
                 errors={"base": "reset_failed"},
