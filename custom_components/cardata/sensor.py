@@ -16,6 +16,7 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
+    UnitOfEnergyDistance,
     UnitOfLength,
     UnitOfPower,
     UnitOfPressure,
@@ -57,6 +58,7 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
         (SensorDeviceClass.DISTANCE, UnitOfLength),
         (SensorDeviceClass.PRESSURE, UnitOfPressure),
         (SensorDeviceClass.ENERGY, UnitOfEnergy),
+        (SensorDeviceClass.ENERGY_DISTANCE, UnitOfEnergyDistance),
         (SensorDeviceClass.POWER, UnitOfPower),
         (SensorDeviceClass.CURRENT, UnitOfElectricCurrent),
         (SensorDeviceClass.DURATION, UnitOfTime),
@@ -68,10 +70,6 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
     for device_class, unit_enum in units_and_classes:
         for unit in unit_enum:
             mapping[unit.value] = device_class
-
-    # Manual mapping for Energy Distance (Enum removed in recent HA)
-    if hasattr(SensorDeviceClass, "ENERGY_DISTANCE"):
-        mapping["kWh/100km"] = SensorDeviceClass.ENERGY_DISTANCE
 
     return mapping
 
