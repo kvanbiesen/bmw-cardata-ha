@@ -219,6 +219,8 @@ class CardataStreamManager:
                 try:
                     await asyncio.wait_for(disconnect_future, timeout=5)
                 except asyncio.TimeoutError:
+                    # Cancel the orphaned future to prevent late resolution issues
+                    disconnect_future.cancel()
                     if debug_enabled():
                         _LOGGER.debug("Timeout waiting for BMW MQTT disconnect acknowledgement")
                 finally:
