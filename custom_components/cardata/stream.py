@@ -12,6 +12,7 @@ from typing import Awaitable, Callable
 import paho.mqtt.client as mqtt
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 
 from .const import (
     ConnectionState,
@@ -33,6 +34,10 @@ from .utils import redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
 
+# Storage version and key for circuit breaker state
+CIRCUIT_BREAKER_STORAGE_VERSION = 1
+CIRCUIT_BREAKER_STORAGE_KEY = "circuit_breaker"
+
 
 class CardataStreamManager:
     """Manage the MQTT connection to BMW CarData."""
@@ -47,6 +52,7 @@ class CardataStreamManager:
         host: str,
         port: int,
         keepalive: int,
+        entry_id: str | None = None,
         error_callback: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.hass = hass
@@ -56,6 +62,7 @@ class CardataStreamManager:
         self._host = host
         self._port = port
         self._keepalive = keepalive
+        self._entry_id = entry_id
         self._client: mqtt.Client | None = None
         self._message_callback: Callable[[dict], Awaitable[None]] | None = None
         self._error_callback = error_callback
@@ -82,6 +89,73 @@ class CardataStreamManager:
         self._max_failures_per_window = MQTT_CIRCUIT_BREAKER_THRESHOLD
         self._failure_window_seconds = MQTT_CIRCUIT_BREAKER_WINDOW
         self._circuit_breaker_duration = MQTT_CIRCUIT_BREAKER_DURATION
+        # Storage for circuit breaker persistence
+        self._circuit_breaker_store: Store | None = None
+        if entry_id:
+            self._circuit_breaker_store = Store(
+                hass,
+                CIRCUIT_BREAKER_STORAGE_VERSION,
+                f"{DOMAIN}_{entry_id}_{CIRCUIT_BREAKER_STORAGE_KEY}",
+            )
+
+    async def async_load_circuit_breaker_state(self) -> None:
+        """Load persisted circuit breaker state from storage."""
+        if not self._circuit_breaker_store:
+            return
+
+        try:
+            data = await self._circuit_breaker_store.async_load()
+            if not data:
+                return
+
+            # Check if circuit breaker was open and still should be
+            open_until_ts = data.get("open_until_timestamp")
+            if open_until_ts:
+                now_ts = time.time()
+                if now_ts < open_until_ts:
+                    # Circuit breaker should still be open
+                    remaining = open_until_ts - now_ts
+                    self._circuit_open = True
+                    self._circuit_open_until = time.monotonic() + remaining
+                    self._failure_count = data.get("failure_count", self._max_failures_per_window)
+                    _LOGGER.warning(
+                        "Restored circuit breaker state: open for %.0f more seconds",
+                        remaining,
+                    )
+                else:
+                    # Circuit breaker has expired, clear the stored state
+                    await self._async_clear_circuit_breaker_state()
+        except Exception as err:
+            _LOGGER.debug("Failed to load circuit breaker state: %s", err)
+
+    async def _async_save_circuit_breaker_state(self) -> None:
+        """Save circuit breaker state to storage."""
+        if not self._circuit_breaker_store:
+            return
+
+        try:
+            if self._circuit_open and self._circuit_open_until:
+                # Convert monotonic time to absolute timestamp for persistence
+                remaining = self._circuit_open_until - time.monotonic()
+                open_until_ts = time.time() + remaining
+                await self._circuit_breaker_store.async_save({
+                    "open_until_timestamp": open_until_ts,
+                    "failure_count": self._failure_count,
+                })
+            else:
+                await self._async_clear_circuit_breaker_state()
+        except Exception as err:
+            _LOGGER.debug("Failed to save circuit breaker state: %s", err)
+
+    async def _async_clear_circuit_breaker_state(self) -> None:
+        """Clear persisted circuit breaker state."""
+        if not self._circuit_breaker_store:
+            return
+
+        try:
+            await self._circuit_breaker_store.async_remove()
+        except Exception:
+            pass  # Ignore errors when clearing
 
     async def async_start(self) -> None:
         async with self._connect_lock:
@@ -90,7 +164,7 @@ class CardataStreamManager:
     def _check_circuit_breaker(self) -> bool:
         """Check if circuit breaker is open. Returns True if connection should be blocked."""
         now = time.monotonic()
-        
+
         # Check if circuit breaker timeout has expired
         if self._circuit_open and self._circuit_open_until:
             if now >= self._circuit_open_until:
@@ -99,6 +173,10 @@ class CardataStreamManager:
                 self._circuit_open_until = None
                 self._failure_count = 0
                 self._failure_window_start = None
+                # Clear persisted state
+                asyncio.run_coroutine_threadsafe(
+                    self._async_clear_circuit_breaker_state(), self.hass.loop
+                )
                 return False
             else:
                 remaining = int(self._circuit_open_until - now)
@@ -108,24 +186,24 @@ class CardataStreamManager:
                         remaining,
                     )
                 return True
-        
+
         # Reset failure window if expired
         if self._failure_window_start and (now - self._failure_window_start) > self._failure_window_seconds:
             self._failure_count = 0
             self._failure_window_start = None
-        
+
         return False
 
     def _record_failure(self) -> None:
         """Record a connection failure and potentially open circuit breaker."""
         now = time.monotonic()
-        
+
         if self._failure_window_start is None:
             self._failure_window_start = now
             self._failure_count = 1
         else:
             self._failure_count += 1
-        
+
         if self._failure_count >= self._max_failures_per_window:
             self._circuit_open = True
             self._circuit_open_until = now + self._circuit_breaker_duration
@@ -136,13 +214,23 @@ class CardataStreamManager:
                 int(now - self._failure_window_start),
                 self._circuit_breaker_duration,
             )
+            # Persist circuit breaker state
+            asyncio.run_coroutine_threadsafe(
+                self._async_save_circuit_breaker_state(), self.hass.loop
+            )
 
     def _record_success(self) -> None:
         """Record a successful connection."""
+        was_open = self._circuit_open
         self._failure_count = 0
         self._failure_window_start = None
         self._circuit_open = False
         self._circuit_open_until = None
+        # Clear persisted state if circuit breaker was open
+        if was_open:
+            asyncio.run_coroutine_threadsafe(
+                self._async_clear_circuit_breaker_state(), self.hass.loop
+            )
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress

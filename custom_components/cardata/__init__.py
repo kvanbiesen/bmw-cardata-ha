@@ -144,10 +144,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             host=data.get("mqtt_host", DEFAULT_STREAM_HOST),
             port=data.get("mqtt_port", DEFAULT_STREAM_PORT),
             keepalive=mqtt_keepalive,
+            entry_id=entry.entry_id,
             error_callback=handle_stream_error_callback,
         )
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)
+
+        # Load persisted circuit breaker state
+        await manager.async_load_circuit_breaker_state()
         
         # CRITICAL: Prevent MQTT from auto-starting during token refresh
         # Set a flag that we'll clear after bootstrap completes
