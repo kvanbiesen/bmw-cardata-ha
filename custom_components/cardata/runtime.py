@@ -52,6 +52,9 @@ class CardataRuntimeData:
     # Lock to protect concurrent config entry updates
     _entry_update_lock: asyncio.Lock = None
 
+    # Lock to protect concurrent token refresh operations
+    _token_refresh_lock: asyncio.Lock = None
+
     def __post_init__(self):
         """Initialize rate limiters if not provided."""
         if self.rate_limit_tracker is None:
@@ -68,11 +71,18 @@ class CardataRuntimeData:
             )
         if self._entry_update_lock is None:
             self._entry_update_lock = asyncio.Lock()
+        if self._token_refresh_lock is None:
+            self._token_refresh_lock = asyncio.Lock()
 
     @property
     def entry_update_lock(self) -> asyncio.Lock:
         """Get the entry update lock."""
         return self._entry_update_lock
+
+    @property
+    def token_refresh_lock(self) -> asyncio.Lock:
+        """Get the token refresh lock."""
+        return self._token_refresh_lock
 
 
 async def async_update_entry_data(
