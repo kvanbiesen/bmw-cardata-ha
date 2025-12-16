@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
 import voluptuous as vol
@@ -558,7 +558,7 @@ def async_unregister_services(hass: HomeAssistant) -> None:
             hass.services.async_remove(DOMAIN, service)
             _LOGGER.debug("Unregistered service %s.%s", DOMAIN, service)
 
-async def async_fetch_vehicle_images_service(call) -> None:
+async def async_fetch_vehicle_images_service(call: ServiceCall) -> None:
     """Service to manually fetch vehicle images."""
     hass = call.hass
     domain_data = hass.data.get(DOMAIN, {})
