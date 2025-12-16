@@ -404,7 +404,9 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         "Accept": "application/json",
     }
 
-    session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession(
+    # Use runtime session if available, otherwise create a temporary one
+    owns_session = not getattr(runtime, "session", None)
+    session = runtime.session if not owns_session else aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=30)
     )
 
@@ -455,48 +457,53 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             _LOGGER.exception("clean_hv_containers: network error deleting container %s: %s", cid, err)
             return False, 0, str(err)
 
-    # Perform requested action
-    if action == "list":
-        containers = await _list_containers()
-        if not containers:
-            _LOGGER.info("clean_hv_containers: no containers found (entry %s)", entry.entry_id)
+    try:
+        # Perform requested action
+        if action == "list":
+            containers = await _list_containers()
+            if not containers:
+                _LOGGER.info("clean_hv_containers: no containers found (entry %s)", entry.entry_id)
+                return
+            # Log a compact listing
+            for c in containers:
+                cid = c.get("containerId") or c.get("containerId")
+                name = c.get("name")
+                purpose = c.get("purpose")
+                _LOGGER.info("clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
             return
-        # Log a compact listing
-        for c in containers:
-            cid = c.get("containerId") or c.get("containerId")
-            name = c.get("name")
-            purpose = c.get("purpose")
-            _LOGGER.info("clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
-        return
 
-    if action == "delete":
-        if not container_id:
-            _LOGGER.error("clean_hv_containers: 'delete' action requires container_id")
+        if action == "delete":
+            if not container_id:
+                _LOGGER.error("clean_hv_containers: 'delete' action requires container_id")
+                return
+            ok, status, text = await _delete_container(container_id)
+            if not ok:
+                _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
             return
-        ok, status, text = await _delete_container(container_id)
-        if not ok:
-            _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
-        return
 
-    if action == "delete_all_matching":
-        containers = await _list_containers()
-        if not containers:
-            _LOGGER.info("clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
+        if action == "delete_all_matching":
+            containers = await _list_containers()
+            if not containers:
+                _LOGGER.info("clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
+                return
+            deleted_any = False
+            for c in containers:
+                cid = c.get("containerId")
+                name = c.get("name")
+                purpose = c.get("purpose")
+                if cid and name == HV_BATTERY_CONTAINER_NAME and purpose == HV_BATTERY_CONTAINER_PURPOSE:
+                    ok, status, text = await _delete_container(cid)
+                    if ok:
+                        deleted_any = True
+            if not deleted_any:
+                _LOGGER.info("clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
             return
-        deleted_any = False
-        for c in containers:
-            cid = c.get("containerId")
-            name = c.get("name")
-            purpose = c.get("purpose")
-            if cid and name == HV_BATTERY_CONTAINER_NAME and purpose == HV_BATTERY_CONTAINER_PURPOSE:
-                ok, status, text = await _delete_container(cid)
-                if ok:
-                    deleted_any = True
-        if not deleted_any:
-            _LOGGER.info("clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
-        return
 
-    _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
+        _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
+    finally:
+        # Close the session if we created it
+        if owns_session:
+            await session.close()
 
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all Cardata services."""
@@ -566,29 +573,34 @@ async def async_fetch_vehicle_images_service(call: ServiceCall) -> None:
     for entry_id, runtime_data in domain_data.items():
         if entry_id.startswith("_"):
             continue
-            
+
         entry = hass.config_entries.async_get_entry(entry_id)
         if not entry:
             continue
-        
-        coordinator = runtime_data.coordinator
-        session = runtime_data.session
-        quota = runtime_data.quota_manager
-        vins = list(coordinator.data.keys())
-        access_token = entry.data.get("access_token")
-        
-        if not access_token or not vins:
-            continue
-        
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "x-version": "v1",
-            "Accept": "*/*",
-        }
-        
-        from .metadata import async_fetch_and_store_vehicle_images
-        
-        _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
-        await async_fetch_and_store_vehicle_images(
-            hass, entry, headers, vins, quota, session
-        )
+
+        try:
+            coordinator = runtime_data.coordinator
+            session = runtime_data.session
+            quota = runtime_data.quota_manager
+            vins = list(coordinator.data.keys())
+            access_token = entry.data.get("access_token")
+
+            if not access_token or not vins:
+                continue
+
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "x-version": "v1",
+                "Accept": "*/*",
+            }
+
+            from .metadata import async_fetch_and_store_vehicle_images
+
+            _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
+            await async_fetch_and_store_vehicle_images(
+                hass, entry, headers, vins, quota, session
+            )
+        except Exception as err:
+            _LOGGER.exception(
+                "Failed to fetch vehicle images for entry %s: %s", entry_id, err
+            )
