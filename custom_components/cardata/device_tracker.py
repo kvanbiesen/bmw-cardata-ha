@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
@@ -380,7 +381,16 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if state and state.value is not None:
             try:
                 value = float(state.value)
-                
+
+                # Reject NaN and Infinity
+                if not math.isfinite(value):
+                    _LOGGER.warning(
+                        "Invalid coordinate for %s: %s (NaN or Infinity)",
+                        self._redacted_vin,
+                        state.value
+                    )
+                    return None
+
                 # Validate coordinate ranges
                 if "latitude" in descriptor.lower():
                     if not (-90 <= value <= 90):
