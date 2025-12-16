@@ -260,7 +260,17 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     wait,
                     wait / 60,
                 )
-                await asyncio.sleep(wait)
+                # Sleep in chunks, checking for entry deletion periodically
+                while wait > 0:
+                    chunk = min(wait, 60)  # Check every 60 seconds
+                    await asyncio.sleep(chunk)
+                    wait -= chunk
+                    # Check if entry was deleted during sleep
+                    if hass.config_entries.async_get_entry(entry_id) is None:
+                        _LOGGER.debug(
+                            "Entry %s removed during sleep, stopping poll loop", entry_id
+                        )
+                        return
                 continue
 
             # Time to poll
