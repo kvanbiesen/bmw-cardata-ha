@@ -761,7 +761,7 @@ async def async_setup_entry(
     
         drive_train = extra.get("drive_train", "").lower()
     
-        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid","mhev"])
+        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid", "mhev"])
     
         # Cache the result
         _electric_vehicle_cache[vin] = is_electric
