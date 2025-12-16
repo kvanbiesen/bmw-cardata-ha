@@ -16,7 +16,14 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
-from .utils import is_valid_vin, redact_vin, redact_vin_in_text
+from .utils import (
+    is_valid_vin,
+    redact_vin,
+    redact_vin_in_text,
+    safe_json_loads,
+    JSONSizeError,
+    JSONDepthError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -204,13 +211,14 @@ async def async_fetch_primary_vins(
         return []
 
     try:
-        payload = json.loads(response.text)
-    except json.JSONDecodeError:
+        payload = safe_json_loads(response.text)
+    except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
         error_excerpt = redact_vin_in_text(response.text[:200])
         _LOGGER.warning(
-            "Bootstrap mapping response malformed for entry %s: %s",
+            "Bootstrap mapping response malformed for entry %s: %s (error: %s)",
             entry_id,
             error_excerpt,
+            type(err).__name__,
         )
         return []
 
@@ -328,13 +336,14 @@ async def async_seed_telematic_data(
             continue
 
         try:
-            payload = json.loads(response.text)
-        except json.JSONDecodeError:
+            payload = safe_json_loads(response.text)
+        except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
             error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.debug(
-                "Bootstrap telematic payload invalid for %s: %s",
+                "Bootstrap telematic payload invalid for %s: %s (error: %s)",
                 redacted_vin,
                 error_excerpt,
+                type(err).__name__,
             )
             continue
 

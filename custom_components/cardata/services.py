@@ -27,7 +27,15 @@ from .const import (
     HV_BATTERY_CONTAINER_PURPOSE,
 )
 from .runtime import CardataRuntimeData
-from .utils import is_valid_vin, redact_vin, redact_vin_in_text, redact_vin_payload
+from .utils import (
+    is_valid_vin,
+    redact_vin,
+    redact_vin_in_text,
+    redact_vin_payload,
+    safe_json_loads,
+    JSONSizeError,
+    JSONDepthError,
+)
 
 import homeassistant.helpers.entity_registry as er
 
@@ -209,9 +217,12 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
                 )
                 return
             try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                payload = text
+                payload = safe_json_loads(text)
+            except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
+                _LOGGER.warning(
+                    "Cardata fetch_vehicle_mappings: invalid JSON response: %s", type(err).__name__
+                )
+                return
             _LOGGER.info("Cardata vehicle mappings: %s", redact_vin_payload(payload))
     except aiohttp.ClientError as err:
         _LOGGER.error("Cardata fetch_vehicle_mappings: network error: %s", err)
@@ -294,9 +305,14 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
                 )
                 return
             try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                payload = text
+                payload = safe_json_loads(text)
+            except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
+                _LOGGER.warning(
+                    "Cardata fetch_basic_data: invalid JSON response for %s: %s",
+                    redacted_vin,
+                    type(err).__name__,
+                )
+                return
 
             _LOGGER.info(
                 "Cardata basic data for %s: %s",
@@ -435,9 +451,11 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                     )
                     return []
                 try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    _LOGGER.debug("clean_hv_containers: non-JSON list response: %s", text)
+                    payload = safe_json_loads(text)
+                except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
+                    _LOGGER.debug(
+                        "clean_hv_containers: invalid JSON list response: %s", type(err).__name__
+                    )
                     return []
                 if isinstance(payload, list):
                     return payload

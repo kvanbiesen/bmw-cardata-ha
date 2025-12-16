@@ -30,7 +30,13 @@ from .const import (
     MQTT_UNAUTHORIZED_RETRY_WINDOW,
 )
 from .debug import debug_enabled
-from .utils import redact_vin_in_text, redact_vin_payload
+from .utils import (
+    redact_vin_in_text,
+    redact_vin_payload,
+    safe_json_loads,
+    JSONSizeError,
+    JSONDepthError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -474,8 +480,8 @@ class CardataStreamManager:
             if not self._message_callback:
                 return
             try:
-                data = json.loads(payload)
-            except json.JSONDecodeError:
+                data = safe_json_loads(payload)
+            except (json.JSONDecodeError, JSONSizeError, JSONDepthError):
                 return
             if self._message_callback:
                 asyncio.run_coroutine_threadsafe(self._message_callback(data), self.hass.loop)
