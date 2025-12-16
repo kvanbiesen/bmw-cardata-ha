@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING
 
 import aiohttp
+
+# Module-level lock for config entry updates during setup (before runtime exists)
+_setup_update_lock = asyncio.Lock()
 
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
@@ -91,15 +94,10 @@ async def async_update_entry_data(
 
     runtime: CardataRuntimeData | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
 
-    if runtime is None:
-        # No runtime yet (during initial setup), update directly
-        # This is safe because setup is sequential
-        merged = dict(entry.data)
-        merged.update(updates)
-        hass.config_entries.async_update_entry(entry, data=merged)
-        return
+    # Choose appropriate lock: runtime lock if available, module-level lock during setup
+    lock = runtime.entry_update_lock if runtime else _setup_update_lock
 
-    async with runtime.entry_update_lock:
+    async with lock:
         # Re-read entry.data inside lock to get latest state
         merged = dict(entry.data)
         merged.update(updates)
