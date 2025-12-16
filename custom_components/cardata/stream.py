@@ -311,146 +311,158 @@ class CardataStreamManager:
         self._client = client
 
     def _handle_connect(self, client: mqtt.Client, userdata, flags, rc) -> None:
-        if rc == 0:
-            self._connection_state = ConnectionState.CONNECTED
-            self._record_success()
-            topic = userdata.get("topic")
-            if topic:
-                result = client.subscribe(topic)
-                if debug_enabled():
-                    _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
-            if self._reauth_notified:
-                self._reauth_notified = False
-                self._awaiting_new_credentials = False
-                asyncio.run_coroutine_threadsafe(self._notify_recovered(), self.hass.loop)
-            self._cancel_retry()
-            self._last_disconnect = None
-            self._retry_backoff = MQTT_RETRY_BACKOFF
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("connected"),
-                    self.hass.loop,
-                )
-        elif rc in MQTT_AUTH_ERROR_CODES:  # bad credentials / not authorized
-            self._connection_state = ConnectionState.FAILED
-            self._record_failure()
-            now = time.monotonic()
-            if (
-                rc == 5
-                and self._last_disconnect is not None
-                and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
-            ):
-                if debug_enabled():
-                    _LOGGER.debug(
-                        "BMW MQTT connection refused shortly after disconnect; scheduling retry"
+        try:
+            if rc == 0:
+                self._connection_state = ConnectionState.CONNECTED
+                self._record_success()
+                topic = userdata.get("topic")
+                if topic:
+                    result = client.subscribe(topic)
+                    if debug_enabled():
+                        _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
+                if self._reauth_notified:
+                    self._reauth_notified = False
+                    self._awaiting_new_credentials = False
+                    asyncio.run_coroutine_threadsafe(self._notify_recovered(), self.hass.loop)
+                self._cancel_retry()
+                self._last_disconnect = None
+                self._retry_backoff = MQTT_RETRY_BACKOFF
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("connected"),
+                        self.hass.loop,
                     )
-                client.loop_stop(force=True)
+            elif rc in MQTT_AUTH_ERROR_CODES:  # bad credentials / not authorized
+                self._connection_state = ConnectionState.FAILED
+                self._record_failure()
+                now = time.monotonic()
+                if (
+                    rc == 5
+                    and self._last_disconnect is not None
+                    and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
+                ):
+                    if debug_enabled():
+                        _LOGGER.debug(
+                            "BMW MQTT connection refused shortly after disconnect; scheduling retry"
+                        )
+                    client.loop_stop(force=True)
+                    self._client = None
+                    self._schedule_retry(MQTT_RETRY_BACKOFF)
+                    return
+                _LOGGER.error("BMW MQTT connection failed: rc=%s", rc)
+                asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
+                client.loop_stop()
                 self._client = None
-                self._schedule_retry(MQTT_RETRY_BACKOFF)
                 return
-            _LOGGER.error("BMW MQTT connection failed: rc=%s", rc)
-            asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
-            client.loop_stop()
-            self._client = None
-            return
-        else:
-            self._connection_state = ConnectionState.FAILED
-            self._record_failure()
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("connection_failed", reason=str(rc)),
-                    self.hass.loop,
-                )
+            else:
+                self._connection_state = ConnectionState.FAILED
+                self._record_failure()
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("connection_failed", reason=str(rc)),
+                        self.hass.loop,
+                    )
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_connect callback")
 
     def _handle_subscribe(self, client: mqtt.Client, userdata, mid, granted_qos) -> None:
-        if debug_enabled():
-            _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
+        try:
+            if debug_enabled():
+                _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_subscribe callback")
 
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
-        payload = msg.payload.decode(errors="ignore")
-        if debug_enabled():
-            _LOGGER.debug(
-                "BMW MQTT message on %s: %s",
-                redact_vin_in_text(msg.topic),
-                redact_vin_payload(payload),
-            )
-        if not self._message_callback:
-            return
         try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            return
-        if self._message_callback:
-            asyncio.run_coroutine_threadsafe(self._message_callback(data), self.hass.loop)
+            payload = msg.payload.decode(errors="ignore")
+            if debug_enabled():
+                _LOGGER.debug(
+                    "BMW MQTT message on %s: %s",
+                    redact_vin_in_text(msg.topic),
+                    redact_vin_payload(payload),
+                )
+            if not self._message_callback:
+                return
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                return
+            if self._message_callback:
+                asyncio.run_coroutine_threadsafe(self._message_callback(data), self.hass.loop)
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_message callback")
 
     def _handle_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
-        reason = {
-            1: "Unacceptable protocol version",
-            2: "Identifier rejected",
-            3: "Server unavailable",
-            4: "Bad username or password",
-            5: "Not authorized",
-        }.get(rc, "Unknown")
-        
-        # Only log if not an intentional disconnect
-        if not self._intentional_disconnect:
-            _LOGGER.warning("BMW MQTT disconnected rc=%s (%s)", rc, reason)
-        elif debug_enabled():
-            _LOGGER.debug("BMW MQTT intentional disconnect rc=%s", rc)
-        
-        self._last_disconnect = time.monotonic()
-        
-        # Update connection state
-        if self._connection_state != ConnectionState.DISCONNECTING:
-            self._connection_state = ConnectionState.DISCONNECTED
-            if rc != 0:
-                self._record_failure()
-        
-        disconnect_future = self._disconnect_future
-        if disconnect_future and not disconnect_future.done():
-            def _set_disconnect() -> None:
-                if not disconnect_future.done():
-                    disconnect_future.set_result(None)
+        try:
+            reason = {
+                1: "Unacceptable protocol version",
+                2: "Identifier rejected",
+                3: "Server unavailable",
+                4: "Bad username or password",
+                5: "Not authorized",
+            }.get(rc, "Unknown")
 
-            self.hass.loop.call_soon_threadsafe(_set_disconnect)
-        
-        # Don't reconnect if this was intentional
-        if self._intentional_disconnect:
-            return
-        
-        should_reconnect = True
-        if isinstance(userdata, dict):
-            should_reconnect = userdata.get("reconnect", True)
-            userdata["reconnect"] = True
-        
-        if rc in (4, 5):
-            now = time.monotonic()
-            if (
-                rc == 5
-                and self._last_disconnect is not None
-                and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
-            ):
-                if debug_enabled():
-                    _LOGGER.debug(
-                        "Ignoring transient MQTT rc=5; scheduling retry instead"
-                    )
-                self._schedule_retry(MQTT_RETRY_BACKOFF)
+            # Only log if not an intentional disconnect
+            if not self._intentional_disconnect:
+                _LOGGER.warning("BMW MQTT disconnected rc=%s (%s)", rc, reason)
+            elif debug_enabled():
+                _LOGGER.debug("BMW MQTT intentional disconnect rc=%s", rc)
+
+            self._last_disconnect = time.monotonic()
+
+            # Update connection state
+            if self._connection_state != ConnectionState.DISCONNECTING:
+                self._connection_state = ConnectionState.DISCONNECTED
+                if rc != 0:
+                    self._record_failure()
+
+            disconnect_future = self._disconnect_future
+            if disconnect_future and not disconnect_future.done():
+                def _set_disconnect() -> None:
+                    if not disconnect_future.done():
+                        disconnect_future.set_result(None)
+
+                self.hass.loop.call_soon_threadsafe(_set_disconnect)
+
+            # Don't reconnect if this was intentional
+            if self._intentional_disconnect:
                 return
-            asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
-            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("unauthorized", reason=reason),
-                    self.hass.loop,
-                )
-        else:
-            if should_reconnect and not self._check_circuit_breaker():
-                asyncio.run_coroutine_threadsafe(self._async_reconnect(), self.hass.loop)
-            if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    self._status_callback("disconnected", reason=reason),
-                    self.hass.loop,
-                )
+
+            should_reconnect = True
+            if isinstance(userdata, dict):
+                should_reconnect = userdata.get("reconnect", True)
+                userdata["reconnect"] = True
+
+            if rc in (4, 5):
+                now = time.monotonic()
+                if (
+                    rc == 5
+                    and self._last_disconnect is not None
+                    and now - self._last_disconnect < MQTT_UNAUTHORIZED_RETRY_WINDOW
+                ):
+                    if debug_enabled():
+                        _LOGGER.debug(
+                            "Ignoring transient MQTT rc=5; scheduling retry instead"
+                        )
+                    self._schedule_retry(MQTT_RETRY_BACKOFF)
+                    return
+                asyncio.run_coroutine_threadsafe(self._handle_unauthorized(), self.hass.loop)
+                self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("unauthorized", reason=reason),
+                        self.hass.loop,
+                    )
+            else:
+                if should_reconnect and not self._check_circuit_breaker():
+                    asyncio.run_coroutine_threadsafe(self._async_reconnect(), self.hass.loop)
+                if self._status_callback:
+                    asyncio.run_coroutine_threadsafe(
+                        self._status_callback("disconnected", reason=reason),
+                        self.hass.loop,
+                    )
+        except Exception:
+            _LOGGER.exception("Unhandled exception in MQTT on_disconnect callback")
 
     async def _async_reconnect(self) -> None:
         await self.async_stop()
