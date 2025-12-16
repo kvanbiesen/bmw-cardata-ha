@@ -82,7 +82,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gcid = data.get("gcid")
         id_token = data.get("id_token")
         if not gcid or not id_token:
-            await session.close()
             raise ConfigEntryNotReady("Missing GCID or ID token")
 
         # Set up coordinator
@@ -166,7 +165,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 err,
             )
         except Exception as err:
-            await session.close()
             raise ConfigEntryNotReady(f"Initial token refresh failed: {err}") from err
 
         # Ensure HV container if token refresh didn't succeed
@@ -190,7 +188,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             entry, session, manager, container_manager
                         )
                     except CardataAuthError as err:
-                        _LOGGER.error("Token refresh failed: %s", err)
+                        _LOGGER.error("Token refresh failed (auth): %s", err)
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                        _LOGGER.warning("Token refresh failed (network): %s", err)
+                    except Exception as err:
+                        _LOGGER.exception("Token refresh failed (unexpected): %s", err)
             except asyncio.CancelledError:
                 return
 
@@ -238,6 +240,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Bootstrap did not complete within 30 seconds. "
                     "Devices will update names when metadata arrives."
                 )
+                # Cancel the orphaned bootstrap task to prevent background execution
+                runtime_data.bootstrap_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await runtime_data.bootstrap_task
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
                 bootstrap_error = str(err)
@@ -254,7 +260,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     title="BMW CarData Setup Failed",
                     notification_id=f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
                 )
-            await session.close()
             raise ConfigEntryNotReady(
                 f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
             )
@@ -267,7 +272,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("Starting MQTT connection after bootstrap")
                 await manager.async_start()
             except Exception as err:
-                await session.close()
                 if refreshed_token:
                     raise ConfigEntryNotReady(
                         f"Unable to connect to BMW MQTT after token refresh: {err}"
@@ -298,8 +302,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         return True
 
-    except Exception as err:
-        # Clean up all tasks and resources on setup failure
+    except BaseException:
+        # Clean up all tasks and resources on setup failure (catches all exceptions including KeyboardInterrupt)
         if refresh_task:
             refresh_task.cancel()
             with suppress(asyncio.CancelledError):
