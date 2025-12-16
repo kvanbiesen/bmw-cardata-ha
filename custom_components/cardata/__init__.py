@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import aiohttp
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -246,15 +247,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if should_bootstrap and not coordinator.names:
             error_message = bootstrap_error or "Unknown bootstrap error"
             # Create a persistent notification in the UI for visibility
-            await hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {
-                    "title":"BMW CarData Setup Failed",
-                    "message":f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                    "notification_id":f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
-                }
-            )
+            with suppress(Exception):
+                persistent_notification.async_create(
+                    hass,
+                    f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
+                    title="BMW CarData Setup Failed",
+                    notification_id=f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+                )
             await session.close()
             raise ConfigEntryNotReady(
                 f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
