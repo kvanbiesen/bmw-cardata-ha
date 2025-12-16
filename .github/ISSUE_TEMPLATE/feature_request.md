@@ -1,11 +1,9 @@
 ---
-
-name: ✨ Feature Request
+name: Feature Request
 about: Suggest an idea or enhancement for the BMW CarData Home Assistant integration
 title: "[Feature]: "
-labels: [enhancement]
-assignees: []
--------------
+labels: enhancement
+---
 
 # ✨ Feature Request – BMW CarData Home Assistant Integration
 
