@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from typing import Optional
 
 import aiohttp
 
@@ -13,7 +14,7 @@ from homeassistant.config_entries import ConfigEntry, SOURCE_REAUTH
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, HV_BATTERY_DESCRIPTORS, TOKEN_REFRESH_RETRY_WINDOW
+from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
 from .device_flow import CardataAuthError, refresh_tokens
 from .container import CardataContainerError, CardataContainerManager
 from .stream import CardataStreamManager
@@ -26,81 +27,63 @@ async def refresh_tokens_for_entry(
     entry: ConfigEntry,
     session: aiohttp.ClientSession,
     manager: CardataStreamManager,
-    container_manager: CardataContainerManager | None = None,
+    container_manager: Optional[CardataContainerManager] = None,
 ) -> None:
     """Refresh tokens and update entry data.
-
+    
     CRITICAL: This function ONLY handles token refresh.
     Container management is handled separately to avoid API hammering.
     Creating containers during token refresh causes excessive API calls!
-
-    This function is protected by a lock to prevent concurrent token refreshes
-    for the same entry, which could cause duplicate API calls or state corruption.
     """
     hass = manager.hass
+    data = dict(entry.data)
+    refresh_token = data.get("refresh_token")
+    client_id = data.get("client_id")
 
-    # Get runtime to access the token refresh lock (may not exist during setup)
-    runtime: CardataRuntimeData | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not refresh_token or not client_id:
+        raise CardataAuthError("Missing credentials for refresh")
 
-    async def _do_refresh() -> None:
-        """Perform the actual token refresh (called under lock if available)."""
-        data = dict(entry.data)
-        refresh_token = data.get("refresh_token")
-        client_id = data.get("client_id")
+    from .const import DEFAULT_SCOPE
 
-        if not refresh_token or not client_id:
-            raise CardataAuthError("Missing credentials for refresh")
+    requested_scope = data.get("scope") or DEFAULT_SCOPE
 
-        from .const import DEFAULT_SCOPE
+    token_data = await refresh_tokens(
+        session,
+        client_id=client_id,
+        refresh_token=refresh_token,
+        scope=requested_scope,
+    )
 
-        requested_scope = data.get("scope") or DEFAULT_SCOPE
+    new_id_token = token_data.get("id_token")
+    if not new_id_token:
+        raise CardataAuthError("Token refresh response did not include id_token")
 
-        token_data = await refresh_tokens(
-            session,
-            client_id=client_id,
-            refresh_token=refresh_token,
-            scope=requested_scope,
-        )
+    token_updates = {
+        "access_token": token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token", refresh_token),
+        "id_token": new_id_token,
+        "expires_in": token_data.get("expires_in"),
+        "scope": token_data.get("scope", data.get("scope")),
+        "token_type": token_data.get("token_type", data.get("token_type")),
+        "received_at": time.time(),
+    }
 
-        new_id_token = token_data.get("id_token")
-        if not new_id_token:
-            raise CardataAuthError("Token refresh response did not include id_token")
+    # Sync existing container ID to manager (NO creation!)
+    if container_manager:
+        hv_container_id = data.get("hv_container_id")
+        if hv_container_id:
+            container_manager.sync_from_entry(hv_container_id)
+            _LOGGER.debug("Synced existing container %s to manager", hv_container_id)
 
-        token_updates = {
-            "access_token": token_data.get("access_token"),
-            "refresh_token": token_data.get("refresh_token", refresh_token),
-            "id_token": new_id_token,
-            "expires_in": token_data.get("expires_in"),
-            "scope": token_data.get("scope", data.get("scope")),
-            "token_type": token_data.get("token_type", data.get("token_type")),
-            "received_at": time.time(),
-        }
+    await async_update_entry_data(hass, entry, token_updates)
+    await manager.async_update_credentials(
+        gcid=data.get("gcid"),
+        id_token=new_id_token,
+    )
 
-        # Sync existing container ID to manager (NO creation!)
-        if container_manager:
-            hv_container_id = data.get("hv_container_id")
-            if hv_container_id:
-                container_manager.sync_from_entry(hv_container_id)
-                _LOGGER.debug("Synced existing container %s to manager", hv_container_id)
-
-        await async_update_entry_data(hass, entry, token_updates)
-        await manager.async_update_credentials(
-            gcid=data.get("gcid"),
-            id_token=new_id_token,
-        )
-
-        # Clear reauth pending flag if runtime exists
-        current_runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-        if current_runtime:
-            current_runtime.reauth_pending = False
-
-    # Use lock if runtime exists to prevent concurrent refreshes
-    if runtime and runtime.token_refresh_lock:
-        async with runtime.token_refresh_lock:
-            await _do_refresh()
-    else:
-        # During setup, runtime may not exist yet - proceed without lock
-        await _do_refresh()
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime:
+        runtime.reauth_pending = False
 
 
 async def handle_stream_error(
@@ -127,7 +110,7 @@ async def handle_stream_error(
                 "Reauth pending for entry %s after failed refresh; starting flow",
                 entry.entry_id,
             )
-        elif now - runtime.last_refresh_attempt >= TOKEN_REFRESH_RETRY_WINDOW:
+        elif now - runtime.last_refresh_attempt >= 30:
             runtime.last_refresh_attempt = now
             try:
                 _LOGGER.info(
@@ -157,7 +140,7 @@ async def handle_stream_error(
                 entry.entry_id,
             )
 
-        if now - runtime.last_reauth_attempt < TOKEN_REFRESH_RETRY_WINDOW:
+        if now - runtime.last_reauth_attempt < 30:
             _LOGGER.debug(
                 "Recent reauth already attempted for entry %s; skipping new flow",
                 entry.entry_id,
