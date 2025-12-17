@@ -17,6 +17,7 @@ from .const import (
     HV_BATTERY_DESCRIPTORS,
 )
 from .debug import debug_enabled
+from .utils import redact_sensitive_data, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ class CardataContainerManager:
                     _LOGGER.warning(
                         "[%s] Failed to list existing containers: %s. Will attempt to create new one.",
                         self._entry_id,
-                        err,
+                        redact_sensitive_data(str(err)),
                     )
             else:
                 _LOGGER.debug(
@@ -181,7 +182,7 @@ class CardataContainerManager:
                         "[%s] Failed to delete container %s: %s",
                         self._entry_id,
                         container_id,
-                        err,
+                        redact_sensitive_data(str(err)),
                     )
                     continue
                 deleted_ids.append(container_id)
@@ -311,9 +312,12 @@ class CardataContainerManager:
                 if response.status == 204:
                     return {}
                 text = await response.text()
+                safe_text = redact_vin_in_text(text.strip())
                 raise CardataContainerError(
-                    f"HTTP {response.status}: {text.strip() or 'no response body'}",
+                    f"HTTP {response.status}: {safe_text or 'no response body'}",
                     status=response.status,
                 )
         except aiohttp.ClientError as err:
-            raise CardataContainerError(f"Network error: {err}") from err
+            raise CardataContainerError(
+                f"Network error: {redact_sensitive_data(str(err))}"
+            ) from err

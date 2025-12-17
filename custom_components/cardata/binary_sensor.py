@@ -1,11 +1,15 @@
-﻿"""Binary sensor platform for BMW CarData."""
+"""Binary sensor platform for BMW CarData."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+import logging
+import time
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorEntity,
+    BinarySensorDeviceClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -16,10 +20,24 @@ from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 
-if TYPE_CHECKING:
-    pass
+_LOGGER = logging.getLogger(__name__)
 
+DOOR_NON_DOOR_DESCRIPTORS = (
+    "vehicle.body.trunk.isOpen",
+    "vehicle.body.hood.isOpen",
+    "vehicle.body.trunk.door.isOpen",
+    "vehicle.body.trunk.left.door.isOpen",
+    "vehicle.body.trunk.lower.door.isOpen",
+    "vehicle.body.trunk.right.door.isOpen",
+    "vehicle.body.trunk.upper.door.isOpen",
+) 
 
+DOOR_DESCRIPTORS = (
+    "vehicle.cabin.door.row1.driver.isOpen",
+    "vehicle.cabin.door.row1.passenger.isOpen",
+    "vehicle.cabin.door.row2.driver.isOpen",
+    "vehicle.cabin.door.row2.passenger.isOpen",
+)
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 
@@ -30,6 +48,9 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
+        
+        if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
+            self._attr_device_class = BinarySensorDeviceClass.DOOR
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -85,7 +106,45 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         # State changed or sensor is unknown - update it!
         self._attr_is_on = new_value
         self.schedule_update_ha_state()
+    
+    @property
+    def icon(self) -> str | None:
+        """Return dynamic icon based on state."""
+        # Door sensors - dynamic icon based on state
+        if self.descriptor and self.descriptor in DOOR_DESCRIPTORS:
+            return "mdi:car-door"
+        
+        # Door non Door sensors - dynamic icon based on state
+        if self.descriptor and self.descriptor in DOOR_NON_DOOR_DESCRIPTORS:
+            is_open = getattr(self, "_attr_is_on", False)
+            if is_open:
+                return "mdi:circle-outline"
+            else:
+                return "mdi:circle"  
+    
+        # Return existing icon attribute if set
+        return getattr(self, "_attr_icon", None)
+        
 
+    ''' For future options and colors
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra attributes."""
+        attrs = super().extra_state_attributes or {}
+    
+        # Add color hint for window sensors
+        descriptor_lower = self._descriptor.lower()
+        if "window" in descriptor_lower:
+            value = str(self._attr_native_value).lower() if self._attr_native_value else ""
+            if "open" in value:
+                attrs["color_hint"] = "red"
+            elif "closed" in value:
+                attrs["color_hint"] = "green"
+            else:
+                attrs["color_hint"] = "orange"
+    
+        return attrs
+    '''
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
@@ -95,8 +154,14 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = runtime.coordinator
     stream_manager = runtime.stream
     
-    # Wait for bootstrap to finish so VIN → name mapping exists
+    # Wait briefly for bootstrap to finish so VIN → name mapping exists.
+    wait_start = time.monotonic()
     while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
+        if time.monotonic() - wait_start > 15:
+            _LOGGER.debug(
+                "Binary sensor setup continuing without vehicle names after 15s wait"
+            )
+            break
         await asyncio.sleep(0.1)
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}

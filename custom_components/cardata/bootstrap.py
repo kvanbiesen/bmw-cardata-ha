@@ -12,8 +12,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, VEHICLE_METADATA
+from .http_retry import async_request_with_retry
+from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
+from .utils import redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,7 +81,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
 
     from .const import DOMAIN
-    from .metadata import async_fetch_and_store_basic_data
+    from .metadata import async_fetch_and_store_basic_data, async_fetch_and_store_vehicle_images
 
     coordinator = runtime.coordinator
 
@@ -91,6 +94,11 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await async_fetch_and_store_basic_data(
         hass, entry, headers, vins, quota, runtime.session
     )
+
+    _LOGGER.debug("Fetching vehicle images for entry %s", entry.entry_id)
+    await async_fetch_and_store_vehicle_images(
+        hass, entry, headers, vins, quota, runtime.session
+    )
     
     # CRITICAL: Apply metadata to populate coordinator.names!
     # async_fetch_and_store_basic_data() populates device_metadata but NOT coordinator.names
@@ -99,9 +107,9 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     for vin in vins:
         metadata = coordinator.device_metadata.get(vin)
         if metadata and "raw_data" in metadata:
-            # Call apply_basic_data to populate coordinator.names
-            coordinator.apply_basic_data(vin, metadata["raw_data"])
-            _LOGGER.debug("Bootstrap populated name for VIN %s: %s", vin, coordinator.names.get(vin))
+            # Call async_apply_basic_data to populate coordinator.names (thread-safe)
+            await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
+            _LOGGER.debug("Bootstrap populated name for VIN %s: %s", redact_vin(vin), coordinator.names.get(vin))
 
     # NOW seed telematic data (entities will be created with complete metadata)
     created_entities = False
@@ -120,7 +128,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         from .telematics import async_update_last_telematic_poll
         import time
 
-        async_update_last_telematic_poll(hass, entry, time.time())
+        await async_update_last_telematic_poll(hass, entry, time.time())
     else:
         _LOGGER.debug(
             "Bootstrap did not seed new descriptors for entry %s",
@@ -150,43 +158,59 @@ async def async_fetch_primary_vins(
             )
             return []
 
-    try:
-        async with session.get(url, headers=headers) as response:
-            text = await response.text()
-            if response.status != 200:
-                # Special handling for rate limit errors
-                if response.status == 429:
-                    _LOGGER.error(
-                        "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
-                        "BMW's daily quota (typically 500 calls/day) has been reached. "
-                        "The limit resets at midnight UTC. Please wait and try again later. "
-                        "Error details: %s",
-                        entry_id,
-                        text
-                    )
-                    return []
-                
-                _LOGGER.warning(
-                    "Bootstrap mapping request failed for entry %s (status=%s): %s",
-                    entry_id,
-                    response.status,
-                    text,
-                )
-                return []
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                _LOGGER.warning(
-                    "Bootstrap mapping response malformed for entry %s: %s",
-                    entry_id,
-                    text,
-                )
-                return []
-    except aiohttp.ClientError as err:
+    response, error = await async_request_with_retry(
+        session,
+        "GET",
+        url,
+        headers=headers,
+        context=f"Bootstrap mapping request for entry {entry_id}",
+    )
+
+    if error:
         _LOGGER.warning(
             "Bootstrap mapping request errored for entry %s: %s",
             entry_id,
-            err,
+            error,
+        )
+        return []
+
+    if response is None:
+        _LOGGER.warning(
+            "Bootstrap mapping request failed for entry %s: no response",
+            entry_id,
+        )
+        return []
+
+    if response.is_rate_limited:
+        error_excerpt = redact_vin_in_text(response.text[:200])
+        _LOGGER.error(
+            "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
+            "BMW's daily quota (typically 500 calls/day) has been reached. "
+            "The limit resets at midnight UTC. Please wait and try again later. "
+            "Error details: %s",
+            entry_id,
+            error_excerpt,
+        )
+        return []
+
+    if not response.is_success:
+        error_excerpt = redact_vin_in_text(response.text[:200])
+        _LOGGER.warning(
+            "Bootstrap mapping request failed for entry %s (status=%s): %s",
+            entry_id,
+            response.status,
+            error_excerpt,
+        )
+        return []
+
+    try:
+        payload = json.loads(response.text)
+    except json.JSONDecodeError:
+        error_excerpt = redact_vin_in_text(response.text[:200])
+        _LOGGER.warning(
+            "Bootstrap mapping response malformed for entry %s: %s",
+            entry_id,
+            error_excerpt,
         )
         return []
 
@@ -231,6 +255,7 @@ async def async_seed_telematic_data(
     params = {"containerId": container_id}
 
     for vin in vins:
+        redacted_vin = redact_vin(vin)
         if coordinator.data.get(vin):
             continue
 
@@ -240,49 +265,67 @@ async def async_seed_telematic_data(
             except CardataQuotaError as err:
                 _LOGGER.warning(
                     "Bootstrap telematic request skipped for %s: %s",
-                    vin,
+                    redacted_vin,
                     err,
                 )
                 break
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
-        try:
-            async with session.get(url, headers=headers, params=params) as response:
-                text = await response.text()
-                if response.status != 200:
-                    # Special handling for rate limit errors
-                    if response.status == 429:
-                        _LOGGER.error(
-                            "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
-                            "BMW's daily quota (typically 500 calls/day) has been reached. "
-                            "The limit resets at midnight UTC. Skipping remaining vehicles. "
-                            "Error details: %s",
-                            vin,
-                            text
-                        )
-                        break  # Stop trying other VINs if we hit rate limit
-                    
-                    _LOGGER.debug(
-                        "Bootstrap telematic request failed for %s (status=%s): %s",
-                        vin,
-                        response.status,
-                        text,
-                    )
-                    continue
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    _LOGGER.debug(
-                        "Bootstrap telematic payload invalid for %s: %s",
-                        vin,
-                        text,
-                    )
-                    continue
-        except aiohttp.ClientError as err:
+
+        response, error = await async_request_with_retry(
+            session,
+            "GET",
+            url,
+            headers=headers,
+            params=params,
+            context=f"Bootstrap telematic request for {redacted_vin}",
+        )
+
+        if error:
             _LOGGER.warning(
                 "Bootstrap telematic request errored for %s: %s",
-                vin,
-                err,
+                redacted_vin,
+                error,
+            )
+            continue
+
+        if response is None:
+            _LOGGER.debug(
+                "Bootstrap telematic request failed for %s: no response",
+                redacted_vin,
+            )
+            continue
+
+        if response.is_rate_limited:
+            error_excerpt = redact_vin_in_text(response.text[:200])
+            _LOGGER.error(
+                "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
+                "BMW's daily quota (typically 500 calls/day) has been reached. "
+                "The limit resets at midnight UTC. Skipping remaining vehicles. "
+                "Error details: %s",
+                redacted_vin,
+                error_excerpt,
+            )
+            break  # Stop trying other VINs if we hit rate limit
+
+        if not response.is_success:
+            error_excerpt = redact_vin_in_text(response.text[:200])
+            _LOGGER.debug(
+                "Bootstrap telematic request failed for %s (status=%s): %s",
+                redacted_vin,
+                response.status,
+                error_excerpt,
+            )
+            continue
+
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError:
+            error_excerpt = redact_vin_in_text(response.text[:200])
+            _LOGGER.debug(
+                "Bootstrap telematic payload invalid for %s: %s",
+                redacted_vin,
+                error_excerpt,
             )
             continue
 
@@ -305,9 +348,7 @@ async def async_mark_bootstrap_complete(hass: HomeAssistant, entry: ConfigEntry)
     if entry.data.get(BOOTSTRAP_COMPLETE):
         return
 
-    updated = dict(entry.data)
-    updated[BOOTSTRAP_COMPLETE] = True
-    hass.config_entries.async_update_entry(entry, data=updated)
+    await async_update_entry_data(hass, entry, {BOOTSTRAP_COMPLETE: True})
 
 
 def _build_headers(access_token: str) -> dict[str, str]:

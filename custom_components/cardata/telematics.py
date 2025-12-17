@@ -16,8 +16,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import API_BASE_URL, API_VERSION, DOMAIN, TELEMATIC_POLL_INTERVAL, VEHICLE_METADATA
+from .http_retry import async_request_with_retry
+from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
+from .utils import redact_vin, redact_vin_payload, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,10 +45,11 @@ async def async_perform_telematic_fetch(
     target_entry_id = entry.entry_id
 
     # Build list of VINs to fetch
+    vins: list[str]
     if vin_override:
-        vins: list[str] = [vin_override]
+        vins = [vin_override]
     else:
-        vins: list[str] = []
+        vins = []
 
         # 1) Explicit vin stored in entry (older single-vehicle setups)
         explicit_vin = entry.data.get("vin")
@@ -113,54 +117,97 @@ async def async_perform_telematic_fetch(
 
     any_success = False
     any_attempt = False
+    auth_failure = False
 
     for vin in vins:
+        redacted_vin = redact_vin(vin)
         if quota:
             try:
                 await quota.async_claim()
             except CardataQuotaError as err:
                 _LOGGER.warning(
                     "Cardata fetch_telematic_data blocked for %s: %s",
-                    vin,
+                    redacted_vin,
                     err,
                 )
                 break  # Quota exhausted, stop trying
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+        any_attempt = True
 
-        try:
-            any_attempt = True
-            async with runtime.session.get(url, headers=headers, params=params) as response:
-                text = await response.text()
-                if response.status != 200:
-                    _LOGGER.error(
-                        "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
-                        response.status,
-                        vin,
-                        text,
-                    )
-                    continue
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    payload = text
+        response, error = await async_request_with_retry(
+            runtime.session,
+            "GET",
+            url,
+            headers=headers,
+            params=params,
+            context=f"Telematic data fetch for {redacted_vin}",
+        )
 
-                _LOGGER.info("Cardata telematic data for %s: %s", vin, payload)
-                telematic_payload = None
-                if isinstance(payload, dict):
-                    telematic_payload = payload.get("telematicData") or payload.get("data")
-
-                if isinstance(telematic_payload, dict):
-                    await runtime.coordinator.async_handle_message(
-                        {"vin": vin, "data": telematic_payload}
-                    )
-                    any_success = True
-        except aiohttp.ClientError as err:
+        if error:
             _LOGGER.error(
                 "Cardata fetch_telematic_data: network error for %s: %s",
-                vin,
-                err,
+                redacted_vin,
+                error,
             )
+            continue
+
+        if response is None:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: no response for %s",
+                redacted_vin,
+            )
+            continue
+
+        # Check for auth errors - these are fatal and require reauth
+        if response.is_auth_error:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: auth error (%s) for %s - token may be expired",
+                response.status,
+                redacted_vin,
+            )
+            auth_failure = True
+            break  # Stop trying other VINs, auth is broken
+
+        # Check for rate limiting
+        if response.is_rate_limited:
+            _LOGGER.warning(
+                "Cardata fetch_telematic_data: rate limited for %s",
+                redacted_vin,
+            )
+            break  # Stop trying other VINs
+
+        if not response.is_success:
+            error_excerpt = redact_vin_in_text(response.text[:200])
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
+                response.status,
+                redacted_vin,
+                error_excerpt,
+            )
+            continue
+
+        try:
+            payload = json.loads(response.text)
+        except json.JSONDecodeError:
+            payload = response.text
+        safe_payload = redact_vin_payload(payload)
+
+        _LOGGER.info("Cardata telematic data for %s: %s", redacted_vin, safe_payload)
+        telematic_payload = None
+        if isinstance(payload, dict):
+            telematic_payload = payload.get("telematicData") or payload.get("data")
+
+        if isinstance(telematic_payload, dict):
+            await runtime.coordinator.async_handle_message(
+                {"vin": vin, "data": telematic_payload}
+            )
+            any_success = True
+
+    # Auth failure is fatal - return None to signal reauth needed
+    if auth_failure:
+        _LOGGER.error("Cardata telematic fetch failed due to auth error - reauth may be required")
+        return None
 
     # Update timestamp and signal if we got any data
     if any_success:
@@ -231,20 +278,20 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             if success is True:
                 # Data fetched successfully
-                async_update_last_telematic_poll(hass, entry, time.time())
+                await async_update_last_telematic_poll(hass, entry, time.time())
                 _LOGGER.debug("Telematic poll succeeded for entry %s", entry_id)
             else:
                 # False: attempted but failed (temporary)
                 _LOGGER.debug("Telematic poll failed (temporary) for entry %s", entry_id)
                 # Still update timestamp so we don't retry immediately
-                async_update_last_telematic_poll(hass, entry, time.time())
+                await async_update_last_telematic_poll(hass, entry, time.time())
 
     except asyncio.CancelledError:
         _LOGGER.debug("Telematic poll loop cancelled for entry %s", entry_id)
         return
 
 
-def async_update_last_telematic_poll(
+async def async_update_last_telematic_poll(
     hass: HomeAssistant, entry: ConfigEntry, timestamp: float
 ) -> None:
     """Update the last telematic poll timestamp."""
@@ -252,6 +299,4 @@ def async_update_last_telematic_poll(
     if existing and abs(existing - timestamp) < 1:
         return
 
-    updated = dict(entry.data)
-    updated["last_telematic_poll"] = timestamp
-    hass.config_entries.async_update_entry(entry, data=updated)
+    await async_update_entry_data(hass, entry, {"last_telematic_poll": timestamp})

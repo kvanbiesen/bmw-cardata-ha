@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from contextlib import suppress
@@ -17,7 +18,7 @@ from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
 from .device_flow import CardataAuthError, refresh_tokens
 from .container import CardataContainerError, CardataContainerManager
 from .stream import CardataStreamManager
-from .runtime import CardataRuntimeData
+from .runtime import CardataRuntimeData, async_update_entry_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,17 +58,15 @@ async def refresh_tokens_for_entry(
     if not new_id_token:
         raise CardataAuthError("Token refresh response did not include id_token")
 
-    data.update(
-        {
-            "access_token": token_data.get("access_token"),
-            "refresh_token": token_data.get("refresh_token", refresh_token),
-            "id_token": new_id_token,
-            "expires_in": token_data.get("expires_in"),
-            "scope": token_data.get("scope", data.get("scope")),
-            "token_type": token_data.get("token_type", data.get("token_type")),
-            "received_at": time.time(),
-        }
-    )
+    token_updates = {
+        "access_token": token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token", refresh_token),
+        "id_token": new_id_token,
+        "expires_in": token_data.get("expires_in"),
+        "scope": token_data.get("scope", data.get("scope")),
+        "token_type": token_data.get("token_type", data.get("token_type")),
+        "received_at": time.time(),
+    }
 
     # Sync existing container ID to manager (NO creation!)
     if container_manager:
@@ -76,7 +75,7 @@ async def refresh_tokens_for_entry(
             container_manager.sync_from_entry(hv_container_id)
             _LOGGER.debug("Synced existing container %s to manager", hv_container_id)
 
-    hass.config_entries.async_update_entry(entry, data=data)
+    await async_update_entry_data(hass, entry, token_updates)
     await manager.async_update_credentials(
         gcid=data.get("gcid"),
         id_token=new_id_token,
@@ -128,7 +127,7 @@ async def handle_stream_error(
                 runtime.last_reauth_attempt = 0.0
                 runtime.reauth_pending = False
                 return
-            except CardataAuthError as err:
+            except (CardataAuthError, aiohttp.ClientError, asyncio.TimeoutError) as err:
                 _LOGGER.warning(
                     "Token refresh after unauthorized failed for entry %s: %s",
                     entry.entry_id,
@@ -205,23 +204,27 @@ async def async_ensure_container_for_entry(
     entry: ConfigEntry,
     hass: HomeAssistant,
     session: aiohttp.ClientSession,
-    container_manager: CardataContainerManager,
+    container_manager: CardataContainerManager | None,
     force: bool = False,
 ) -> bool:
     """Ensure HV container exists for entry.
-    
+
     This function should ONLY be called:
     1. During initial bootstrap
     2. When user manually resets container
     3. When signature changes AND user confirms recreation
-    
+
     NOT during token refresh, MQTT reconnects, or unauthorized errors!
-    
+
     Returns True if container is ready, False otherwise.
     """
     from .const import DOMAIN
     from .container import CardataContainerError
-    
+
+    if container_manager is None:
+        _LOGGER.warning("Cannot ensure container - no container manager available")
+        return False
+
     data = dict(entry.data)
     hv_container_id = data.get("hv_container_id")
     stored_signature = data.get("hv_descriptor_signature")
@@ -253,8 +256,7 @@ async def async_ensure_container_for_entry(
         # User can manually reset if needed
         if not force:
             container_manager.sync_from_entry(hv_container_id)
-            data["hv_descriptor_signature"] = desired_signature
-            hass.config_entries.async_update_entry(entry, data=data)
+            await async_update_entry_data(hass, entry, {"hv_descriptor_signature": desired_signature})
             return True
     
     # Only create if forced or no container exists
@@ -282,16 +284,17 @@ async def async_ensure_container_for_entry(
         return False
     
     # Success! Update entry
-    data["hv_container_id"] = container_id
-    data["hv_descriptor_signature"] = desired_signature
     container_manager.sync_from_entry(container_id)
-    
+
     # Sync to runtime if available
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if runtime and runtime.container_manager:
         runtime.container_manager.sync_from_entry(container_id)
-    
-    hass.config_entries.async_update_entry(entry, data=data)
+
+    await async_update_entry_data(hass, entry, {
+        "hv_container_id": container_id,
+        "hv_descriptor_signature": desired_signature,
+    })
     _LOGGER.info("Created HV container %s for entry %s", container_id, entry.entry_id)
     
     return True

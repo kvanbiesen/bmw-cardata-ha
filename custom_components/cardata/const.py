@@ -1,6 +1,30 @@
 """Constants for the BMW CarData integration."""
 
 DOMAIN = "cardata"
+
+# Location descriptors
+LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
+LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
+LOCATION_HEADING_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.heading"
+LOCATION_ALTITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.altitude"
+
+# Window descriptors for sensor icons
+WINDOW_DESCRIPTORS = (
+    "vehicle.cabin.window.row1.driver.status",
+    "vehicle.cabin.window.row1.passenger.status",
+    "vehicle.cabin.window.row2.driver.status",
+    "vehicle.cabin.window.row2.passenger.status",
+    "vehicle.body.trunk.window.isOpen",
+)
+
+# Battery descriptors for device class detection
+BATTERY_DESCRIPTORS = {
+    "vehicle.drivetrain.batteryManagement.header",
+    "vehicle.drivetrain.electricEngine.charging.level",
+    "vehicle.powertrain.electric.battery.stateOfCharge.target",
+    "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
+}
+
 DEFAULT_SCOPE = "authenticate_user openid cardata:api:read cardata:streaming:read"
 DEVICE_CODE_URL = "https://customer.bmwgroup.com/gcdm/oauth/device/code"
 TOKEN_URL = "https://customer.bmwgroup.com/gcdm/oauth/token"
@@ -19,10 +43,11 @@ REQUEST_LOG_VERSION = 1
 REQUEST_LIMIT = 400  # API Quota - 80% of BMW's ~500/day limit (leaves safety margin)
 REQUEST_WINDOW_SECONDS = 24 * 60 * 60  # How long API Quota is reserved after API Call in seconds
 
-# Quota thresholds for warnings
-QUOTA_WARNING_THRESHOLD = 350  # Warn at 70% usage
-QUOTA_CRITICAL_THRESHOLD = 450  # Critical at 90% usage
+# Quota thresholds for warnings (percentages of REQUEST_LIMIT)
+QUOTA_WARNING_THRESHOLD = 280   # Warn at 70% of REQUEST_LIMIT
+QUOTA_CRITICAL_THRESHOLD = 360  # Critical at 90% of REQUEST_LIMIT
 TELEMATIC_POLL_INTERVAL = 40 * 60 # How often to call the Telematic API in seconds
+HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"

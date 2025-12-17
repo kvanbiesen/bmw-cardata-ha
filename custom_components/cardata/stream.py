@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .debug import debug_enabled
+from .utils import redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class CardataStreamManager:
         self._error_callback = error_callback
         self._reauth_notified = False
         self._unauthorized_retry_in_progress = False
+        self._unauthorized_lock = asyncio.Lock()  # Protects _unauthorized_retry_in_progress
         self._awaiting_new_credentials = False
         self._status_callback: Optional[
             Callable[[str, Optional[str]], Awaitable[None]]
@@ -78,6 +80,8 @@ class CardataStreamManager:
         self._max_failures_per_window = 10
         self._failure_window_seconds = 60
         self._circuit_breaker_duration = 300  # 5 minutes
+        # Flag to prevent MQTT start during bootstrap
+        self._bootstrap_in_progress: bool = False
 
     async def async_start(self) -> None:
         async with self._connect_lock:
@@ -245,6 +249,9 @@ class CardataStreamManager:
     def debug_info(self) -> dict[str, str | int | bool]:
         """Return connection parameters for diagnostics."""
 
+        # Redact sensitive token - show only first 10 chars for debugging
+        redacted_token = f"{self._password[:10]}..." if self._password else ""
+
         return {
             "client_id": self._client_id,
             "gcid": self._gcid,
@@ -254,7 +261,7 @@ class CardataStreamManager:
             "topic": f"{self._gcid}/+",
             "clean_session": True,
             "protocol": "MQTTv311",
-            "id_token": self._password,
+            "id_token": redacted_token,
         }
 
     def _start_client(self) -> None:
@@ -311,7 +318,7 @@ class CardataStreamManager:
             if topic:
                 result = client.subscribe(topic)
                 if debug_enabled():
-                    _LOGGER.debug("Subscribed to %s result=%s", topic, result)
+                    _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
             if self._reauth_notified:
                 self._reauth_notified = False
                 self._awaiting_new_credentials = False
@@ -321,7 +328,7 @@ class CardataStreamManager:
             self._retry_backoff = 3
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
-                    self._status_callback("connected"),
+                    self._status_callback("connected", None),  # type: ignore[arg-type]
                     self.hass.loop,
                 )
         elif rc in (4, 5):  # bad credentials / not authorized
@@ -351,27 +358,31 @@ class CardataStreamManager:
             self._record_failure()
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
-                    self._status_callback("connection_failed", reason=str(rc)),
+                    self._status_callback("connection_failed", str(rc)),  # type: ignore[arg-type]
                     self.hass.loop,
                 )
 
     def _handle_subscribe(self, client: mqtt.Client, userdata, mid, granted_qos) -> None:
         if debug_enabled():
-            if debug_enabled():
-                _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
+            _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
 
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
         payload = msg.payload.decode(errors="ignore")
         if debug_enabled():
-            _LOGGER.debug("BMW MQTT message on %s: %s", msg.topic, payload)
+            _LOGGER.debug(
+                "BMW MQTT message on %s: %s",
+                redact_vin_in_text(msg.topic),
+                redact_vin_payload(payload),
+            )
         if not self._message_callback:
             return
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
             return
-        if self._message_callback:
-            asyncio.run_coroutine_threadsafe(self._message_callback(data), self.hass.loop)
+        asyncio.run_coroutine_threadsafe(
+            self._message_callback(data), self.hass.loop  # type: ignore[arg-type]
+        )
 
     def _handle_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
         reason = {
@@ -430,7 +441,7 @@ class CardataStreamManager:
             self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
-                    self._status_callback("unauthorized", reason=reason),
+                    self._status_callback("unauthorized", reason),  # type: ignore[arg-type]
                     self.hass.loop,
                 )
         else:
@@ -438,7 +449,7 @@ class CardataStreamManager:
                 asyncio.run_coroutine_threadsafe(self._async_reconnect(), self.hass.loop)
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
-                    self._status_callback("disconnected", reason=reason),
+                    self._status_callback("disconnected", reason),  # type: ignore[arg-type]
                     self.hass.loop,
                 )
 
@@ -454,9 +465,11 @@ class CardataStreamManager:
             self._reconnect_backoff = 5
 
     async def _handle_unauthorized(self) -> None:
-        if self._unauthorized_retry_in_progress:
-            return
-        self._unauthorized_retry_in_progress = True
+        async with self._unauthorized_lock:
+            if self._unauthorized_retry_in_progress:
+                return
+            self._unauthorized_retry_in_progress = True
+
         try:
             self._awaiting_new_credentials = True
             if not self._reauth_notified:
@@ -465,9 +478,10 @@ class CardataStreamManager:
             else:
                 await self.async_stop()
             if self._status_callback:
-                await self._status_callback("unauthorized", reason="MQTT rc=5")
+                await self._status_callback("unauthorized", "MQTT rc=5")
         finally:
-            self._unauthorized_retry_in_progress = False
+            async with self._unauthorized_lock:
+                self._unauthorized_retry_in_progress = False
 
     async def _notify_error(self, reason: str) -> None:
         await self.async_stop()

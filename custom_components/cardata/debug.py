@@ -6,6 +6,7 @@ import logging
 
 
 _LOGGER_NAMESPACE = "custom_components.cardata"
+_DEBUG_ENABLED = False
 
 
 def set_debug_enabled(value: bool) -> None:

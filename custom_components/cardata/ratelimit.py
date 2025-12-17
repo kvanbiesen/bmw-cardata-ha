@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class RateLimitTracker:
         self._last_429_time = None
         self._successful_calls = 0
     
-    def get_status(self) -> Dict[str, any]:
+    def get_status(self) -> Dict[str, Any]:
         """Get current rate limit status.
         
         Returns:
@@ -211,7 +211,7 @@ class UnauthorizedLoopProtection:
         self._blocked_until = None
         self._first_attempt_time = None
     
-    def get_status(self) -> Dict[str, any]:
+    def get_status(self) -> Dict[str, Any]:
         """Get current protection status.
         
         Returns:
@@ -300,7 +300,7 @@ class ContainerRateLimiter:
             len(self._operations_day)
         )
     
-    def get_status(self) -> Dict[str, any]:
+    def get_status(self) -> Dict[str, Any]:
         """Get current limiter status.
         
         Returns:

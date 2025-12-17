@@ -1,4 +1,4 @@
-﻿"""Config flow for BMW CarData integration."""
+"""Config flow for BMW CarData integration."""
 
 from __future__ import annotations
 
@@ -18,7 +18,34 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
-LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)
+
+# Maximum length for error messages shown to users
+MAX_ERROR_LENGTH = 200
+
+
+def _sanitize_error_for_user(err: Exception) -> str:
+    """Sanitize an error message for display to users.
+
+    This function:
+    - Removes sensitive data (tokens, auth headers, VINs)
+    - Truncates long messages
+    - Provides a safe, user-friendly error description
+    """
+    from .utils import redact_sensitive_data
+
+    # Get the error message
+    error_msg = str(err)
+
+    # Redact sensitive data
+    safe_msg = redact_sensitive_data(error_msg)
+
+    # Truncate if too long
+    if len(safe_msg) > MAX_ERROR_LENGTH:
+        safe_msg = safe_msg[:MAX_ERROR_LENGTH] + "..."
+
+    # Return type and message
+    return f"{type(err).__name__}: {safe_msg}"
 
 # Note: Heavy imports like aiohttp are imported lazily inside methods to avoid blocking the event loop
 
@@ -28,12 +55,28 @@ def _build_code_verifier() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(86))
 
 
+def _validate_client_id(client_id: str) -> bool:
+    """Validate client ID format to prevent injection attacks.
+
+    BMW client IDs are uppercase hexadecimal with hyphens (UUID format).
+    Example: 31C3B263-A9B7-4C8E-B123-456789ABCDEF
+    """
+    if not client_id or not isinstance(client_id, str):
+        return False
+    # Length check (UUID with hyphens is 36 chars, allow some flexibility)
+    if len(client_id) < 8 or len(client_id) > 64:
+        return False
+    # Character whitelist: uppercase hex digits and hyphens only
+    allowed = set(string.hexdigits + "-")
+    return all(c in allowed for c in client_id)
+
+
 def _generate_code_challenge(code_verifier: str) -> str:
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
-class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
+class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: ignore[call-arg]
     """Handle config flow for BMW CarData."""
 
     VERSION = 1
@@ -54,6 +97,14 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
 
         client_id = user_input["client_id"].strip()
 
+        # Validate client ID format to prevent injection
+        if not _validate_client_id(client_id):
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({vol.Required("client_id"): str}),
+                errors={"base": "invalid_client_id"},
+            )
+
         for entry in list(self._async_current_entries()):
             existing_client_id = entry.data.get("client_id") if hasattr(entry, "data") else None
             if entry.unique_id == client_id or existing_client_id == client_id:
@@ -69,7 +120,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                 step_id="user",
                 data_schema=vol.Schema({vol.Required("client_id"): str}),
                 errors={"base": "device_code_failed"},
-                description_placeholders={"error": str(err)},
+                description_placeholders={"error": _sanitize_error_for_user(err)},
             )
 
         return await self.async_step_authorize()
@@ -94,9 +145,19 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
         assert self._device_data is not None
         assert self._code_verifier is not None
 
+        verification_url = self._device_data.get("verification_uri_complete")
+
+        if not verification_url:
+            base_url = self._device_data.get("verification_uri")
+            user_code = self._device_data.get("user_code", "")
+            if base_url and user_code:
+                # Append user code automatically
+                verification_url = f"{base_url}?user_code={user_code}"
+            else:
+                verification_url = base_url  # Fallback
+
         placeholders = {
-            "verification_url": self._device_data.get("verification_uri_complete")
-            or self._device_data.get("verification_uri"),
+            "verification_url": verification_url,
             "user_code": self._device_data.get("user_code", ""),
         }
 
@@ -124,16 +185,16 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                     timeout=int(self._device_data.get("expires_in", 600)),
                 )
             except CardataAuthError as err:
-                LOGGER.warning("BMW authorization pending/failed: %s", err)
+                _LOGGER.warning("BMW authorization pending/failed: %s", err)
                 return self.async_show_form(
                     step_id="authorize",
                     data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
                     errors={"base": "authorization_failed"},
-                    description_placeholders={"error": str(err), **placeholders},
+                    description_placeholders={"error": _sanitize_error_for_user(err), **placeholders},
                 )
 
         self._token_data = token_data
-        LOGGER.debug(
+        _LOGGER.debug(
             "Received token: scope=%s id_token_length=%s",
             token_data.get("scope"),
             len(token_data.get("id_token") or ""),
@@ -144,6 +205,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
         from custom_components.cardata.const import DOMAIN, VEHICLE_METADATA
 
         assert self._client_id is not None
+        assert self._token_data is not None
         token_data = self._token_data
 
         entry_data = {
@@ -194,12 +256,12 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
         self._client_id = entry_data.get("client_id")
         if not self._client_id:
-            LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
+            _LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
             return self.async_abort(reason="reauth_missing_client_id")
         try:
             await self._request_device_code()
         except CardataAuthError as err:
-            LOGGER.error(
+            _LOGGER.error(
                 "Unable to request BMW device authorization code for entry %s: %s",
                 entry_id,
                 err,
@@ -307,7 +369,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         else:
             client_id = ""
         errors: Dict[str, str] = {}
-        if not client_id:
+        if not client_id or not _validate_client_id(client_id):
             errors["client_id"] = "invalid_client_id"
         if not user_input.get("confirm"):
             errors["confirm"] = "confirm"
@@ -452,10 +514,11 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 from custom_components.cardata.auth import async_manual_refresh_tokens
                 await async_manual_refresh_tokens(self.hass, entry)
             except Exception as err:
+                _LOGGER.exception("Token refresh failed during container reset: %s", err)
                 return self._show_confirm(
                     step_id="action_reset_container",
                     errors={"base": "refresh_failed"},
-                    placeholders={"error": str(err)},
+                    placeholders={"error": _sanitize_error_for_user(err)},
                 )
             entry = self.hass.config_entries.async_get_entry(entry.entry_id)
             if entry is None:
@@ -473,10 +536,11 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         try:
             new_id = await runtime.container_manager.async_reset_hv_container(access_token)
         except CardataContainerError as err:
+            _LOGGER.exception("Container reset failed: %s", err)
             return self._show_confirm(
                 step_id="action_reset_container",
                 errors={"base": "reset_failed"},
-                placeholders={"error": str(err)},
+                placeholders={"error": _sanitize_error_for_user(err)},
             )
 
         updated = dict(entry.data)
@@ -529,7 +593,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 entity_reg.async_remove(entity.entity_id)
                 deleted_count += 1
             
-            LOGGER.info(
+            _LOGGER.info(
                 "Cleaned up %s orphaned entities for entry %s: %s",
                 deleted_count,
                 entry_id,
@@ -545,7 +609,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
             
         except Exception as err:
-            LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
+            _LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
             return self._show_confirm(
                 step_id="action_cleanup_entities",
                 errors={"base": "cleanup_failed"},
@@ -598,12 +662,12 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 self.hass.config_entries.async_update_entry(entry, data=updated_data)
                 
                 if delete_entities:
-                    LOGGER.info(
+                    _LOGGER.info(
                         "User chose to delete entities for entry %s",
                         entry.entry_id,
                     )
                 else:
-                    LOGGER.debug(
+                    _LOGGER.debug(
                         "User chose to keep entities for entry %s",
                         entry.entry_id,
                     )

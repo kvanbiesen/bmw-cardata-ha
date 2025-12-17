@@ -15,6 +15,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
+from .utils import redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +45,11 @@ class CardataEntity(RestoreEntity):
         self._attr_available = True
         self._name_unsub: Optional[Callable[[], None]] = None
 
+    def _resolve_vin(self) -> str:
+        """Resolve VIN alias if coordinator provides resolver."""
+        resolver = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)
+        return resolver(self._vin)
+
     def _format_name(self) -> str:
         """Return a human-friendly title for a descriptor.
 
@@ -71,8 +77,7 @@ class CardataEntity(RestoreEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        # Resolve VIN alias if coordinator provides resolver
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin, {})
         name = metadata.get("name") or self._coordinator.names.get(resolved_vin, resolved_vin)
         manufacturer = metadata.get("manufacturer", "bmw")
@@ -97,22 +102,13 @@ class CardataEntity(RestoreEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        # Use resolved vin for attribute lookups
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         state = self._coordinator.get_state(resolved_vin, self._descriptor)
         if not state:
             return {}
         attrs = {}
         if getattr(state, "timestamp", None):
             attrs["timestamp"] = state.timestamp
-        metadata = self._coordinator.device_metadata.get(resolved_vin)
-        if metadata:
-            extra = metadata.get("extra_attributes")
-            if extra:
-                attrs.setdefault("vehicle_basic_data", dict(extra))
-            raw = metadata.get("raw_data")
-            if raw:
-                attrs.setdefault("vehicle_basic_data_raw", dict(raw))
         return attrs
 
     @property
@@ -124,7 +120,7 @@ class CardataEntity(RestoreEntity):
         return self._vin
 
     def _get_vehicle_name(self) -> Optional[str]:
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin)
         if metadata and metadata.get("name"):
             return metadata["name"]
@@ -203,7 +199,8 @@ class CardataEntity(RestoreEntity):
         try:
             self._update_name(write_state=True)
         except Exception:
-            _LOGGER.exception("Failed to update name for entity %s", getattr(self, "entity_id", "<unknown>"))
+            entity_id = getattr(self, "entity_id", "<unknown>")
+            _LOGGER.exception("Failed to update name for entity %s", redact_vin_in_text(entity_id))
 
     async def async_will_remove_from_hass(self) -> None:
         if self._name_unsub:
@@ -213,7 +210,7 @@ class CardataEntity(RestoreEntity):
 
     def _handle_vehicle_name(self, vin: str, name: str) -> None:
         # Coordinator sends canonical VIN; resolve our vin and compare
-        resolved_vin = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)(self._vin)
+        resolved_vin = self._resolve_vin()
         if vin != resolved_vin:
             return
         # Update name (do not force writing to registry again)

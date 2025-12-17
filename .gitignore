@@ -9,4 +9,5 @@
 __pycache__/
 *.pyc
 *.pyo
- 
+.vs*
+.venv/

@@ -42,6 +42,7 @@ from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .container import CardataContainerManager
 from .migrations import async_migrate_entity_ids
+from .utils import redact_vin, redact_vins
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.DEVICE_TRACKER,
+    Platform.IMAGE,
 ]
 
 
@@ -59,6 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Setting up Bmw Cardata Streamline entry %s", entry.entry_id)
 
     session = aiohttp.ClientSession()
+    refresh_task: asyncio.Task | None = None
 
     try:
         # Prepare configuration
@@ -76,6 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gcid = data.get("gcid")
         id_token = data.get("id_token")
         if not gcid or not id_token:
+            await session.close()
             raise ConfigEntryNotReady("Missing GCID or ID token")
 
         # Set up coordinator
@@ -102,17 +106,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     coordinator.names[vin] = vehicle_name
                     _LOGGER.debug(
                         "Pre-populated coordinator.names for VIN %s with: %s (from restored metadata)",
-                        vin,
+                        redact_vin(vin),
                         vehicle_name,
                     )
         
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
+        redacted_names = redact_vins(coordinator.names.keys()) if has_metadata else "empty"
         _LOGGER.debug(
             "Metadata restored for entry %s: %s (names: %s)",
             entry.entry_id,
             "yes" if has_metadata else "no",
-            list(coordinator.names.keys()) if has_metadata else "empty",
+            redacted_names,
         )
 
         # Set up quota manager
@@ -293,6 +298,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     except Exception as err:
+        # Clean up all tasks and resources on setup failure
+        if refresh_task:
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
+
+        # Clean up runtime data tasks if they were created
+        runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if runtime:
+            if runtime.bootstrap_task:
+                runtime.bootstrap_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await runtime.bootstrap_task
+
+            if runtime.telematic_task:
+                runtime.telematic_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await runtime.telematic_task
+
+            # Stop coordinator watchdog if started
+            await runtime.coordinator.async_stop_watchdog()
+
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         await session.close()
         raise
 
