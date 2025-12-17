@@ -171,14 +171,14 @@ class CardataSensor(CardataEntity, SensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
-        #Mayfe for later settings the GPS available
-        #if descriptor in GPS_DESCRIPTORS = (
-        #    LOCATION_LATITUDE_DESCRIPTOR,
-        #    LOCATION_LONGITUDE_DESCRIPTOR,
-        #    LOCATION_ALTITUDE_DESCRIPTOR,
-        #    LOCATION_HEADING_DESCRIPTOR,
-        #):
-        #    self._attr_entity_registry_enabled_default = False
+        #create Raw data gps Sensors but hidden
+        if descriptor in GPS_DESCRIPTORS = (
+            LOCATION_LATITUDE_DESCRIPTOR,
+            LOCATION_LONGITUDE_DESCRIPTOR,
+            LOCATION_ALTITUDE_DESCRIPTOR,
+            LOCATION_HEADING_DESCRIPTOR,
+        ):
+            self._attr_entity_registry_enabled_default = False
 
         state_class = self._determine_state_class()
         if state_class:
@@ -819,12 +819,12 @@ async def async_setup_entry(
 
         # Skip location descriptors (used by device_tracker)
         #not needed since device tracker is working
-        if descriptor in (LOCATION_LATITUDE_DESCRIPTOR,
-            LOCATION_LONGITUDE_DESCRIPTOR,
-            LOCATION_ALTITUDE_DESCRIPTOR,
-            LOCATION_HEADING_DESCRIPTOR
-        ):
-            return
+        #if descriptor in (LOCATION_LATITUDE_DESCRIPTOR,
+        #    LOCATION_LONGITUDE_DESCRIPTOR,
+        #    LOCATION_ALTITUDE_DESCRIPTOR,
+        #    LOCATION_HEADING_DESCRIPTOR
+        #):
+        #    return
 
         if not is_electric_vehicle(vin):
             descriptor_lower = descriptor.lower()
