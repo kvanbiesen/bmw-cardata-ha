@@ -61,3 +61,35 @@ def redact_vin_payload(payload: Any) -> Any:
     if isinstance(payload, str):
         return redact_vin_in_text(payload)
     return payload
+
+
+# Pattern to match Bearer tokens and other sensitive auth strings
+_AUTH_TOKEN_PATTERN = re.compile(
+    r"(Bearer\s+)[A-Za-z0-9\-_\.]+",
+    re.IGNORECASE
+)
+_AUTHORIZATION_HEADER_PATTERN = re.compile(
+    r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]+",
+    re.IGNORECASE
+)
+
+
+def redact_sensitive_data(text: str | None) -> str:
+    """Redact sensitive data (tokens, auth headers, VINs) from text for safe logging.
+
+    This should be used when logging error messages that might contain
+    request/response details with sensitive information.
+    """
+    if not isinstance(text, str):
+        return str(text) if text is not None else ""
+
+    # Redact Bearer tokens
+    result = _AUTH_TOKEN_PATTERN.sub(r"\1[REDACTED]", text)
+
+    # Redact Authorization header values
+    result = _AUTHORIZATION_HEADER_PATTERN.sub(r"\1[REDACTED]", result)
+
+    # Also redact VINs
+    result = redact_vin_in_text(result) or result
+
+    return result

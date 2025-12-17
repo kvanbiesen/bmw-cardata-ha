@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 import aiohttp
 
 from .const import HTTP_TIMEOUT
-from .utils import redact_vin_in_text
+from .utils import redact_sensitive_data, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -215,7 +215,7 @@ async def async_request_with_retry(
                     "%s failed with %s: %s, retrying in %.1fs (attempt %d/%d)",
                     context,
                     type(err).__name__,
-                    str(err),
+                    redact_sensitive_data(str(err)),
                     backoff,
                     attempt + 1,
                     max_retries + 1,
@@ -230,7 +230,7 @@ async def async_request_with_retry(
             "%s failed after %d attempts: %s",
             context,
             max_retries + 1,
-            last_error,
+            redact_sensitive_data(str(last_error)),
         )
         return None, last_error
 

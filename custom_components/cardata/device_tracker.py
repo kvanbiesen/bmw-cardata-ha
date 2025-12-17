@@ -7,26 +7,13 @@ import logging
 import time
 from typing import Any
 
-from homeassistant.components.device_tracker import TrackerEntity
+from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
-
-try:
-    from homeassistant.components.device_tracker import SourceType
-except ImportError:  # Home Assistant < 2025.10
-    SourceType = str  # type: ignore[assignment]
-    try:
-        from homeassistant.components.device_tracker.const import (
-            SOURCE_TYPE_GPS as GPS_SOURCE,
-        )  # type: ignore[attr-defined]
-    except ImportError:
-        GPS_SOURCE = "gps"
-else:
-    GPS_SOURCE = SourceType.GPS
 
 from .const import (
     DOMAIN,
@@ -415,9 +402,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         return None
 
     @property
-    def source_type(self) -> SourceType | str:
+    def source_type(self) -> SourceType:
         """Return the source type of the device."""
-        return GPS_SOURCE
+        return SourceType.GPS
 
     @property
     def latitude(self) -> float | None:
