@@ -159,6 +159,25 @@ def convert_value_for_unit(
 
     return value
 
+def format_sensor_value(value: Any) -> Any:
+    """Format sensor values to be human-readable."""
+    if not isinstance(value, str):
+        return value
+    
+    try:
+        float(value)
+        return value
+    except (ValueError, TypeError):
+        pass
+    
+    if value.isupper() and '_' not in value:
+        return value.title()
+    
+    if '_' in value:
+        return value.replace('_', ' ').title()
+    
+    return value
+
 
 class CardataSensor(CardataEntity, SensorEntity):
     """Sensor for generic telematic data."""
@@ -264,6 +283,10 @@ class CardataSensor(CardataEntity, SensorEntity):
         original_unit = state.unit
         normalized_unit = map_unit_to_ha(state.unit)
         converted_value = convert_value_for_unit(state.value, original_unit, normalized_unit)
+        
+        #Camel Case It
+        converted_value = format_sensor_value(converted_value)
+
         # SMART FILTERING: Check if sensor's current state differs from new value
         current_value = getattr(self, '_attr_native_value', None)
         current_unit = getattr(self, '_attr_native_unit_of_measurement', None)
