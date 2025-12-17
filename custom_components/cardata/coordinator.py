@@ -121,7 +121,7 @@ class SocTracking:
             return self.estimated_percent
 
         rate = self.current_rate_per_hour()
-        if not self.charging_active or rate in (None, 0):
+        if not self.charging_active or rate is None or rate == 0:
             self.last_estimate_time = now
             return self.estimated_percent
 
@@ -130,7 +130,6 @@ class SocTracking:
         self.estimated_percent = (self.estimated_percent or 0.0) + increment
         if (
             self.target_soc_percent is not None
-            and rate > 0
             and previous_estimate is not None
             and previous_estimate <= self.target_soc_percent <= self.estimated_percent
         ):
@@ -151,7 +150,12 @@ class SocTracking:
         if not self.charging_active:
             self.rate_per_hour = None
             return
-        if self.last_power_w in (None, 0) or self.max_energy_kwh in (None, 0):
+        if (
+            self.last_power_w is None
+            or self.last_power_w == 0
+            or self.max_energy_kwh is None
+            or self.max_energy_kwh == 0
+        ):
             return
         self.rate_per_hour = (self.last_power_w / 1000.0) / self.max_energy_kwh * 100.0
 
@@ -581,38 +585,41 @@ class CardataCoordinator:
                 for vin, descriptors in self._pending_updates.items():
                     _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
         
+        # Snapshot and clear pending updates atomically
+        updates_to_process = dict(self._pending_updates)
+        new_sensors_to_process = dict(self._pending_new_sensors)
+        new_binary_to_process = dict(self._pending_new_binary)
+        self._pending_updates.clear()
+        self._pending_new_sensors.clear()
+        self._pending_new_binary.clear()
+
         if debug_enabled():
-            total_updates = sum(len(descriptors) for descriptors in self._pending_updates.values())
-            total_new_sensors = sum(len(descriptors) for descriptors in self._pending_new_sensors.values())
-            total_new_binary = sum(len(descriptors) for descriptors in self._pending_new_binary.values())
+            total_updates = sum(len(descriptors) for descriptors in updates_to_process.values())
+            total_new_sensors = sum(len(descriptors) for descriptors in new_sensors_to_process.values())
+            total_new_binary = sum(len(descriptors) for descriptors in new_binary_to_process.values())
             _LOGGER.debug(
                 "Debounced coordinator update executed: %d updates, %d new sensors, %d new binary",
                 total_updates,
                 total_new_sensors,
                 total_new_binary,
             )
-        
+
         # Send batched updates for changed descriptors
-        for vin, descriptors in self._pending_updates.items():
-            for descriptor in descriptors:
+        for vin, update_descriptors in updates_to_process.items():
+            for descriptor in update_descriptors:
                 async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
-        
+
         # Send new entity notifications
-        for vin, descriptors in self._pending_new_sensors.items():
-            for descriptor in descriptors:
+        for vin, sensor_descriptors in new_sensors_to_process.items():
+            for descriptor in sensor_descriptors:
                 async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
-        
-        for vin, descriptors in self._pending_new_binary.items():
-            for descriptor in descriptors:
+
+        for vin, binary_descriptors in new_binary_to_process.items():
+            for descriptor in binary_descriptors:
                 async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
-        
+
         # Send diagnostics update
         async_dispatcher_send(self.hass, self.signal_diagnostics)
-        
-        # Clear all pending updates
-        self._pending_updates.clear()
-        self._pending_new_sensors.clear()
-        self._pending_new_binary.clear()
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         """Get state for a descriptor. Returns a copy to avoid race conditions."""
@@ -636,7 +643,7 @@ class CardataCoordinator:
         return result
 
     async def async_handle_connection_event(
-        self, status: str, *, reason: Optional[str] = None
+        self, status: str, reason: str | None = None
     ) -> None:
         self.connection_status = status
         if reason:
@@ -710,7 +717,7 @@ class CardataCoordinator:
         rate = tracking.current_rate_per_hour()
 
         rate_changed = False
-        if rate in (None, 0):
+        if rate is None or rate == 0:
             if vin in self._soc_rate:
                 self._soc_rate.pop(vin, None)
                 rate_changed = True
@@ -814,7 +821,7 @@ class CardataCoordinator:
                 self._soc_estimate[vin] = round(tracking.estimated_percent, 2)
             elif tracking.last_soc_percent is not None:
                 self._soc_estimate[vin] = round(tracking.last_soc_percent, 2)
-            if tracking.rate_per_hour not in (None, 0):
+            if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
             else:
                 self._soc_rate.pop(vin, None)
@@ -841,11 +848,11 @@ class CardataCoordinator:
             tracking.last_estimate_time = reference_time
             self._soc_estimate[vin] = round(estimate, 2)
         if rate is not None:
-            tracking.rate_per_hour = rate if rate not in (None, 0) else None
-            if tracking.rate_per_hour:
+            tracking.rate_per_hour = rate if rate != 0 else None
+            if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
                 tracking.charging_active = True
-                if tracking.max_energy_kwh not in (None, 0):
+                if tracking.max_energy_kwh is not None and tracking.max_energy_kwh != 0:
                     tracking.last_power_w = (
                         tracking.rate_per_hour / 100.0
                     ) * tracking.max_energy_kwh * 1000.0

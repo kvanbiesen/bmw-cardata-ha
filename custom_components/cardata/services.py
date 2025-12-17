@@ -33,9 +33,6 @@ from .utils import (
     redact_vin,
     redact_vin_in_text,
     redact_vin_payload,
-    safe_json_loads,
-    JSONSizeError,
-    JSONDepthError,
 )
 
 import homeassistant.helpers.entity_registry as er

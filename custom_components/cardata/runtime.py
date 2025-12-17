@@ -42,12 +42,15 @@ class CardataRuntimeData:
     reauth_pending: bool = False
 
     # Rate limit protection (NEW!)
-    rate_limit_tracker: RateLimitTracker = None
-    unauthorized_protection: UnauthorizedLoopProtection = None
-    container_rate_limiter: ContainerRateLimiter = None
+    rate_limit_tracker: RateLimitTracker | None = None
+    unauthorized_protection: UnauthorizedLoopProtection | None = None
+    container_rate_limiter: ContainerRateLimiter | None = None
 
     # Lock to protect concurrent config entry updates
-    _entry_update_lock: asyncio.Lock = None
+    _entry_update_lock: asyncio.Lock | None = None
+
+    # Lock to protect concurrent token refresh operations
+    _token_refresh_lock: asyncio.Lock | None = None
 
     def __post_init__(self):
         """Initialize rate limiters if not provided."""
@@ -67,9 +70,18 @@ class CardataRuntimeData:
             self._entry_update_lock = asyncio.Lock()
 
     @property
-    def entry_update_lock(self) -> asyncio.Lock:
+    def entry_update_lock(self) -> asyncio.Lock | None:
         """Get the entry update lock."""
         return self._entry_update_lock
+
+    @property
+    def token_refresh_lock(self) -> asyncio.Lock | None:
+        """Get the token refresh lock."""
+        return self._token_refresh_lock
+
+
+# Module-level lock used during setup before runtime is available
+_setup_update_lock = asyncio.Lock()
 
 
 async def async_update_entry_data(
@@ -91,15 +103,10 @@ async def async_update_entry_data(
 
     runtime: CardataRuntimeData | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
 
-    if runtime is None:
-        # No runtime yet (during initial setup), update directly
-        # This is safe because setup is sequential
-        merged = dict(entry.data)
-        merged.update(updates)
-        hass.config_entries.async_update_entry(entry, data=merged)
-        return
+    # Choose appropriate lock: runtime lock if available, module-level lock during setup
+    lock = (runtime.entry_update_lock if runtime and runtime.entry_update_lock else _setup_update_lock)
 
-    async with runtime.entry_update_lock:
+    async with lock:
         # Re-read entry.data inside lock to get latest state
         merged = dict(entry.data)
         merged.update(updates)
