@@ -18,7 +18,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
-LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)
 
 # Note: Heavy imports like aiohttp are imported lazily inside methods to avoid blocking the event loop
 
@@ -158,7 +158,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                     timeout=int(self._device_data.get("expires_in", 600)),
                 )
             except CardataAuthError as err:
-                LOGGER.warning("BMW authorization pending/failed: %s", err)
+                _LOGGER.warning("BMW authorization pending/failed: %s", err)
                 return self.async_show_form(
                     step_id="authorize",
                     data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
@@ -167,7 +167,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                 )
 
         self._token_data = token_data
-        LOGGER.debug(
+        _LOGGER.debug(
             "Received token: scope=%s id_token_length=%s",
             token_data.get("scope"),
             len(token_data.get("id_token") or ""),
@@ -228,12 +228,12 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
         self._client_id = entry_data.get("client_id")
         if not self._client_id:
-            LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
+            _LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
             return self.async_abort(reason="reauth_missing_client_id")
         try:
             await self._request_device_code()
         except CardataAuthError as err:
-            LOGGER.error(
+            _LOGGER.error(
                 "Unable to request BMW device authorization code for entry %s: %s",
                 entry_id,
                 err,
@@ -563,7 +563,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 entity_reg.async_remove(entity.entity_id)
                 deleted_count += 1
             
-            LOGGER.info(
+            _LOGGER.info(
                 "Cleaned up %s orphaned entities for entry %s: %s",
                 deleted_count,
                 entry_id,
@@ -579,7 +579,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
             
         except Exception as err:
-            LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
+            _LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
             return self._show_confirm(
                 step_id="action_cleanup_entities",
                 errors={"base": "cleanup_failed"},
@@ -632,12 +632,12 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 self.hass.config_entries.async_update_entry(entry, data=updated_data)
                 
                 if delete_entities:
-                    LOGGER.info(
+                    _LOGGER.info(
                         "User chose to delete entities for entry %s",
                         entry.entry_id,
                     )
                 else:
-                    LOGGER.debug(
+                    _LOGGER.debug(
                         "User chose to keep entities for entry %s",
                         entry.entry_id,
                     )
