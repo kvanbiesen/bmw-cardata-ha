@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import hashlib
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 import aiohttp
 
@@ -25,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 class CardataContainerError(Exception):
     """Raised when BMW CarData container management fails."""
 
-    def __init__(self, message: str, *, status: int | None = None) -> None:
+    def __init__(self, message: str, *, status: Optional[int] = None) -> None:
         super().__init__(message)
         self.status = status
 
@@ -38,18 +38,18 @@ class CardataContainerManager:
         *,
         session: aiohttp.ClientSession,
         entry_id: str,
-        initial_container_id: str | None = None,
+        initial_container_id: Optional[str] = None,
     ) -> None:
         self._session = session
         self._entry_id = entry_id
-        self._container_id: str | None = initial_container_id
+        self._container_id: Optional[str] = initial_container_id
         self._lock = asyncio.Lock()
         descriptors = list(dict.fromkeys(HV_BATTERY_DESCRIPTORS))
         self._desired_descriptors = tuple(descriptors)
         self._descriptor_signature = self.compute_signature(descriptors)
 
     @property
-    def container_id(self) -> str | None:
+    def container_id(self) -> Optional[str]:
         """Return the currently known container identifier."""
 
         return self._container_id
@@ -68,12 +68,12 @@ class CardataContainerManager:
         joined = "|".join(normalized)
         return hashlib.sha1(joined.encode("utf-8")).hexdigest()
 
-    def sync_from_entry(self, container_id: str | None) -> None:
+    def sync_from_entry(self, container_id: Optional[str]) -> None:
         """Synchronize the known container id with stored config data."""
 
         self._container_id = container_id
 
-    async def async_ensure_hv_container(self, access_token: str | None) -> str | None:
+    async def async_ensure_hv_container(self, access_token: Optional[str]) -> Optional[str]:
         """Ensure the HV battery container exists and is active.
         
         Behavior controlled by CONTAINER_REUSE_EXISTING in const.py:
@@ -155,7 +155,7 @@ class CardataContainerManager:
             _LOGGER.info("[%s] Created new HV battery container %s", self._entry_id, created_id)
             return self._container_id
 
-    async def async_reset_hv_container(self, access_token: str | None) -> str | None:
+    async def async_reset_hv_container(self, access_token: Optional[str]) -> Optional[str]:
         """Delete existing HV telemetry containers and create a fresh one."""
 
         if not access_token:
@@ -287,7 +287,7 @@ class CardataContainerManager:
         path: str,
         access_token: str,
         *,
-        json_body: Dict[str, Any] | None = None,
+        json_body: Optional[Dict[str, Any]] = None,
     ) -> Any:
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -298,7 +298,7 @@ class CardataContainerManager:
             headers["Content-Type"] = "application/json"
         url = f"{API_BASE_URL}{path}"
         if debug_enabled():
-            _LOGGER.debug("[%s] %s %s", self._entry_id, method, redact_vin_in_text(url))
+            _LOGGER.debug("[%s] %s %s", self._entry_id, method, url)
         try:
             async with self._session.request(
                 method,

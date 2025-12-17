@@ -9,7 +9,7 @@ import logging
 import secrets
 import string
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import voluptuous as vol
 
@@ -18,7 +18,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
-LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(__name__)
 
 # Maximum length for error messages shown to users
 MAX_ERROR_LENGTH = 200
@@ -82,13 +82,13 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
     VERSION = 1
 
     def __init__(self) -> None:
-        self._client_id: str | None = None
-        self._device_data: Dict[str, Any] | None = None
-        self._code_verifier: str | None = None
-        self._token_data: Dict[str, Any] | None = None
-        self._reauth_entry: config_entries.ConfigEntry | None = None
+        self._client_id: Optional[str] = None
+        self._device_data: Optional[Dict[str, Any]] = None
+        self._code_verifier: Optional[str] = None
+        self._token_data: Optional[Dict[str, Any]] = None
+        self._reauth_entry: Optional[config_entries.ConfigEntry] = None
 
-    async def async_step_user(self, user_input: Dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         if user_input is None:
             return self.async_show_form(
                 step_id="user",
@@ -132,7 +132,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
 
         assert self._client_id is not None
         self._code_verifier = _build_code_verifier()
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with aiohttp.ClientSession() as session:
             self._device_data = await request_device_code(
                 session,
                 client_id=self._client_id,
@@ -140,7 +140,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                 code_challenge=_generate_code_challenge(self._code_verifier),
             )
 
-    async def async_step_authorize(self, user_input: Dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_authorize(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         assert self._client_id is not None
         assert self._device_data is not None
         assert self._code_verifier is not None
@@ -174,7 +174,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
         import aiohttp
         from custom_components.cardata.device_flow import poll_for_tokens, CardataAuthError
 
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+        async with aiohttp.ClientSession() as session:
             try:
                 token_data = await poll_for_tokens(
                     session,
@@ -185,7 +185,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                     timeout=int(self._device_data.get("expires_in", 600)),
                 )
             except CardataAuthError as err:
-                LOGGER.warning("BMW authorization pending/failed: %s", err)
+                _LOGGER.warning("BMW authorization pending/failed: %s", err)
                 return self.async_show_form(
                     step_id="authorize",
                     data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
@@ -194,14 +194,14 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                 )
 
         self._token_data = token_data
-        LOGGER.debug(
+        _LOGGER.debug(
             "Received token: scope=%s id_token_length=%s",
             token_data.get("scope"),
             len(token_data.get("id_token") or ""),
         )
         return await self.async_step_tokens()
 
-    async def async_step_tokens(self, user_input: Dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_tokens(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         from custom_components.cardata.const import DOMAIN, VEHICLE_METADATA
 
         assert self._client_id is not None
@@ -255,12 +255,12 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
         self._client_id = entry_data.get("client_id")
         if not self._client_id:
-            LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
+            _LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
             return self.async_abort(reason="reauth_missing_client_id")
         try:
             await self._request_device_code()
         except CardataAuthError as err:
-            LOGGER.error(
+            _LOGGER.error(
                 "Unable to request BMW device authorization code for entry %s: %s",
                 entry_id,
                 err,
@@ -288,9 +288,9 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
 class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
-        self._reauth_client_id: str | None = None
+        self._reauth_client_id: Optional[str] = None
 
-    async def async_step_init(self, user_input: Dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         return self.async_show_menu(
             step_id="init",
             menu_options={
@@ -311,8 +311,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         self,
         *,
         step_id: str,
-        errors: Dict[str, str] | None = None,
-        placeholders: Dict[str, Any] | None = None,
+        errors: Optional[Dict[str, str]] = None,
+        placeholders: Optional[Dict[str, Any]] = None,
     ) -> FlowResult:
         return self.async_show_form(
             step_id=step_id,
@@ -326,7 +326,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
 
     async def async_step_action_refresh_tokens(
-        self, user_input: Dict[str, Any] | None = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         if user_input is None:
             return self._show_confirm(step_id="action_refresh_tokens")
@@ -347,7 +347,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data={})
 
     async def async_step_action_reauth(
-        self, user_input: Dict[str, Any] | None = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         current_client_id = (
             self._reauth_client_id
@@ -382,7 +382,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return await self._handle_reauth()
 
     async def async_step_action_fetch_mappings(
-        self, user_input: Dict[str, Any] | None = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         from custom_components.cardata.const import DOMAIN
 
@@ -422,7 +422,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return [vin for vin in vins if isinstance(vin, str)]
 
     async def async_step_action_fetch_basic(
-        self, user_input: Dict[str, Any] | None = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         from custom_components.cardata.const import DOMAIN
 
@@ -455,7 +455,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data={})
 
     async def async_step_action_fetch_telematic(
-        self, user_input: Dict[str, Any] | None = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         from custom_components.cardata.const import DOMAIN
 
@@ -481,7 +481,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data={})
 
     async def async_step_action_reset_container(
-        self, user_input: Dict[str, Any] | None = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         from custom_components.cardata.const import DOMAIN
         from custom_components.cardata.container import CardataContainerError
@@ -513,7 +513,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 from custom_components.cardata.auth import async_manual_refresh_tokens
                 await async_manual_refresh_tokens(self.hass, entry)
             except Exception as err:
-                LOGGER.exception("Token refresh failed during container reset: %s", err)
+                _LOGGER.exception("Token refresh failed during container reset: %s", err)
                 return self._show_confirm(
                     step_id="action_reset_container",
                     errors={"base": "refresh_failed"},
@@ -535,7 +535,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         try:
             new_id = await runtime.container_manager.async_reset_hv_container(access_token)
         except CardataContainerError as err:
-            LOGGER.exception("Container reset failed: %s", err)
+            _LOGGER.exception("Container reset failed: %s", err)
             return self._show_confirm(
                 step_id="action_reset_container",
                 errors={"base": "reset_failed"},
@@ -554,7 +554,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data={})
 
     async def async_step_action_cleanup_entities(
-        self, user_input: Dict[str, Any] | None = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         """Clean up orphaned entities for this integration."""
         from homeassistant.helpers import entity_registry as er
@@ -592,7 +592,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 entity_reg.async_remove(entity.entity_id)
                 deleted_count += 1
             
-            LOGGER.info(
+            _LOGGER.info(
                 "Cleaned up %s orphaned entities for entry %s: %s",
                 deleted_count,
                 entry_id,
@@ -608,7 +608,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
             
         except Exception as err:
-            LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
+            _LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
             return self._show_confirm(
                 step_id="action_cleanup_entities",
                 errors={"base": "cleanup_failed"},
@@ -646,7 +646,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
         return self.async_abort(reason="reauth_started")
 
-    async def async_step_remove(self, user_input: Dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_remove(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Handle removal of config entry - prompt user about entity cleanup."""
         
         if user_input is not None:
@@ -661,12 +661,12 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 self.hass.config_entries.async_update_entry(entry, data=updated_data)
                 
                 if delete_entities:
-                    LOGGER.info(
+                    _LOGGER.info(
                         "User chose to delete entities for entry %s",
                         entry.entry_id,
                     )
                 else:
-                    LOGGER.debug(
+                    _LOGGER.debug(
                         "User chose to keep entities for entry %s",
                         entry.entry_id,
                     )

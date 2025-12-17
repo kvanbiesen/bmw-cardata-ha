@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 import aiohttp
 
@@ -19,15 +20,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
-from .utils import (
-    is_valid_vin,
-    redact_vin,
-    redact_vin_payload,
-    redact_vin_in_text,
-    safe_json_loads,
-    JSONSizeError,
-    JSONDepthError,
-)
+from .utils import redact_vin, redact_vin_payload, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,8 +30,8 @@ async def async_perform_telematic_fetch(
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
     *,
-    vin_override: str | None = None,
-) -> bool | None:
+    vin_override: Optional[str] = None,
+) -> Optional[bool]:
     """Fetch telematic data for one or more VINs.
 
     If vin_override is provided: fetch only that VIN (service use case).
@@ -53,13 +46,13 @@ async def async_perform_telematic_fetch(
 
     # Build list of VINs to fetch
     if vin_override:
-        vins: list[str] = [vin_override] if is_valid_vin(vin_override) else []
+        vins: list[str] = [vin_override]
     else:
         vins: list[str] = []
 
         # 1) Explicit vin stored in entry (older single-vehicle setups)
         explicit_vin = entry.data.get("vin")
-        if isinstance(explicit_vin, str) and is_valid_vin(explicit_vin):
+        if isinstance(explicit_vin, str):
             vins.append(explicit_vin)
 
         # 2) VINs known from coordinator state (stream/bootstrap)
@@ -72,9 +65,9 @@ async def async_perform_telematic_fetch(
         else:
             vins_from_metadata = []
 
-        # Merge & deduplicate while preserving order (only valid VINs)
+        # Merge & deduplicate while preserving order
         for v in vins_from_data + vins_from_metadata:
-            if isinstance(v, str) and is_valid_vin(v) and v not in vins:
+            if isinstance(v, str) and v not in vins:
                 vins.append(v)
 
     if not vins:
@@ -194,14 +187,9 @@ async def async_perform_telematic_fetch(
             continue
 
         try:
-            payload = safe_json_loads(response.text)
-        except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
-            _LOGGER.warning(
-                "Cardata telematic data invalid for %s: %s",
-                redacted_vin,
-                type(err).__name__,
-            )
-            continue
+            payload = json.loads(response.text)
+        except json.JSONDecodeError:
+            payload = response.text
         safe_payload = redact_vin_payload(payload)
 
         _LOGGER.info("Cardata telematic data for %s: %s", redacted_vin, safe_payload)
@@ -273,17 +261,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     wait,
                     wait / 60,
                 )
-                # Sleep in chunks, checking for entry deletion periodically
-                while wait > 0:
-                    chunk = min(wait, 60)  # Check every 60 seconds
-                    await asyncio.sleep(chunk)
-                    wait -= chunk
-                    # Check if entry was deleted during sleep
-                    if hass.config_entries.async_get_entry(entry_id) is None:
-                        _LOGGER.debug(
-                            "Entry %s removed during sleep, stopping poll loop", entry_id
-                        )
-                        return
+                await asyncio.sleep(wait)
                 continue
 
             # Time to poll
