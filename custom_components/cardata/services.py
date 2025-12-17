@@ -29,6 +29,7 @@ from .const import (
 from .runtime import CardataRuntimeData
 from .utils import (
     is_valid_vin,
+    redact_sensitive_data,
     redact_vin,
     redact_vin_in_text,
     redact_vin_payload,
@@ -225,7 +226,10 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
                 return
             _LOGGER.info("Cardata vehicle mappings: %s", redact_vin_payload(payload))
     except aiohttp.ClientError as err:
-        _LOGGER.error("Cardata fetch_vehicle_mappings: network error: %s", err)
+        _LOGGER.error(
+            "Cardata fetch_vehicle_mappings: network error: %s",
+            redact_sensitive_data(str(err)),
+        )
 
 
 async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
@@ -343,7 +347,11 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
                         serial_number=metadata.get("serial_number"),
                     )
     except aiohttp.ClientError as err:
-        _LOGGER.error("Cardata fetch_basic_data: network error for %s: %s", redacted_vin, err)
+        _LOGGER.error(
+            "Cardata fetch_basic_data: network error for %s: %s",
+            redacted_vin,
+            redact_sensitive_data(str(err)),
+        )
 
 
 async def async_handle_migrate(call: ServiceCall) -> None:
@@ -463,7 +471,10 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                     return payload.get("containers") or payload.get("items") or []
                 return []
         except aiohttp.ClientError as err:
-            _LOGGER.exception("clean_hv_containers: network error listing containers: %s", err)
+            _LOGGER.error(
+                "clean_hv_containers: network error listing containers: %s",
+                redact_sensitive_data(str(err)),
+            )
             return []
 
     # Helper: delete a single container id
@@ -483,8 +494,12 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                 )
                 return False, resp.status, text
         except aiohttp.ClientError as err:
-            _LOGGER.exception("clean_hv_containers: network error deleting container %s: %s", cid, err)
-            return False, 0, str(err)
+            _LOGGER.error(
+                "clean_hv_containers: network error deleting container %s: %s",
+                cid,
+                redact_sensitive_data(str(err)),
+            )
+            return False, 0, redact_sensitive_data(str(err))
 
     try:
         # Perform requested action
