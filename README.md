@@ -88,9 +88,11 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 > **Heads-up:** I've tested this on 2020 330e. everythig show up entities, he sends them instantly after locking/closing the car remotely using Mybmw. BSo far after reinstalling the plugin, I haven't seen anything for an hour, but received data multiple times earlier. So be patient, maybe go and drive around or something to trigger the data transfer :) 
 
-## BMW Portal Setup (DON'T SKIP, DO THIS FIRST)
+## BMW Portal Setup (DON'T SKIP, DO THIS FIRST - All Steps 1-13 before continuing)
 
 The CarData web portal isn’t available everywhere (e.g., it’s disabled in Finland). You can still enable streaming by logging in by using supported region. It doesn't matter which language you select - all the generated Id and configuration is shared between all of them. 
+
+**DO Steps 1-3 First before installing it in HACS**
 
 ### BMW 
 
@@ -108,7 +110,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 4. Under section CARDATA API, you see **Client ID**. Copy this to your clipboard because you will need it during **Configuration Flow** in Home Assistant.
 5. Now select Request access to CarData API and CarData Stream.
    Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for +30 seconds, then select the another one and wait agin.
-6. Don't press the button Authenticate device
+6. Don't press the button Authenticate device!!!!
 7. Scroll down to **CARDATA STREAMING** and press **Configure data stream** and on that new page, load all descriptors (keep clicking “Load more”).
 8. Manually check every descriptor you want to stream or optionally to automate this, open the browser console and run:
 ```js
@@ -158,6 +160,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 3. The flow displays a `verification_url` and `user_code`. Open the link, enter the code, and approve the device.
 4. Once the BMW portal confirms the approval, return to HA and click Submit. If you accidentally submit before finishing the BMW login, the flow will hang until the device-code exchange times out; cancel it and start over after completing the BMW login.
 5. If you remove the integration later, you can re-add it with the same client ID—the flow deletes the old entry automatically.
+6. Small tip, on newer cars with Idrive7, you can force the sensor creation by opening the BMW/Mini App and press lock doors; on older ones like idrive6, You have to start the car, maybe even drive it a little bit
 
 ### Reauthorization
 If BMW rejects the token (e.g. because the portal revoked it), please use the Configure > Start Device Authorization Again tool
@@ -169,7 +172,7 @@ If BMW rejects the token (e.g. because the portal revoked it), please use the Co
 - Additional attributes include the source timestamp.
 
 ## Debug Logging
-Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (enabled by default). To reduce noise, change it to `False` and reload HA.
+Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (disabled by default). To reduce noise, change it to `False` and reload HA.
 
 ## Developer Tools Services
 
@@ -184,14 +187,14 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 - BMW CarData account with streaming access (CarData API + CarData Streaming subscribed in the portal).
 - Client ID created in the BMW portal (see "BMW Portal Setup").
-- Home Assistant 2024.6+.
+- Home Assistant 2025.3+.
 - Familiarity with BMW’s CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
 ## Known Limitations
 
 - Only one BMW stream per GCID: make sure no other clients are connected simultaneously.
 - The CarData API is read-only; sending commands remains outside this integration.
-- Premature Continue in auth flow: If you hit Continue before authorizing on BMW’s site, the device-code flow gets stuck. Cancel the flow and restart the integration (or Home Assistant) once you’ve completed the BMW login.
+- **Premature Continue in auth flow: If you hit Continue before authorizing on BMW’s site, the device-code flow gets stuck. Cancel the flow and restart the integration (or Home Assistant) once you’ve completed the BMW login.**
 
 ## License
 
