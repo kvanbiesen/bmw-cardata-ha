@@ -43,24 +43,27 @@
   <img src="https://raw.githubusercontent.com/kvanbiesen/bmw-cardata-ha/refs/heads/main/images/icon.png" alt="BMW Cardata logo" width="240" />
 </p>
 
-# (BMW CarData for Home Assistant)
+# BMW CarData for Home Assistant
 
-## This is experimental. 
-## Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha) -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
+## This is experimental (Kinda production ready almost ). 
+Turn your BMW CarData stream into native Home Assistant entities. This integration subscribes directly to the BMW CarData MQTT stream, keeps the token fresh automatically, and creates sensors/binary sensors for every descriptor that emits data.
+
+**IMPORTANT: I released this to public after verifying that it works on my automations, so the testing time has been quite low so far. If you're running any critical automations, please don't use this plugin yet.**
+
+> **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
+
+> **Tested Environment:** since I adopted the project, I used the latest ha 2025.12 (2025.3+ is required)
+
+> **Heads-up:** I've tested this on 2020 330e. everythig show up entities, he sends them instantly after locking/closing the car remotely using Mybmw. BSo far after reinstalling the plugin, I haven't seen anything for an hour, but received data multiple times earlier. So be patient, maybe go and drive around or something to trigger the data transfer :) 
+
+Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha) -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
+
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 
 Not required but appreciated :)
 
-I'm developing this on my free time with personal use cases as highest priority. Main goal was to get it running ASAP when BMW killed the old API, so the code quality wasn't priority at all. So far the plugin has been surprisingly stable even after bigger (AI Agent assisted) edits, but there's always a risk that something falls through, due to nonexistent automatic testing and me not doing a completely fresh install every time I test a new feature.
-^^^^^^
-
-
-Releases might go hard in the beginning as i have different view over the plugin so might be breakage when upgrading :)
-
-
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-The Beta branch is used as a day to day development branch and can contain completely broken stuff, please don't use it or report bugs from it unless specifically asked for. The main branch is updated when I feel that it works well enough and has something worth to publish.
 
 ## Issues / Discussion
 Please try to post only issues relevant to the integration itself on the [Issues](https://github.com/kvanbiesen/bmw-cardata-ha/issues) and keep all the outside discussion (problems with registration on BMWs side, asking for guidance, etc)
@@ -77,16 +80,8 @@ And manual API calls, these should be automatically called when needed, but if i
 
 Note that every API call here counts towards your 50/24h quota!
 
+# <u>Installation Instructions</u>
 
-Turn your BMW CarData stream into native Home Assistant entities. This integration subscribes directly to the BMW CarData MQTT stream, keeps the token fresh automatically, and creates sensors/binary sensors for every descriptor that emits data.
-
-**IMPORTANT: I released this to public after verifying that it works on my automations, so the testing time has been quite low so far. If you're running any critical automations, please don't use this plugin yet.**
-
-> **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
-
-> **Tested Environment:** since I adopted the project, I used the latest ha 2025.11 or 12.
-
-> **Heads-up:** I've tested this on 2020 330e. everythig show up entities, he sends them instantly after locking/closing the car remotely using Mybmw. BSo far after reinstalling the plugin, I haven't seen anything for an hour, but received data multiple times earlier. So be patient, maybe go and drive around or something to trigger the data transfer :) 
 
 ## BMW Portal Setup (DON'T SKIP, DO THIS FIRST - All Steps 1-13 before continuing)
 
@@ -139,7 +134,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
   console.log(`Checked ${changed} of ${labels.length} checkboxes.`);
 })();
 ```
-   - If you want the "Extrapolated SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the extrapolated state of charge and calculate the charging slope between stream updates.
+   - If you want the "Extrapolated SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the extrapolated state of charge and calculate the charging slope between stream updates. It seems like the `vehicle.drivetrain.batteryManagement.maxEnergy` always get sended even tho its not explicitly set, but check it anyways.
 
 9. Save the selection.
 10. Repeat for all the cars you want to support
