@@ -108,6 +108,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # unique_id is already set in CardataEntity.__init__ as: f"{vin}_device_tracker"
         
         self._unsubscribe = None
+        self._debounce_handle: asyncio.TimerHandle | None = None
         self._base_name = "Location"
         # Update name to include vehicle name prefix
         self._update_name(write_state=False)
@@ -417,14 +418,14 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         return self._current_lon
     
     @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        attrs = {}
-    
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {}
+
         if self._heading is not None:
             attrs["gps_heading_deg"] = round(self._heading, 1)  # Degrees, 1 decimal
-    
+
         if self._altitude is not None:
             attrs["gps_altitude"] = round(self._altitude, 1)
             attrs["gps_altitude_unit"] = self._altitude_unit
-    
-        return attrs if attrs else None
+
+        return attrs

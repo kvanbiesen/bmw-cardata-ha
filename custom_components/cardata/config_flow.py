@@ -76,7 +76,7 @@ def _generate_code_challenge(code_verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
-class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
+class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: ignore[call-arg]
     """Handle config flow for BMW CarData."""
 
     VERSION = 1
@@ -205,6 +205,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
         from custom_components.cardata.const import DOMAIN, VEHICLE_METADATA
 
         assert self._client_id is not None
+        assert self._token_data is not None
         token_data = self._token_data
 
         entry_data = {

@@ -365,6 +365,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_native_value: datetime | str | None = None
 
     def __init__(
         self,
@@ -423,13 +424,13 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
             return attrs
 
         if self._sensor_type == "last_telematic_api":
-            attrs: dict[str, Any] = {}
+            telematic_attrs: dict[str, Any] = {}
             if self._quota:
-                attrs["api_quota_used"] = self._quota.used
-                attrs["api_quota_remaining"] = self._quota.remaining
+                telematic_attrs["api_quota_used"] = self._quota.used
+                telematic_attrs["api_quota_remaining"] = self._quota.remaining
                 if next_reset := self._quota.next_reset_iso:
-                    attrs["api_quota_next_reset"] = next_reset
-            return attrs
+                    telematic_attrs["api_quota_next_reset"] = next_reset
+            return telematic_attrs
 
         return {}
 
@@ -460,6 +461,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     def _handle_update(self) -> None:
         """Handle updates from coordinator."""
+        value: datetime | str | None
         if self._sensor_type == "last_message":
             value = self._coordinator.last_message_at
         elif self._sensor_type == "last_telematic_api":
@@ -569,6 +571,7 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
     _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_value: float | None = None
 
     def __init__(
         self, coordinator: CardataCoordinator, vin: str, descriptor: str, base_name: str
@@ -774,18 +777,6 @@ async def async_setup_entry(
                      vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
     
         return is_electric
-
-    def is_electric_vehicle(vin: str) -> bool:
-        """Check if vehicle is electric/hybrid based on metadata."""
-        metadata = coordinator.device_metadata.get(vin, {})
-        extra = metadata.get("extra_attributes", {})
-    
-        drive_train = extra.get("drive_train", "").lower()
-    
-        if any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"]):
-            return True
-    
-        return False
 
     def ensure_metadata_sensor(vin: str) -> None:
         """Ensure metadata sensor exists for VIN (all vehicles)."""

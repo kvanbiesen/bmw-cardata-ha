@@ -45,10 +45,11 @@ async def async_perform_telematic_fetch(
     target_entry_id = entry.entry_id
 
     # Build list of VINs to fetch
+    vins: list[str]
     if vin_override:
-        vins: list[str] = [vin_override]
+        vins = [vin_override]
     else:
-        vins: list[str] = []
+        vins = []
 
         # 1) Explicit vin stored in entry (older single-vehicle setups)
         explicit_vin = entry.data.get("vin")

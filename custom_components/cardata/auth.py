@@ -204,23 +204,27 @@ async def async_ensure_container_for_entry(
     entry: ConfigEntry,
     hass: HomeAssistant,
     session: aiohttp.ClientSession,
-    container_manager: CardataContainerManager,
+    container_manager: CardataContainerManager | None,
     force: bool = False,
 ) -> bool:
     """Ensure HV container exists for entry.
-    
+
     This function should ONLY be called:
     1. During initial bootstrap
     2. When user manually resets container
     3. When signature changes AND user confirms recreation
-    
+
     NOT during token refresh, MQTT reconnects, or unauthorized errors!
-    
+
     Returns True if container is ready, False otherwise.
     """
     from .const import DOMAIN
     from .container import CardataContainerError
-    
+
+    if container_manager is None:
+        _LOGGER.warning("Cannot ensure container - no container manager available")
+        return False
+
     data = dict(entry.data)
     hv_container_id = data.get("hv_container_id")
     stored_signature = data.get("hv_descriptor_signature")
