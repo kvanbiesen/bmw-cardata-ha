@@ -20,6 +20,33 @@ from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
 LOGGER = logging.getLogger(__name__)
 
+# Maximum length for error messages shown to users
+MAX_ERROR_LENGTH = 200
+
+
+def _sanitize_error_for_user(err: Exception) -> str:
+    """Sanitize an error message for display to users.
+
+    This function:
+    - Removes sensitive data (tokens, auth headers, VINs)
+    - Truncates long messages
+    - Provides a safe, user-friendly error description
+    """
+    from .utils import redact_sensitive_data
+
+    # Get the error message
+    error_msg = str(err)
+
+    # Redact sensitive data
+    safe_msg = redact_sensitive_data(error_msg)
+
+    # Truncate if too long
+    if len(safe_msg) > MAX_ERROR_LENGTH:
+        safe_msg = safe_msg[:MAX_ERROR_LENGTH] + "..."
+
+    # Return type and message
+    return f"{type(err).__name__}: {safe_msg}"
+
 # Note: Heavy imports like aiohttp are imported lazily inside methods to avoid blocking the event loop
 
 
@@ -93,7 +120,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                 step_id="user",
                 data_schema=vol.Schema({vol.Required("client_id"): str}),
                 errors={"base": "device_code_failed"},
-                description_placeholders={"error": str(err)},
+                description_placeholders={"error": _sanitize_error_for_user(err)},
             )
 
         return await self.async_step_authorize()
@@ -163,7 +190,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
                     step_id="authorize",
                     data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
                     errors={"base": "authorization_failed"},
-                    description_placeholders={"error": str(err), **placeholders},
+                    description_placeholders={"error": _sanitize_error_for_user(err), **placeholders},
                 )
 
         self._token_data = token_data
@@ -490,7 +517,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 return self._show_confirm(
                     step_id="action_reset_container",
                     errors={"base": "refresh_failed"},
-                    placeholders={"error": str(err)},
+                    placeholders={"error": _sanitize_error_for_user(err)},
                 )
             entry = self.hass.config_entries.async_get_entry(entry.entry_id)
             if entry is None:
@@ -512,7 +539,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_confirm(
                 step_id="action_reset_container",
                 errors={"base": "reset_failed"},
-                placeholders={"error": str(err)},
+                placeholders={"error": _sanitize_error_for_user(err)},
             )
 
         updated = dict(entry.data)
