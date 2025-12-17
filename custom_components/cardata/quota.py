@@ -7,7 +7,7 @@ import logging
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Deque, Optional
+from typing import Deque
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -21,6 +21,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Periodic save interval (5 minutes) to prevent state loss on crash
+PERIODIC_SAVE_INTERVAL = 300
 
 
 class CardataQuotaError(Exception):
@@ -42,6 +45,8 @@ class QuotaManager:
         self._store = store
         self._timestamps: Deque[float] = timestamps
         self._lock = asyncio.Lock()
+        self._periodic_save_task: asyncio.Task | None = None
+        self._dirty = False  # Track if there are unsaved changes
 
     @classmethod
     async def async_create(cls, hass: HomeAssistant, entry_id: str) -> QuotaManager:
@@ -52,7 +57,7 @@ class QuotaManager:
         values: list[float] = []
 
         for item in raw_timestamps:
-            value: Optional[float] = None
+            value: float | None = None
             if isinstance(item, (int, float)):
                 value = float(item)
             elif isinstance(item, str):
@@ -75,6 +80,11 @@ class QuotaManager:
         async with manager._lock:
             manager._prune(time.time())
             await manager._async_save_locked()
+
+        # Start periodic save task to prevent state loss on crash
+        manager._periodic_save_task = hass.loop.create_task(
+            manager._async_periodic_save_loop()
+        )
 
         return manager
 
@@ -117,6 +127,7 @@ class QuotaManager:
                 )
             
             self._timestamps.append(now)
+            self._dirty = True
             await self._async_save_locked()
 
     @property
@@ -131,7 +142,7 @@ class QuotaManager:
         return max(0, REQUEST_LIMIT - self.used)
 
     @property
-    def next_reset_epoch(self) -> Optional[float]:
+    def next_reset_epoch(self) -> float | None:
         """Return Unix timestamp of next quota reset, or None if not at limit."""
         self._prune(time.time())
         if len(self._timestamps) < REQUEST_LIMIT:
@@ -139,7 +150,7 @@ class QuotaManager:
         return self._timestamps[0] + REQUEST_WINDOW_SECONDS
 
     @property
-    def next_reset_iso(self) -> Optional[str]:
+    def next_reset_iso(self) -> str | None:
         """Return ISO timestamp of next quota reset, or None if not at limit."""
         ts = self.next_reset_epoch
         if ts is None:
@@ -148,6 +159,15 @@ class QuotaManager:
 
     async def async_close(self) -> None:
         """Close and save final state."""
+        # Cancel periodic save task
+        if self._periodic_save_task is not None:
+            self._periodic_save_task.cancel()
+            try:
+                await self._periodic_save_task
+            except asyncio.CancelledError:
+                pass
+            self._periodic_save_task = None
+
         async with self._lock:
             self._prune(time.time())
             await self._async_save_locked()
@@ -155,3 +175,17 @@ class QuotaManager:
     async def _async_save_locked(self) -> None:
         """Save timestamps to storage (must hold lock)."""
         await self._store.async_save({"timestamps": list(self._timestamps)})
+        self._dirty = False
+
+    async def _async_periodic_save_loop(self) -> None:
+        """Periodically save state to prevent loss on crash."""
+        try:
+            while True:
+                await asyncio.sleep(PERIODIC_SAVE_INTERVAL)
+                async with self._lock:
+                    if self._dirty:
+                        self._prune(time.time())
+                        await self._async_save_locked()
+                        _LOGGER.debug("Quota state saved (periodic)")
+        except asyncio.CancelledError:
+            return

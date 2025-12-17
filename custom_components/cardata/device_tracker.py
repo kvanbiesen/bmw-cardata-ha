@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
@@ -30,10 +31,16 @@ else:
 
 from .const import (
     DOMAIN,
+    EARTH_RADIUS_METERS,
+    GPS_COORD_PRECISION,
+    GPS_MAX_STALE_TIME,
+    GPS_MIN_MOVEMENT_DISTANCE,
+    GPS_PAIR_WINDOW,
+    LOCATION_ALTITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    LOCATION_HEADING_DESCRIPTOR,
-    LOCATION_ALTITUDE_DESCRIPTOR,
+    PARALLEL_UPDATES,
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
@@ -42,7 +49,6 @@ from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
-PARALLEL_UPDATES = 0
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -59,8 +65,14 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = runtime_data.coordinator
     stream_manager = runtime_data.stream
     
-    # Wait for bootstrap to finish so VIN → name mapping exists
+    # Wait briefly for bootstrap to finish so VIN → name mapping exists
+    wait_start = time.monotonic()
     while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
+        if time.monotonic() - wait_start > 15:
+            _LOGGER.debug(
+                "Device tracker setup continuing without vehicle names after 15s wait"
+            )
+            break
         await asyncio.sleep(0.1)
     
     trackers: dict[str, CardataDeviceTracker] = {}
@@ -103,16 +115,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     _attr_force_update = False
     _attr_translation_key = "car"
 
-    # Timing thresholds for coordinate pairing logic
-    _PAIR_WINDOW = 2.0  # seconds - lat/lon come in separate messages
-    _MAX_STALE_TIME = 600  # seconds (10 minutes) - discard very old coordinates
-    
-    # Movement filtering
-    _MIN_MOVEMENT_DISTANCE = 3  # meters - MORE SENSITIVE (was 5m)
-
-    # GPS precision
-    _COORD_PRECISION = 0.000001  # degrees (~0.1 meter) - ignore smaller changes
-
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         """Initialize the device tracker."""
         super().__init__(coordinator, vin, "device_tracker")
@@ -137,6 +139,10 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self._last_lat_time: float = 0
         self._last_lon_time: float = 0
 
+        # Debounce and altitude tracking
+        self._debounce_handle = None
+        self._altitude_unit: str | None = None
+
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
         await super().async_added_to_hass()
@@ -152,7 +158,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon = state.attributes.get("longitude")
             alt = state.attributes.get("gps_altitude")
             heading = state.attributes.get("gps_heading_deg")
-            #havent decided yet to Restore altitude and heading
+            # TODO: Restore altitude and heading
 
             if lat is not None and lon is not None:
                 try:
@@ -278,7 +284,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         lon_age = now - lon_time
     
         # Discard if both coordinates are very stale
-        if lat_age > self._MAX_STALE_TIME and lon_age > self._MAX_STALE_TIME:
+        if lat_age > GPS_MAX_STALE_TIME and lon_age > GPS_MAX_STALE_TIME:
             _LOGGER.debug(
                 "Discarding stale coordinates for %s (lat age: %.1fs, lon age: %.1fs)",
                 redacted_vin,
@@ -288,12 +294,12 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             return
 
         # CRITICAL: Only accept coordinates that arrived close together
-        if time_diff > self._PAIR_WINDOW:
+        if time_diff > GPS_PAIR_WINDOW:
             _LOGGER.debug(
                 "Coordinates too far apart for %s (Δt=%.1fs > %.1fs window) - waiting for pair",
                 redacted_vin,
                 time_diff,
-                self._PAIR_WINDOW
+                GPS_PAIR_WINDOW
             )
             return
     
@@ -305,8 +311,8 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         lat_changed = True
         lon_changed = True
         if self._current_lat is not None and self._current_lon is not None:
-            lat_changed = abs(lat - self._current_lat) > self._COORD_PRECISION
-            lon_changed = abs(lon - self._current_lon) > self._COORD_PRECISION
+            lat_changed = abs(lat - self._current_lat) > GPS_COORD_PRECISION
+            lon_changed = abs(lon - self._current_lon) > GPS_COORD_PRECISION
         
             if not lat_changed and not lon_changed:
                 _LOGGER.debug("Ignoring update for %s - no movement detected", redacted_vin)
@@ -320,12 +326,12 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 final_lat, final_lon
             )
         
-            if distance < self._MIN_MOVEMENT_DISTANCE:
+            if distance < GPS_MIN_MOVEMENT_DISTANCE:
                 _LOGGER.debug(
                     "Ignoring update for %s - movement too small (%.1fm < %dm threshold)",
                     redacted_vin,
                     distance,
-                    self._MIN_MOVEMENT_DISTANCE
+                    GPS_MIN_MOVEMENT_DISTANCE
                 )
                 return
         
@@ -340,9 +346,8 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two GPS coordinates in meters using Haversine formula."""
         from math import radians, sin, cos, sqrt, atan2
-        
-        # Earth radius in meters
-        R = 6371000
+
+        R = EARTH_RADIUS_METERS
         
         # Convert to radians
         lat1_rad = radians(lat1)
@@ -376,7 +381,16 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if state and state.value is not None:
             try:
                 value = float(state.value)
-                
+
+                # Reject NaN and Infinity
+                if not math.isfinite(value):
+                    _LOGGER.warning(
+                        "Invalid coordinate for %s: %s (NaN or Infinity)",
+                        self._redacted_vin,
+                        state.value
+                    )
+                    return None
+
                 # Validate coordinate ranges
                 if "latitude" in descriptor.lower():
                     if not (-90 <= value <= 90):

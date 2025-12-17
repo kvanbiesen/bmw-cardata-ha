@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
-import logging
-
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -45,6 +44,7 @@ from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 from .quota import QuotaManager
+from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -138,9 +138,13 @@ def get_device_class_for_unit(
 
 
 def convert_value_for_unit(
-    value: float | str | int, original_unit: str | None, normalized_unit: str | None
-) -> float | str | int:
-    """Convert value when unit normalization requires it."""
+    value: float | str | int | None, original_unit: str | None, normalized_unit: str | None
+) -> float | str | int | None:
+    """Convert value when unit normalization requires it.
+
+    Returns the value unchanged if units match or value is None.
+    Converts numeric values when unit conversion is needed (e.g., weeks to days).
+    """
     if original_unit == normalized_unit or value is None:
         return value
 
@@ -171,7 +175,7 @@ class CardataSensor(CardataEntity, SensorEntity):
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
-        #Mayfe for later settings the GPS available
+        # Maybe for later: setting GPS available
         #if descriptor in GPS_DESCRIPTORS = (
         #    LOCATION_LATITUDE_DESCRIPTOR,
         #    LOCATION_LONGITUDE_DESCRIPTOR,
@@ -612,6 +616,16 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
     def _load_current_value(self) -> None:
         """Load current value from coordinator. Override in subclass."""
 
+    def _parse_restore_timestamp(self, last_state) -> datetime | None:
+        """Parse timestamp from restored state for cache restoration."""
+        restored_ts = last_state.attributes.get("timestamp")
+        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
+        if reference is None:
+            reference = last_state.last_changed
+        if reference is not None:
+            reference = dt_util.as_utc(reference)
+        return reference
+
     def _handle_update(self, vin: str) -> None:
         """Handle updates from coordinator.
     
@@ -648,17 +662,11 @@ class CardataSocEstimateSensor(_SocTrackerBase):
 
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore SOC estimate cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
         if self._coordinator.get_soc_estimate(self.vin) is None:
             await self._coordinator.async_restore_soc_cache(
                 self.vin,
                 estimate=self._attr_native_value,
-                timestamp=reference,
+                timestamp=self._parse_restore_timestamp(last_state),
             )
 
     def _load_current_value(self) -> None:
@@ -683,17 +691,11 @@ class CardataTestingSocEstimateSensor(_SocTrackerBase):
 
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore testing SOC cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
         if self._coordinator.get_testing_soc_estimate(self.vin) is None:
             await self._coordinator.async_restore_testing_soc_cache(
                 self.vin,
                 estimate=self._attr_native_value,
-                timestamp=reference,
+                timestamp=self._parse_restore_timestamp(last_state),
             )
 
     def _load_current_value(self) -> None:
@@ -720,17 +722,11 @@ class CardataSocRateSensor(_SocTrackerBase):
 
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore SOC rate cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
         if self._coordinator.get_soc_rate(self.vin) is None:
             await self._coordinator.async_restore_soc_cache(
                 self.vin,
                 rate=self._attr_native_value,
-                timestamp=reference,
+                timestamp=self._parse_restore_timestamp(last_state),
             )
 
     def _load_current_value(self) -> None:
@@ -765,27 +761,15 @@ async def async_setup_entry(
     
         drive_train = extra.get("drive_train", "").lower()
     
-        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"])
+        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid", "mhev"])
     
         # Cache the result
         _electric_vehicle_cache[vin] = is_electric
     
         _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
-                     vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
-    
-        return is_electric
+                     redact_vin(vin), "electric/hybrid" if is_electric else "NOT electric", drive_train)
 
-    def is_electric_vehicle(vin: str) -> bool:
-        """Check if vehicle is electric/hybrid based on metadata."""
-        metadata = coordinator.device_metadata.get(vin, {})
-        extra = metadata.get("extra_attributes", {})
-    
-        drive_train = extra.get("drive_train", "").lower()
-    
-        if any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"]):
-            return True
-    
-        return False
+        return is_electric
 
     def ensure_metadata_sensor(vin: str) -> None:
         """Ensure metadata sensor exists for VIN (all vehicles)."""

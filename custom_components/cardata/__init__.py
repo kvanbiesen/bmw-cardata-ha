@@ -6,10 +6,10 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Optional
 
 import aiohttp
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -19,6 +19,7 @@ from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
 from .const import (
     BOOTSTRAP_COMPLETE,
+    ConnectionState,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
@@ -60,7 +61,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.debug("Setting up Bmw Cardata Streamline entry %s", entry.entry_id)
 
-    session = aiohttp.ClientSession()
+    session = aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=30)
+    )
     refresh_task: asyncio.Task | None = None
 
     try:
@@ -79,7 +82,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gcid = data.get("gcid")
         id_token = data.get("id_token")
         if not gcid or not id_token:
-            await session.close()
             raise ConfigEntryNotReady("Missing GCID or ID token")
 
         # Set up coordinator
@@ -124,7 +126,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
 
         # Set up container manager
-        container_manager: Optional[CardataContainerManager] = CardataContainerManager(
+        container_manager: CardataContainerManager | None = CardataContainerManager(
             session=session,
             entry_id=entry.entry_id,
             initial_container_id=data.get("hv_container_id"),
@@ -142,10 +144,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             host=data.get("mqtt_host", DEFAULT_STREAM_HOST),
             port=data.get("mqtt_port", DEFAULT_STREAM_PORT),
             keepalive=mqtt_keepalive,
+            entry_id=entry.entry_id,
             error_callback=handle_stream_error_callback,
         )
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)
+
+        # Load persisted circuit breaker state
+        await manager.async_load_circuit_breaker_state()
         
         # CRITICAL: Prevent MQTT from auto-starting during token refresh
         # Set a flag that we'll clear after bootstrap completes
@@ -163,7 +169,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 err,
             )
         except Exception as err:
-            await session.close()
             raise ConfigEntryNotReady(f"Initial token refresh failed: {err}") from err
 
         # Ensure HV container if token refresh didn't succeed
@@ -187,7 +192,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             entry, session, manager, container_manager
                         )
                     except CardataAuthError as err:
-                        _LOGGER.error("Token refresh failed: %s", err)
+                        _LOGGER.error("Token refresh failed (auth): %s", err)
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                        _LOGGER.warning("Token refresh failed (network): %s", err)
+                    except Exception as err:
+                        _LOGGER.exception("Token refresh failed (unexpected): %s", err)
             except asyncio.CancelledError:
                 return
 
@@ -216,7 +225,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
-        bootstrap_error: Optional[str] = None
+        bootstrap_error: str | None = None
         if should_bootstrap:
             _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
             
@@ -235,6 +244,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Bootstrap did not complete within 30 seconds. "
                     "Devices will update names when metadata arrives."
                 )
+                # Cancel the orphaned bootstrap task to prevent background execution
+                runtime_data.bootstrap_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await runtime_data.bootstrap_task
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
                 bootstrap_error = str(err)
@@ -244,16 +257,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if should_bootstrap and not coordinator.names:
             error_message = bootstrap_error or "Unknown bootstrap error"
             # Create a persistent notification in the UI for visibility
-            await hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {
-                    "title":"BMW CarData Setup Failed",
-                    "message":f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                    "notification_id":f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
-                }
-            )
-            await session.close()
+            with suppress(Exception):
+                persistent_notification.async_create(
+                    hass,
+                    f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
+                    title="BMW CarData Setup Failed",
+                    notification_id=f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+                )
             raise ConfigEntryNotReady(
                 f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
             )
@@ -266,7 +276,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("Starting MQTT connection after bootstrap")
                 await manager.async_start()
             except Exception as err:
-                await session.close()
                 if refreshed_token:
                     raise ConfigEntryNotReady(
                         f"Unable to connect to BMW MQTT after token refresh: {err}"
@@ -274,7 +283,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
 
         # Start coordinator watchdog
-        await coordinator.async_handle_connection_event("connecting")
+        await coordinator.async_handle_connection_event(ConnectionState.CONNECTING.value)
         await coordinator.async_start_watchdog()
 
         # --- NEW: Run safe migration of existing entity_ids to include model prefix
@@ -297,8 +306,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         return True
 
-    except Exception as err:
-        # Clean up all tasks and resources on setup failure
+    except BaseException:
+        # Clean up all tasks and resources on setup failure (catches all exceptions including KeyboardInterrupt)
         if refresh_task:
             refresh_task.cancel()
             with suppress(asyncio.CancelledError):

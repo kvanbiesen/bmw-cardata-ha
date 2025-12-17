@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import aiohttp
 
@@ -86,7 +86,7 @@ async def refresh_tokens(
     *,
     client_id: str,
     refresh_token: str,
-    scope: Optional[str] = None,
+    scope: str | None = None,
     token_url: str = TOKEN_URL,
     max_retries: int = 3,
 ) -> Dict[str, Any]:
@@ -104,7 +104,7 @@ async def refresh_tokens(
 
     timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
     backoff = 1.0
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
 
     for attempt in range(max_retries + 1):
         try:
