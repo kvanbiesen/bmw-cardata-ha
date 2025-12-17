@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 import voluptuous as vol
@@ -29,12 +29,10 @@ from .const import (
 from .runtime import CardataRuntimeData
 from .utils import (
     is_valid_vin,
+    redact_sensitive_data,
     redact_vin,
     redact_vin_in_text,
     redact_vin_payload,
-    safe_json_loads,
-    JSONSizeError,
-    JSONDepthError,
 )
 
 import homeassistant.helpers.entity_registry as er
@@ -119,19 +117,13 @@ async def async_handle_fetch_telematic(call: ServiceCall) -> None:
 
     target_entry_id, target_entry, runtime = resolved
 
-    # Validate VIN if provided
-    vin_override = call.data.get("vin")
-    if vin_override and not is_valid_vin(vin_override):
-        _LOGGER.error("Cardata fetch_telematic_data: invalid VIN format")
-        return
-
     from .telematics import async_perform_telematic_fetch, async_update_last_telematic_poll
 
     success = await async_perform_telematic_fetch(
         hass,
         target_entry,
         runtime,
-        vin_override=vin_override,
+        vin_override=call.data.get("vin"),
     )
 
     if success is None:
@@ -217,15 +209,15 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
                 )
                 return
             try:
-                payload = safe_json_loads(text)
-            except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
-                _LOGGER.warning(
-                    "Cardata fetch_vehicle_mappings: invalid JSON response: %s", type(err).__name__
-                )
-                return
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                payload = text
             _LOGGER.info("Cardata vehicle mappings: %s", redact_vin_payload(payload))
     except aiohttp.ClientError as err:
-        _LOGGER.error("Cardata fetch_vehicle_mappings: network error: %s", err)
+        _LOGGER.error(
+            "Cardata fetch_vehicle_mappings: network error: %s",
+            redact_sensitive_data(str(err)),
+        )
 
 
 async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
@@ -244,11 +236,6 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
     if not vin:
         _LOGGER.error(
             "Cardata fetch_basic_data: no VIN available; provide vin parameter"
-        )
-        return
-    if not is_valid_vin(vin):
-        _LOGGER.error(
-            "Cardata fetch_basic_data: invalid VIN format"
         )
         return
     redacted_vin = redact_vin(vin)
@@ -305,14 +292,9 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
                 )
                 return
             try:
-                payload = safe_json_loads(text)
-            except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
-                _LOGGER.warning(
-                    "Cardata fetch_basic_data: invalid JSON response for %s: %s",
-                    redacted_vin,
-                    type(err).__name__,
-                )
-                return
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                payload = text
 
             _LOGGER.info(
                 "Cardata basic data for %s: %s",
@@ -343,7 +325,11 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
                         serial_number=metadata.get("serial_number"),
                     )
     except aiohttp.ClientError as err:
-        _LOGGER.error("Cardata fetch_basic_data: network error for %s: %s", redacted_vin, err)
+        _LOGGER.error(
+            "Cardata fetch_basic_data: network error for %s: %s",
+            redacted_vin,
+            redact_sensitive_data(str(err)),
+        )
 
 
 async def async_handle_migrate(call: ServiceCall) -> None:
@@ -431,11 +417,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         "Accept": "application/json",
     }
 
-    # Use runtime session if available, otherwise create a temporary one
-    owns_session = not getattr(runtime, "session", None)
-    session = runtime.session if not owns_session else aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=30)
-    )
+    session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession()
 
     # Helper: fetch list of containers
     async def _list_containers() -> list[dict[str, Any]]:
@@ -451,11 +433,9 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                     )
                     return []
                 try:
-                    payload = safe_json_loads(text)
-                except (json.JSONDecodeError, JSONSizeError, JSONDepthError) as err:
-                    _LOGGER.debug(
-                        "clean_hv_containers: invalid JSON list response: %s", type(err).__name__
-                    )
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    _LOGGER.debug("clean_hv_containers: non-JSON list response: %s", text)
                     return []
                 if isinstance(payload, list):
                     return payload
@@ -463,7 +443,10 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                     return payload.get("containers") or payload.get("items") or []
                 return []
         except aiohttp.ClientError as err:
-            _LOGGER.exception("clean_hv_containers: network error listing containers: %s", err)
+            _LOGGER.error(
+                "clean_hv_containers: network error listing containers: %s",
+                redact_sensitive_data(str(err)),
+            )
             return []
 
     # Helper: delete a single container id
@@ -483,56 +466,55 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                 )
                 return False, resp.status, text
         except aiohttp.ClientError as err:
-            _LOGGER.exception("clean_hv_containers: network error deleting container %s: %s", cid, err)
-            return False, 0, str(err)
+            _LOGGER.error(
+                "clean_hv_containers: network error deleting container %s: %s",
+                cid,
+                redact_sensitive_data(str(err)),
+            )
+            return False, 0, redact_sensitive_data(str(err))
 
-    try:
-        # Perform requested action
-        if action == "list":
-            containers = await _list_containers()
-            if not containers:
-                _LOGGER.info("clean_hv_containers: no containers found (entry %s)", entry.entry_id)
-                return
-            # Log a compact listing
-            for c in containers:
-                cid = c.get("containerId") or c.get("containerId")
-                name = c.get("name")
-                purpose = c.get("purpose")
-                _LOGGER.info("clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
+    # Perform requested action
+    if action == "list":
+        containers = await _list_containers()
+        if not containers:
+            _LOGGER.info("clean_hv_containers: no containers found (entry %s)", entry.entry_id)
             return
+        # Log a compact listing
+        for c in containers:
+            cid = c.get("containerId") or c.get("containerId")
+            name = c.get("name")
+            purpose = c.get("purpose")
+            _LOGGER.info("clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
+        return
 
-        if action == "delete":
-            if not container_id:
-                _LOGGER.error("clean_hv_containers: 'delete' action requires container_id")
-                return
-            ok, status, text = await _delete_container(container_id)
-            if not ok:
-                _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
+    if action == "delete":
+        if not container_id:
+            _LOGGER.error("clean_hv_containers: 'delete' action requires container_id")
             return
+        ok, status, text = await _delete_container(container_id)
+        if not ok:
+            _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
+        return
 
-        if action == "delete_all_matching":
-            containers = await _list_containers()
-            if not containers:
-                _LOGGER.info("clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
-                return
-            deleted_any = False
-            for c in containers:
-                cid = c.get("containerId")
-                name = c.get("name")
-                purpose = c.get("purpose")
-                if cid and name == HV_BATTERY_CONTAINER_NAME and purpose == HV_BATTERY_CONTAINER_PURPOSE:
-                    ok, status, text = await _delete_container(cid)
-                    if ok:
-                        deleted_any = True
-            if not deleted_any:
-                _LOGGER.info("clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
+    if action == "delete_all_matching":
+        containers = await _list_containers()
+        if not containers:
+            _LOGGER.info("clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
             return
+        deleted_any = False
+        for c in containers:
+            cid = c.get("containerId")
+            name = c.get("name")
+            purpose = c.get("purpose")
+            if cid and name == HV_BATTERY_CONTAINER_NAME and purpose == HV_BATTERY_CONTAINER_PURPOSE:
+                ok, status, text = await _delete_container(cid)
+                if ok:
+                    deleted_any = True
+        if not deleted_any:
+            _LOGGER.info("clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
+        return
 
-        _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
-    finally:
-        # Close the session if we created it
-        if owns_session:
-            await session.close()
+    _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
 
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all Cardata services."""
@@ -594,7 +576,7 @@ def async_unregister_services(hass: HomeAssistant) -> None:
             hass.services.async_remove(DOMAIN, service)
             _LOGGER.debug("Unregistered service %s.%s", DOMAIN, service)
 
-async def async_fetch_vehicle_images_service(call: ServiceCall) -> None:
+async def async_fetch_vehicle_images_service(call) -> None:
     """Service to manually fetch vehicle images."""
     hass = call.hass
     domain_data = hass.data.get(DOMAIN, {})
@@ -602,34 +584,29 @@ async def async_fetch_vehicle_images_service(call: ServiceCall) -> None:
     for entry_id, runtime_data in domain_data.items():
         if entry_id.startswith("_"):
             continue
-
+            
         entry = hass.config_entries.async_get_entry(entry_id)
         if not entry:
             continue
-
-        try:
-            coordinator = runtime_data.coordinator
-            session = runtime_data.session
-            quota = runtime_data.quota_manager
-            vins = list(coordinator.data.keys())
-            access_token = entry.data.get("access_token")
-
-            if not access_token or not vins:
-                continue
-
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "x-version": "v1",
-                "Accept": "*/*",
-            }
-
-            from .metadata import async_fetch_and_store_vehicle_images
-
-            _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
-            await async_fetch_and_store_vehicle_images(
-                hass, entry, headers, vins, quota, session
-            )
-        except Exception as err:
-            _LOGGER.exception(
-                "Failed to fetch vehicle images for entry %s: %s", entry_id, err
-            )
+        
+        coordinator = runtime_data.coordinator
+        session = runtime_data.session
+        quota = runtime_data.quota_manager
+        vins = list(coordinator.data.keys())
+        access_token = entry.data.get("access_token")
+        
+        if not access_token or not vins:
+            continue
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "x-version": "v1",
+            "Accept": "*/*",
+        }
+        
+        from .metadata import async_fetch_and_store_vehicle_images
+        
+        _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
+        await async_fetch_and_store_vehicle_images(
+            hass, entry, headers, vins, quota, session
+        )

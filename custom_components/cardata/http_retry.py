@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
 
 from .const import HTTP_TIMEOUT
-from .utils import redact_vin_in_text
+from .utils import redact_sensitive_data, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,17 +72,17 @@ async def async_request_with_retry(
     method: str,
     url: str,
     *,
-    headers: Dict[str, str] | None = None,
-    params: Dict[str, Any] | None = None,
-    data: Dict[str, Any] | None = None,
-    json_data: Dict[str, Any] | None = None,
-    timeout: float | None = None,
+    headers: Optional[Dict[str, str]] = None,
+    params: Optional[Dict[str, Any]] = None,
+    data: Optional[Dict[str, Any]] = None,
+    json_data: Optional[Dict[str, Any]] = None,
+    timeout: Optional[float] = None,
     max_retries: int = 3,
     initial_backoff: float = 1.0,
     max_backoff: float = 30.0,
     backoff_multiplier: float = 2.0,
     context: str = "HTTP request",
-) -> Tuple[HttpResponse | None, Exception | None]:
+) -> Tuple[Optional[HttpResponse], Optional[Exception]]:
     """Make an HTTP request with retry logic for transient failures.
 
     Args:
@@ -111,8 +111,8 @@ async def async_request_with_retry(
     """
     request_timeout = aiohttp.ClientTimeout(total=timeout or HTTP_TIMEOUT)
     backoff = initial_backoff
-    last_error: Exception | None = None
-    last_response: HttpResponse | None = None
+    last_error: Optional[Exception] = None
+    last_response: Optional[HttpResponse] = None
 
     for attempt in range(max_retries + 1):
         try:
@@ -215,7 +215,7 @@ async def async_request_with_retry(
                     "%s failed with %s: %s, retrying in %.1fs (attempt %d/%d)",
                     context,
                     type(err).__name__,
-                    str(err),
+                    redact_sensitive_data(str(err)),
                     backoff,
                     attempt + 1,
                     max_retries + 1,
@@ -230,7 +230,7 @@ async def async_request_with_retry(
             "%s failed after %d attempts: %s",
             context,
             max_retries + 1,
-            last_error,
+            redact_sensitive_data(str(last_error)),
         )
         return None, last_error
 

@@ -15,14 +15,29 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 
-from .const import DOMAIN, DOOR_DESCRIPTORS, DOOR_NON_DOOR_DESCRIPTORS
+from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
+DOOR_NON_DOOR_DESCRIPTORS = (
+    "vehicle.body.trunk.isOpen",
+    "vehicle.body.hood.isOpen",
+    "vehicle.body.trunk.door.isOpen",
+    "vehicle.body.trunk.left.door.isOpen",
+    "vehicle.body.trunk.lower.door.isOpen",
+    "vehicle.body.trunk.right.door.isOpen",
+    "vehicle.body.trunk.upper.door.isOpen",
+) 
 
+DOOR_DESCRIPTORS = (
+    "vehicle.cabin.door.row1.driver.isOpen",
+    "vehicle.cabin.door.row1.passenger.isOpen",
+    "vehicle.cabin.door.row2.driver.isOpen",
+    "vehicle.cabin.door.row2.passenger.isOpen",
+)
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 

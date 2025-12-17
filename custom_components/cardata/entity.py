@@ -6,18 +6,23 @@ import asyncio
 import logging
 import re
 import time
-from typing import Callable
+from typing import Callable, Optional
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DOMAIN, ENTITY_NAME_WAIT_TIMEOUT
+from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
 from .utils import redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
+
+# How long (seconds) an entity will wait for coordinator-provided vehicle name
+# before writing its original_name into the registry. Short default avoids long
+# startup delays while still giving bootstrap a chance to populate metadata.
+_ENTITY_NAME_WAIT = 2.0
 
 
 class CardataEntity(RestoreEntity):
@@ -38,7 +43,7 @@ class CardataEntity(RestoreEntity):
         self._attr_name = self._compute_full_name()
 
         self._attr_available = True
-        self._name_unsub: Callable[[], None] | None = None
+        self._name_unsub: Optional[Callable[[], None]] = None
 
     def _resolve_vin(self) -> str:
         """Resolve VIN alias if coordinator provides resolver."""
@@ -72,15 +77,9 @@ class CardataEntity(RestoreEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device info for this entity.
-
-        Note: Snapshots coordinator data at entry for consistency.
-        """
         resolved_vin = self._resolve_vin()
-        # Snapshot coordinator data at entry for consistency
         metadata = self._coordinator.device_metadata.get(resolved_vin, {})
-        names_fallback = self._coordinator.names.get(resolved_vin, resolved_vin)
-        name = metadata.get("name") or names_fallback
+        name = metadata.get("name") or self._coordinator.names.get(resolved_vin, resolved_vin)
         manufacturer = metadata.get("manufacturer", "bmw")
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, resolved_vin)},
@@ -120,21 +119,12 @@ class CardataEntity(RestoreEntity):
     def vin(self) -> str:
         return self._vin
 
-    def _get_vehicle_name(self) -> str | None:
-        """Get vehicle name from coordinator metadata or names.
-
-        Note: Snapshots both sources at method entry for consistency.
-        In asyncio, sync methods run atomically, but this pattern is
-        defensive against future refactoring.
-        """
+    def _get_vehicle_name(self) -> Optional[str]:
         resolved_vin = self._resolve_vin()
-        # Snapshot both sources at entry for consistency
         metadata = self._coordinator.device_metadata.get(resolved_vin)
-        names_fallback = self._coordinator.names.get(resolved_vin)
-
         if metadata and metadata.get("name"):
             return metadata["name"]
-        return names_fallback
+        return self._coordinator.names.get(resolved_vin)
 
     def _strip_leading_vehicle_name(self, base: str, vehicle_name: str) -> str:
         """Remove a leading vehicle name from base to avoid double-prefixing.
@@ -197,7 +187,7 @@ class CardataEntity(RestoreEntity):
         # Wait briefly for the coordinator to supply vehicle name for our VIN so original_name
         # (written below) will include the correct vehicle prefix. This is a small, non-blocking
         # wait to avoid racing with bootstrap/telemetry.
-        deadline = time.monotonic() + ENTITY_NAME_WAIT_TIMEOUT
+        deadline = time.monotonic() + _ENTITY_NAME_WAIT
         while time.monotonic() < deadline:
             if self._get_vehicle_name():
                 break
