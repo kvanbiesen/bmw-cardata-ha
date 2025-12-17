@@ -93,6 +93,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 
 - https://www.bmw.co.uk/en-gb/mybmw/vehicle-overview (in English)
 - https://www.bmw.de/de-de/mybmw/vehicle-overview (in German)
+- https://mybmw.bmwusa.com/ (USA we need testers or temp access)
 
 ### Mini
 
