@@ -170,6 +170,10 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             if self._current_lat is None or self._current_lon is None:
                 self._current_lat = initial_lat
                 self._current_lon = initial_lon
+                self._last_lat = initial_lat
+                self._last_lon = initial_lon
+                self._last_lat_time = time.monotonic()
+                self._last_lon_time = time.monotonic()
                 _LOGGER.debug(
                     "Initialized location from coordinator for %s: %.6f, %.6f",
                     self._redacted_vin,

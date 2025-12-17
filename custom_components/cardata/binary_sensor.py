@@ -209,3 +209,12 @@ async def async_setup_entry(
             hass, coordinator.signal_new_binary, async_handle_new_binary_sensor
         )
     )
+
+    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor)  # Safe to call multiple times
+
+    entry.async_on_unload(
+        async_dispatcher_connect(
+            hass, coordinator.signal_update, async_handle_update_for_creation
+        )
+    )
