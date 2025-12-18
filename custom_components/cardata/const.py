@@ -36,7 +36,7 @@ DEFAULT_STREAM_PORT = 9000
 # How often to refresh the auth tokens in seconds
 DEFAULT_REFRESH_INTERVAL = 45 * 60
 MQTT_KEEPALIVE = 30
-DEBUG_LOG = True
+DEBUG_LOG = False
 DIAGNOSTIC_LOG_INTERVAL = 30  # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
 REQUEST_LOG = "request_log"
