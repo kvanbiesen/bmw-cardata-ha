@@ -17,6 +17,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
+from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Maximum length for error messages shown to users
@@ -76,7 +77,8 @@ def _generate_code_challenge(code_verifier: str) -> str:
 
 
 # type: ignore[call-arg]
-class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
+class CardataConfigFlow(config_entries.ConfigFlow):
+    domain = DOMAIN
     """Handle config flow for BMW CarData."""
 
     VERSION = 1

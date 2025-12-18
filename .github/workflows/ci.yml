@@ -28,7 +28,7 @@ jobs:
         run: flake8 --ignore=E501,W503,E203 custom_components/cardata
 
       - name: Run mypy (ignore missing imports)
-        run: mypy --ignore-missing-imports custom_components/cardata
+        run: mypy --namespace-packages --explicit-package-bases --ignore-missing-imports custom_components/cardata
 
       - name: Compile all
         run: python -m compileall custom_components/cardata

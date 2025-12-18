@@ -8,7 +8,7 @@ import logging
 import ssl
 import time
 from enum import Enum
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, Coroutine, Any, cast
 
 import paho.mqtt.client as mqtt
 
@@ -339,7 +339,7 @@ class CardataStreamManager:
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
                     # type: ignore[arg-type]
-                    self._status_callback("connected", None),
+                    cast(Coroutine[Any, Any, None], self._status_callback('connected', None)),
                     self.hass.loop,
                 )
         elif rc in (4, 5):  # bad credentials / not authorized
@@ -371,7 +371,7 @@ class CardataStreamManager:
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
                     # type: ignore[arg-type]
-                    self._status_callback("connection_failed", str(rc)),
+                    cast(Coroutine[Any, Any, None], self._status_callback('connection_failed', str(rc))),
                     self.hass.loop,
                 )
 
@@ -396,7 +396,7 @@ class CardataStreamManager:
             return
         asyncio.run_coroutine_threadsafe(
             # type: ignore[arg-type]
-            self._message_callback(data), self.hass.loop
+            cast(Coroutine[Any, Any, None], self._message_callback(data)), self.hass.loop
         )
 
     def _handle_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
@@ -459,7 +459,7 @@ class CardataStreamManager:
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
                     # type: ignore[arg-type]
-                    self._status_callback("unauthorized", reason),
+                    cast(Coroutine[Any, Any, None], self._status_callback('unauthorized', reason)),
                     self.hass.loop,
                 )
         else:
@@ -469,7 +469,7 @@ class CardataStreamManager:
             if self._status_callback:
                 asyncio.run_coroutine_threadsafe(
                     # type: ignore[arg-type]
-                    self._status_callback("disconnected", reason),
+                    cast(Coroutine[Any, Any, None], self._status_callback('disconnected', reason)),
                     self.hass.loop,
                 )
 
