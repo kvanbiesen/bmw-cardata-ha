@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -25,22 +26,32 @@ from .utils import redact_vin, redact_vin_payload, redact_vin_in_text
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass
+class TelematicFetchResult:
+    """Result of a telematic fetch operation."""
+
+    status: Optional[bool]
+    reason: Optional[str] = None
+
+
+
 async def async_perform_telematic_fetch(
     hass: HomeAssistant,
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
     *,
     vin_override: Optional[str] = None,
-) -> Optional[bool]:
+) -> TelematicFetchResult:
     """Fetch telematic data for one or more VINs.
 
     If vin_override is provided: fetch only that VIN (service use case).
     Otherwise: fetch all known VINs (entry.data, coordinator state, metadata).
 
     Returns:
-        True: Successfully fetched data for at least one VIN
-        False: No fatal errors, but failed to fetch any data (quota hit, all network errors)
-        None: Fatal/unrecoverable error (no VIN, no container, auth failure) - stop polling
+        TelematicFetchResult:
+            status True: Successfully fetched data for at least one VIN
+            status False: No fatal errors, but failed to fetch any data (quota hit, all network errors)
+            status None: Fatal/unrecoverable error (reason provided) - caller decides whether to back off or stop
     """
     target_entry_id = entry.entry_id
 
@@ -75,7 +86,7 @@ async def async_perform_telematic_fetch(
         _LOGGER.error(
             "Cardata fetch_telematic_data: no VIN available; provide vin parameter"
         )
-        return None  # Fatal: can't proceed without VIN
+        return TelematicFetchResult(None, "no_vin")  # Fatal: cannot proceed without VIN
 
     container_id = entry.data.get("hv_container_id")
     if not container_id:
@@ -83,7 +94,7 @@ async def async_perform_telematic_fetch(
             "Cardata fetch_telematic_data: no container_id stored for entry %s",
             target_entry_id,
         )
-        return None  # Fatal: can't fetch without container
+        return TelematicFetchResult(None, "missing_container")  # Fatal: cannot fetch without container
 
     try:
         from .auth import refresh_tokens_for_entry
@@ -100,12 +111,12 @@ async def async_perform_telematic_fetch(
             target_entry_id,
             err,
         )
-        return None  # Fatal: can't proceed without valid token
+        return TelematicFetchResult(None, "token_refresh_failed")  # Fatal: cannot proceed without valid token
 
     access_token = entry.data.get("access_token")
     if not access_token:
         _LOGGER.error("Cardata fetch_telematic_data: access token missing after refresh")
-        return None  # Fatal: auth failed
+        return TelematicFetchResult(None, "missing_access_token")  # Fatal: auth failed
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -204,10 +215,10 @@ async def async_perform_telematic_fetch(
             )
             any_success = True
 
-    # Auth failure is fatal - return None to signal reauth needed
+    # Auth failure is fatal - return TelematicFetchResult(None, "auth_error") to signal reauth needed
     if auth_failure:
         _LOGGER.error("Cardata telematic fetch failed due to auth error - reauth may be required")
-        return None
+        return TelematicFetchResult(None, "auth_error")
 
     # Update timestamp and signal if we got any data
     if any_success:
@@ -216,19 +227,19 @@ async def async_perform_telematic_fetch(
             runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
         )
         _LOGGER.info("Cardata telematic fetch succeeded for at least one VIN")
-        return True
+        return TelematicFetchResult(True)
 
-    # If we tried but got no data, return False (temporary failure)
+    # If we tried but got no data, return TelematicFetchResult(False) (temporary failure)
     if any_attempt:
         _LOGGER.warning("Cardata telematic fetch attempted but failed for all VINs")
-        return False
+        return TelematicFetchResult(False)
 
     # Should not reach here, but be safe
-    return False
+    return TelematicFetchResult(False)
 
 
 async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
-    """Poll telematic data periodically (every 45 minutes)."""
+    """Poll telematic data periodically with backoff on failures."""
     from .const import DOMAIN
 
     domain_entries = hass.data.get(DOMAIN, {})
@@ -239,6 +250,10 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     )
     if runtime is None:
         return
+
+    base_interval = TELEMATIC_POLL_INTERVAL
+    max_backoff = max(base_interval * 6, base_interval)
+    consecutive_failures = 0
 
     _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
@@ -253,38 +268,52 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # Check if we should poll based on last poll timestamp
             last_poll = entry.data.get("last_telematic_poll", 0.0)
             now = time.time()
-            wait = TELEMATIC_POLL_INTERVAL - (now - last_poll)
-            
+            interval = min(
+                max_backoff,
+                base_interval if consecutive_failures == 0 else base_interval * (2 ** consecutive_failures),
+            )
+            wait = interval - (now - last_poll)
+
             if wait > 0:
                 # Not time to poll yet, sleep until next poll time
                 _LOGGER.debug(
-                    "Next telematic poll in %.1f seconds (%.1f minutes)",
+                    "Next telematic poll in %.1f seconds (%.1f minutes) [failures=%d]",
                     wait,
                     wait / 60,
+                    consecutive_failures,
                 )
                 await asyncio.sleep(wait)
                 continue
 
             # Time to poll
-            success = await async_perform_telematic_fetch(hass, entry, runtime)
+            result = await async_perform_telematic_fetch(hass, entry, runtime)
+            now = time.time()
 
-            if success is None:
-                # Fatal error - stop polling
-                _LOGGER.error(
-                    "Fatal telematic error for entry %s — stopping poll loop",
-                    entry_id,
-                )
-                return
-
-            if success is True:
+            if result.status is True:
                 # Data fetched successfully
-                await async_update_last_telematic_poll(hass, entry, time.time())
+                consecutive_failures = 0
+                await async_update_last_telematic_poll(hass, entry, now)
                 _LOGGER.debug("Telematic poll succeeded for entry %s", entry_id)
+                continue
+
+            # False or None: attempted but failed
+            consecutive_failures += 1
+            next_interval = min(max_backoff, base_interval * (2 ** consecutive_failures))
+            await async_update_last_telematic_poll(hass, entry, now)
+
+            if result.status is None:
+                _LOGGER.error(
+                    "Telematic poll error for entry %s (reason=%s); backing off to %.1f minutes",
+                    entry_id,
+                    result.reason or "unknown",
+                    next_interval / 60,
+                )
             else:
-                # False: attempted but failed (temporary)
-                _LOGGER.debug("Telematic poll failed (temporary) for entry %s", entry_id)
-                # Still update timestamp so we don't retry immediately
-                await async_update_last_telematic_poll(hass, entry, time.time())
+                _LOGGER.debug(
+                    "Telematic poll failed (temporary) for entry %s; backing off to %.1f minutes",
+                    entry_id,
+                    next_interval / 60,
+                )
 
     except asyncio.CancelledError:
         _LOGGER.debug("Telematic poll loop cancelled for entry %s", entry_id)
