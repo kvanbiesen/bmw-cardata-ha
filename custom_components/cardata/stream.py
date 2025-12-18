@@ -256,7 +256,7 @@ class CardataStreamManager:
 
         self._connection_state = ConnectionState.DISCONNECTED
         self._last_disconnect = time.monotonic()
-        self._cancel_retry()
+        await self._async_cancel_retry()
 
     @property
     def client(self) -> Optional[mqtt.Client]:
@@ -597,8 +597,22 @@ class CardataStreamManager:
         await self.async_update_credentials(id_token=id_token)
 
     def _cancel_retry(self) -> None:
+        """Cancel retry task (sync version for MQTT callbacks)."""
         if self._retry_task and not self._retry_task.done():
             self._retry_task.cancel()
+            # Task will clean itself up via finally block in _retry()
+        self._retry_task = None
+        self._retry_backoff = 3
+
+    async def _async_cancel_retry(self) -> None:
+        """Cancel retry task and wait for cancellation to complete."""
+        task = self._retry_task
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         self._retry_task = None
         self._retry_backoff = 3
 
