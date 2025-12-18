@@ -188,6 +188,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         )
                     except CardataAuthError as err:
                         _LOGGER.error("Token refresh failed: %s", err)
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                        _LOGGER.warning("Token refresh network/timeout error: %s", err)
+                    except Exception as err:
+                        _LOGGER.exception("Token refresh crashed with unexpected error: %s", err)
             except asyncio.CancelledError:
                 return
 
@@ -217,6 +221,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
         bootstrap_error: Optional[str] = None
+        bootstrap_completed = False
         if should_bootstrap:
             _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
             
@@ -229,6 +234,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # before we set up platforms (which create entities)
             try:
                 await asyncio.wait_for(runtime_data.bootstrap_task, timeout=30.0)
+                bootstrap_completed = True
                 _LOGGER.debug("Bootstrap completed successfully")
             except asyncio.TimeoutError:
                 _LOGGER.warning(
@@ -240,9 +246,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 bootstrap_error = str(err)
 
         # Check if we have vehicle names after bootstrap attempt
-        # If bootstrap was required but failed (e.g., due to rate limits), abort setup
-        if should_bootstrap and not coordinator.names:
-            error_message = bootstrap_error or "Unknown bootstrap error"
+        # If bootstrap was required and explicitly failed, abort setup
+        if should_bootstrap and bootstrap_error:
+            error_message = bootstrap_error
             # Create a persistent notification in the UI for visibility
             await hass.services.async_call(
                 "persistent_notification",
@@ -256,6 +262,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await session.close()
             raise ConfigEntryNotReady(
                 f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
+            )
+        # If bootstrap completed but produced no names, continue with VIN placeholders
+        if should_bootstrap and bootstrap_completed and not coordinator.names:
+            _LOGGER.warning(
+                "Bootstrap completed without vehicle names; continuing setup with VIN placeholders."
             )
         # NOW clear the bootstrap flag and start MQTT connection
         # This ensures MQTT doesn't create entities before we have vehicle names
@@ -323,6 +334,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         await session.close()
         raise
+    finally:
+        # If setup failed before storing runtime data, ensure session is closed
+        if hass.data.get(DOMAIN, {}).get(entry.entry_id) is None:
+            await session.close()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

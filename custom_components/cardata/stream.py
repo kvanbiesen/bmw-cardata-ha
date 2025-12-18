@@ -70,6 +70,7 @@ class CardataStreamManager:
         self._retry_task: Optional[asyncio.Task] = None
         self._min_reconnect_interval = 10.0
         self._connect_lock = asyncio.Lock()
+        self._credential_lock = asyncio.Lock()  # Serialize credential updates and reconnects
         self._connection_state = ConnectionState.DISCONNECTED
         self._intentional_disconnect = False
         # Circuit breaker for runaway reconnections
@@ -454,15 +455,21 @@ class CardataStreamManager:
                 )
 
     async def _async_reconnect(self) -> None:
-        await self.async_stop()
-        await asyncio.sleep(self._reconnect_backoff)
-        try:
-            await self.async_start()
-        except Exception as err:
-            _LOGGER.error("BMW MQTT reconnect failed: %s", err)
-            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
-        else:
-            self._reconnect_backoff = 5
+        async with self._connect_lock:
+            if self._check_circuit_breaker():
+                if debug_enabled():
+                    _LOGGER.debug("Skipping MQTT reconnect due to open circuit breaker")
+                return
+
+            await self._async_stop_locked()
+            await asyncio.sleep(self._reconnect_backoff)
+            try:
+                await self._async_start_locked()
+            except Exception as err:
+                _LOGGER.error("BMW MQTT reconnect failed: %s", err)
+                self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
+            else:
+                self._reconnect_backoff = 5
 
     async def _handle_unauthorized(self) -> None:
         async with self._unauthorized_lock:
@@ -501,50 +508,51 @@ class CardataStreamManager:
         if not gcid and not id_token:
             return
 
-        reconnect_required = False
+        async with self._credential_lock:
+            reconnect_required = False
 
-        if gcid and gcid != self._gcid:
-            _LOGGER.debug("Updating MQTT GCID from %s to %s", self._gcid, gcid)
-            self._gcid = gcid
-            reconnect_required = True
+            if gcid and gcid != self._gcid:
+                _LOGGER.debug("Updating MQTT GCID from %s to %s", self._gcid, gcid)
+                self._gcid = gcid
+                reconnect_required = True
 
-        if id_token and id_token != self._password:
-            self._password = id_token
-            reconnect_required = True
+            if id_token and id_token != self._password:
+                self._password = id_token
+                reconnect_required = True
 
-        if not reconnect_required:
+            if not reconnect_required:
+                if self._awaiting_new_credentials:
+                    self._awaiting_new_credentials = False
+                    if self._client is None:
+                        try:
+                            await self.async_start()
+                        except Exception as err:
+                            _LOGGER.error(
+                                "BMW MQTT reconnect failed after credential refresh: %s",
+                                err,
+                            )
+                return
+
+            if self._client:
+                _LOGGER.debug("Updating MQTT credentials; reconnecting")
+                await self.async_stop()
+
+            self._reconnect_backoff = 5
             if self._awaiting_new_credentials:
                 self._awaiting_new_credentials = False
-                if self._client is None:
-                    try:
-                        await self.async_start()
-                    except Exception as err:
-                        _LOGGER.error(
-                            "BMW MQTT reconnect failed after credential refresh: %s",
-                            err,
-                        )
-            return
 
-        if self._client:
-            _LOGGER.debug("Updating MQTT credentials; reconnecting")
-            await self.async_stop()
+            delay = 0.0
+            if self._last_disconnect is not None:
+                elapsed = time.monotonic() - self._last_disconnect
+                if elapsed < 2.0:
+                    delay = 2.0 - elapsed
+            if delay > 0:
+                await asyncio.sleep(delay)
 
-        self._reconnect_backoff = 5
-        if self._awaiting_new_credentials:
-            self._awaiting_new_credentials = False
-
-        delay = 0.0
-        if self._last_disconnect is not None:
-            elapsed = time.monotonic() - self._last_disconnect
-            if elapsed < 2.0:
-                delay = 2.0 - elapsed
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-        try:
-            await self.async_start()
-        except Exception as err:
-            _LOGGER.error("BMW MQTT reconnect failed after credential update: %s", err)
+            try:
+                await self.async_start()
+            except Exception as err:
+                _LOGGER.error("BMW MQTT reconnect failed after credential update: %s", err)
 
     async def async_update_token(self, id_token: Optional[str]) -> None:
         await self.async_update_credentials(id_token=id_token)

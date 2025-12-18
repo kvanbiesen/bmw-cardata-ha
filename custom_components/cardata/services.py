@@ -119,22 +119,23 @@ async def async_handle_fetch_telematic(call: ServiceCall) -> None:
 
     from .telematics import async_perform_telematic_fetch, async_update_last_telematic_poll
 
-    success = await async_perform_telematic_fetch(
+    result = await async_perform_telematic_fetch(
         hass,
         target_entry,
         runtime,
         vin_override=call.data.get("vin"),
     )
 
-    if success is None:
+    if result.status is None:
         # Fatal error - don't update timestamp
         _LOGGER.error(
-            "Cardata fetch_telematic_data: fatal error for entry %s",
+            "Cardata fetch_telematic_data: fatal error for entry %s (reason=%s)",
             target_entry_id,
+            result.reason or "unknown",
         )
         return
 
-    if success is True:
+    if result.status is True:
         # Data fetched successfully
         await async_update_last_telematic_poll(hass, target_entry, time.time())
         _LOGGER.info(
