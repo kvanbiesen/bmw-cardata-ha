@@ -29,7 +29,6 @@ from .const import (
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
     OPTION_MQTT_KEEPALIVE,
-    VEHICLE_METADATA,
 )
 from .coordinator import CardataCoordinator
 from .debug import set_debug_enabled
@@ -41,7 +40,6 @@ from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .container import CardataContainerManager
-from .migrations import async_migrate_entity_ids
 from .utils import redact_vin, redact_vins
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,7 +66,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         data = entry.data
         options = dict(entry.options) if entry.options else {}
         mqtt_keepalive = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
-        diagnostic_interval = options.get(OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL)
+        diagnostic_interval = options.get(
+            OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL)
         debug_option = options.get(OPTION_DEBUG_LOG)
         debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
 
@@ -94,7 +93,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
         await async_restore_vehicle_metadata(hass, entry, coordinator)
-        
+
         # CRITICAL FIX: Pre-populate coordinator.names from restored device_metadata
         # Entities check coordinator.names for the vehicle name prefix, so we must
         # populate it BEFORE the MQTT stream starts and entities are created
@@ -105,14 +104,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if vehicle_name:
                     coordinator.names[vin] = vehicle_name
                     _LOGGER.debug(
-                        "Pre-populated coordinator.names for VIN %s with: %s (from restored metadata)",
+                        "Pre-populated coordinator.names for VIN %s with %s from restored metadata",
                         redact_vin(vin),
                         vehicle_name,
                     )
-        
+
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
-        redacted_names = redact_vins(coordinator.names.keys()) if has_metadata else "empty"
+        redacted_names = redact_vins(
+            coordinator.names.keys()) if has_metadata else "empty"
         _LOGGER.debug(
             "Metadata restored for entry %s: %s (names: %s)",
             entry.entry_id,
@@ -146,7 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)
-        
+
         # CRITICAL: Prevent MQTT from auto-starting during token refresh
         # Set a flag that we'll clear after bootstrap completes
         manager._bootstrap_in_progress = True
@@ -164,15 +164,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         except Exception as err:
             await session.close()
-            raise ConfigEntryNotReady(f"Initial token refresh failed: {err}") from err
+            raise ConfigEntryNotReady(
+                f"Initial token refresh failed: {err}") from err
 
         # Ensure HV container if token refresh didn't succeed
         if not refreshed_token and container_manager:
             try:
-                container_manager.sync_from_entry(entry.data.get("hv_container_id"))
-                await container_manager.async_ensure_hv_container(entry.data.get("access_token"))
+                container_manager.sync_from_entry(
+                    entry.data.get("hv_container_id"))
+                await container_manager.async_ensure_hv_container(
+                    entry.data.get("access_token")
+                )
             except Exception as err:
-                _LOGGER.warning("Unable to ensure HV container for entry %s: %s", entry.entry_id, err)
+                _LOGGER.warning(
+                    "Unable to ensure HV container for entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
 
         # MQTT auto-start is now prevented by _bootstrap_in_progress flag
         # We'll explicitly start it after bootstrap completes
@@ -189,9 +197,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     except CardataAuthError as err:
                         _LOGGER.error("Token refresh failed: %s", err)
                     except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-                        _LOGGER.warning("Token refresh network/timeout error: %s", err)
+                        _LOGGER.warning(
+                            "Token refresh network/timeout error: %s", err)
                     except Exception as err:
-                        _LOGGER.exception("Token refresh crashed with unexpected error: %s", err)
+                        _LOGGER.exception(
+                            "Token refresh crashed with unexpected error: %s", err)
             except asyncio.CancelledError:
                 return
 
@@ -223,12 +233,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bootstrap_error: Optional[str] = None
         bootstrap_completed = False
         if should_bootstrap:
-            _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
-            
+            _LOGGER.debug(
+                "Starting bootstrap to fetch vehicle metadata before creating entities")
+
             runtime_data.bootstrap_task = hass.loop.create_task(
                 async_run_bootstrap(hass, entry)
             )
-            
+
             # Wait for bootstrap task to FULLY complete (including async_seed_telematic_data)
             # This ensures coordinator.names is populated AND telematic data is seeded
             # before we set up platforms (which create entities)
@@ -254,9 +265,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "persistent_notification",
                 "create",
                 {
-                    "title":"BMW CarData Setup Failed",
-                    "message":f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                    "notification_id":f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
+                    "title": "BMW CarData Setup Failed",
+                    "message": f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
+                    "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
                 }
             )
             await session.close()
@@ -271,7 +282,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # NOW clear the bootstrap flag and start MQTT connection
         # This ensures MQTT doesn't create entities before we have vehicle names
         manager._bootstrap_in_progress = False
-        
+
         if manager.client is None:
             try:
                 _LOGGER.debug("Starting MQTT connection after bootstrap")
@@ -282,7 +293,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     raise ConfigEntryNotReady(
                         f"Unable to connect to BMW MQTT after token refresh: {err}"
                     ) from err
-                raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
+                raise ConfigEntryNotReady(
+                    f"Unable to connect to BMW MQTT: {err}") from err
 
         # Start coordinator watchdog
         await coordinator.async_handle_connection_event("connecting")
@@ -290,9 +302,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # --- NEW: Run safe migration of existing entity_ids to include model prefix
         # Run this after bootstrap (so coordinator.names is populated) and before platforms
-        #try:
+        # try:
         #    await async_migrate_entity_ids(hass, entry, coordinator)
-        #except Exception as err:
+        # except Exception as err:
         #    _LOGGER.debug("Entity id migration failed for entry %s: %s", entry.entry_id, err)
 
         # NOW set up platforms - coordinator.names should be populated
@@ -308,7 +320,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         return True
 
-    except Exception as err:
+    except Exception:
         # Clean up all tasks and resources on setup failure
         if refresh_task:
             refresh_task.cancel()
@@ -377,7 +389,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await data.session.close()
 
     # Clean up services if this is the last entry
-    remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
+    remaining_entries = [
+        k for k in domain_data.keys() if not k.startswith("_")]
     if not remaining_entries:
         async_unregister_services(hass)
         domain_data.pop("_service_registered", None)

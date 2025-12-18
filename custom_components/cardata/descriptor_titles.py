@@ -256,7 +256,7 @@ DESCRIPTOR_TITLES = {
     "vehicle.trip.segment.accumulated.drivetrain.electricEngine.energyConsumptionComfort": "Trip Energy consumption (comfort mode)",
     "vehicle.trip.segment.accumulated.drivetrain.transmission.setting.fractionDriveEcoPro": "Trip ECO Pro mode share",
     "vehicle.trip.segment.accumulated.drivetrain.transmission.setting.fractionDriveEcoProPlus": "Trip ECO Pro Plus share",
-    "vehicle.trip.segment.accumulated.drivetrain.transmission.setting.fractionDriveElectric": "Trip Electric share", 
+    "vehicle.trip.segment.accumulated.drivetrain.transmission.setting.fractionDriveElectric": "Trip Electric share",
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc": "Trip Battery charge level at end of trip",
     "vehicle.trip.segment.end.time": "Trip Last trip time",
     "vehicle.trip.segment.end.travelledDistance": "Trip Last trip distance",

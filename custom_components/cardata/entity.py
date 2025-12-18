@@ -47,7 +47,8 @@ class CardataEntity(RestoreEntity):
 
     def _resolve_vin(self) -> str:
         """Resolve VIN alias if coordinator provides resolver."""
-        resolver = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)
+        resolver = getattr(self._coordinator,
+                           "_resolve_vin_alias", lambda v: v)
         return resolver(self._vin)
 
     def _format_name(self) -> str:
@@ -79,7 +80,8 @@ class CardataEntity(RestoreEntity):
     def device_info(self) -> DeviceInfo:
         resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin, {})
-        name = metadata.get("name") or self._coordinator.names.get(resolved_vin, resolved_vin)
+        name = metadata.get("name") or self._coordinator.names.get(
+            resolved_vin, resolved_vin)
         manufacturer = metadata.get("manufacturer", "bmw")
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, resolved_vin)},
@@ -200,7 +202,8 @@ class CardataEntity(RestoreEntity):
             self._update_name(write_state=True)
         except Exception:
             entity_id = getattr(self, "entity_id", "<unknown>")
-            _LOGGER.exception("Failed to update name for entity %s", redact_vin_in_text(entity_id))
+            _LOGGER.exception(
+                "Failed to update name for entity %s", redact_vin_in_text(entity_id))
 
     async def async_will_remove_from_hass(self) -> None:
         if self._name_unsub:

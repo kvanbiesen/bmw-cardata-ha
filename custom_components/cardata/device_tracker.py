@@ -12,7 +12,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
@@ -31,6 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
 
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -45,18 +45,18 @@ async def async_setup_entry(
 
     coordinator: CardataCoordinator = runtime_data.coordinator
     stream_manager = runtime_data.stream
-    
+
     # Wait for bootstrap to finish so VIN → name mapping exists
     while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
         await asyncio.sleep(0.1)
-    
+
     trackers: dict[str, CardataDeviceTracker] = {}
 
     def ensure_tracker(vin: str) -> None:
         """Ensure device tracker exists for VIN."""
         if vin in trackers:
             return
-        
+
         tracker = CardataDeviceTracker(coordinator, vin)
         trackers[vin] = tracker
         async_add_entities([tracker])
@@ -92,13 +92,15 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
     # Timing thresholds for coordinate pairing logic
     _PAIR_WINDOW = 2.0  # seconds - lat/lon come in separate messages
-    _MAX_STALE_TIME = 600  # seconds (10 minutes) - discard very old coordinates
-    
+    # seconds (10 minutes) - discard very old coordinates
+    _MAX_STALE_TIME = 600
+
     # Movement filtering
     _MIN_MOVEMENT_DISTANCE = 3  # meters - MORE SENSITIVE (was 5m)
 
     # GPS precision
-    _COORD_PRECISION = 0.000001  # degrees (~0.1 meter) - ignore smaller changes
+    # degrees (~0.1 meter) - ignore smaller changes
+    _COORD_PRECISION = 0.000001
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         """Initialize the device tracker."""
@@ -106,7 +108,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self._redacted_vin = redact_vin(vin)
         # Don't override unique_id - let parent class set it properly
         # unique_id is already set in CardataEntity.__init__ as: f"{vin}_device_tracker"
-        
+
         self._unsubscribe = None
         self._debounce_handle: asyncio.TimerHandle | None = None
         self._base_name = "Location"
@@ -128,7 +130,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
         await super().async_added_to_hass()
-        
+
         # CRITICAL: Ensure VIN names are available before restoring state
         # Entity restore can happen before names exist, causing missing prefix
         while not self._coordinator.names.get(self._vin):
@@ -138,9 +140,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if (state := await self.async_get_last_state()) is not None:
             lat = state.attributes.get("latitude")
             lon = state.attributes.get("longitude")
-            alt = state.attributes.get("gps_altitude")
-            heading = state.attributes.get("gps_heading_deg")
-            #havent decided yet to Restore altitude and heading
+            state.attributes.get("gps_altitude")
+            state.attributes.get("gps_heading_deg")
+            # havent decided yet to Restore altitude and heading
 
             if lat is not None and lon is not None:
                 try:
@@ -185,12 +187,12 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
         await super().async_will_remove_from_hass()
-        
+
         # Cancel any pending debounce
         if self._debounce_handle is not None:
             self._debounce_handle.cancel()
             self._debounce_handle = None
-        
+
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
@@ -223,7 +225,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 self._last_lon = lon
                 self._last_lon_time = now
                 updated = True
-        
+
         elif descriptor == LOCATION_HEADING_DESCRIPTOR:
             state = self._coordinator.get_state(self._vin, descriptor)
             if state and state.value is not None:
@@ -233,7 +235,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 except (ValueError, TypeError):
                     pass
                 return
- 
+
         elif descriptor == LOCATION_ALTITUDE_DESCRIPTOR:
             state = self._coordinator.get_state(self._vin, descriptor)
             if state and state.value is not None:
@@ -247,7 +249,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         if not updated:
             return
-        
+
         # Process immediately - coordinator already batches!
         self._process_coordinate_pair()
 
@@ -268,7 +270,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         time_diff = abs(lat_time - lon_time)
         lat_age = now - lat_time
         lon_age = now - lon_time
-    
+
         # Discard if both coordinates are very stale
         if lat_age > self._MAX_STALE_TIME and lon_age > self._MAX_STALE_TIME:
             _LOGGER.debug(
@@ -288,22 +290,23 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 self._PAIR_WINDOW
             )
             return
-    
+
         # Final coordinates (may be smoothed)
         final_lat = lat
         final_lon = lon
-    
+
         # Check if coordinates changed from previous position
         lat_changed = True
         lon_changed = True
         if self._current_lat is not None and self._current_lon is not None:
             lat_changed = abs(lat - self._current_lat) > self._COORD_PRECISION
             lon_changed = abs(lon - self._current_lon) > self._COORD_PRECISION
-        
+
             if not lat_changed and not lon_changed:
-                _LOGGER.debug("Ignoring update for %s - no movement detected", redacted_vin)
+                _LOGGER.debug(
+                    "Ignoring update for %s - no movement detected", redacted_vin)
                 return
-    
+
         # Apply movement threshold check
         update_reason = None
         if self._current_lat is not None and self._current_lon is not None:
@@ -311,7 +314,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 self._current_lat, self._current_lon,
                 final_lat, final_lon
             )
-        
+
             if distance < self._MIN_MOVEMENT_DISTANCE:
                 _LOGGER.debug(
                     "Ignoring update for %s - movement too small (%.1fm < %dm threshold)",
@@ -320,33 +323,34 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     self._MIN_MOVEMENT_DISTANCE
                 )
                 return
-        
+
             update_reason = f"paired update (Δt={time_diff:.1f}s, moved {distance:.1f}m)"
-        
+
         else:
             update_reason = f"initial position (Δt={time_diff:.1f}s)"
-    
+
         # Update the tracker position
         self._apply_new_coordinates(final_lat, final_lon, update_reason)
-    
+
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two GPS coordinates in meters using Haversine formula."""
         from math import radians, sin, cos, sqrt, atan2
-        
+
         # Earth radius in meters
         R = 6371000
-        
+
         # Convert to radians
         lat1_rad = radians(lat1)
         lat2_rad = radians(lat2)
         delta_lat = radians(lat2 - lat1)
         delta_lon = radians(lon2 - lon1)
-        
+
         # Haversine formula
-        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
+        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * \
+            cos(lat2_rad) * sin(delta_lon / 2) ** 2
         c = 2 * atan2(sqrt(a), sqrt(1 - a))
         distance = R * c
-        
+
         return distance
 
     def _apply_new_coordinates(self, lat: float, lon: float, reason: str) -> None:
@@ -368,7 +372,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if state and state.value is not None:
             try:
                 value = float(state.value)
-                
+
                 # Validate coordinate ranges
                 if "latitude" in descriptor.lower():
                     if not (-90 <= value <= 90):
@@ -386,7 +390,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                             value
                         )
                         return None
-                
+
                 # Reject obvious invalid GPS (null island)
                 if value == 0.0:
                     _LOGGER.debug(
@@ -394,9 +398,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                         self._redacted_vin
                     )
                     return None
-                
+
                 return value
-                
+
             except (ValueError, TypeError):
                 _LOGGER.debug(
                     "Unable to parse coordinate for %s from descriptor %s: %s",
@@ -420,13 +424,14 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def longitude(self) -> float | None:
         """Return last known longitude of the device."""
         return self._current_lon
-    
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         attrs: dict[str, Any] = {}
 
         if self._heading is not None:
-            attrs["gps_heading_deg"] = round(self._heading, 1)  # Degrees, 1 decimal
+            attrs["gps_heading_deg"] = round(
+                self._heading, 1)  # Degrees, 1 decimal
 
         if self._altitude is not None:
             attrs["gps_altitude"] = round(self._altitude, 1)

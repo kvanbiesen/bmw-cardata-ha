@@ -30,7 +30,7 @@ DOOR_NON_DOOR_DESCRIPTORS = (
     "vehicle.body.trunk.lower.door.isOpen",
     "vehicle.body.trunk.right.door.isOpen",
     "vehicle.body.trunk.upper.door.isOpen",
-) 
+)
 
 DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row1.driver.isOpen",
@@ -38,6 +38,8 @@ DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row2.driver.isOpen",
     "vehicle.cabin.door.row2.passenger.isOpen",
 )
+
+
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 
@@ -48,7 +50,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
-        
+
         if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR
 
@@ -77,7 +79,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
 
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle incoming data updates from coordinator.
-        
+
         SMART FILTERING: Only updates Home Assistant if the binary sensor's
         state actually changed. This prevents HA spam while ensuring sensors
         restore from 'unknown' state after reload.
@@ -90,10 +92,10 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
             return
 
         new_value = state.value
-        
+
         # SMART FILTERING: Check if sensor's current state differs from new value
         current_value = getattr(self, '_attr_is_on', None)
-        
+
         # Only update HA if state actually changed or sensor is unknown
         if current_value == new_value:
             # Binary sensor already has this state - skip HA update!
@@ -102,36 +104,35 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
             # - Binary sensor: "I'm already 'locked' → SKIP"
             # - Result: No HA spam! ✅
             return
-        
+
         # State changed or sensor is unknown - update it!
         self._attr_is_on = new_value
         self.schedule_update_ha_state()
-    
+
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
         # Door sensors - dynamic icon based on state
         if self.descriptor and self.descriptor in DOOR_DESCRIPTORS:
             return "mdi:car-door"
-        
+
         # Door non Door sensors - dynamic icon based on state
         if self.descriptor and self.descriptor in DOOR_NON_DOOR_DESCRIPTORS:
             is_open = getattr(self, "_attr_is_on", False)
             if is_open:
                 return "mdi:circle-outline"
             else:
-                return "mdi:circle"  
-    
+                return "mdi:circle"
+
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)
-        
 
     ''' For future options and colors
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
         attrs = super().extra_state_attributes or {}
-    
+
         # Add color hint for window sensors
         descriptor_lower = self._descriptor.lower()
         if "window" in descriptor_lower:
@@ -142,9 +143,10 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
                 attrs["color_hint"] = "green"
             else:
                 attrs["color_hint"] = "orange"
-    
+
         return attrs
     '''
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
@@ -153,7 +155,7 @@ async def async_setup_entry(
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
     stream_manager = runtime.stream
-    
+
     # Wait briefly for bootstrap to finish so VIN → name mapping exists.
     wait_start = time.monotonic()
     while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:

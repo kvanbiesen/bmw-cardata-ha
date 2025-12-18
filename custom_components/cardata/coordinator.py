@@ -7,7 +7,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -19,8 +19,6 @@ from .const import (
     DIAGNOSTIC_LOG_INTERVAL,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    LOCATION_HEADING_DESCRIPTOR,
-    LOCATION_ALTITUDE_DESCRIPTOR,
 )
 from .debug import debug_enabled
 from .utils import redact_vin
@@ -84,7 +82,8 @@ class SocTracking:
     def update_status(self, status: Optional[str]) -> None:
         if status is None:
             return
-        self.charging_active = status in {"CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
+        self.charging_active = status in {
+            "CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
         self._recalculate_rate()
 
     def update_target_soc(
@@ -157,7 +156,8 @@ class SocTracking:
             or self.max_energy_kwh == 0
         ):
             return
-        self.rate_per_hour = (self.last_power_w / 1000.0) / self.max_energy_kwh * 100.0
+        self.rate_per_hour = (self.last_power_w / 1000.0) / \
+            self.max_energy_kwh * 100.0
 
 
 @dataclass
@@ -172,29 +172,40 @@ class CardataCoordinator:
     connection_status: str = "connecting"
     last_disconnect_reason: Optional[str] = None
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
-    watchdog_task: Optional[asyncio.Task] = field(default=None, init=False, repr=False)
+    watchdog_task: Optional[asyncio.Task] = field(
+        default=None, init=False, repr=False)
     # Lock to protect concurrent access to data, names, device_metadata, and SOC tracking dicts
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    _soc_tracking: Dict[str, SocTracking] = field(default_factory=dict, init=False)
+    _lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock, init=False, repr=False)
+    _soc_tracking: Dict[str, SocTracking] = field(
+        default_factory=dict, init=False)
     _soc_rate: Dict[str, float] = field(default_factory=dict, init=False)
     _soc_estimate: Dict[str, float] = field(default_factory=dict, init=False)
     _testing_soc_tracking: Dict[str, SocTracking] = field(
         default_factory=dict, init=False
     )
-    _testing_soc_estimate: Dict[str, float] = field(default_factory=dict, init=False)
-    _avg_aux_power_w: Dict[str, float] = field(default_factory=dict, init=False)
-    _charging_power_w: Dict[str, float] = field(default_factory=dict, init=False)
+    _testing_soc_estimate: Dict[str, float] = field(
+        default_factory=dict, init=False)
+    _avg_aux_power_w: Dict[str, float] = field(
+        default_factory=dict, init=False)
+    _charging_power_w: Dict[str, float] = field(
+        default_factory=dict, init=False)
     _direct_power_w: Dict[str, float] = field(default_factory=dict, init=False)
     _ac_voltage_v: Dict[str, float] = field(default_factory=dict, init=False)
     _ac_current_a: Dict[str, float] = field(default_factory=dict, init=False)
     _ac_phase_count: Dict[str, int] = field(default_factory=dict, init=False)
-    
+
     # Debouncing fields (NEW!)
-    _update_debounce_handle: Optional[asyncio.TimerHandle] = field(default=None, init=False)
-    _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    _pending_updates: Dict[str, set[str]] = field(default_factory=dict, init=False)  # {vin: {descriptors}}
-    _pending_new_sensors: Dict[str, list[str]] = field(default_factory=dict, init=False)
-    _pending_new_binary: Dict[str, list[str]] = field(default_factory=dict, init=False)
+    _update_debounce_handle: Optional[asyncio.TimerHandle] = field(
+        default=None, init=False)
+    _debounce_lock: asyncio.Lock = field(
+        default_factory=asyncio.Lock, init=False, repr=False)
+    _pending_updates: Dict[str, set[str]] = field(
+        default_factory=dict, init=False)  # {vin: {descriptors}}
+    _pending_new_sensors: Dict[str, list[str]] = field(
+        default_factory=dict, init=False)
+    _pending_new_binary: Dict[str, list[str]] = field(
+        default_factory=dict, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
 
@@ -482,7 +493,8 @@ class CardataCoordinator:
         self.last_message_at = datetime.now(timezone.utc)
 
         if debug_enabled():
-            _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
+            _LOGGER.debug("Processing message for VIN %s: %s",
+                          redacted_vin, list(data.keys()))
 
         now = datetime.now(timezone.utc)
 
@@ -492,9 +504,11 @@ class CardataCoordinator:
             value = descriptor_payload.get("value")
             unit = normalize_unit(descriptor_payload.get("unit"))
             timestamp = descriptor_payload.get("timestamp")
-            parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
+            parsed_ts = dt_util.parse_datetime(
+                timestamp) if timestamp else None
             if value is None:
-                self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
+                self._update_soc_tracking_for_descriptor(
+                    vin, descriptor, None, unit, parsed_ts)
                 continue
             is_new = descriptor not in vehicle_state
 
@@ -503,9 +517,11 @@ class CardataCoordinator:
             if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
                 value_changed = True
             else:
-                value_changed = is_new or self._is_significant_change(vin, descriptor, value)
+                value_changed = is_new or self._is_significant_change(
+                    vin, descriptor, value)
 
-            vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
+            vehicle_state[descriptor] = DescriptorState(
+                value=value, unit=unit, timestamp=timestamp)
 
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
@@ -519,7 +535,8 @@ class CardataCoordinator:
             if value_changed:
                 # GPS coordinates: send immediately without debouncing!
                 if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
-                    async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
+                    async_dispatcher_send(
+                        self.hass, self.signal_update, vin, descriptor)
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
                     if vin not in self._pending_updates:
@@ -533,7 +550,8 @@ class CardataCoordinator:
                         )
 
             # Update SOC tracking for relevant descriptors
-            self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
+            self._update_soc_tracking_for_descriptor(
+                vin, descriptor, value, unit, parsed_ts)
 
         # Queue new entities for immediate notification
         if new_sensor:
@@ -545,34 +563,34 @@ class CardataCoordinator:
 
         # Schedule debounced update instead of immediate dispatcher sends
         await self._async_schedule_debounced_update()
-    
+
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
         """Check if value change is significant enough to send to sensors.
-     
+
         Uses MODERATE filtering to reduce MQTT noise while ensuring sensors
         can restore from 'unknown' state. Sensors do their own smart filtering!
         """
         current_state = self.get_state(vin, descriptor)
-        
+
         # No previous state = always significant
         if not current_state:
             return True
-        
+
         old_value = current_state.value
-        
+
         # ALWAYS send same values - sensors might be 'unknown' and need them!
         if old_value == new_value:
             return True  # Let sensors decide!
-        
+
         # For numeric values, check threshold
         if isinstance(new_value, (int, float)) and isinstance(old_value, (int, float)):
             # Absolute change
             if abs(new_value - old_value) < self._MIN_CHANGE_THRESHOLD:
                 return False
-        
+
         # Value changed significantly
         return True
-    
+
     async def _async_schedule_debounced_update(self) -> None:
         """Schedule debounced coordinator update.
 
@@ -597,11 +615,13 @@ class CardataCoordinator:
             self._update_debounce_handle = None
         if debug_enabled():
             pending_count = sum(len(d) for d in self._pending_updates.values())
-            _LOGGER.debug("Debounce timer fired, pending items: %d", pending_count)
+            _LOGGER.debug(
+                "Debounce timer fired, pending items: %d", pending_count)
             if pending_count > 0:
                 for vin, descriptors in self._pending_updates.items():
-                    _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
-        
+                    _LOGGER.debug("   VIN %s: %s", redact_vin(
+                        vin), list(descriptors)[:5])
+
         # Snapshot and clear pending updates atomically
         updates_to_process = dict(self._pending_updates)
         new_sensors_to_process = dict(self._pending_new_sensors)
@@ -611,9 +631,12 @@ class CardataCoordinator:
         self._pending_new_binary.clear()
 
         if debug_enabled():
-            total_updates = sum(len(descriptors) for descriptors in updates_to_process.values())
-            total_new_sensors = sum(len(descriptors) for descriptors in new_sensors_to_process.values())
-            total_new_binary = sum(len(descriptors) for descriptors in new_binary_to_process.values())
+            total_updates = sum(len(descriptors)
+                                for descriptors in updates_to_process.values())
+            total_new_sensors = sum(len(descriptors)
+                                    for descriptors in new_sensors_to_process.values())
+            total_new_binary = sum(len(descriptors)
+                                   for descriptors in new_binary_to_process.values())
             _LOGGER.debug(
                 "Debounced coordinator update executed: %d updates, %d new sensors, %d new binary",
                 total_updates,
@@ -624,16 +647,19 @@ class CardataCoordinator:
         # Send batched updates for changed descriptors
         for vin, update_descriptors in updates_to_process.items():
             for descriptor in update_descriptors:
-                async_dispatcher_send(self.hass, self.signal_update, vin, descriptor)
+                async_dispatcher_send(
+                    self.hass, self.signal_update, vin, descriptor)
 
         # Send new entity notifications
         for vin, sensor_descriptors in new_sensors_to_process.items():
             for descriptor in sensor_descriptors:
-                async_dispatcher_send(self.hass, self.signal_new_sensor, vin, descriptor)
+                async_dispatcher_send(
+                    self.hass, self.signal_new_sensor, vin, descriptor)
 
         for vin, binary_descriptors in new_binary_to_process.items():
             for descriptor in binary_descriptors:
-                async_dispatcher_send(self.hass, self.signal_new_binary, vin, descriptor)
+                async_dispatcher_send(
+                    self.hass, self.signal_new_binary, vin, descriptor)
 
         # Send diagnostics update
         async_dispatcher_send(self.hass, self.signal_diagnostics)
@@ -718,7 +744,8 @@ class CardataCoordinator:
         if not tracking:
             removed_estimate = self._soc_estimate.pop(vin, None) is not None
             removed_rate = self._soc_rate.pop(vin, None) is not None
-            testing_removed = self._testing_soc_estimate.pop(vin, None) is not None
+            testing_removed = self._testing_soc_estimate.pop(
+                vin, None) is not None
             if vin in self._testing_soc_tracking:
                 self._testing_soc_tracking.pop(vin, None)
             self._avg_aux_power_w.pop(vin, None)
@@ -808,7 +835,8 @@ class CardataCoordinator:
 
         # Handle None values
         if value is None:
-            self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
+            self._update_soc_tracking_for_descriptor(
+                vin, descriptor, None, unit, parsed_ts)
             return
 
         # Store descriptor state
@@ -832,7 +860,8 @@ class CardataCoordinator:
         )
 
         # Update SOC tracking
-        updated = self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
+        updated = self._update_soc_tracking_for_descriptor(
+            vin, descriptor, value, unit, parsed_ts)
 
         if not updated:
             return
@@ -918,7 +947,8 @@ class CardataCoordinator:
     ) -> None:
         """Thread-safe async version of restore_descriptor_state."""
         async with self._lock:
-            self.restore_descriptor_state(vin, descriptor, value, unit, timestamp)
+            self.restore_descriptor_state(
+                vin, descriptor, value, unit, timestamp)
 
     async def async_restore_soc_cache(
         self,
@@ -930,7 +960,8 @@ class CardataCoordinator:
     ) -> None:
         """Thread-safe async version of restore_soc_cache."""
         async with self._lock:
-            self.restore_soc_cache(vin, estimate=estimate, rate=rate, timestamp=timestamp)
+            self.restore_soc_cache(
+                vin, estimate=estimate, rate=rate, timestamp=timestamp)
 
     async def async_restore_testing_soc_cache(
         self,
@@ -941,7 +972,8 @@ class CardataCoordinator:
     ) -> None:
         """Thread-safe async version of restore_testing_soc_cache."""
         async with self._lock:
-            self.restore_testing_soc_cache(vin, estimate=estimate, timestamp=timestamp)
+            self.restore_testing_soc_cache(
+                vin, estimate=estimate, timestamp=timestamp)
 
     @staticmethod
     def _build_device_metadata(vin: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -982,7 +1014,8 @@ class CardataCoordinator:
             "extra_attributes": display_attrs,
             "raw_data": raw_payload,
         }
-        model = raw_payload.get("modelName") or raw_payload.get("series") or raw_payload.get("modelRange")
+        model = raw_payload.get("modelName") or raw_payload.get(
+            "series") or raw_payload.get("modelRange")
         if model:
             metadata["model"] = model
         if raw_payload.get("puStep"):

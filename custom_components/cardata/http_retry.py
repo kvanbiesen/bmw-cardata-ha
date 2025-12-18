@@ -188,7 +188,8 @@ async def async_request_with_retry(
                             max_retries + 1,
                         )
                         await asyncio.sleep(backoff)
-                        backoff = min(backoff * backoff_multiplier, max_backoff)
+                        backoff = min(
+                            backoff * backoff_multiplier, max_backoff)
                         continue
 
                 # Unknown status - return as-is

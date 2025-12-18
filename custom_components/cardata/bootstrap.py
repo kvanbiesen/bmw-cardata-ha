@@ -11,7 +11,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
@@ -44,7 +44,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             runtime.container_manager,
         )
     except Exception as err:
-        _LOGGER.warning("Bootstrap token refresh failed for entry %s: %s", entry.entry_id, err)
+        _LOGGER.warning(
+            "Bootstrap token refresh failed for entry %s: %s", entry.entry_id, err)
         return
 
     data = entry.data
@@ -60,7 +61,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     # Ensure HV container exists (ONLY here, not in token refresh!)
     from .auth import async_ensure_container_for_entry
-    
+
     container_ready = await async_ensure_container_for_entry(
         entry,
         hass,
@@ -68,7 +69,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         runtime.container_manager,
         force=False,  # Don't force recreation
     )
-    
+
     if not container_ready:
         _LOGGER.warning(
             "Bootstrap: Container not ready for entry %s. Continuing without container.",
@@ -99,7 +100,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await async_fetch_and_store_vehicle_images(
         hass, entry, headers, vins, quota, runtime.session
     )
-    
+
     # CRITICAL: Apply metadata to populate coordinator.names!
     # async_fetch_and_store_basic_data() populates device_metadata but NOT coordinator.names
     # coordinator.names is ONLY populated by apply_basic_data()
@@ -109,7 +110,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if metadata and "raw_data" in metadata:
             # Call async_apply_basic_data to populate coordinator.names (thread-safe)
             await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
-            _LOGGER.debug("Bootstrap populated name for VIN %s: %s", redact_vin(vin), coordinator.names.get(vin))
+            _LOGGER.debug("Bootstrap populated name for VIN %s: %s",
+                          redact_vin(vin), coordinator.names.get(vin))
 
     # NOW seed telematic data (entities will be created with complete metadata)
     created_entities = False
@@ -233,9 +235,11 @@ async def async_fetch_primary_vins(
             vins.append(vin)
 
     if not vins:
-        _LOGGER.info("Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
+        _LOGGER.info(
+            "Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
     else:
-        _LOGGER.debug("Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
+        _LOGGER.debug(
+            "Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
 
     return vins
 
@@ -331,7 +335,8 @@ async def async_seed_telematic_data(
 
         telematic_data = None
         if isinstance(payload, dict):
-            telematic_data = payload.get("telematicData") or payload.get("data")
+            telematic_data = payload.get(
+                "telematicData") or payload.get("data")
 
         if not isinstance(telematic_data, dict) or not telematic_data:
             continue
