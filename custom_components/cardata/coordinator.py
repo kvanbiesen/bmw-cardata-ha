@@ -26,6 +26,19 @@ from .units import normalize_unit
 
 _LOGGER = logging.getLogger(__name__)
 
+# Descriptors that require parsed timestamps for SOC/charging tracking
+_TIMESTAMPED_SOC_DESCRIPTORS = {
+    "vehicle.drivetrain.batteryManagement.header",
+    "vehicle.drivetrain.batteryManagement.maxEnergy",
+    "vehicle.powertrain.electric.battery.charging.power",
+    "vehicle.drivetrain.electricEngine.charging.status",
+    "vehicle.powertrain.electric.battery.stateOfCharge.target",
+    "vehicle.vehicle.avgAuxPower",
+    "vehicle.drivetrain.electricEngine.charging.acVoltage",
+    "vehicle.drivetrain.electricEngine.charging.acAmpere",
+    "vehicle.drivetrain.electricEngine.charging.phaseNumber",
+}
+
 
 @dataclass
 class DescriptorState:
@@ -518,8 +531,9 @@ class CardataCoordinator:
             value = descriptor_payload.get("value")
             unit = normalize_unit(descriptor_payload.get("unit"))
             timestamp = descriptor_payload.get("timestamp")
-            parsed_ts = dt_util.parse_datetime(
-                timestamp) if timestamp else None
+            parsed_ts = None
+            if timestamp and descriptor in _TIMESTAMPED_SOC_DESCRIPTORS:
+                parsed_ts = dt_util.parse_datetime(timestamp)
             if value is None:
                 self._update_soc_tracking_for_descriptor(
                     vin, descriptor, None, unit, parsed_ts)
