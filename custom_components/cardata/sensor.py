@@ -172,7 +172,7 @@ class CardataSensor(CardataEntity, SensorEntity):
         self._unsubscribe = None
 
         #create Raw data gps Sensors but hidden
-        if descriptor in GPS_DESCRIPTORS = (
+        if descriptor in (
             LOCATION_LATITUDE_DESCRIPTOR,
             LOCATION_LONGITUDE_DESCRIPTOR,
             LOCATION_ALTITUDE_DESCRIPTOR,
