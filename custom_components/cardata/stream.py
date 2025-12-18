@@ -85,6 +85,24 @@ class CardataStreamManager:
         self._circuit_breaker_duration = 300  # 5 minutes
         # Flag to prevent MQTT start during bootstrap
         self._bootstrap_in_progress: bool = False
+        # Connection timeout for MQTT
+        self._connect_timeout = 30.0
+
+    def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
+        """Run coroutine from MQTT callback thread with exception logging.
+
+        This ensures exceptions in async callbacks are logged instead of silently lost.
+        """
+        def _done_callback(future: asyncio.Future) -> None:
+            try:
+                future.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as err:
+                _LOGGER.exception("Exception in MQTT async callback: %s", err)
+
+        future = asyncio.run_coroutine_threadsafe(coro, self.hass.loop)
+        future.add_done_callback(_done_callback)
 
     async def async_start(self) -> None:
         async with self._connect_lock:
@@ -310,7 +328,18 @@ class CardataStreamManager:
         client.reconnect_delay_set(min_delay=5, max_delay=60)
 
         try:
-            client.connect(self._host, self._port, keepalive=self._keepalive)
+            # Set socket timeout to prevent hanging indefinitely
+            import socket
+            old_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(self._connect_timeout)
+            try:
+                client.connect(self._host, self._port, keepalive=self._keepalive)
+            finally:
+                socket.setdefaulttimeout(old_timeout)
+        except socket.timeout:
+            _LOGGER.error("BMW MQTT connection timed out after %.0f seconds", self._connect_timeout)
+            client.loop_stop()
+            raise
         except Exception as err:
             _LOGGER.error("Unable to connect to BMW MQTT: %s", err)
             client.loop_stop()
@@ -331,16 +360,13 @@ class CardataStreamManager:
             if self._reauth_notified:
                 self._reauth_notified = False
                 self._awaiting_new_credentials = False
-                asyncio.run_coroutine_threadsafe(
-                    self._notify_recovered(), self.hass.loop)
+                self._run_coro_safe(self._notify_recovered())
             self._cancel_retry()
             self._last_disconnect = None
             self._retry_backoff = 3
             if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    # type: ignore[arg-type]
-                    cast(Coroutine[Any, Any, None], self._status_callback('connected', None)),
-                    self.hass.loop,
+                self._run_coro_safe(
+                    cast(Coroutine[Any, Any, None], self._status_callback('connected', None))
                 )
         elif rc in (4, 5):  # bad credentials / not authorized
             self._connection_state = ConnectionState.FAILED
@@ -360,8 +386,7 @@ class CardataStreamManager:
                 self._schedule_retry(3)
                 return
             _LOGGER.error("BMW MQTT connection failed: rc=%s", rc)
-            asyncio.run_coroutine_threadsafe(
-                self._handle_unauthorized(), self.hass.loop)
+            self._run_coro_safe(self._handle_unauthorized())
             client.loop_stop()
             self._client = None
             return
@@ -369,10 +394,8 @@ class CardataStreamManager:
             self._connection_state = ConnectionState.FAILED
             self._record_failure()
             if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    # type: ignore[arg-type]
-                    cast(Coroutine[Any, Any, None], self._status_callback('connection_failed', str(rc))),
-                    self.hass.loop,
+                self._run_coro_safe(
+                    cast(Coroutine[Any, Any, None], self._status_callback('connection_failed', str(rc)))
                 )
 
     def _handle_subscribe(self, client: mqtt.Client, userdata, mid, granted_qos) -> None:
@@ -394,9 +417,8 @@ class CardataStreamManager:
             data = json.loads(payload)
         except json.JSONDecodeError:
             return
-        asyncio.run_coroutine_threadsafe(
-            # type: ignore[arg-type]
-            cast(Coroutine[Any, Any, None], self._message_callback(data)), self.hass.loop
+        self._run_coro_safe(
+            cast(Coroutine[Any, Any, None], self._message_callback(data))
         )
 
     def _handle_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
@@ -452,25 +474,19 @@ class CardataStreamManager:
                     )
                 self._schedule_retry(3)
                 return
-            asyncio.run_coroutine_threadsafe(
-                self._handle_unauthorized(), self.hass.loop)
+            self._run_coro_safe(self._handle_unauthorized())
             self._reconnect_backoff = min(
                 self._reconnect_backoff * 2, self._max_backoff)
             if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    # type: ignore[arg-type]
-                    cast(Coroutine[Any, Any, None], self._status_callback('unauthorized', reason)),
-                    self.hass.loop,
+                self._run_coro_safe(
+                    cast(Coroutine[Any, Any, None], self._status_callback('unauthorized', reason))
                 )
         else:
             if should_reconnect and not self._check_circuit_breaker():
-                asyncio.run_coroutine_threadsafe(
-                    self._async_reconnect(), self.hass.loop)
+                self._run_coro_safe(self._async_reconnect())
             if self._status_callback:
-                asyncio.run_coroutine_threadsafe(
-                    # type: ignore[arg-type]
-                    cast(Coroutine[Any, Any, None], self._status_callback('disconnected', reason)),
-                    self.hass.loop,
+                self._run_coro_safe(
+                    cast(Coroutine[Any, Any, None], self._status_callback('disconnected', reason))
                 )
 
     async def _async_reconnect(self) -> None:
