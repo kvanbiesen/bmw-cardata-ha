@@ -502,11 +502,11 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         if last_state and last_state.state not in ("unknown", "unavailable"):
             self._attr_native_value = last_state.state
 
-        # Subscribe to coordinator updates
+        # Subscribe to metadata updates (triggered by apply_basic_data)
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
-            self._coordinator.signal_update,
-            self._handle_update,
+            self._coordinator.signal_metadata,
+            self._handle_metadata_update,
         )
 
         # Load current value
@@ -527,7 +527,7 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         else:
             self._attr_native_value = "unavailable"
 
-    def _handle_update(self, vin: str, descriptor: str) -> None:
+    def _handle_metadata_update(self, vin: str) -> None:
         """Handle metadata updates with smart filtering."""
         if vin != self._vin:
             return
@@ -915,7 +915,16 @@ async def async_setup_entry(
     entry.async_on_unload(
         async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
     )
-    
+
+    async def async_handle_metadata_update(vin: str) -> None:
+        # When metadata updates, re-check if vehicle is now detected as EV
+        # The is_electric_vehicle() cache will invalidate if drive_train changed
+        ensure_soc_tracking_entities(vin)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update)
+    )
+
     # Add diagnostic sensors
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
     stream_manager = runtime.stream

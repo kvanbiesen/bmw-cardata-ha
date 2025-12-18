@@ -226,6 +226,10 @@ class CardataCoordinator:
     def signal_new_image(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_new_image"
 
+    @property
+    def signal_metadata(self) -> str:
+        return f"{DOMAIN}_{self.entry_id}_metadata"
+
     def _get_testing_tracking(self, vin: str) -> SocTracking:
         return self._testing_soc_tracking.setdefault(vin, SocTracking())
 
@@ -974,6 +978,8 @@ class CardataCoordinator:
                 vin,
                 new_name,
             )
+        # Signal metadata update so sensors can refresh
+        async_dispatcher_send(self.hass, self.signal_metadata, vin)
         return metadata
 
     async def async_apply_basic_data(
