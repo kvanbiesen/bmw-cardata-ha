@@ -50,8 +50,8 @@ async def async_perform_telematic_fetch(
     Returns:
         TelematicFetchResult:
             status True: Successfully fetched data for at least one VIN
-            status False: No fatal errors, but failed to fetch any data (quota hit, all network errors)
-            status None: Fatal/unrecoverable error (reason provided) - caller decides whether to back off or stop
+            status False: No fatal errors (quota hit or transient/network failures)
+            status None: Fatal/unrecoverable error; caller decides whether to back off or stop
     """
     target_entry_id = entry.entry_id
 
@@ -94,7 +94,7 @@ async def async_perform_telematic_fetch(
             "Cardata fetch_telematic_data: no container_id stored for entry %s",
             target_entry_id,
         )
-        return TelematicFetchResult(None, "missing_container")  # Fatal: cannot fetch without container
+        return TelematicFetchResult(None, "missing_container")  # Fatal: missing container
 
     try:
         from .auth import refresh_tokens_for_entry
@@ -111,7 +111,7 @@ async def async_perform_telematic_fetch(
             target_entry_id,
             err,
         )
-        return TelematicFetchResult(None, "token_refresh_failed")  # Fatal: cannot proceed without valid token
+        return TelematicFetchResult(None, "token_refresh_failed")  # Fatal: token refresh failed
 
     access_token = entry.data.get("access_token")
     if not access_token:
@@ -215,7 +215,7 @@ async def async_perform_telematic_fetch(
             )
             any_success = True
 
-    # Auth failure is fatal - return TelematicFetchResult(None, "auth_error") to signal reauth needed
+    # Auth failure is fatal - signal reauth needed
     if auth_failure:
         _LOGGER.error("Cardata telematic fetch failed due to auth error - reauth may be required")
         return TelematicFetchResult(None, "auth_error")
@@ -240,7 +240,6 @@ async def async_perform_telematic_fetch(
 
 async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     """Poll telematic data periodically with backoff on failures."""
-    from .const import DOMAIN
 
     domain_entries = hass.data.get(DOMAIN, {})
     runtime: CardataRuntimeData | None = (
@@ -268,10 +267,12 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # Check if we should poll based on last poll timestamp
             last_poll = entry.data.get("last_telematic_poll", 0.0)
             now = time.time()
-            interval = min(
-                max_backoff,
-                base_interval if consecutive_failures == 0 else base_interval * (2 ** consecutive_failures),
+            backoff_interval = (
+                base_interval
+                if consecutive_failures == 0
+                else base_interval * (2 ** consecutive_failures)
             )
+            interval = min(max_backoff, backoff_interval)
             wait = interval - (now - last_poll)
 
             if wait > 0:
@@ -298,7 +299,12 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             # False or None: attempted but failed
             consecutive_failures += 1
-            next_interval = min(max_backoff, base_interval * (2 ** consecutive_failures))
+            backoff_interval = (
+                base_interval
+                if consecutive_failures == 0
+                else base_interval * (2 ** consecutive_failures)
+            )
+            next_interval = min(max_backoff, backoff_interval)
             await async_update_last_telematic_poll(hass, entry, now)
 
             if result.status is None:

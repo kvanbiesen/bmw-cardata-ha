@@ -105,7 +105,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if vehicle_name:
                     coordinator.names[vin] = vehicle_name
                     _LOGGER.debug(
-                        "Pre-populated coordinator.names for VIN %s with: %s (from restored metadata)",
+                        "Pre-populated coordinator.names for VIN %s with %s from restored metadata",
                         redact_vin(vin),
                         vehicle_name,
                     )
@@ -170,9 +170,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not refreshed_token and container_manager:
             try:
                 container_manager.sync_from_entry(entry.data.get("hv_container_id"))
-                await container_manager.async_ensure_hv_container(entry.data.get("access_token"))
+                await container_manager.async_ensure_hv_container(
+                    entry.data.get("access_token")
+                )
             except Exception as err:
-                _LOGGER.warning("Unable to ensure HV container for entry %s: %s", entry.entry_id, err)
+                _LOGGER.warning(
+                    "Unable to ensure HV container for entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
 
         # MQTT auto-start is now prevented by _bootstrap_in_progress flag
         # We'll explicitly start it after bootstrap completes

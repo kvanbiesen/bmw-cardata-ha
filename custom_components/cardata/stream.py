@@ -111,7 +111,9 @@ class CardataStreamManager:
                 return True
         
         # Reset failure window if expired
-        if self._failure_window_start and (now - self._failure_window_start) > self._failure_window_seconds:
+        if self._failure_window_start and (
+            now - self._failure_window_start
+        ) > self._failure_window_seconds:
             self._failure_count = 0
             self._failure_window_start = None
         
@@ -147,7 +149,7 @@ class CardataStreamManager:
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress
-        # This blocks ALL paths that try to start MQTT (reconnects, retries, credential updates, etc)
+        # Blocks reconnects, retries, and credential updates until bootstrap finishes
         if getattr(self, '_bootstrap_in_progress', False):
             _LOGGER.debug(
                 "Skipping MQTT start - bootstrap still fetching vehicle metadata. "
@@ -270,7 +272,8 @@ class CardataStreamManager:
         client = mqtt.Client(
             client_id=client_id,
             clean_session=True,
-            # Subscribe only to direct VIN topics. Do not modify this unless BMW changes the stream contract.
+            # Subscribe only to direct VIN topics.
+            # Do not modify unless BMW changes the stream contract.
             userdata={"topic": f"{self._gcid}/+"},
             protocol=mqtt.MQTTv311,
             transport="tcp",
@@ -584,7 +587,7 @@ class CardataStreamManager:
                         except asyncio.TimeoutError:
                             if debug_enabled():
                                 _LOGGER.debug(
-                                    "Timed out waiting for previous BMW MQTT disconnect before retry"
+                                    "Timed out waiting for prior BMW MQTT disconnect"
                                 )
                         finally:
                             self._disconnect_future = None
