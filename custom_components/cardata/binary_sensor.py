@@ -182,25 +182,9 @@ async def async_setup_entry(
         entities[(vin, descriptor)] = entity
         async_add_entities([entity])
 
-    # Restore enabled binary sensors from entity registry
-    entity_registry = async_get(hass)
-
-    for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
-        if entity_entry.domain != "binary_sensor" or entity_entry.disabled_by is not None:
-            continue
-
-        unique_id = entity_entry.unique_id
-        if not unique_id or "_" not in unique_id:
-            continue
-
-        vin, descriptor = unique_id.split("_", 1)
-        ensure_entity(vin, descriptor, assume_binary=True)
-
-    # Add binary sensors from coordinator state
-    for vin, descriptor in coordinator.iter_descriptors(binary=True):
-        ensure_entity(vin, descriptor)
-
-    # Subscribe to new binary sensor signals
+    # Subscribe to signals FIRST to catch any descriptors arriving during setup
+    # This prevents race conditions where descriptors arrive between iter_descriptors
+    # and signal subscription
     async def async_handle_new_binary_sensor(vin: str, descriptor: str) -> None:
         ensure_entity(vin, descriptor)
 
@@ -218,3 +202,21 @@ async def async_setup_entry(
             hass, coordinator.signal_update, async_handle_update_for_creation
         )
     )
+
+    # Restore enabled binary sensors from entity registry
+    entity_registry = async_get(hass)
+
+    for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if entity_entry.domain != "binary_sensor" or entity_entry.disabled_by is not None:
+            continue
+
+        unique_id = entity_entry.unique_id
+        if not unique_id or "_" not in unique_id:
+            continue
+
+        vin, descriptor = unique_id.split("_", 1)
+        ensure_entity(vin, descriptor, assume_binary=True)
+
+    # Add binary sensors from coordinator state
+    for vin, descriptor in coordinator.iter_descriptors(binary=True):
+        ensure_entity(vin, descriptor)

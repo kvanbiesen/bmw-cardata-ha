@@ -172,7 +172,7 @@ class CardataSensor(CardataEntity, SensorEntity):
         self._unsubscribe = None
 
         #create Raw data gps Sensors but hidden
-        if descriptor in GPS_DESCRIPTORS = (
+        if descriptor in (
             LOCATION_LATITUDE_DESCRIPTOR,
             LOCATION_LONGITUDE_DESCRIPTOR,
             LOCATION_ALTITUDE_DESCRIPTOR,
@@ -502,11 +502,11 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         if last_state and last_state.state not in ("unknown", "unavailable"):
             self._attr_native_value = last_state.state
 
-        # Subscribe to coordinator updates
+        # Subscribe to metadata updates (triggered by apply_basic_data)
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
-            self._coordinator.signal_update,
-            self._handle_update,
+            self._coordinator.signal_metadata,
+            self._handle_metadata_update,
         )
 
         # Load current value
@@ -527,7 +527,7 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         else:
             self._attr_native_value = "unavailable"
 
-    def _handle_update(self, vin: str, descriptor: str) -> None:
+    def _handle_metadata_update(self, vin: str) -> None:
         """Handle metadata updates with smart filtering."""
         if vin != self._vin:
             return
@@ -755,27 +755,30 @@ async def async_setup_entry(
     soc_testing_entities: dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: dict[str, CardataSocRateSensor] = {}
     metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
-    _electric_vehicle_cache: dict[str, bool] = {}
-    
+    # Cache stores (drive_train_value, is_electric_result) to detect metadata changes
+    _electric_vehicle_cache: dict[str, tuple[str, bool]] = {}
+
     def is_electric_vehicle(vin: str) -> bool:
-        """Check if vehicle is electric/hybrid based on metadata (cached)."""
-        # Return cached result if available
-        if vin in _electric_vehicle_cache:
-            return _electric_vehicle_cache[vin]
-    
+        """Check if vehicle is electric/hybrid based on metadata (cached with invalidation)."""
         metadata = coordinator.device_metadata.get(vin, {})
         extra = metadata.get("extra_attributes", {})
-    
         drive_train = extra.get("drive_train", "").lower()
-    
+
+        # Check cache - invalidate if drive_train changed
+        if vin in _electric_vehicle_cache:
+            cached_drive_train, cached_result = _electric_vehicle_cache[vin]
+            if cached_drive_train == drive_train:
+                return cached_result
+            # drive_train changed, re-evaluate below
+
         is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"])
-    
-        # Cache the result
-        _electric_vehicle_cache[vin] = is_electric
-    
-        _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
-                     vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
-    
+
+        # Cache result with the drive_train value used for the decision
+        _electric_vehicle_cache[vin] = (drive_train, is_electric)
+
+        _LOGGER.debug("VIN %s is %s (drive_train: %s)",
+                      vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
+
         return is_electric
 
     def ensure_metadata_sensor(vin: str) -> None:
@@ -864,6 +867,39 @@ async def async_setup_entry(
     if entity_id := entity_registry.async_get_entity_id("sensor", DOMAIN, legacy_soc_rate_id):
         entity_registry.async_remove(entity_id)
 
+    # Subscribe to signals FIRST to catch any descriptors arriving during setup
+    # This prevents race conditions where descriptors arrive between iter_descriptors
+    # and signal subscription
+    async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor)
+    )
+
+    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
+    )
+
+    async def async_handle_soc_update(vin: str) -> None:
+        ensure_soc_tracking_entities(vin)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
+    )
+
+    async def async_handle_metadata_update(vin: str) -> None:
+        # When metadata updates, re-check if vehicle is now detected as EV
+        # The is_electric_vehicle() cache will invalidate if drive_train changed
+        ensure_soc_tracking_entities(vin)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update)
+    )
+
     # Restore enabled sensors from entity registry
     for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
         if entity_entry.domain != "sensor" or entity_entry.disabled_by is not None:
@@ -892,27 +928,6 @@ async def async_setup_entry(
     for vin in list(coordinator.data.keys()):
         ensure_soc_tracking_entities(vin)
 
-    # Subscribe to new sensor signals
-    async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor)
-    )
-    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
-    )
-
-    async def async_handle_soc_update(vin: str) -> None:
-        ensure_soc_tracking_entities(vin)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
-    )
-    
     # Add diagnostic sensors
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
     stream_manager = runtime.stream
@@ -925,13 +940,11 @@ async def async_setup_entry(
         else:
             unique_id = f"{entry.entry_id}_diagnostics_connection_status"
 
+        # Skip only if entity is explicitly disabled by user
         entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
         if entity_id:
             entity_entry = entity_registry.async_get(entity_id)
             if entity_entry and entity_entry.disabled_by is not None:
-                continue
-            existing_state = hass.states.get(entity_id)
-            if existing_state and not existing_state.attributes.get("restored", False):
                 continue
 
         diagnostic_entities.append(
