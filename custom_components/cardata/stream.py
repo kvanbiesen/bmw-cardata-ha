@@ -7,6 +7,7 @@ import json
 import logging
 import ssl
 import time
+from concurrent.futures import Future as ConcurrentFuture
 from enum import Enum
 from typing import Awaitable, Callable, Optional, Coroutine, Any, cast
 
@@ -93,7 +94,7 @@ class CardataStreamManager:
 
         This ensures exceptions in async callbacks are logged instead of silently lost.
         """
-        def _done_callback(future: asyncio.Future) -> None:
+        def _done_callback(future: ConcurrentFuture[Any]) -> None:
             try:
                 future.result()
             except asyncio.CancelledError:
