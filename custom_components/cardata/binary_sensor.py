@@ -194,14 +194,11 @@ async def async_setup_entry(
         )
     )
 
-    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)  # Safe to call multiple times
-
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_update, async_handle_update_for_creation
-        )
-    )
+    # Note: We don't subscribe to signal_update for entity creation here.
+    # - signal_new_binary handles new boolean descriptors
+    # - iter_descriptors() loop below handles existing data
+    # - Individual entities subscribe to signal_update for their own state updates
+    # This avoids duplicate processing on every update.
 
     # Restore enabled binary sensors from entity registry
     entity_registry = async_get(hass)

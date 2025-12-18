@@ -877,12 +877,11 @@ async def async_setup_entry(
         async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor)
     )
 
-    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
-    )
+    # Note: We don't subscribe to signal_update for entity creation here.
+    # - signal_new_sensor handles new descriptors
+    # - iter_descriptors() loop below handles existing data
+    # - Individual entities subscribe to signal_update for their own state updates
+    # This avoids duplicate processing on every update.
 
     async def async_handle_soc_update(vin: str) -> None:
         ensure_soc_tracking_entities(vin)
