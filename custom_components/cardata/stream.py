@@ -86,6 +86,8 @@ class CardataStreamManager:
         self._circuit_breaker_duration = 300  # 5 minutes
         # Flag to prevent MQTT start during bootstrap
         self._bootstrap_in_progress: bool = False
+        # Event signaled when bootstrap completes (for efficient waiting)
+        self._bootstrap_complete_event: asyncio.Event = asyncio.Event()
         # Connection timeout for MQTT
         self._connect_timeout = 30.0
 

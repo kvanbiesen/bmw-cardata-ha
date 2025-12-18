@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
@@ -156,15 +155,15 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = runtime.coordinator
     stream_manager = runtime.stream
 
-    # Wait briefly for bootstrap to finish so VIN → name mapping exists.
-    wait_start = time.monotonic()
-    while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
-        if time.monotonic() - wait_start > 15:
+    # Wait for bootstrap to finish so VIN → name mapping exists.
+    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
+    if bootstrap_event and not bootstrap_event.is_set():
+        try:
+            await asyncio.wait_for(bootstrap_event.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
             _LOGGER.debug(
                 "Binary sensor setup continuing without vehicle names after 15s wait"
             )
-            break
-        await asyncio.sleep(0.1)
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
 

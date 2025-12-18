@@ -284,9 +284,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning(
                 "Bootstrap completed without vehicle names; continuing setup with VIN placeholders."
             )
-        # NOW clear the bootstrap flag and start MQTT connection
+        # NOW clear the bootstrap flag and signal completion event
         # This ensures MQTT doesn't create entities before we have vehicle names
         manager._bootstrap_in_progress = False
+        manager._bootstrap_complete_event.set()
 
         if manager.client is None:
             try:
