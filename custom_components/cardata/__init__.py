@@ -334,6 +334,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         await session.close()
         raise
+    finally:
+        # If setup failed before storing runtime data, ensure session is closed
+        if hass.data.get(DOMAIN, {}).get(entry.entry_id) is None:
+            await session.close()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
