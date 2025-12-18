@@ -231,15 +231,18 @@ class CardataCoordinator:
         return f"{DOMAIN}_{self.entry_id}_metadata"
 
     def _get_testing_tracking(self, vin: str) -> SocTracking:
+        """Get or create testing SOC tracking for VIN. Must be called while holding _lock."""
         return self._testing_soc_tracking.setdefault(vin, SocTracking())
 
     def _adjust_power_for_testing(self, vin: str, power_w: float) -> float:
+        """Adjust power for testing by subtracting aux power. Must be called while holding _lock."""
         aux_power = self._avg_aux_power_w.get(vin)
         if aux_power is None:
             return max(power_w, 0.0)
         return max(power_w - aux_power, 0.0)
 
     def _update_testing_power(self, vin: str, timestamp: Optional[datetime]) -> None:
+        """Update testing power tracking. Must be called while holding _lock."""
         raw_power = self._charging_power_w.get(vin)
         if raw_power is None:
             return
@@ -256,7 +259,10 @@ class CardataCoordinator:
         unit: Optional[str],
         parsed_ts: Optional[datetime],
     ) -> bool:
-        """Update SOC tracking for a descriptor. Returns True if tracking was updated."""
+        """Update SOC tracking for a descriptor. Returns True if tracking was updated.
+
+        Must be called while holding _lock.
+        """
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         testing_tracking = self._get_testing_tracking(vin)
 
@@ -369,6 +375,7 @@ class CardataCoordinator:
     def _set_direct_power(
         self, vin: str, power_w: Optional[float], timestamp: Optional[datetime]
     ) -> None:
+        """Set direct charging power. Must be called while holding _lock."""
         if power_w is None:
             self._direct_power_w.pop(vin, None)
         else:
@@ -378,6 +385,7 @@ class CardataCoordinator:
     def _set_ac_voltage(
         self, vin: str, voltage_v: Optional[float], timestamp: Optional[datetime]
     ) -> None:
+        """Set AC voltage. Must be called while holding _lock."""
         if voltage_v is None:
             self._ac_voltage_v.pop(vin, None)
         else:
@@ -387,6 +395,7 @@ class CardataCoordinator:
     def _set_ac_current(
         self, vin: str, current_a: Optional[float], timestamp: Optional[datetime]
     ) -> None:
+        """Set AC current. Must be called while holding _lock."""
         if current_a is None:
             self._ac_current_a.pop(vin, None)
         else:
@@ -396,6 +405,7 @@ class CardataCoordinator:
     def _set_ac_phase(
         self, vin: str, phase_value: Optional[Any], timestamp: Optional[datetime]
     ) -> None:
+        """Set AC phase count. Must be called while holding _lock."""
         phase_count: Optional[int] = None
         if phase_value is None:
             phase_count = None
@@ -420,6 +430,7 @@ class CardataCoordinator:
         self._apply_effective_power(vin, timestamp)
 
     def _derive_ac_power(self, vin: str) -> Optional[float]:
+        """Derive AC charging power from voltage, current, and phases. Must be called while holding _lock."""
         voltage = self._ac_voltage_v.get(vin)
         current = self._ac_current_a.get(vin)
         phases = self._ac_phase_count.get(vin)
@@ -428,6 +439,7 @@ class CardataCoordinator:
         return max(voltage * current * phases, 0.0)
 
     def _compute_effective_power(self, vin: str) -> Optional[float]:
+        """Compute effective charging power (direct or derived from AC). Must be called while holding _lock."""
         direct = self._direct_power_w.get(vin)
         if direct is not None:
             return direct
@@ -436,6 +448,7 @@ class CardataCoordinator:
     def _apply_effective_power(
         self, vin: str, timestamp: Optional[datetime]
     ) -> None:
+        """Apply effective power to SOC tracking. Must be called while holding _lock."""
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         testing_tracking = self._get_testing_tracking(vin)
         effective_power = self._compute_effective_power(vin)
@@ -699,6 +712,7 @@ class CardataCoordinator:
         async_dispatcher_send(self.hass, self.signal_diagnostics)
 
     def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
+        """Apply SOC estimate calculation. Must be called while holding _lock."""
         tracking = self._soc_tracking.get(vin)
         testing_tracking = self._testing_soc_tracking.get(vin)
         if not tracking:
@@ -766,12 +780,15 @@ class CardataCoordinator:
         return final_updated
 
     def get_soc_rate(self, vin: str) -> Optional[float]:
+        """Get current SOC rate for VIN. Thread-safe for read-only access."""
         return self._soc_rate.get(vin)
 
     def get_soc_estimate(self, vin: str) -> Optional[float]:
+        """Get current SOC estimate for VIN. Thread-safe for read-only access."""
         return self._soc_estimate.get(vin)
 
     def get_testing_soc_estimate(self, vin: str) -> Optional[float]:
+        """Get testing SOC estimate for VIN. Thread-safe for read-only access."""
         return self._testing_soc_estimate.get(vin)
 
     def restore_descriptor_state(
@@ -782,6 +799,10 @@ class CardataCoordinator:
         unit: Optional[str],
         timestamp: Optional[str],
     ) -> None:
+        """Restore descriptor state from saved data.
+
+        Must be called while holding _lock. Use async_restore_descriptor_state for thread-safe access.
+        """
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
 
@@ -845,6 +866,10 @@ class CardataCoordinator:
         rate: Optional[float] = None,
         timestamp: Optional[datetime] = None,
     ) -> None:
+        """Restore SOC cache from saved state.
+
+        Must be called while holding _lock. Use async_restore_soc_cache for thread-safe access.
+        """
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         reference_time = timestamp or datetime.now(timezone.utc)
         if estimate is not None:
@@ -871,6 +896,10 @@ class CardataCoordinator:
         estimate: Optional[float] = None,
         timestamp: Optional[datetime] = None,
     ) -> None:
+        """Restore testing SOC cache from saved state.
+
+        Must be called while holding _lock. Use async_restore_testing_soc_cache for thread-safe access.
+        """
         tracking = self._get_testing_tracking(vin)
         reference_time = timestamp or datetime.now(timezone.utc)
         if estimate is None:
