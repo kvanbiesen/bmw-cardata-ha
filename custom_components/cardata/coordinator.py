@@ -625,6 +625,8 @@ class CardataCoordinator:
         Note: GPS coordinates are sent immediately inline in async_handle_message,
         so this only handles non-GPS updates which are batched every 5 seconds.
         """
+        if self._update_debounce_handle:
+            return
         async with self._debounce_lock:
             # Cancel existing debounce timer if any
             if self._update_debounce_handle:
