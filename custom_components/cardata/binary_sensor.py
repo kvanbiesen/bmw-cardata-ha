@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
@@ -30,7 +29,7 @@ DOOR_NON_DOOR_DESCRIPTORS = (
     "vehicle.body.trunk.lower.door.isOpen",
     "vehicle.body.trunk.right.door.isOpen",
     "vehicle.body.trunk.upper.door.isOpen",
-) 
+)
 
 DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row1.driver.isOpen",
@@ -38,6 +37,8 @@ DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row2.driver.isOpen",
     "vehicle.cabin.door.row2.passenger.isOpen",
 )
+
+
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 
@@ -48,7 +49,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
-        
+
         if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR
 
@@ -77,7 +78,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
 
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle incoming data updates from coordinator.
-        
+
         SMART FILTERING: Only updates Home Assistant if the binary sensor's
         state actually changed. This prevents HA spam while ensuring sensors
         restore from 'unknown' state after reload.
@@ -90,48 +91,47 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
             return
 
         new_value = state.value
-        
+
         # SMART FILTERING: Check if sensor's current state differs from new value
         current_value = getattr(self, '_attr_is_on', None)
-        
+
         # Only update HA if state actually changed or sensor is unknown
         if current_value == new_value:
             # Binary sensor already has this state - skip HA update!
             # Example: Door lock stays "locked" for hours
             # - Coordinator sends "locked" every 5 seconds
             # - Binary sensor: "I'm already 'locked' → SKIP"
-            # - Result: No HA spam! ✅
+            # - Result: No HA spam! [OK]
             return
-        
+
         # State changed or sensor is unknown - update it!
         self._attr_is_on = new_value
         self.schedule_update_ha_state()
-    
+
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
         # Door sensors - dynamic icon based on state
         if self.descriptor and self.descriptor in DOOR_DESCRIPTORS:
             return "mdi:car-door"
-        
+
         # Door non Door sensors - dynamic icon based on state
         if self.descriptor and self.descriptor in DOOR_NON_DOOR_DESCRIPTORS:
             is_open = getattr(self, "_attr_is_on", False)
             if is_open:
                 return "mdi:circle-outline"
             else:
-                return "mdi:circle"  
-    
+                return "mdi:circle"
+
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)
-        
 
     ''' For future options and colors
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
         attrs = super().extra_state_attributes or {}
-    
+
         # Add color hint for window sensors
         descriptor_lower = self._descriptor.lower()
         if "window" in descriptor_lower:
@@ -142,9 +142,10 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
                 attrs["color_hint"] = "green"
             else:
                 attrs["color_hint"] = "orange"
-    
+
         return attrs
     '''
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
@@ -153,16 +154,16 @@ async def async_setup_entry(
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
     stream_manager = runtime.stream
-    
-    # Wait briefly for bootstrap to finish so VIN → name mapping exists.
-    wait_start = time.monotonic()
-    while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
-        if time.monotonic() - wait_start > 15:
+
+    # Wait for bootstrap to finish so VIN → name mapping exists.
+    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
+    if bootstrap_event and not bootstrap_event.is_set():
+        try:
+            await asyncio.wait_for(bootstrap_event.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
             _LOGGER.debug(
                 "Binary sensor setup continuing without vehicle names after 15s wait"
             )
-            break
-        await asyncio.sleep(0.1)
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
 
@@ -182,6 +183,24 @@ async def async_setup_entry(
         entities[(vin, descriptor)] = entity
         async_add_entities([entity])
 
+    # Subscribe to signals FIRST to catch any descriptors arriving during setup
+    # This prevents race conditions where descriptors arrive between iter_descriptors
+    # and signal subscription
+    async def async_handle_new_binary_sensor(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(
+            hass, coordinator.signal_new_binary, async_handle_new_binary_sensor
+        )
+    )
+
+    # Note: We don't subscribe to signal_update for entity creation here.
+    # - signal_new_binary handles new boolean descriptors
+    # - iter_descriptors() loop below handles existing data
+    # - Individual entities subscribe to signal_update for their own state updates
+    # This avoids duplicate processing on every update.
+
     # Restore enabled binary sensors from entity registry
     entity_registry = async_get(hass)
 
@@ -199,13 +218,3 @@ async def async_setup_entry(
     # Add binary sensors from coordinator state
     for vin, descriptor in coordinator.iter_descriptors(binary=True):
         ensure_entity(vin, descriptor)
-
-    # Subscribe to new binary sensor signals
-    async def async_handle_new_binary_sensor(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_new_binary, async_handle_new_binary_sensor
-        )
-    )

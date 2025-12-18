@@ -26,4 +26,3 @@ def normalize_unit(unit: Optional[str]) -> Optional[str]:
         return mapped
 
     return stripped
-

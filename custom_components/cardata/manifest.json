@@ -6,12 +6,11 @@
   ],
   "config_flow": true,
   "documentation": "https://github.com/kvanbiesen/bmw-cardata-ha/",
-  "homeassistant": "2025.3.0",
   "integration_type": "device",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/kvanbiesen/bmw-cardata-ha/issues",
   "requirements": [
     "paho-mqtt>=1.6.1"
   ],
-  "version": "4.3.0"
+  "version": "4.3.4"
 }

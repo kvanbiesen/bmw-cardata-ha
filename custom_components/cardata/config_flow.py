@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import logging
@@ -15,9 +14,10 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components import persistent_notification
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
+from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Maximum length for error messages shown to users
@@ -76,7 +76,9 @@ def _generate_code_challenge(code_verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
-class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: ignore[call-arg]
+# type: ignore[call-arg]
+class CardataConfigFlow(config_entries.ConfigFlow):
+    domain = DOMAIN
     """Handle config flow for BMW CarData."""
 
     VERSION = 1
@@ -106,7 +108,8 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
             )
 
         for entry in list(self._async_current_entries()):
-            existing_client_id = entry.data.get("client_id") if hasattr(entry, "data") else None
+            existing_client_id = entry.data.get(
+                "client_id") if hasattr(entry, "data") else None
             if entry.unique_id == client_id or existing_client_id == client_id:
                 await self.hass.config_entries.async_remove(entry.entry_id)
 
@@ -120,7 +123,8 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
                 step_id="user",
                 data_schema=vol.Schema({vol.Required("client_id"): str}),
                 errors={"base": "device_code_failed"},
-                description_placeholders={"error": _sanitize_error_for_user(err)},
+                description_placeholders={
+                    "error": _sanitize_error_for_user(err)},
             )
 
         return await self.async_step_authorize()
@@ -164,7 +168,8 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
         if user_input is None:
             return self.async_show_form(
                 step_id="authorize",
-                data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
+                data_schema=vol.Schema(
+                    {vol.Required("confirmed", default=True): bool}),
                 description_placeholders=placeholders,
             )
 
@@ -188,9 +193,11 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
                 _LOGGER.warning("BMW authorization pending/failed: %s", err)
                 return self.async_show_form(
                     step_id="authorize",
-                    data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
+                    data_schema=vol.Schema(
+                        {vol.Required("confirmed", default=True): bool}),
                     errors={"base": "authorization_failed"},
-                    description_placeholders={"error": _sanitize_error_for_user(err), **placeholders},
+                    description_placeholders={
+                        "error": _sanitize_error_for_user(err), **placeholders},
                 )
 
         self._token_data = token_data
@@ -202,7 +209,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
         return await self.async_step_tokens()
 
     async def async_step_tokens(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
-        from custom_components.cardata.const import DOMAIN, VEHICLE_METADATA
+        from custom_components.cardata.const import DOMAIN
 
         assert self._client_id is not None
         assert self._token_data is not None
@@ -224,8 +231,10 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
             merged = dict(self._reauth_entry.data)
             merged.update(entry_data)
             merged.pop("reauth_pending", None)
-            self.hass.config_entries.async_update_entry(self._reauth_entry, data=merged)
-            runtime = self.hass.data.get(DOMAIN, {}).get(self._reauth_entry.entry_id)
+            self.hass.config_entries.async_update_entry(
+                self._reauth_entry, data=merged)
+            runtime = self.hass.data.get(DOMAIN, {}).get(
+                self._reauth_entry.entry_id)
             if runtime:
                 runtime.reauth_in_progress = False
                 runtime.reauth_flow_id = None
@@ -253,10 +262,12 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
 
         entry_id = entry_data.get("entry_id")
         if entry_id:
-            self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
+            self._reauth_entry = self.hass.config_entries.async_get_entry(
+                entry_id)
         self._client_id = entry_data.get("client_id")
         if not self._client_id:
-            _LOGGER.error("Reauth requested but client_id missing for entry %s", entry_id)
+            _LOGGER.error(
+                "Reauth requested but client_id missing for entry %s", entry_id)
             return self.async_abort(reason="reauth_missing_client_id")
         try:
             await self._request_device_code()
@@ -268,7 +279,8 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):  # type: i
             )
             if self._reauth_entry:
                 from custom_components.cardata.const import DOMAIN
-                runtime = self.hass.data.get(DOMAIN, {}).get(self._reauth_entry.entry_id)
+                runtime = self.hass.data.get(DOMAIN, {}).get(
+                    self._reauth_entry.entry_id)
                 if runtime:
                     runtime.reauth_in_progress = False
                     runtime.reauth_flow_id = None
@@ -484,7 +496,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_action_reset_container(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        from custom_components.cardata.const import DOMAIN
         from custom_components.cardata.container import CardataContainerError
 
         runtime = self._get_runtime()
@@ -501,7 +512,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 errors={"confirm": "confirm"},
             )
 
-        entry = self.hass.config_entries.async_get_entry(self._config_entry.entry_id)
+        entry = self.hass.config_entries.async_get_entry(
+            self._config_entry.entry_id)
         if entry is None:
             return self._show_confirm(
                 step_id="action_reset_container",
@@ -514,7 +526,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 from custom_components.cardata.auth import async_manual_refresh_tokens
                 await async_manual_refresh_tokens(self.hass, entry)
             except Exception as err:
-                _LOGGER.exception("Token refresh failed during container reset: %s", err)
+                _LOGGER.exception(
+                    "Token refresh failed during container reset: %s", err)
                 return self._show_confirm(
                     step_id="action_reset_container",
                     errors={"base": "refresh_failed"},
@@ -559,7 +572,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Clean up orphaned entities for this integration."""
         from homeassistant.helpers import entity_registry as er
-        
+
         if user_input is None:
             # Show warning form
             return self.async_show_form(
@@ -568,48 +581,50 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required("confirm", default=False): bool,
                 }),
                 description_placeholders={
-                    "warning": "⚠️ This will delete ALL entities for this integration from the entity registry, including their history! Only do this if you have orphaned entities with wrong names.",
+                    "warning": "[WARN] This will delete ALL entities for this integration from the entity registry, including their history! Only do this if you have orphaned entities with wrong names.",
                 },
             )
-        
+
         if not user_input.get("confirm"):
             return self._show_confirm(
                 step_id="action_cleanup_entities",
                 errors={"confirm": "confirm"},
             )
-        
+
         try:
             entity_reg = er.async_get(self.hass)
             entry_id = self._config_entry.entry_id
-            
+
             # Get all entities for this config entry
             entities = er.async_entries_for_config_entry(entity_reg, entry_id)
             deleted_count = 0
             entity_ids_deleted = []
-            
+
             # Delete each entity
             for entity in entities:
                 entity_ids_deleted.append(entity.entity_id)
                 entity_reg.async_remove(entity.entity_id)
                 deleted_count += 1
-            
+
             _LOGGER.info(
                 "Cleaned up %s orphaned entities for entry %s: %s",
                 deleted_count,
                 entry_id,
-                ", ".join(entity_ids_deleted[:10]) + ("..." if deleted_count > 10 else ""),
+                f"{', '.join(entity_ids_deleted[:10])}"
+                f"{'...' if deleted_count > 10 else ''}",
             )
-            
+
             return self.async_show_form(
                 step_id="action_cleanup_entities",
                 data_schema=vol.Schema({}),
                 description_placeholders={
-                    "success": f"✅ Successfully deleted {deleted_count} entities! They will be recreated automatically. Restart Home Assistant or wait a few seconds.",
+                    "success": f"[OK] Successfully deleted {deleted_count} entities! They will be recreated automatically. Restart Home Assistant or wait a few seconds.",
                 },
             )
-            
+
         except Exception as err:
-            _LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)
+            _LOGGER.error("Failed to clean up entities: %s",
+                          err, exc_info=True)
             return self._show_confirm(
                 step_id="action_cleanup_entities",
                 errors={"base": "cleanup_failed"},
@@ -622,7 +637,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         entry = self._config_entry
         if entry is None:
             return self.async_abort(reason="unknown")
-        client_id = (self._reauth_client_id or entry.data.get("client_id") or "").strip()
+        client_id = (self._reauth_client_id or entry.data.get(
+            "client_id") or "").strip()
         self._reauth_client_id = None
         if not client_id:
             return self.async_abort(reason="reauth_missing_client_id")
@@ -643,24 +659,27 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         if flow_result["type"] == FlowResultType.ABORT:
             return self.async_abort(
                 reason=flow_result.get("reason", "reauth_failed"),
-                description_placeholders=flow_result.get("description_placeholders"),
+                description_placeholders=flow_result.get(
+                    "description_placeholders"),
             )
         return self.async_abort(reason="reauth_started")
 
     async def async_step_remove(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Handle removal of config entry - prompt user about entity cleanup."""
-        
+
         if user_input is not None:
             # User made their choice
             delete_entities = user_input.get("delete_entities", False)
-            
+
             # Store the choice in entry data so async_remove_entry can read it
-            entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+            entry = self.hass.config_entries.async_get_entry(
+                self.context["entry_id"])
             if entry:
                 updated_data = dict(entry.data)
                 updated_data["_delete_entities_on_remove"] = delete_entities
-                self.hass.config_entries.async_update_entry(entry, data=updated_data)
-                
+                self.hass.config_entries.async_update_entry(
+                    entry, data=updated_data)
+
                 if delete_entities:
                     _LOGGER.info(
                         "User chose to delete entities for entry %s",
@@ -671,10 +690,10 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                         "User chose to keep entities for entry %s",
                         entry.entry_id,
                     )
-            
+
             # Proceed with removal
             return self.async_abort(reason="user_remove_completed")
-        
+
         # Show form asking user's preference
         return self.async_show_form(
             step_id="remove",
@@ -682,6 +701,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required("delete_entities", default=False): bool,
             }),
             description_placeholders={
-                "warning": "⚠️ **Delete entities and history?**\n\nIf you check this box, ALL sensors for this integration will be permanently deleted from Home Assistant, including their historical data.\n\nOnly check this if you want to completely remove all traces, or if you have orphaned entities with wrong names.\n\n**Unchecked (default)**: Entities will be kept and can be reused if you re-add the integration later.\n\n**Checked**: Entities will be permanently deleted. They will be recreated fresh if you re-add the integration.",
+                "warning": "[WARN] **Delete entities and history?**\n\nIf you check this box, ALL sensors for this integration will be permanently deleted from Home Assistant, including their historical data.\n\nOnly check this if you want to completely remove all traces, or if you have orphaned entities with wrong names.\n\n**Unchecked (default)**: Entities will be kept and can be reused if you re-add the integration later.\n\n**Checked**: Entities will be permanently deleted. They will be recreated fresh if you re-add the integration.",
             },
         )

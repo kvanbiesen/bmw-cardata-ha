@@ -46,7 +46,8 @@ class QuotaManager:
     @classmethod
     async def async_create(cls, hass: HomeAssistant, entry_id: str) -> QuotaManager:
         """Create and initialize a QuotaManager."""
-        store = Store(hass, REQUEST_LOG_VERSION, f"{DOMAIN}_{entry_id}_{REQUEST_LOG}")
+        store = Store(hass, REQUEST_LOG_VERSION,
+                      f"{DOMAIN}_{entry_id}_{REQUEST_LOG}")
         data = await store.async_load() or {}
         raw_timestamps = data.get("timestamps", [])
         values: list[float] = []
@@ -89,17 +90,17 @@ class QuotaManager:
         async with self._lock:
             now = time.time()
             self._prune(now)
-            
+
             current_usage = len(self._timestamps)
-            
+
             if current_usage >= REQUEST_LIMIT:
                 raise CardataQuotaError(
                     f"BMW CarData API limit reached ({REQUEST_LIMIT} calls/day); try again after quota resets"
                 )
-            
+
             # Import thresholds
             from .const import QUOTA_WARNING_THRESHOLD, QUOTA_CRITICAL_THRESHOLD
-            
+
             # Warn when approaching limits
             if current_usage == QUOTA_WARNING_THRESHOLD:
                 _LOGGER.warning(
@@ -115,7 +116,7 @@ class QuotaManager:
                     current_usage,
                     REQUEST_LIMIT
                 )
-            
+
             self._timestamps.append(now)
             await self._async_save_locked()
 

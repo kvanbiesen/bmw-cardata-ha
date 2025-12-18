@@ -11,7 +11,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE, VEHICLE_METADATA
+from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
@@ -33,6 +33,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.debug("Starting bootstrap sequence for entry %s", entry.entry_id)
 
     quota = runtime.quota_manager
+    rate_limiter = runtime.rate_limiter_tracker 
 
     try:
         from .auth import refresh_tokens_for_entry
@@ -44,7 +45,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             runtime.container_manager,
         )
     except Exception as err:
-        _LOGGER.warning("Bootstrap token refresh failed for entry %s: %s", entry.entry_id, err)
+        _LOGGER.warning(
+            "Bootstrap token refresh failed for entry %s: %s", entry.entry_id, err)
         return
 
     data = entry.data
@@ -60,7 +62,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     # Ensure HV container exists (ONLY here, not in token refresh!)
     from .auth import async_ensure_container_for_entry
-    
+
     container_ready = await async_ensure_container_for_entry(
         entry,
         hass,
@@ -68,14 +70,14 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         runtime.container_manager,
         force=False,  # Don't force recreation
     )
-    
+
     if not container_ready:
         _LOGGER.warning(
             "Bootstrap: Container not ready for entry %s. Continuing without container.",
             entry.entry_id
         )
 
-    vins = await async_fetch_primary_vins(runtime.session, headers, entry.entry_id, quota)
+    vins = await async_fetch_primary_vins(runtime.session, headers, entry.entry_id, quota, rate_limiter)
     if not vins:
         await async_mark_bootstrap_complete(hass, entry)
         return
@@ -99,7 +101,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await async_fetch_and_store_vehicle_images(
         hass, entry, headers, vins, quota, runtime.session
     )
-    
+
     # CRITICAL: Apply metadata to populate coordinator.names!
     # async_fetch_and_store_basic_data() populates device_metadata but NOT coordinator.names
     # coordinator.names is ONLY populated by apply_basic_data()
@@ -109,14 +111,15 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if metadata and "raw_data" in metadata:
             # Call async_apply_basic_data to populate coordinator.names (thread-safe)
             await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
-            _LOGGER.debug("Bootstrap populated name for VIN %s: %s", redact_vin(vin), coordinator.names.get(vin))
+            _LOGGER.debug("Bootstrap populated name for VIN %s: %s",
+                          redact_vin(vin), coordinator.names.get(vin))
 
     # NOW seed telematic data (entities will be created with complete metadata)
     created_entities = False
     container_id = entry.data.get("hv_container_id")
     if container_id:
         created_entities = await async_seed_telematic_data(
-            runtime, entry.entry_id, headers, container_id, vins, quota
+            runtime, entry.entry_id, headers, container_id, vins, quota, rate_limiter
         )
     else:
         _LOGGER.debug(
@@ -143,6 +146,7 @@ async def async_fetch_primary_vins(
     headers: dict[str, str],
     entry_id: str,
     quota: QuotaManager | None,
+    rate_limiter: Any | None = None,   
 ) -> list[str]:
     """Fetch list of primary vehicle VINs from vehicle mappings."""
     url = f"{API_BASE_URL}/customers/vehicles/mappings"
@@ -164,6 +168,7 @@ async def async_fetch_primary_vins(
         url,
         headers=headers,
         context=f"Bootstrap mapping request for entry {entry_id}",
+        rate_limiter=rate_limiter,
     )
 
     if error:
@@ -233,9 +238,11 @@ async def async_fetch_primary_vins(
             vins.append(vin)
 
     if not vins:
-        _LOGGER.info("Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
+        _LOGGER.info(
+            "Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
     else:
-        _LOGGER.debug("Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
+        _LOGGER.debug(
+            "Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
 
     return vins
 
@@ -247,6 +254,7 @@ async def async_seed_telematic_data(
     container_id: str,
     vins: list[str],
     quota: QuotaManager | None,
+    rate_limiter: Any | None = None,
 ) -> bool:
     """Fetch initial telematic data for each VIN to seed descriptors."""
     session = runtime.session
@@ -279,6 +287,7 @@ async def async_seed_telematic_data(
             headers=headers,
             params=params,
             context=f"Bootstrap telematic request for {redacted_vin}",
+            rate_limiter=rate_limiter,
         )
 
         if error:
@@ -331,7 +340,8 @@ async def async_seed_telematic_data(
 
         telematic_data = None
         if isinstance(payload, dict):
-            telematic_data = payload.get("telematicData") or payload.get("data")
+            telematic_data = payload.get(
+                "telematicData") or payload.get("data")
 
         if not isinstance(telematic_data, dict) or not telematic_data:
             continue

@@ -82,6 +82,7 @@ async def async_request_with_retry(
     max_backoff: float = 30.0,
     backoff_multiplier: float = 2.0,
     context: str = "HTTP request",
+    rate_limiter: Optional[Any] = None,
 ) -> Tuple[Optional[HttpResponse], Optional[Exception]]:
     """Make an HTTP request with retry logic for transient failures.
 
@@ -99,6 +100,7 @@ async def async_request_with_retry(
         max_backoff: Maximum backoff delay in seconds (default: 30.0)
         backoff_multiplier: Backoff multiplier for exponential backoff (default: 2.0)
         context: Description for logging (default: "HTTP request")
+        rate_limiter: Optional RateLimitTracker to check/record rate limits
 
     Returns:
         Tuple of (HttpResponse, None) on success or partial success,
@@ -109,6 +111,22 @@ async def async_request_with_retry(
         - Auth errors (401, 403) are returned immediately without retry
         - Server errors (5xx) and network errors trigger retries
     """
+    if rate_limiter:
+        can_request, block_reason = rate_limiter.can_make_request()
+        if not can_request:
+            _LOGGER.warning(
+                "%s blocked by rate limiter: %s",
+                context,
+                block_reason
+            )
+            # Return a fake 429 response to indicate rate limit
+            fake_response = HttpResponse(
+                status=429,
+                text=f"Blocked by rate limiter: {block_reason}",
+                headers={}
+            )
+            return fake_response, None
+
     request_timeout = aiohttp.ClientTimeout(total=timeout or HTTP_TIMEOUT)
     backoff = initial_backoff
     last_error: Optional[Exception] = None
@@ -138,6 +156,8 @@ async def async_request_with_retry(
 
                 # Success - return immediately
                 if http_response.is_success:
+                    if rate_limiter:
+                        rate_limiter.record_success()
                     if attempt > 0:
                         _LOGGER.debug(
                             "%s succeeded after %d retries",
@@ -148,6 +168,8 @@ async def async_request_with_retry(
 
                 # Rate limit - return immediately, caller handles quota
                 if http_response.is_rate_limited:
+                    if rate_limiter:
+                        rate_limiter.record_429()
                     _LOGGER.warning(
                         "%s rate limited (429): %s",
                         context,
@@ -188,7 +210,8 @@ async def async_request_with_retry(
                             max_retries + 1,
                         )
                         await asyncio.sleep(backoff)
-                        backoff = min(backoff * backoff_multiplier, max_backoff)
+                        backoff = min(
+                            backoff * backoff_multiplier, max_backoff)
                         continue
 
                 # Unknown status - return as-is

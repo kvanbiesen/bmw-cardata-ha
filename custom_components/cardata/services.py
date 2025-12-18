@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
 import voluptuous as vol
@@ -28,14 +28,12 @@ from .const import (
 )
 from .runtime import CardataRuntimeData
 from .utils import (
-    is_valid_vin,
     redact_sensitive_data,
     redact_vin,
     redact_vin_in_text,
     redact_vin_payload,
 )
 
-import homeassistant.helpers.entity_registry as er
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,18 +89,21 @@ def _resolve_target(
         runtime = entries.get(target_entry_id)
         target_entry = hass.config_entries.async_get_entry(target_entry_id)
         if runtime is None or target_entry is None:
-            _LOGGER.error("Cardata service: unknown entry_id %s", target_entry_id)
+            _LOGGER.error("Cardata service: unknown entry_id %s",
+                          target_entry_id)
             return None
         return target_entry_id, target_entry, runtime
 
     if len(entries) != 1:
-        _LOGGER.error("Cardata service: multiple entries configured; specify entry_id")
+        _LOGGER.error(
+            "Cardata service: multiple entries configured; specify entry_id")
         return None
 
     target_entry_id, runtime = next(iter(entries.items()))
     target_entry = hass.config_entries.async_get_entry(target_entry_id)
     if target_entry is None:
-        _LOGGER.error("Cardata service: unable to resolve entry %s", target_entry_id)
+        _LOGGER.error(
+            "Cardata service: unable to resolve entry %s", target_entry_id)
         return None
 
     return target_entry_id, target_entry, runtime
@@ -119,22 +120,23 @@ async def async_handle_fetch_telematic(call: ServiceCall) -> None:
 
     from .telematics import async_perform_telematic_fetch, async_update_last_telematic_poll
 
-    success = await async_perform_telematic_fetch(
+    result = await async_perform_telematic_fetch(
         hass,
         target_entry,
         runtime,
         vin_override=call.data.get("vin"),
     )
 
-    if success is None:
+    if result.status is None:
         # Fatal error - don't update timestamp
         _LOGGER.error(
-            "Cardata fetch_telematic_data: fatal error for entry %s",
+            "Cardata fetch_telematic_data: fatal error for entry %s (reason=%s)",
             target_entry_id,
+            result.reason or "unknown",
         )
         return
 
-    if success is True:
+    if result.status is True:
         # Data fetched successfully
         await async_update_last_telematic_poll(hass, target_entry, time.time())
         _LOGGER.info(
@@ -177,7 +179,8 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
 
     access_token = target_entry.data.get("access_token")
     if not access_token:
-        _LOGGER.error("Cardata fetch_vehicle_mappings: access token missing after refresh")
+        _LOGGER.error(
+            "Cardata fetch_vehicle_mappings: access token missing after refresh")
         return
 
     headers = {
@@ -212,7 +215,8 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
                 payload = json.loads(text)
             except json.JSONDecodeError:
                 payload = text
-            _LOGGER.info("Cardata vehicle mappings: %s", redact_vin_payload(payload))
+            _LOGGER.info("Cardata vehicle mappings: %s",
+                         redact_vin_payload(payload))
     except aiohttp.ClientError as err:
         _LOGGER.error(
             "Cardata fetch_vehicle_mappings: network error: %s",
@@ -259,7 +263,8 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
 
     access_token = target_entry.data.get("access_token")
     if not access_token:
-        _LOGGER.error("Cardata fetch_basic_data: access token missing after refresh")
+        _LOGGER.error(
+            "Cardata fetch_basic_data: access token missing after refresh")
         return
 
     headers = {
@@ -276,7 +281,8 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
         try:
             await quota.async_claim()
         except CardataQuotaError as err:
-            _LOGGER.warning("Cardata fetch_basic_data blocked for %s: %s", redacted_vin, err)
+            _LOGGER.warning(
+                "Cardata fetch_basic_data blocked for %s: %s", redacted_vin, err)
             return
 
     try:
@@ -356,7 +362,8 @@ async def async_handle_migrate(call: ServiceCall) -> None:
             return
         coordinator = runtime.coordinator
         try:
-            _LOGGER.debug("Running migration for entry %s (force=%s dry_run=%s)", eid, force, dry_run)
+            _LOGGER.debug(
+                "Running migration for entry %s (force=%s dry_run=%s)", eid, force, dry_run)
             planned = await async_migrate_entity_ids(hass, entry, coordinator, force=force, dry_run=dry_run)
             _LOGGER.debug("Migration planned actions for %s: %s", eid, planned)
         except Exception as err:
@@ -398,17 +405,20 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             return
     else:
         # no entry specified: if only one entry exists, use it; otherwise require entry_id
-        non_meta = {k: v for k, v in domain_data.items() if not str(k).startswith("_")}
+        non_meta = {k: v for k, v in domain_data.items()
+                    if not str(k).startswith("_")}
         if len(non_meta) == 1:
             entry_id, runtime = next(iter(non_meta.items()))
             entry = hass.config_entries.async_get_entry(entry_id)
         else:
-            _LOGGER.error("clean_hv_containers: multiple entries configured; specify entry_id")
+            _LOGGER.error(
+                "clean_hv_containers: multiple entries configured; specify entry_id")
             return
 
     access_token = entry.data.get("access_token")
     if not access_token:
-        _LOGGER.error("clean_hv_containers: no access token available for entry %s", entry.entry_id)
+        _LOGGER.error(
+            "clean_hv_containers: no access token available for entry %s", entry.entry_id)
         return
 
     headers = {
@@ -417,7 +427,8 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         "Accept": "application/json",
     }
 
-    session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession()
+    session = runtime.session if getattr(
+        runtime, "session", None) else aiohttp.ClientSession()
 
     # Helper: fetch list of containers
     async def _list_containers() -> list[dict[str, Any]]:
@@ -435,7 +446,8 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                 try:
                     payload = json.loads(text)
                 except json.JSONDecodeError:
-                    _LOGGER.debug("clean_hv_containers: non-JSON list response: %s", text)
+                    _LOGGER.debug(
+                        "clean_hv_containers: non-JSON list response: %s", text)
                     return []
                 if isinstance(payload, list):
                     return payload
@@ -456,7 +468,8 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             async with session.delete(url, headers=headers) as resp:
                 text = await resp.text()
                 if resp.status in (200, 204):
-                    _LOGGER.info("clean_hv_containers: deleted container %s for entry %s", cid, entry.entry_id)
+                    _LOGGER.info(
+                        "clean_hv_containers: deleted container %s for entry %s", cid, entry.entry_id)
                     return True, resp.status, text
                 _LOGGER.warning(
                     "clean_hv_containers: failed deleting container %s (HTTP %s): %s",
@@ -477,29 +490,34 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
     if action == "list":
         containers = await _list_containers()
         if not containers:
-            _LOGGER.info("clean_hv_containers: no containers found (entry %s)", entry.entry_id)
+            _LOGGER.info(
+                "clean_hv_containers: no containers found (entry %s)", entry.entry_id)
             return
         # Log a compact listing
         for c in containers:
             cid = c.get("containerId") or c.get("containerId")
             name = c.get("name")
             purpose = c.get("purpose")
-            _LOGGER.info("clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
+            _LOGGER.info(
+                "clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
         return
 
     if action == "delete":
         if not container_id:
-            _LOGGER.error("clean_hv_containers: 'delete' action requires container_id")
+            _LOGGER.error(
+                "clean_hv_containers: 'delete' action requires container_id")
             return
         ok, status, text = await _delete_container(container_id)
         if not ok:
-            _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
+            _LOGGER.error(
+                "clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
         return
 
     if action == "delete_all_matching":
         containers = await _list_containers()
         if not containers:
-            _LOGGER.info("clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
+            _LOGGER.info(
+                "clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
             return
         deleted_any = False
         for c in containers:
@@ -511,10 +529,12 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                 if ok:
                     deleted_any = True
         if not deleted_any:
-            _LOGGER.info("clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
+            _LOGGER.info(
+                "clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
         return
 
     _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
+
 
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all Cardata services."""
@@ -560,7 +580,9 @@ def async_register_services(hass: HomeAssistant) -> None:
             async_handle_clean_containers,
             schema=CLEAN_CONTAINERS_SCHEMA,
         )
-        _LOGGER.debug("Registered service %s.%s", DOMAIN, "clean_hv_containers")
+        _LOGGER.debug("Registered service %s.%s",
+                      DOMAIN, "clean_hv_containers")
+
 
 def async_unregister_services(hass: HomeAssistant) -> None:
     """Unregister all Cardata services."""
@@ -576,37 +598,39 @@ def async_unregister_services(hass: HomeAssistant) -> None:
             hass.services.async_remove(DOMAIN, service)
             _LOGGER.debug("Unregistered service %s.%s", DOMAIN, service)
 
+
 async def async_fetch_vehicle_images_service(call) -> None:
     """Service to manually fetch vehicle images."""
     hass = call.hass
     domain_data = hass.data.get(DOMAIN, {})
-    
+
     for entry_id, runtime_data in domain_data.items():
         if entry_id.startswith("_"):
             continue
-            
+
         entry = hass.config_entries.async_get_entry(entry_id)
         if not entry:
             continue
-        
+
         coordinator = runtime_data.coordinator
         session = runtime_data.session
         quota = runtime_data.quota_manager
         vins = list(coordinator.data.keys())
         access_token = entry.data.get("access_token")
-        
+
         if not access_token or not vins:
             continue
-        
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "x-version": "v1",
             "Accept": "*/*",
         }
-        
+
         from .metadata import async_fetch_and_store_vehicle_images
-        
-        _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
+
+        _LOGGER.info(
+            "Manually fetching vehicle images for %d vehicles", len(vins))
         await async_fetch_and_store_vehicle_images(
             hass, entry, headers, vins, quota, session
         )
