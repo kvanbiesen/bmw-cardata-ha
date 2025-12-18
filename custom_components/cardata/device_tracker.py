@@ -47,8 +47,14 @@ async def async_setup_entry(
     stream_manager = runtime_data.stream
 
     # Wait for bootstrap to finish so VIN → name mapping exists
-    while getattr(stream_manager, "_bootstrap_in_progress", False) or not coordinator.names:
-        await asyncio.sleep(0.1)
+    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
+    if bootstrap_event and not bootstrap_event.is_set():
+        try:
+            await asyncio.wait_for(bootstrap_event.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            _LOGGER.debug(
+                "Device tracker setup continuing without vehicle names after 15s wait"
+            )
 
     trackers: dict[str, CardataDeviceTracker] = {}
 

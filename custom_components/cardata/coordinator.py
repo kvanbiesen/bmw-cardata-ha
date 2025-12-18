@@ -241,6 +241,20 @@ class CardataCoordinator:
     def signal_metadata(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_metadata"
 
+    def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
+        """Send dispatcher signal with exception protection.
+
+        Wraps async_dispatcher_send to catch and log any exceptions from
+        signal handlers, preventing crashed handlers from breaking the
+        coordinator's message processing.
+        """
+        try:
+            async_dispatcher_send(self.hass, signal, *args)
+        except Exception as err:
+            _LOGGER.exception(
+                "Exception in dispatcher signal %s handler: %s", signal, err
+            )
+
     def _get_testing_tracking(self, vin: str) -> SocTracking:
         """Get or create testing SOC tracking for VIN. Must be called while holding _lock."""
         return self._testing_soc_tracking.setdefault(vin, SocTracking())
@@ -535,8 +549,8 @@ class CardataCoordinator:
             if value_changed:
                 # GPS coordinates: send immediately without debouncing!
                 if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
-                    async_dispatcher_send(
-                        self.hass, self.signal_update, vin, descriptor)
+                    self._safe_dispatcher_send(
+                        self.signal_update, vin, descriptor)
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
                     if vin not in self._pending_updates:
@@ -647,22 +661,22 @@ class CardataCoordinator:
         # Send batched updates for changed descriptors
         for vin, update_descriptors in updates_to_process.items():
             for descriptor in update_descriptors:
-                async_dispatcher_send(
-                    self.hass, self.signal_update, vin, descriptor)
+                self._safe_dispatcher_send(
+                    self.signal_update, vin, descriptor)
 
         # Send new entity notifications
         for vin, sensor_descriptors in new_sensors_to_process.items():
             for descriptor in sensor_descriptors:
-                async_dispatcher_send(
-                    self.hass, self.signal_new_sensor, vin, descriptor)
+                self._safe_dispatcher_send(
+                    self.signal_new_sensor, vin, descriptor)
 
         for vin, binary_descriptors in new_binary_to_process.items():
             for descriptor in binary_descriptors:
-                async_dispatcher_send(
-                    self.hass, self.signal_new_binary, vin, descriptor)
+                self._safe_dispatcher_send(
+                    self.signal_new_binary, vin, descriptor)
 
         # Send diagnostics update
-        async_dispatcher_send(self.hass, self.signal_diagnostics)
+        self._safe_dispatcher_send(self.signal_diagnostics)
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         """Get state for a descriptor. Returns a copy to avoid race conditions."""
@@ -734,8 +748,8 @@ class CardataCoordinator:
                 if self._apply_soc_estimate(vin, now, notify=False):
                     updated_vins.append(vin)
         for vin in updated_vins:
-            async_dispatcher_send(self.hass, self.signal_soc_estimate, vin)
-        async_dispatcher_send(self.hass, self.signal_diagnostics)
+            self._safe_dispatcher_send(self.signal_soc_estimate, vin)
+        self._safe_dispatcher_send(self.signal_diagnostics)
 
     def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
         """Apply SOC estimate calculation. Must be called while holding _lock."""
@@ -756,7 +770,7 @@ class CardataCoordinator:
             self._ac_phase_count.pop(vin, None)
             changed = removed_estimate or removed_rate or testing_removed
             if notify and changed:
-                async_dispatcher_send(self.hass, self.signal_soc_estimate, vin)
+                self._safe_dispatcher_send(self.signal_soc_estimate, vin)
             return changed
         percent = tracking.estimate(now)
         rate = tracking.current_rate_per_hour()
@@ -803,7 +817,7 @@ class CardataCoordinator:
 
         final_updated = updated or testing_changed
         if notify and final_updated:
-            async_dispatcher_send(self.hass, self.signal_soc_estimate, vin)
+            self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         return final_updated
 
     def get_soc_rate(self, vin: str) -> Optional[float]:
@@ -1034,14 +1048,13 @@ class CardataCoordinator:
         name_changed = self.names.get(vin) != new_name
         self.names[vin] = new_name
         if name_changed:
-            async_dispatcher_send(
-                self.hass,
+            self._safe_dispatcher_send(
                 f"{DOMAIN}_{self.entry_id}_name",
                 vin,
                 new_name,
             )
         # Signal metadata update so sensors can refresh
-        async_dispatcher_send(self.hass, self.signal_metadata, vin)
+        self._safe_dispatcher_send(self.signal_metadata, vin)
         return metadata
 
     async def async_apply_basic_data(

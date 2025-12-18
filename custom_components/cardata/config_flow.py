@@ -17,6 +17,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
+from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Maximum length for error messages shown to users
@@ -76,7 +77,8 @@ def _generate_code_challenge(code_verifier: str) -> str:
 
 
 # type: ignore[call-arg]
-class CardataConfigFlow(config_entries.ConfigFlow, domain="cardata"):
+class CardataConfigFlow(config_entries.ConfigFlow):
+    domain = DOMAIN
     """Handle config flow for BMW CarData."""
 
     VERSION = 1
@@ -579,7 +581,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required("confirm", default=False): bool,
                 }),
                 description_placeholders={
-                    "warning": "⚠️ This will delete ALL entities for this integration from the entity registry, including their history! Only do this if you have orphaned entities with wrong names.",
+                    "warning": "[WARN] This will delete ALL entities for this integration from the entity registry, including their history! Only do this if you have orphaned entities with wrong names.",
                 },
             )
 
@@ -608,15 +610,15 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 "Cleaned up %s orphaned entities for entry %s: %s",
                 deleted_count,
                 entry_id,
-                ", ".join(entity_ids_deleted[:10]) +
-                ("..." if deleted_count > 10 else ""),
+                f"{', '.join(entity_ids_deleted[:10])}"
+                f"{'...' if deleted_count > 10 else ''}",
             )
 
             return self.async_show_form(
                 step_id="action_cleanup_entities",
                 data_schema=vol.Schema({}),
                 description_placeholders={
-                    "success": f"✅ Successfully deleted {deleted_count} entities! They will be recreated automatically. Restart Home Assistant or wait a few seconds.",
+                    "success": f"[OK] Successfully deleted {deleted_count} entities! They will be recreated automatically. Restart Home Assistant or wait a few seconds.",
                 },
             )
 
@@ -699,6 +701,6 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required("delete_entities", default=False): bool,
             }),
             description_placeholders={
-                "warning": "⚠️ **Delete entities and history?**\n\nIf you check this box, ALL sensors for this integration will be permanently deleted from Home Assistant, including their historical data.\n\nOnly check this if you want to completely remove all traces, or if you have orphaned entities with wrong names.\n\n**Unchecked (default)**: Entities will be kept and can be reused if you re-add the integration later.\n\n**Checked**: Entities will be permanently deleted. They will be recreated fresh if you re-add the integration.",
+                "warning": "[WARN] **Delete entities and history?**\n\nIf you check this box, ALL sensors for this integration will be permanently deleted from Home Assistant, including their historical data.\n\nOnly check this if you want to completely remove all traces, or if you have orphaned entities with wrong names.\n\n**Unchecked (default)**: Entities will be kept and can be reused if you re-add the integration later.\n\n**Checked**: Entities will be permanently deleted. They will be recreated fresh if you re-add the integration.",
             },
         )

@@ -77,6 +77,12 @@ def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
 UNIT_DEVICE_CLASS_MAP = _build_unit_device_class_map()
 
 
+# Tank volume descriptors should expose stored volume (HA device_class volume_storage)
+FUEL_VOLUME_DESCRIPTORS = {
+    "vehicle.drivetrain.fuelSystem.remainingFuel",
+}
+
+
 def map_unit_to_ha(unit: str | None) -> str | None:
     """Map BMW unit strings to Home Assistant compatible units."""
     if unit is None:
@@ -104,6 +110,9 @@ def get_device_class_for_unit(
         descriptor_lower = descriptor.lower()
         if unit is None:
             return None
+        # Fuel tank volume is a stored volume, not a flowing volume
+        if descriptor in FUEL_VOLUME_DESCRIPTORS:
+            return getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME)
         # Check if this is a battery-related descriptor with % unit
         if descriptor and descriptor in BATTERY_DESCRIPTORS:
             # Only apply battery class if unit is % (percentage)
