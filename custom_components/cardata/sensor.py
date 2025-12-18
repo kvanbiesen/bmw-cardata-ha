@@ -867,6 +867,39 @@ async def async_setup_entry(
     if entity_id := entity_registry.async_get_entity_id("sensor", DOMAIN, legacy_soc_rate_id):
         entity_registry.async_remove(entity_id)
 
+    # Subscribe to signals FIRST to catch any descriptors arriving during setup
+    # This prevents race conditions where descriptors arrive between iter_descriptors
+    # and signal subscription
+    async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor)
+    )
+
+    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
+    )
+
+    async def async_handle_soc_update(vin: str) -> None:
+        ensure_soc_tracking_entities(vin)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
+    )
+
+    async def async_handle_metadata_update(vin: str) -> None:
+        # When metadata updates, re-check if vehicle is now detected as EV
+        # The is_electric_vehicle() cache will invalidate if drive_train changed
+        ensure_soc_tracking_entities(vin)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update)
+    )
+
     # Restore enabled sensors from entity registry
     for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
         if entity_entry.domain != "sensor" or entity_entry.disabled_by is not None:
@@ -894,36 +927,6 @@ async def async_setup_entry(
     # Ensure SOC entities for all known VINs
     for vin in list(coordinator.data.keys()):
         ensure_soc_tracking_entities(vin)
-
-    # Subscribe to new sensor signals
-    async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor)
-    )
-    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
-    )
-
-    async def async_handle_soc_update(vin: str) -> None:
-        ensure_soc_tracking_entities(vin)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update)
-    )
-
-    async def async_handle_metadata_update(vin: str) -> None:
-        # When metadata updates, re-check if vehicle is now detected as EV
-        # The is_electric_vehicle() cache will invalidate if drive_train changed
-        ensure_soc_tracking_entities(vin)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update)
-    )
 
     # Add diagnostic sensors
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
