@@ -771,7 +771,7 @@ async def async_setup_entry(
                 return cached_result
             # drive_train changed, re-evaluate below
 
-        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"])
+        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid", "mhev"])
 
         # Cache result with the drive_train value used for the decision
         _electric_vehicle_cache[vin] = (drive_train, is_electric)
