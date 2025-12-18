@@ -320,6 +320,10 @@ class CardataContainerManager:
                     f"HTTP {response.status}: {safe_text or 'no response body'}",
                     status=response.status,
                 )
+        except asyncio.TimeoutError as err:
+            raise CardataContainerError(
+                "Request timed out after 15 seconds"
+            ) from err
         except aiohttp.ClientError as err:
             raise CardataContainerError(
                 f"Network error: {redact_sensitive_data(str(err))}"
