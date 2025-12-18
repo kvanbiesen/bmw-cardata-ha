@@ -455,15 +455,21 @@ class CardataStreamManager:
                 )
 
     async def _async_reconnect(self) -> None:
-        await self.async_stop()
-        await asyncio.sleep(self._reconnect_backoff)
-        try:
-            await self.async_start()
-        except Exception as err:
-            _LOGGER.error("BMW MQTT reconnect failed: %s", err)
-            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
-        else:
-            self._reconnect_backoff = 5
+        async with self._connect_lock:
+            if self._check_circuit_breaker():
+                if debug_enabled():
+                    _LOGGER.debug("Skipping MQTT reconnect due to open circuit breaker")
+                return
+
+            await self._async_stop_locked()
+            await asyncio.sleep(self._reconnect_backoff)
+            try:
+                await self._async_start_locked()
+            except Exception as err:
+                _LOGGER.error("BMW MQTT reconnect failed: %s", err)
+                self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
+            else:
+                self._reconnect_backoff = 5
 
     async def _handle_unauthorized(self) -> None:
         async with self._unauthorized_lock:
