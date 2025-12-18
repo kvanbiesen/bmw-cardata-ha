@@ -191,14 +191,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 while True:
                     await asyncio.sleep(DEFAULT_REFRESH_INTERVAL)
                     try:
-                        await refresh_tokens_for_entry(
-                            entry, session, manager, container_manager
+                        # Timeout prevents hanging indefinitely on network issues
+                        await asyncio.wait_for(
+                            refresh_tokens_for_entry(
+                                entry, session, manager, container_manager
+                            ),
+                            timeout=60.0
                         )
                     except CardataAuthError as err:
                         _LOGGER.error("Token refresh failed: %s", err)
-                    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-                        _LOGGER.warning(
-                            "Token refresh network/timeout error: %s", err)
+                    except asyncio.TimeoutError:
+                        _LOGGER.warning("Token refresh timed out after 60 seconds")
+                    except aiohttp.ClientError as err:
+                        _LOGGER.warning("Token refresh network error: %s", err)
                     except Exception as err:
                         _LOGGER.exception(
                             "Token refresh crashed with unexpected error: %s", err)
