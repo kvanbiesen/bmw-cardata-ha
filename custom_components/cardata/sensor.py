@@ -755,27 +755,30 @@ async def async_setup_entry(
     soc_testing_entities: dict[str, CardataTestingSocEstimateSensor] = {}
     soc_rate_entities: dict[str, CardataSocRateSensor] = {}
     metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
-    _electric_vehicle_cache: dict[str, bool] = {}
-    
+    # Cache stores (drive_train_value, is_electric_result) to detect metadata changes
+    _electric_vehicle_cache: dict[str, tuple[str, bool]] = {}
+
     def is_electric_vehicle(vin: str) -> bool:
-        """Check if vehicle is electric/hybrid based on metadata (cached)."""
-        # Return cached result if available
-        if vin in _electric_vehicle_cache:
-            return _electric_vehicle_cache[vin]
-    
+        """Check if vehicle is electric/hybrid based on metadata (cached with invalidation)."""
         metadata = coordinator.device_metadata.get(vin, {})
         extra = metadata.get("extra_attributes", {})
-    
         drive_train = extra.get("drive_train", "").lower()
-    
+
+        # Check cache - invalidate if drive_train changed
+        if vin in _electric_vehicle_cache:
+            cached_drive_train, cached_result = _electric_vehicle_cache[vin]
+            if cached_drive_train == drive_train:
+                return cached_result
+            # drive_train changed, re-evaluate below
+
         is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid"])
-    
-        # Cache the result
-        _electric_vehicle_cache[vin] = is_electric
-    
-        _LOGGER.debug("VIN %s is %s (drive_train: %s)", 
-                     vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
-    
+
+        # Cache result with the drive_train value used for the decision
+        _electric_vehicle_cache[vin] = (drive_train, is_electric)
+
+        _LOGGER.debug("VIN %s is %s (drive_train: %s)",
+                      vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
+
         return is_electric
 
     def ensure_metadata_sensor(vin: str) -> None:
