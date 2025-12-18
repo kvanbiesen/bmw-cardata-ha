@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import aiohttp
 
@@ -101,7 +101,8 @@ async def async_update_entry_data(
     """
     from .const import DOMAIN
 
-    runtime: CardataRuntimeData | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    runtime: CardataRuntimeData | None = hass.data.get(
+        DOMAIN, {}).get(entry.entry_id)
 
     # Choose appropriate lock: runtime lock if available, module-level lock during setup
     lock = (runtime.entry_update_lock if runtime and runtime.entry_update_lock else _setup_update_lock)

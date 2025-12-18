@@ -69,7 +69,8 @@ async def poll_for_tokens(
 
     while True:
         if time.monotonic() - start > timeout:
-            raise CardataAuthError("Timed out waiting for device authorization")
+            raise CardataAuthError(
+                "Timed out waiting for device authorization")
 
         async with session.post(token_url, data=payload, timeout=request_timeout) as resp:
             data = await resp.json(content_type=None)
@@ -82,8 +83,10 @@ async def poll_for_tokens(
                 continue
 
             # Redact sensitive data from error response
-            safe_data = {k: v for k, v in data.items() if k not in ("access_token", "refresh_token", "id_token")}
-            raise CardataAuthError(f"Token polling failed ({resp.status}): {safe_data}")
+            safe_data = {k: v for k, v in data.items() if k not in (
+                "access_token", "refresh_token", "id_token")}
+            raise CardataAuthError(
+                f"Token polling failed ({resp.status}): {safe_data}")
 
 
 async def refresh_tokens(
@@ -117,14 +120,17 @@ async def refresh_tokens(
                 data = await resp.json(content_type=None)
                 if resp.status == 200:
                     if attempt > 0:
-                        _LOGGER.debug("Token refresh succeeded after %d retries", attempt)
+                        _LOGGER.debug(
+                            "Token refresh succeeded after %d retries", attempt)
                     return data
 
                 # Auth errors (401, 403) - don't retry
                 if resp.status in (401, 403):
                     # Redact sensitive data from error response
-                    safe_data = {k: v for k, v in data.items() if k not in ("access_token", "refresh_token", "id_token")}
-                    raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}")
+                    safe_data = {k: v for k, v in data.items() if k not in (
+                        "access_token", "refresh_token", "id_token")}
+                    raise CardataAuthError(
+                        f"Token refresh failed ({resp.status}): {safe_data}")
 
                 # Server errors - retry
                 if 500 <= resp.status < 600 and attempt < max_retries:
@@ -140,8 +146,10 @@ async def refresh_tokens(
                     continue
 
                 # Other errors - fail
-                safe_data = {k: v for k, v in data.items() if k not in ("access_token", "refresh_token", "id_token")}
-                raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}")
+                safe_data = {k: v for k, v in data.items() if k not in (
+                    "access_token", "refresh_token", "id_token")}
+                raise CardataAuthError(
+                    f"Token refresh failed ({resp.status}): {safe_data}")
 
         except asyncio.TimeoutError as err:
             last_error = err

@@ -52,7 +52,8 @@ async def async_setup_entry(
         async_add_entities([entity])
         _LOGGER.debug("Created image entity for VIN: %s", redact_vin(vin))
 
-    initial_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
+    initial_vins = set(coordinator.data.keys()) | set(
+        coordinator.device_metadata.keys())
     for vin in initial_vins:
         ensure_entity(vin)
 
@@ -60,7 +61,8 @@ async def async_setup_entry(
         ensure_entity(vin)
 
     config_entry.async_on_unload(
-        async_dispatcher_connect(hass, coordinator.signal_new_image, async_handle_new_image)
+        async_dispatcher_connect(
+            hass, coordinator.signal_new_image, async_handle_new_image)
     )
 
 
@@ -75,10 +77,10 @@ class CardataImage(CardataEntity, ImageEntity):
         CardataEntity.__init__(self, coordinator, vin, "image")
         # Then initialize ImageEntity with hass
         ImageEntity.__init__(self, coordinator.hass)
-        
+
         self._base_name = "Vehicle Image"
         self._update_name(write_state=False)
-        
+
         # Get initial image data
         metadata = self._coordinator.device_metadata.get(self._vin, {})
         self._image_data: bytes | None = metadata.get("vehicle_image")
@@ -88,27 +90,28 @@ class CardataImage(CardataEntity, ImageEntity):
         # Get latest image from coordinator metadata
         metadata = self._coordinator.device_metadata.get(self._vin, {})
         image_data = metadata.get("vehicle_image")
-        
+
         if image_data and isinstance(image_data, bytes):
             return image_data
-        
+
         # Fallback to stored image data
         return self._image_data
 
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
         await super().async_added_to_hass()
-        
+
         # Initial image load
         metadata = self._coordinator.device_metadata.get(self._vin, {})
         self._image_data = metadata.get("vehicle_image")
-        
+
         if self._image_data:
             _LOGGER.debug(
                 "Vehicle image loaded for %s (%d bytes)",
                 redact_vin(self._vin),
                 len(self._image_data)
             )
+
     @property
     def state(self) -> str:
         """Return the state of the image entity."""

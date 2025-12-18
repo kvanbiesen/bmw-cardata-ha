@@ -75,7 +75,7 @@ class CardataContainerManager:
 
     async def async_ensure_hv_container(self, access_token: Optional[str]) -> Optional[str]:
         """Ensure the HV battery container exists and is active.
-        
+
         Behavior controlled by CONTAINER_REUSE_EXISTING in const.py:
         - True (default): Lists existing containers and reuses matching ones
           Pros: Prevents container accumulation, good for testing/reinstalls
@@ -83,10 +83,10 @@ class CardataContainerManager:
         - False: Always creates new container
           Pros: Saves 1 API call on first install
           Cons: Creates orphaned containers on reinstalls
-        
+
         Matching criteria (when reuse enabled):
         - Purpose: "High voltage battery telemetry"
-        - Name: "Bmw Cardata HV Battery"  
+        - Name: "Bmw Cardata HV Battery"
         - Descriptors: SHA1 signature of descriptor list
         """
         from .const import CONTAINER_REUSE_EXISTING
@@ -117,7 +117,7 @@ class CardataContainerManager:
                     "[%s] Container reuse enabled - searching for existing matching container...",
                     self._entry_id,
                 )
-                
+
                 try:
                     containers = await self._list_containers(access_token)
                     for container in containers:
@@ -131,12 +131,12 @@ class CardataContainerManager:
                                     found_id,
                                 )
                                 return self._container_id
-                    
+
                     _LOGGER.debug(
                         "[%s] No matching container found, will create new one",
                         self._entry_id,
                     )
-                    
+
                 except Exception as err:
                     _LOGGER.warning(
                         "[%s] Failed to list existing containers: %s. Will attempt to create new one.",
@@ -152,7 +152,8 @@ class CardataContainerManager:
             # No cached ID and (no match found OR reuse disabled) - create new one
             created_id = await self._create_container(access_token)
             self._container_id = created_id
-            _LOGGER.info("[%s] Created new HV battery container %s", self._entry_id, created_id)
+            _LOGGER.info("[%s] Created new HV battery container %s",
+                         self._entry_id, created_id)
             return self._container_id
 
     async def async_reset_hv_container(self, access_token: Optional[str]) -> Optional[str]:
@@ -214,7 +215,8 @@ class CardataContainerManager:
         response = await self._request(
             "POST", "/customers/containers", access_token, json_body=payload
         )
-        container_id = response.get("containerId") if isinstance(response, dict) else None
+        container_id = response.get("containerId") if isinstance(
+            response, dict) else None
         if not container_id:
             raise CardataContainerError(
                 "Container creation response missing containerId"
@@ -228,7 +230,8 @@ class CardataContainerManager:
         elif isinstance(response, dict):
             possible = response.get("containers")
             if isinstance(possible, list):
-                containers = [item for item in possible if isinstance(item, dict)]
+                containers = [
+                    item for item in possible if isinstance(item, dict)]
             else:
                 containers = []
         else:
@@ -237,25 +240,25 @@ class CardataContainerManager:
 
     def _matches_hv_container(self, container: Dict[str, Any]) -> bool:
         """Check if container matches HV battery container criteria.
-        
+
         CRITICAL: ALL conditions must match (not just any one)!
         - Purpose must match
-        - Name must match  
+        - Name must match
         - Signature must match
         """
         if not isinstance(container, dict):
             return False
-        
+
         purpose = container.get("purpose")
         name = container.get("name")
         descriptors = container.get("technicalDescriptors")
         signature = None
-        
+
         if isinstance(descriptors, list):
             signature = self.compute_signature(
                 [item for item in descriptors if isinstance(item, str)]
             )
-        
+
         # ALL conditions must be true (not any)!
         return (
             isinstance(purpose, str) and purpose == HV_BATTERY_CONTAINER_PURPOSE
