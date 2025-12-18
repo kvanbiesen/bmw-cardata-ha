@@ -102,7 +102,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
             # Example: Door lock stays "locked" for hours
             # - Coordinator sends "locked" every 5 seconds
             # - Binary sensor: "I'm already 'locked' → SKIP"
-            # - Result: No HA spam! ✅
+            # - Result: No HA spam! [OK]
             return
 
         # State changed or sensor is unknown - update it!
