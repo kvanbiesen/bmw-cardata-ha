@@ -506,16 +506,26 @@ class CardataCoordinator:
             return
 
         async with self._lock:
-            await self._async_handle_message_locked(payload, vin, data)
+            immediate_updates, schedule_debounce = await self._async_handle_message_locked(
+                payload, vin, data
+            )
+
+        for update_vin, descriptor in immediate_updates:
+            self._safe_dispatcher_send(self.signal_update, update_vin, descriptor)
+
+        if schedule_debounce:
+            await self._async_schedule_debounced_update()
 
     async def _async_handle_message_locked(
         self, payload: Dict[str, Any], vin: str, data: Dict[str, Any]
-    ) -> None:
+    ) -> tuple[list[tuple[str, str]], bool]:
         """Handle message while holding the lock."""
         redacted_vin = redact_vin(vin)
         vehicle_state = self.data.setdefault(vin, {})
         new_binary: list[str] = []
         new_sensor: list[str] = []
+        immediate_updates: list[tuple[str, str]] = []
+        schedule_debounce = False
 
         self.last_message_at = datetime.now(timezone.utc)
 
@@ -563,13 +573,13 @@ class CardataCoordinator:
             if value_changed:
                 # GPS coordinates: send immediately without debouncing!
                 if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
-                    self._safe_dispatcher_send(
-                        self.signal_update, vin, descriptor)
+                    immediate_updates.append((vin, descriptor))
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
                     if vin not in self._pending_updates:
                         self._pending_updates[vin] = set()
                     self._pending_updates[vin].add(descriptor)
+                    schedule_debounce = True
                     if debug_enabled():
                         _LOGGER.debug(
                             "Added to pending: %s (total pending: %d)",
@@ -584,13 +594,14 @@ class CardataCoordinator:
         # Queue new entities for immediate notification
         if new_sensor:
             self._pending_new_sensors.setdefault(vin, []).extend(new_sensor)
+            schedule_debounce = True
         if new_binary:
             self._pending_new_binary.setdefault(vin, []).extend(new_binary)
+            schedule_debounce = True
 
         self._apply_soc_estimate(vin, now)
 
-        # Schedule debounced update instead of immediate dispatcher sends
-        await self._async_schedule_debounced_update()
+        return immediate_updates, schedule_debounce
 
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
         """Check if value change is significant enough to send to sensors.
