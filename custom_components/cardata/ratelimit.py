@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 class RateLimitTracker:
     """Track API rate limits and implement cooldown after 429 errors."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize rate limit tracker."""
         self._rate_limited_until: float | None = None
         self._429_count: int = 0
@@ -118,7 +118,7 @@ class RateLimitTracker:
 class UnauthorizedLoopProtection:
     """Protect against repeated unauthorized retry loops."""
 
-    def __init__(self, max_attempts: int = 3, cooldown_hours: int = 1):
+    def __init__(self, max_attempts: int = 3, cooldown_hours: int = 1) -> None:
         """Initialize unauthorized loop protection.
 
         Args:
@@ -236,7 +236,7 @@ class UnauthorizedLoopProtection:
 class ContainerRateLimiter:
     """Rate limiter specifically for container operations."""
 
-    def __init__(self, max_per_hour: int = 3, max_per_day: int = 10):
+    def __init__(self, max_per_hour: int = 3, max_per_day: int = 10) -> None:
         """Initialize container rate limiter.
 
         Args:
