@@ -546,7 +546,16 @@ class CardataStreamManager:
         if not gcid and not id_token:
             return
 
-        async with self._credential_lock:
+        # Acquire lock with timeout to prevent indefinite blocking
+        try:
+            await asyncio.wait_for(self._credential_lock.acquire(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Credential lock acquisition timed out after 60s; skipping credential update"
+            )
+            return
+
+        try:
             reconnect_required = False
 
             if gcid and gcid != self._gcid:
@@ -593,6 +602,8 @@ class CardataStreamManager:
             except Exception as err:
                 _LOGGER.error(
                     "BMW MQTT reconnect failed after credential update: %s", err)
+        finally:
+            self._credential_lock.release()
 
     async def async_update_token(self, id_token: Optional[str]) -> None:
         await self.async_update_credentials(id_token=id_token)
