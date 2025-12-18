@@ -188,6 +188,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         )
                     except CardataAuthError as err:
                         _LOGGER.error("Token refresh failed: %s", err)
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                        _LOGGER.warning("Token refresh network/timeout error: %s", err)
+                    except Exception as err:
+                        _LOGGER.exception("Token refresh crashed with unexpected error: %s", err)
             except asyncio.CancelledError:
                 return
 
