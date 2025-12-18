@@ -608,8 +608,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 "Cleaned up %s orphaned entities for entry %s: %s",
                 deleted_count,
                 entry_id,
-                ", ".join(entity_ids_deleted[:10]) +
-                ("..." if deleted_count > 10 else ""),
+                f"{', '.join(entity_ids_deleted[:10])}"
+                f"{'...' if deleted_count > 10 else ''}",
             )
 
             return self.async_show_form(
