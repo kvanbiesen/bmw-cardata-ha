@@ -355,13 +355,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Stop coordinator watchdog if started
             await runtime.coordinator.async_stop_watchdog()
 
+            # Stop stream manager if started
+            await runtime.stream.async_stop()
+
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        await session.close()
-        raise
-    finally:
-        # If setup failed before storing runtime data, ensure session is closed
-        if hass.data.get(DOMAIN, {}).get(entry.entry_id) is None:
+
+        # Close session safely (may already be closed by earlier error handling)
+        if not session.closed:
             await session.close()
+        raise
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
