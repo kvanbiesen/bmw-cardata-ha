@@ -21,9 +21,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Ensure compatible DNS bindings for aiodns on 3.13
-          pip install "pycares>=4.4.0"
+          python -m pip install --upgrade "pycares>=4.4.0" "aiodns>=3.2.0"
           # Install latest HA and test stack
-          pip install homeassistant pytest pytest-asyncio pytest-homeassistant-custom-component paho-mqtt
+          python -m pip install homeassistant pytest pytest-asyncio pytest-homeassistant-custom-component paho-mqtt
+          # Reinstate pycares in case HA deps pulled an older build
+          python -m pip install --upgrade "pycares>=4.4.0"
 
       - name: Run mocked config/setup tests
         env:
