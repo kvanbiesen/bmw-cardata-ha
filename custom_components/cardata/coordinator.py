@@ -215,12 +215,13 @@ class CardataCoordinator:
         default_factory=asyncio.Lock, init=False, repr=False)
     _pending_updates: Dict[str, set[str]] = field(
         default_factory=dict, init=False)  # {vin: {descriptors}}
-    _pending_new_sensors: Dict[str, list[str]] = field(
-        default_factory=dict, init=False)
-    _pending_new_binary: Dict[str, list[str]] = field(
-        default_factory=dict, init=False)
+    _pending_new_sensors: Dict[str, set[str]] = field(
+        default_factory=dict, init=False)  # Changed to set to avoid duplicates
+    _pending_new_binary: Dict[str, set[str]] = field(
+        default_factory=dict, init=False)  # Changed to set to avoid duplicates
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
+    _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
 
     @property
     def signal_new_sensor(self) -> str:
@@ -578,13 +579,24 @@ class CardataCoordinator:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
                     if vin not in self._pending_updates:
                         self._pending_updates[vin] = set()
-                    self._pending_updates[vin].add(descriptor)
-                    schedule_debounce = True
+                    pending_set = self._pending_updates[vin]
+                    # Enforce size limit to prevent unbounded memory growth
+                    if len(pending_set) < self._MAX_PENDING_PER_VIN:
+                        pending_set.add(descriptor)
+                        schedule_debounce = True
+                    elif descriptor not in pending_set:
+                        _LOGGER.warning(
+                            "Pending updates limit reached for VIN %s (%d items); "
+                            "dropping update for %s",
+                            redact_vin(vin),
+                            len(pending_set),
+                            descriptor.split('.')[-1],
+                        )
                     if debug_enabled():
                         _LOGGER.debug(
                             "Added to pending: %s (total pending: %d)",
                             descriptor.split('.')[-1],  # Just the last part
-                            len(self._pending_updates.get(vin, set()))
+                            len(pending_set)
                         )
 
             # Update SOC tracking for relevant descriptors
@@ -593,10 +605,14 @@ class CardataCoordinator:
 
         # Queue new entities for immediate notification
         if new_sensor:
-            self._pending_new_sensors.setdefault(vin, []).extend(new_sensor)
+            pending_sensors = self._pending_new_sensors.setdefault(vin, set())
+            if len(pending_sensors) < self._MAX_PENDING_PER_VIN:
+                pending_sensors.update(new_sensor)
             schedule_debounce = True
         if new_binary:
-            self._pending_new_binary.setdefault(vin, []).extend(new_binary)
+            pending_binary = self._pending_new_binary.setdefault(vin, set())
+            if len(pending_binary) < self._MAX_PENDING_PER_VIN:
+                pending_binary.update(new_binary)
             schedule_debounce = True
 
         self._apply_soc_estimate(vin, now)
