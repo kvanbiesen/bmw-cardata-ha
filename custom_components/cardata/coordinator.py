@@ -743,14 +743,24 @@ class CardataCoordinator:
         self.watchdog_task = self.hass.loop.create_task(self._watchdog_loop())
 
     async def async_stop_watchdog(self) -> None:
-        if not self.watchdog_task:
-            return
-        self.watchdog_task.cancel()
-        try:
-            await self.watchdog_task
-        except asyncio.CancelledError:
-            pass
-        self.watchdog_task = None
+        # Cancel watchdog task
+        if self.watchdog_task:
+            self.watchdog_task.cancel()
+            try:
+                await self.watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self.watchdog_task = None
+
+        # Cancel debounce timer to prevent callbacks after shutdown
+        async with self._debounce_lock:
+            if self._update_debounce_handle is not None:
+                self._update_debounce_handle.cancel()
+                self._update_debounce_handle = None
+            # Clear pending updates to avoid stale data on restart
+            self._pending_updates.clear()
+            self._pending_new_sensors.clear()
+            self._pending_new_binary.clear()
 
     async def _watchdog_loop(self) -> None:
         try:
