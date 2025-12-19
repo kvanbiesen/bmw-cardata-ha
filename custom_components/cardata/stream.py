@@ -357,12 +357,12 @@ class CardataStreamManager:
             self._connection_state = ConnectionState.CONNECTED
             self._record_success()
 
-            if self._entry_id:  
+            if self._entry_id:
                 from .const import DOMAIN
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-                if runtime and runtime.unauthorized_protection:   
-                    runtime.unauthorized_protection.record_success()  
-
+                if runtime and runtime.unauthorized_protection:
+                    runtime.unauthorized_protection.record_success()
+            
             topic = userdata.get("topic")
             if topic:
                 result = client.subscribe(topic)
@@ -532,18 +532,20 @@ class CardataStreamManager:
                 from .const import DOMAIN
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                 if runtime:
-                    unauthorized_protection = runtime.unauthorized_protection   
+                    unauthorized_protection = runtime.unauthorized_protection
                 
             if unauthorized_protection:
-                can_retry, block_reason =runtime.unauthorized_protection.can_retry()
+                can_retry, block_reason = runtime.unauthorized_protection.can_retry()
                 if not can_retry:
                     _LOGGER.error(
-                            "BMW MQTT unauthorized retry blocked: %s", block_reason)
+                            "BMW MQTT unauthorized retry blocked: %s",
+                            block_reason
+                    )
                 await self.async_stop()
                 if self._status_callback:
                     await self._status_callback("unauthorized_blocked", block_reason)
                 return
-                runtime.unauthorized_protection.record_attempt()
+            runtime.unauthorized_protection.record_attempt()
                 
             self._awaiting_new_credentials = True
             if not self._reauth_notified:
