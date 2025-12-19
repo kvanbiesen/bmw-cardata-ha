@@ -389,14 +389,15 @@ class CardataStreamManager:
             rc = self._connect_rc
             self._connect_event = None
 
-            if rc != 0:
-                error_reason = {
+            if rc is None or rc != 0:
+                error_reasons = {
                     1: "Incorrect protocol version",
                     2: "Invalid client identifier",
                     3: "Server unavailable",
                     4: "Bad username or password",
                     5: "Not authorized",
-                }.get(rc, f"Unknown error (rc={rc})")
+                }
+                error_reason = error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
                 _LOGGER.error("BMW MQTT connection failed: %s", error_reason)
                 client.loop_stop()
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
