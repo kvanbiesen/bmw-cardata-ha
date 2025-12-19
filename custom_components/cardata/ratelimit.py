@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 class RateLimitTracker:
     """Track API rate limits and implement cooldown after 429 errors."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize rate limit tracker."""
         self._rate_limited_until: float | None = None
         self._429_count: int = 0
