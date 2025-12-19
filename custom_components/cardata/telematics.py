@@ -262,6 +262,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     base_interval = TELEMATIC_POLL_INTERVAL
     max_backoff = max(base_interval * 6, base_interval)
     consecutive_failures = 0
+    # Track last poll locally to prevent spin if config entry update fails
+    last_poll_local: float = 0.0
 
     _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
@@ -274,8 +276,10 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     "Entry %s removed, stopping telematic poll loop", entry_id)
                 return
 
-            # Check if we should poll based on last poll timestamp
-            last_poll = entry.data.get("last_telematic_poll", 0.0)
+            # Use local timestamp for loop control, fall back to persisted on first run
+            if last_poll_local == 0.0:
+                last_poll_local = entry.data.get("last_telematic_poll", 0.0)
+
             now = time.time()
             backoff_interval = (
                 base_interval
@@ -283,8 +287,9 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 else base_interval * (2 ** consecutive_failures)
             )
             interval = min(max_backoff, backoff_interval)
-            wait = interval - (now - last_poll)
+            wait = interval - (now - last_poll_local)
 
+            # Always wait at least 1 second to prevent spin
             if wait > 0:
                 # Not time to poll yet, sleep until next poll time
                 _LOGGER.debug(
@@ -295,10 +300,19 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 )
                 await asyncio.sleep(wait)
                 continue
+            elif wait < -interval:
+                # Guard against clock skew or very stale timestamps
+                _LOGGER.debug(
+                    "Telematic poll timestamp very stale (wait=%.1f); resetting",
+                    wait,
+                )
+                last_poll_local = now
 
             # Time to poll
             result = await async_perform_telematic_fetch(hass, entry, runtime)
             now = time.time()
+            # Always update local timestamp to prevent spin, regardless of persistence success
+            last_poll_local = now
 
             if result.status is True:
                 # Data fetched successfully
