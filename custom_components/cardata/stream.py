@@ -179,13 +179,82 @@ class CardataStreamManager:
                 int(now - self._failure_window_start),
                 self._circuit_breaker_duration,
             )
+            # Persist state so it survives HA restart
+            self._persist_circuit_breaker_state()
 
     def _record_success(self) -> None:
         """Record a successful connection."""
+        was_open = self._circuit_open
         self._failure_count = 0
         self._failure_window_start = None
         self._circuit_open = False
         self._circuit_open_until = None
+        # Clear persisted state if circuit was open
+        if was_open:
+            self._persist_circuit_breaker_state()
+
+    def get_circuit_breaker_state(self) -> dict:
+        """Get circuit breaker state for persistence. Uses absolute timestamps."""
+        if not self._circuit_open or self._circuit_open_until is None:
+            return {"circuit_open": False}
+
+        # Convert monotonic to absolute time for persistence
+        now_monotonic = time.monotonic()
+        now_absolute = time.time()
+        remaining = self._circuit_open_until - now_monotonic
+        if remaining <= 0:
+            return {"circuit_open": False}
+
+        return {
+            "circuit_open": True,
+            "circuit_open_until": now_absolute + remaining,
+            "failure_count": self._failure_count,
+        }
+
+    def restore_circuit_breaker_state(self, state: dict) -> None:
+        """Restore circuit breaker state from persistence. Converts absolute to monotonic."""
+        if not state or not state.get("circuit_open"):
+            return
+
+        open_until_absolute = state.get("circuit_open_until")
+        if open_until_absolute is None:
+            return
+
+        now_absolute = time.time()
+        remaining = open_until_absolute - now_absolute
+        if remaining <= 0:
+            # Circuit breaker expired while HA was down
+            _LOGGER.info("Circuit breaker expired during restart; allowing connections")
+            return
+
+        # Restore circuit breaker with remaining time
+        now_monotonic = time.monotonic()
+        self._circuit_open = True
+        self._circuit_open_until = now_monotonic + remaining
+        self._failure_count = state.get("failure_count", self._max_failures_per_window)
+        _LOGGER.warning(
+            "Restored circuit breaker state: blocking connections for %.0f more seconds",
+            remaining,
+        )
+
+    def _persist_circuit_breaker_state(self) -> None:
+        """Persist circuit breaker state to config entry."""
+        if not self._entry_id:
+            return
+        state = self.get_circuit_breaker_state()
+        # Schedule persistence in event loop (called from sync context)
+        self._run_coro_safe(self._async_persist_circuit_breaker(state))
+
+    async def _async_persist_circuit_breaker(self, state: dict) -> None:
+        """Async helper to persist circuit breaker state."""
+        from .const import DOMAIN
+        from .runtime import async_update_entry_data
+
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry:
+            await async_update_entry_data(
+                self.hass, entry, {"circuit_breaker_state": state}
+            )
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress

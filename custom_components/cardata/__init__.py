@@ -148,6 +148,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)
 
+        # Restore circuit breaker state from previous session
+        circuit_breaker_state = data.get("circuit_breaker_state")
+        if circuit_breaker_state:
+            manager.restore_circuit_breaker_state(circuit_breaker_state)
+
         # CRITICAL: Prevent MQTT from auto-starting during token refresh
         # Set a flag that we'll clear after bootstrap completes
         manager._bootstrap_in_progress = True
