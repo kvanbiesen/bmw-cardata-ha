@@ -284,7 +284,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
                     runtime.reauth_flow_id = None
             return self.async_abort(
                 reason="reauth_device_code_failed",
-                description_placeholders={"error": str(err)},
+                description_placeholders={"error": _sanitize_error_for_user(err)},
             )
         return await self.async_step_authorize()
 
