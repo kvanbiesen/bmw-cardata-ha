@@ -76,7 +76,7 @@ def _generate_code_challenge(code_verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
-class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN): # type: ignore[call-arg]
+class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     """Handle config flow for BMW CarData."""
 
     VERSION = 1
