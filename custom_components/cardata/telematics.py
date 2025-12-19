@@ -20,7 +20,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError
 from .runtime import CardataRuntimeData
-from .utils import redact_vin, redact_vin_payload, redact_vin_in_text
+from .utils import is_valid_vin, redact_vin, redact_vin_payload, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,6 +136,13 @@ async def async_perform_telematic_fetch(
 
     for vin in vins:
         redacted_vin = redact_vin(vin)
+        # Validate VIN format before using in URL to prevent injection
+        if not is_valid_vin(vin):
+            _LOGGER.warning(
+                "Cardata fetch_telematic_data: skipping invalid VIN format %s",
+                redacted_vin,
+            )
+            continue
         if quota:
             try:
                 await quota.async_claim()

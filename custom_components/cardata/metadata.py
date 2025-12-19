@@ -72,6 +72,13 @@ async def async_fetch_and_store_basic_data(
 
     for vin in vins:
         redacted_vin = redact_vin(vin)
+        # Validate VIN format before using in URL to prevent injection
+        if not is_valid_vin(vin):
+            _LOGGER.warning(
+                "Basic data request skipped for invalid VIN format %s",
+                redacted_vin,
+            )
+            continue
         url = f"{API_BASE_URL}{BASIC_DATA_ENDPOINT.format(vin=vin)}"
 
         if quota:
