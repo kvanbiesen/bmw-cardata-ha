@@ -20,7 +20,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError
 from .runtime import CardataRuntimeData
-from .utils import redact_vin, redact_vin_payload, redact_vin_in_text
+from .utils import is_valid_vin, redact_vin, redact_vin_payload, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,6 +56,12 @@ async def async_perform_telematic_fetch(
     # Build list of VINs to fetch
     vins: list[str]
     if vin_override:
+        # Validate user-supplied VIN early to provide clear error
+        if not is_valid_vin(vin_override):
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: invalid VIN format provided"
+            )
+            return TelematicFetchResult(None, "invalid_vin")
         vins = [vin_override]
     else:
         vins = []
@@ -136,6 +142,13 @@ async def async_perform_telematic_fetch(
 
     for vin in vins:
         redacted_vin = redact_vin(vin)
+        # Validate VIN format before using in URL to prevent injection
+        if not is_valid_vin(vin):
+            _LOGGER.warning(
+                "Cardata fetch_telematic_data: skipping invalid VIN format %s",
+                redacted_vin,
+            )
+            continue
         if quota:
             try:
                 await quota.async_claim()
@@ -262,6 +275,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     base_interval = TELEMATIC_POLL_INTERVAL
     max_backoff = max(base_interval * 6, base_interval)
     consecutive_failures = 0
+    # Track last poll locally to prevent spin if config entry update fails
+    last_poll_local: float = 0.0
 
     _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
@@ -274,8 +289,10 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     "Entry %s removed, stopping telematic poll loop", entry_id)
                 return
 
-            # Check if we should poll based on last poll timestamp
-            last_poll = entry.data.get("last_telematic_poll", 0.0)
+            # Use local timestamp for loop control, fall back to persisted on first run
+            if last_poll_local == 0.0:
+                last_poll_local = entry.data.get("last_telematic_poll", 0.0)
+
             now = time.time()
             backoff_interval = (
                 base_interval
@@ -283,8 +300,9 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 else base_interval * (2 ** consecutive_failures)
             )
             interval = min(max_backoff, backoff_interval)
-            wait = interval - (now - last_poll)
+            wait = interval - (now - last_poll_local)
 
+            # Always wait at least 1 second to prevent spin
             if wait > 0:
                 # Not time to poll yet, sleep until next poll time
                 _LOGGER.debug(
@@ -295,10 +313,19 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 )
                 await asyncio.sleep(wait)
                 continue
+            elif wait < -interval:
+                # Guard against clock skew or very stale timestamps
+                _LOGGER.debug(
+                    "Telematic poll timestamp very stale (wait=%.1f); resetting",
+                    wait,
+                )
+                last_poll_local = now
 
             # Time to poll
             result = await async_perform_telematic_fetch(hass, entry, runtime)
             now = time.time()
+            # Always update local timestamp to prevent spin, regardless of persistence success
+            last_poll_local = now
 
             if result.status is True:
                 # Data fetched successfully
@@ -325,6 +352,15 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     result.reason or "unknown",
                     next_interval / 60,
                 )
+                # Trigger reauth flow for auth-related failures
+                if result.reason in ("token_refresh_failed", "auth_error", "missing_access_token"):
+                    from .auth import handle_stream_error
+                    try:
+                        await handle_stream_error(hass, entry, "unauthorized")
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Failed to trigger reauth from telematic poll: %s", err
+                        )
             else:
                 _LOGGER.debug(
                     "Telematic poll failed (temporary) for entry %s; backing off to %.1f minutes",

@@ -7,7 +7,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -49,6 +49,8 @@ class DescriptorState:
 
 @dataclass
 class SocTracking:
+    """Track state of charge for a vehicle's battery with estimation and drift correction."""
+
     energy_kwh: Optional[float] = None
     max_energy_kwh: Optional[float] = None
     last_update: Optional[datetime] = None
@@ -60,6 +62,15 @@ class SocTracking:
     estimated_percent: Optional[float] = None
     last_estimate_time: Optional[datetime] = None
     target_soc_percent: Optional[float] = None
+    # Drift correction tracking
+    last_drift_check: Optional[datetime] = None
+    cumulative_drift: float = 0.0
+    drift_corrections: int = 0
+
+    # Class-level constants for drift correction
+    MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
+    DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
+    DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
 
     def update_max_energy(self, value: Optional[float]) -> None:
         if value is None:
@@ -70,13 +81,38 @@ class SocTracking:
         self._recalculate_rate()
 
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
-        self.last_soc_percent = percent
+        """Update with actual SOC value, detecting and correcting drift."""
         ts = timestamp or datetime.now(timezone.utc)
+
+        # Check for drift between estimate and actual
+        if self.estimated_percent is not None:
+            drift = abs(self.estimated_percent - percent)
+            self.cumulative_drift += drift
+            self.last_drift_check = ts
+
+            if drift >= self.DRIFT_CORRECTION_THRESHOLD:
+                _LOGGER.warning(
+                    "SOC estimate drift correction: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
+                    self.estimated_percent,
+                    percent,
+                    drift,
+                )
+                self.drift_corrections += 1
+            elif drift >= self.DRIFT_WARNING_THRESHOLD:
+                _LOGGER.debug(
+                    "SOC estimate drift detected: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
+                    self.estimated_percent,
+                    percent,
+                    drift,
+                )
+
+        self.last_soc_percent = percent
         self.last_update = ts
         if self.max_energy_kwh:
             self.energy_kwh = self.max_energy_kwh * percent / 100.0
         else:
             self.energy_kwh = None
+        # Reset estimate to actual value (correction)
         self.estimated_percent = percent
         self.last_estimate_time = ts
 
@@ -116,6 +152,10 @@ class SocTracking:
             self.last_estimate_time = timestamp or datetime.now(timezone.utc)
 
     def estimate(self, now: datetime) -> Optional[float]:
+        """Estimate current SOC based on charging rate and elapsed time.
+
+        Returns None if estimate is stale (no actual update for MAX_ESTIMATE_AGE_SECONDS).
+        """
         if self.estimated_percent is None:
             base = self.last_soc_percent
             if base is None:
@@ -127,6 +167,19 @@ class SocTracking:
         if self.last_estimate_time is None:
             self.last_estimate_time = now
             return self.estimated_percent
+
+        # Check if estimate is stale (no actual SOC update for too long)
+        if self.last_update is not None:
+            time_since_actual = (now - self.last_update).total_seconds()
+            if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
+                # Estimate is stale - fall back to last known actual value
+                _LOGGER.debug(
+                    "SOC estimate stale (%.0f seconds since last actual); "
+                    "returning last known value %.1f%%",
+                    time_since_actual,
+                    self.last_soc_percent or 0.0,
+                )
+                return self.last_soc_percent
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
         if delta_seconds <= 0:
@@ -215,12 +268,13 @@ class CardataCoordinator:
         default_factory=asyncio.Lock, init=False, repr=False)
     _pending_updates: Dict[str, set[str]] = field(
         default_factory=dict, init=False)  # {vin: {descriptors}}
-    _pending_new_sensors: Dict[str, list[str]] = field(
-        default_factory=dict, init=False)
-    _pending_new_binary: Dict[str, list[str]] = field(
-        default_factory=dict, init=False)
+    _pending_new_sensors: Dict[str, set[str]] = field(
+        default_factory=dict, init=False)  # Changed to set to avoid duplicates
+    _pending_new_binary: Dict[str, set[str]] = field(
+        default_factory=dict, init=False)  # Changed to set to avoid duplicates
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
+    _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
 
     @property
     def signal_new_sensor(self) -> str:
@@ -254,19 +308,42 @@ class CardataCoordinator:
     def signal_metadata(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_metadata"
 
+    # Track dispatcher exceptions to detect recurring issues
+    _dispatcher_exception_count: int = 0
+    _DISPATCHER_EXCEPTION_THRESHOLD: int = 10
+
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
 
         Wraps async_dispatcher_send to catch and log any exceptions from
         signal handlers, preventing crashed handlers from breaking the
         coordinator's message processing.
+
+        In debug mode, exceptions are re-raised to aid development.
+        In production, exceptions are logged and tracked to detect recurring issues.
         """
         try:
             async_dispatcher_send(self.hass, signal, *args)
+            # Reset counter on success
+            if self._dispatcher_exception_count > 0:
+                self._dispatcher_exception_count = 0
         except Exception as err:
+            self._dispatcher_exception_count += 1
             _LOGGER.exception(
                 "Exception in dispatcher signal %s handler: %s", signal, err
             )
+
+            # Warn if exceptions are recurring
+            if self._dispatcher_exception_count == self._DISPATCHER_EXCEPTION_THRESHOLD:
+                _LOGGER.error(
+                    "Dispatcher exceptions threshold reached (%d consecutive failures). "
+                    "This indicates a bug in a signal handler that should be investigated.",
+                    self._dispatcher_exception_count,
+                )
+
+            # In debug mode, re-raise to make bugs visible during development
+            if debug_enabled():
+                raise
 
     def _get_testing_tracking(self, vin: str) -> SocTracking:
         """Get or create testing SOC tracking for VIN. Must be called while holding _lock."""
@@ -578,13 +655,24 @@ class CardataCoordinator:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
                     if vin not in self._pending_updates:
                         self._pending_updates[vin] = set()
-                    self._pending_updates[vin].add(descriptor)
-                    schedule_debounce = True
+                    pending_set = self._pending_updates[vin]
+                    # Enforce size limit to prevent unbounded memory growth
+                    if len(pending_set) < self._MAX_PENDING_PER_VIN:
+                        pending_set.add(descriptor)
+                        schedule_debounce = True
+                    elif descriptor not in pending_set:
+                        _LOGGER.warning(
+                            "Pending updates limit reached for VIN %s (%d items); "
+                            "dropping update for %s",
+                            redact_vin(vin),
+                            len(pending_set),
+                            descriptor.split('.')[-1],
+                        )
                     if debug_enabled():
                         _LOGGER.debug(
                             "Added to pending: %s (total pending: %d)",
                             descriptor.split('.')[-1],  # Just the last part
-                            len(self._pending_updates.get(vin, set()))
+                            len(pending_set)
                         )
 
             # Update SOC tracking for relevant descriptors
@@ -593,10 +681,14 @@ class CardataCoordinator:
 
         # Queue new entities for immediate notification
         if new_sensor:
-            self._pending_new_sensors.setdefault(vin, []).extend(new_sensor)
+            pending_sensors = self._pending_new_sensors.setdefault(vin, set())
+            if len(pending_sensors) < self._MAX_PENDING_PER_VIN:
+                pending_sensors.update(new_sensor)
             schedule_debounce = True
         if new_binary:
-            self._pending_new_binary.setdefault(vin, []).extend(new_binary)
+            pending_binary = self._pending_new_binary.setdefault(vin, set())
+            if len(pending_binary) < self._MAX_PENDING_PER_VIN:
+                pending_binary.update(new_binary)
             schedule_debounce = True
 
         self._apply_soc_estimate(vin, now)
@@ -637,11 +729,11 @@ class CardataCoordinator:
         Note: GPS coordinates are sent immediately inline in async_handle_message,
         so this only handles non-GPS updates which are batched every 5 seconds.
         """
-        if self._update_debounce_handle:
-            return
+        # Always acquire lock first to avoid race conditions.
+        # The lock is fast and ensures atomic check-and-schedule.
         async with self._debounce_lock:
-            # Cancel existing debounce timer if any
-            if self._update_debounce_handle:
+            # Already scheduled - nothing to do
+            if self._update_debounce_handle is not None:
                 return
 
             # Schedule new update with 5 second delay
@@ -707,7 +799,12 @@ class CardataCoordinator:
         self._safe_dispatcher_send(self.signal_diagnostics)
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
-        """Get state for a descriptor. Returns a copy to avoid race conditions."""
+        """Get state for a descriptor (sync version for entity property access).
+
+        Returns a copy to minimize race condition impact. For guaranteed
+        thread-safety, use async_get_state() instead.
+        """
+        # Snapshot the nested dict access to minimize race window
         vehicle_data = self.data.get(vin)
         if vehicle_data is None:
             return None
@@ -717,15 +814,43 @@ class CardataCoordinator:
         # Return a copy to avoid mutations during read
         return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
+    async def async_get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
+        """Get state for a descriptor with proper lock acquisition."""
+        async with self._lock:
+            vehicle_data = self.data.get(vin)
+            if vehicle_data is None:
+                return None
+            state = vehicle_data.get(descriptor)
+            if state is None:
+                return None
+            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
+
     def iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
-        """Iterate over descriptors. Returns a snapshot list to avoid race conditions."""
+        """Iterate over descriptors (sync version for platform setup).
+
+        Returns a snapshot list to minimize race condition impact. For guaranteed
+        thread-safety, use async_iter_descriptors() instead.
+        """
         # Take a snapshot of the data to avoid iteration issues during concurrent modification
+        # Using list() on items() creates a shallow copy of the dict items at that moment
         result: list[tuple[str, str]] = []
-        for vin, descriptors in list(self.data.items()):
-            for descriptor, descriptor_state in list(descriptors.items()):
+        data_snapshot = list(self.data.items())
+        for vin, descriptors in data_snapshot:
+            descriptors_snapshot = list(descriptors.items())
+            for descriptor, descriptor_state in descriptors_snapshot:
                 if isinstance(descriptor_state.value, bool) == binary:
                     result.append((vin, descriptor))
         return result
+
+    async def async_iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
+        """Iterate over descriptors with proper lock acquisition."""
+        async with self._lock:
+            result: list[tuple[str, str]] = []
+            for vin, descriptors in self.data.items():
+                for descriptor, descriptor_state in descriptors.items():
+                    if isinstance(descriptor_state.value, bool) == binary:
+                        result.append((vin, descriptor))
+            return result
 
     async def async_handle_connection_event(
         self, status: str, reason: str | None = None
@@ -743,14 +868,24 @@ class CardataCoordinator:
         self.watchdog_task = self.hass.loop.create_task(self._watchdog_loop())
 
     async def async_stop_watchdog(self) -> None:
-        if not self.watchdog_task:
-            return
-        self.watchdog_task.cancel()
-        try:
-            await self.watchdog_task
-        except asyncio.CancelledError:
-            pass
-        self.watchdog_task = None
+        # Cancel watchdog task
+        if self.watchdog_task:
+            self.watchdog_task.cancel()
+            try:
+                await self.watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self.watchdog_task = None
+
+        # Cancel debounce timer to prevent callbacks after shutdown
+        async with self._debounce_lock:
+            if self._update_debounce_handle is not None:
+                self._update_debounce_handle.cancel()
+                self._update_debounce_handle = None
+            # Clear pending updates to avoid stale data on restart
+            self._pending_updates.clear()
+            self._pending_new_sensors.clear()
+            self._pending_new_binary.clear()
 
     async def _watchdog_loop(self) -> None:
         try:
