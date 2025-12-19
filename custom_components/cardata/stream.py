@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import ssl
+import threading
 import time
 from concurrent.futures import Future as ConcurrentFuture
 from enum import Enum
@@ -92,6 +93,9 @@ class CardataStreamManager:
         self._bootstrap_complete_event: asyncio.Event = asyncio.Event()
         # Connection timeout for MQTT
         self._connect_timeout = 30.0
+        # Threading event for connection synchronization (avoids global socket timeout)
+        self._connect_event: Optional[threading.Event] = None
+        self._connect_rc: Optional[int] = None
 
     def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run coroutine from MQTT callback thread with exception logging.
@@ -332,27 +336,60 @@ class CardataStreamManager:
         client.tls_insecure_set(False)
         client.reconnect_delay_set(min_delay=5, max_delay=60)
 
-        try:
-            # Set socket timeout to prevent hanging indefinitely
-            import socket
-            old_timeout = socket.getdefaulttimeout()
-            socket.setdefaulttimeout(self._connect_timeout)
-            try:
-                client.connect(self._host, self._port, keepalive=self._keepalive)
-            finally:
-                socket.setdefaulttimeout(old_timeout)
-        except socket.timeout:
-            _LOGGER.error("BMW MQTT connection timed out after %.0f seconds", self._connect_timeout)
-            client.loop_stop()
-            raise
-        except Exception as err:
-            _LOGGER.error("Unable to connect to BMW MQTT: %s", err)
-            client.loop_stop()
-            raise
+        # Use connect_async() with threading.Event to avoid modifying global socket timeout
+        # which could affect other concurrent connections in Home Assistant
+        self._connect_event = threading.Event()
+        self._connect_rc = None
+
+        # Start the network loop first (required for connect_async)
         client.loop_start()
+
+        try:
+            # Initiate async connection - actual connection happens in loop thread
+            client.connect_async(self._host, self._port, keepalive=self._keepalive)
+
+            # Wait for on_connect callback to signal completion
+            if not self._connect_event.wait(timeout=self._connect_timeout):
+                _LOGGER.error(
+                    "BMW MQTT connection timed out after %.0f seconds",
+                    self._connect_timeout
+                )
+                client.loop_stop()
+                self._connect_event = None
+                raise TimeoutError(
+                    f"MQTT connection timed out after {self._connect_timeout} seconds"
+                )
+
+            # Check connection result from on_connect callback
+            rc = self._connect_rc
+            self._connect_event = None
+
+            if rc != 0:
+                error_reason = {
+                    1: "Incorrect protocol version",
+                    2: "Invalid client identifier",
+                    3: "Server unavailable",
+                    4: "Bad username or password",
+                    5: "Not authorized",
+                }.get(rc, f"Unknown error (rc={rc})")
+                _LOGGER.error("BMW MQTT connection failed: %s", error_reason)
+                client.loop_stop()
+                raise ConnectionError(f"MQTT connection failed: {error_reason}")
+
+        except Exception as err:
+            self._connect_event = None
+            if not isinstance(err, (TimeoutError, ConnectionError)):
+                _LOGGER.error("Unable to connect to BMW MQTT: %s", err)
+                client.loop_stop()
+            raise
         self._client = client
 
     def _handle_connect(self, client: mqtt.Client, userdata, flags, rc) -> None:
+        # Signal the connect event for synchronous waiters (used during initial connection)
+        self._connect_rc = rc
+        if self._connect_event is not None:
+            self._connect_event.set()
+
         if rc == 0:
             self._connection_state = ConnectionState.CONNECTED
             self._record_success()
