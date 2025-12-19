@@ -7,7 +7,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -49,6 +49,8 @@ class DescriptorState:
 
 @dataclass
 class SocTracking:
+    """Track state of charge for a vehicle's battery with estimation and drift correction."""
+
     energy_kwh: Optional[float] = None
     max_energy_kwh: Optional[float] = None
     last_update: Optional[datetime] = None
@@ -60,6 +62,15 @@ class SocTracking:
     estimated_percent: Optional[float] = None
     last_estimate_time: Optional[datetime] = None
     target_soc_percent: Optional[float] = None
+    # Drift correction tracking
+    last_drift_check: Optional[datetime] = None
+    cumulative_drift: float = 0.0
+    drift_corrections: int = 0
+
+    # Class-level constants for drift correction
+    MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
+    DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
+    DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
 
     def update_max_energy(self, value: Optional[float]) -> None:
         if value is None:
@@ -70,13 +81,38 @@ class SocTracking:
         self._recalculate_rate()
 
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
-        self.last_soc_percent = percent
+        """Update with actual SOC value, detecting and correcting drift."""
         ts = timestamp or datetime.now(timezone.utc)
+
+        # Check for drift between estimate and actual
+        if self.estimated_percent is not None:
+            drift = abs(self.estimated_percent - percent)
+            self.cumulative_drift += drift
+            self.last_drift_check = ts
+
+            if drift >= self.DRIFT_CORRECTION_THRESHOLD:
+                _LOGGER.warning(
+                    "SOC estimate drift correction: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
+                    self.estimated_percent,
+                    percent,
+                    drift,
+                )
+                self.drift_corrections += 1
+            elif drift >= self.DRIFT_WARNING_THRESHOLD:
+                _LOGGER.debug(
+                    "SOC estimate drift detected: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
+                    self.estimated_percent,
+                    percent,
+                    drift,
+                )
+
+        self.last_soc_percent = percent
         self.last_update = ts
         if self.max_energy_kwh:
             self.energy_kwh = self.max_energy_kwh * percent / 100.0
         else:
             self.energy_kwh = None
+        # Reset estimate to actual value (correction)
         self.estimated_percent = percent
         self.last_estimate_time = ts
 
@@ -116,6 +152,10 @@ class SocTracking:
             self.last_estimate_time = timestamp or datetime.now(timezone.utc)
 
     def estimate(self, now: datetime) -> Optional[float]:
+        """Estimate current SOC based on charging rate and elapsed time.
+
+        Returns None if estimate is stale (no actual update for MAX_ESTIMATE_AGE_SECONDS).
+        """
         if self.estimated_percent is None:
             base = self.last_soc_percent
             if base is None:
@@ -127,6 +167,19 @@ class SocTracking:
         if self.last_estimate_time is None:
             self.last_estimate_time = now
             return self.estimated_percent
+
+        # Check if estimate is stale (no actual SOC update for too long)
+        if self.last_update is not None:
+            time_since_actual = (now - self.last_update).total_seconds()
+            if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
+                # Estimate is stale - fall back to last known actual value
+                _LOGGER.debug(
+                    "SOC estimate stale (%.0f seconds since last actual); "
+                    "returning last known value %.1f%%",
+                    time_since_actual,
+                    self.last_soc_percent or 0.0,
+                )
+                return self.last_soc_percent
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
         if delta_seconds <= 0:
