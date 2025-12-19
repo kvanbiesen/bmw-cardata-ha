@@ -707,7 +707,12 @@ class CardataCoordinator:
         self._safe_dispatcher_send(self.signal_diagnostics)
 
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
-        """Get state for a descriptor. Returns a copy to avoid race conditions."""
+        """Get state for a descriptor (sync version for entity property access).
+
+        Returns a copy to minimize race condition impact. For guaranteed
+        thread-safety, use async_get_state() instead.
+        """
+        # Snapshot the nested dict access to minimize race window
         vehicle_data = self.data.get(vin)
         if vehicle_data is None:
             return None
@@ -717,15 +722,43 @@ class CardataCoordinator:
         # Return a copy to avoid mutations during read
         return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
+    async def async_get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
+        """Get state for a descriptor with proper lock acquisition."""
+        async with self._lock:
+            vehicle_data = self.data.get(vin)
+            if vehicle_data is None:
+                return None
+            state = vehicle_data.get(descriptor)
+            if state is None:
+                return None
+            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
+
     def iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
-        """Iterate over descriptors. Returns a snapshot list to avoid race conditions."""
+        """Iterate over descriptors (sync version for platform setup).
+
+        Returns a snapshot list to minimize race condition impact. For guaranteed
+        thread-safety, use async_iter_descriptors() instead.
+        """
         # Take a snapshot of the data to avoid iteration issues during concurrent modification
+        # Using list() on items() creates a shallow copy of the dict items at that moment
         result: list[tuple[str, str]] = []
-        for vin, descriptors in list(self.data.items()):
-            for descriptor, descriptor_state in list(descriptors.items()):
+        data_snapshot = list(self.data.items())
+        for vin, descriptors in data_snapshot:
+            descriptors_snapshot = list(descriptors.items())
+            for descriptor, descriptor_state in descriptors_snapshot:
                 if isinstance(descriptor_state.value, bool) == binary:
                     result.append((vin, descriptor))
         return result
+
+    async def async_iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
+        """Iterate over descriptors with proper lock acquisition."""
+        async with self._lock:
+            result: list[tuple[str, str]] = []
+            for vin, descriptors in self.data.items():
+                for descriptor, descriptor_state in descriptors.items():
+                    if isinstance(descriptor_state.value, bool) == binary:
+                        result.append((vin, descriptor))
+            return result
 
     async def async_handle_connection_event(
         self, status: str, reason: str | None = None
