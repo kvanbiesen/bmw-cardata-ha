@@ -325,6 +325,15 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     result.reason or "unknown",
                     next_interval / 60,
                 )
+                # Trigger reauth flow for auth-related failures
+                if result.reason in ("token_refresh_failed", "auth_error", "missing_access_token"):
+                    from .auth import handle_stream_error
+                    try:
+                        await handle_stream_error(hass, entry, "unauthorized")
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Failed to trigger reauth from telematic poll: %s", err
+                        )
             else:
                 _LOGGER.debug(
                     "Telematic poll failed (temporary) for entry %s; backing off to %.1f minutes",
