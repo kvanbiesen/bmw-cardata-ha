@@ -655,6 +655,8 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
 class CardataSocEstimateSensor(_SocTrackerBase):
     """Sensor for predicted state of charge (SOC)."""
 
+     _attr_translation_key = "battery"
+
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(
             coordinator,
