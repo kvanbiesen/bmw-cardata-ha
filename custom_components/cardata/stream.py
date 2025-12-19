@@ -114,8 +114,19 @@ class CardataStreamManager:
         future.add_done_callback(_done_callback)
 
     async def async_start(self) -> None:
-        async with self._connect_lock:
+        # Acquire lock with timeout to prevent indefinite blocking
+        try:
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Connect lock acquisition timed out after 60s; skipping start"
+            )
+            raise ConnectionError("Connect lock acquisition timed out")
+
+        try:
             await self._async_start_locked()
+        finally:
+            self._connect_lock.release()
 
     def _check_circuit_breaker(self) -> bool:
         """Check if circuit breaker is open. Returns True if connection should be blocked."""
@@ -224,8 +235,22 @@ class CardataStreamManager:
             raise
 
     async def async_stop(self) -> None:
-        async with self._connect_lock:
+        # Acquire lock with timeout to prevent indefinite blocking
+        try:
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Connect lock acquisition timed out after 60s during stop; "
+                "proceeding with forced stop"
+            )
+            # Still attempt to stop even without lock - resource cleanup is critical
             await self._async_stop_locked()
+            return
+
+        try:
+            await self._async_stop_locked()
+        finally:
+            self._connect_lock.release()
 
     async def _async_stop_locked(self) -> None:
         # Mark as intentional disconnect to prevent reconnection callbacks
@@ -539,7 +564,17 @@ class CardataStreamManager:
                 )
 
     async def _async_reconnect(self) -> None:
-        async with self._connect_lock:
+        # Acquire lock with timeout to prevent indefinite blocking
+        try:
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Connect lock acquisition timed out after 60s during reconnect; "
+                "skipping this reconnect attempt"
+            )
+            return
+
+        try:
             if self._check_circuit_breaker():
                 if debug_enabled():
                     _LOGGER.debug(
@@ -556,6 +591,8 @@ class CardataStreamManager:
                     self._reconnect_backoff * 2, self._max_backoff)
             else:
                 self._reconnect_backoff = 5
+        finally:
+            self._connect_lock.release()
 
     async def _handle_unauthorized(self) -> None:
         async with self._unauthorized_lock:
