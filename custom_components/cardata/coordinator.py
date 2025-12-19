@@ -255,19 +255,42 @@ class CardataCoordinator:
     def signal_metadata(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_metadata"
 
+    # Track dispatcher exceptions to detect recurring issues
+    _dispatcher_exception_count: int = 0
+    _DISPATCHER_EXCEPTION_THRESHOLD: int = 10
+
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
 
         Wraps async_dispatcher_send to catch and log any exceptions from
         signal handlers, preventing crashed handlers from breaking the
         coordinator's message processing.
+
+        In debug mode, exceptions are re-raised to aid development.
+        In production, exceptions are logged and tracked to detect recurring issues.
         """
         try:
             async_dispatcher_send(self.hass, signal, *args)
+            # Reset counter on success
+            if self._dispatcher_exception_count > 0:
+                self._dispatcher_exception_count = 0
         except Exception as err:
+            self._dispatcher_exception_count += 1
             _LOGGER.exception(
                 "Exception in dispatcher signal %s handler: %s", signal, err
             )
+
+            # Warn if exceptions are recurring
+            if self._dispatcher_exception_count == self._DISPATCHER_EXCEPTION_THRESHOLD:
+                _LOGGER.error(
+                    "Dispatcher exceptions threshold reached (%d consecutive failures). "
+                    "This indicates a bug in a signal handler that should be investigated.",
+                    self._dispatcher_exception_count,
+                )
+
+            # In debug mode, re-raise to make bugs visible during development
+            if debug_enabled():
+                raise
 
     def _get_testing_tracking(self, vin: str) -> SocTracking:
         """Get or create testing SOC tracking for VIN. Must be called while holding _lock."""
