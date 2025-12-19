@@ -33,7 +33,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.debug("Starting bootstrap sequence for entry %s", entry.entry_id)
 
     quota = runtime.quota_manager
-    rate_limiter = runtime.rate_limiter_tracker 
+    rate_limiter = runtime.rate_limiter_tracker
 
     try:
         from .auth import refresh_tokens_for_entry
@@ -146,7 +146,7 @@ async def async_fetch_primary_vins(
     headers: dict[str, str],
     entry_id: str,
     quota: QuotaManager | None,
-    rate_limiter: Any | None = None,   
+    rate_limiter: Any | None = None,
 ) -> list[str]:
     """Fetch list of primary vehicle VINs from vehicle mappings."""
     url = f"{API_BASE_URL}/customers/vehicles/mappings"
