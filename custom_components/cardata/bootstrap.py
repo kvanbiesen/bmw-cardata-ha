@@ -33,7 +33,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.debug("Starting bootstrap sequence for entry %s", entry.entry_id)
 
     quota = runtime.quota_manager
-    rate_limiter = runtime.rate_limiter_tracker
+    rate_limiter = runtime.rate_limit_tracker
 
     try:
         from .auth import refresh_tokens_for_entry
