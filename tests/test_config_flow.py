@@ -129,7 +129,7 @@ async def test_reauth_flow_updates_entry(hass):
     ):
         reauth_result = await hass.config_entries.flow.async_init(
             DOMAIN,
-            context={"source": config_entries.SOURCE_REAUTH},
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": existing.entry_id},
             data={"client_id": CLIENT_ID, "entry_id": existing.entry_id},
         )
         assert reauth_result["type"] == FlowResultType.FORM
