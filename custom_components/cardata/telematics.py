@@ -128,6 +128,7 @@ async def async_perform_telematic_fetch(
     }
     params = {"containerId": container_id}
     quota = runtime.quota_manager
+    rate_limiter = runtime.rate_limit_tracker
 
     any_success = False
     any_attempt = False
@@ -156,6 +157,7 @@ async def async_perform_telematic_fetch(
             headers=headers,
             params=params,
             context=f"Telematic data fetch for {redacted_vin}",
+            rate_limiter=rate_limiter,
         )
 
         if error:

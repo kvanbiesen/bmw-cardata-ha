@@ -73,7 +73,7 @@ class CardataContainerManager:
 
         self._container_id = container_id
 
-    async def async_ensure_hv_container(self, access_token: Optional[str]) -> Optional[str]:
+    async def async_ensure_hv_container(self, access_token: Optional[str], rate_limiter: Any | None = None,) -> Optional[str]:
         """Ensure the HV battery container exists and is active.
 
         Behavior controlled by CONTAINER_REUSE_EXISTING in const.py:
@@ -109,6 +109,16 @@ class CardataContainerManager:
                         self._container_id,
                     )
                 return self._container_id
+
+            if rate_limiter:
+                can_create, block_reason = rate_limiter.can_create_container()
+                if not can_create:
+                    _LOGGER.warning(
+                        "[%s] Cannot create new container due to rate limiting: %s",
+                        self._entry_id,
+                        block_reason
+                    )
+                    return None
 
             # Check if container reuse is enabled
             if CONTAINER_REUSE_EXISTING:
@@ -151,12 +161,16 @@ class CardataContainerManager:
 
             # No cached ID and (no match found OR reuse disabled) - create new one
             created_id = await self._create_container(access_token)
+
+            if created_id and rate_limiter:
+                rate_limiter.record_creation()
+
             self._container_id = created_id
             _LOGGER.info("[%s] Created new HV battery container %s",
                          self._entry_id, created_id)
             return self._container_id
 
-    async def async_reset_hv_container(self, access_token: Optional[str]) -> Optional[str]:
+    async def async_reset_hv_container(self, access_token: Optional[str], rate_limiter: Any | None = None) -> Optional[str]:
         """Delete existing HV telemetry containers and create a fresh one."""
 
         if not access_token:
@@ -168,6 +182,18 @@ class CardataContainerManager:
             return self._container_id
 
         async with self._lock:
+            if rate_limiter:
+                can_create, block_reason = rate_limiter.can_create_container()
+                if not can_create:
+                    _LOGGER.warning(
+                        "[%s] Cannot reset container due to rate limiting: %s",
+                        self._entry_id,
+                        block_reason
+                    )
+                    raise CardataContainerError(
+                        f"Container creatin rate limited: {block_reason}"
+                    )
+
             containers = await self._list_containers(access_token)
             deleted_ids: List[str] = []
             for container in containers:
@@ -198,6 +224,9 @@ class CardataContainerManager:
 
             self._container_id = None
             new_id = await self._create_container(access_token)
+            if new_id and rate_limiter:
+                rate_limiter.record_creation()
+
             self._container_id = new_id
             _LOGGER.info(
                 "[%s] Reset HV telemetry container; new container id %s",

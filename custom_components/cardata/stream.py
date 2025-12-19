@@ -44,8 +44,10 @@ class CardataStreamManager:
         port: int,
         keepalive: int,
         error_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+        entry_id: Optional[str] = None,
     ) -> None:
         self.hass = hass
+        self._entry_id = entry_id
         self._client_id = client_id
         self._gcid = gcid
         self._password = id_token
@@ -354,6 +356,13 @@ class CardataStreamManager:
         if rc == 0:
             self._connection_state = ConnectionState.CONNECTED
             self._record_success()
+
+            if self._entry_id:
+                from .const import DOMAIN
+                runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+                if runtime and runtime.unauthorized_protection:
+                    runtime.unauthorized_protection.record_success()
+
             topic = userdata.get("topic")
             if topic:
                 result = client.subscribe(topic)
@@ -518,6 +527,26 @@ class CardataStreamManager:
             self._unauthorized_retry_in_progress = True
 
         try:
+            unauthorized_protection = None
+            if self._entry_id:
+                from .const import DOMAIN
+                runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+                if runtime:
+                    unauthorized_protection = runtime.unauthorized_protection
+
+            if unauthorized_protection:
+                can_retry, block_reason = runtime.unauthorized_protection.can_retry()
+                if not can_retry:
+                    _LOGGER.error(
+                        "BMW MQTT unauthorized retry blocked: %s",
+                        block_reason
+                    )
+                await self.async_stop()
+                if self._status_callback:
+                    await self._status_callback("unauthorized_blocked", block_reason)
+                return
+            runtime.unauthorized_protection.record_attempt()
+
             self._awaiting_new_credentials = True
             if not self._reauth_notified:
                 self._reauth_notified = True

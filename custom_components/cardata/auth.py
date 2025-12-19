@@ -275,9 +275,11 @@ async def async_ensure_container_for_entry(
     )
 
     container_manager.sync_from_entry(None)
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    rate_limiter = runtime.container_rate_limiter if runtime else None
 
     try:
-        container_id = await container_manager.async_ensure_hv_container(access_token)
+        container_id = await container_manager.async_ensure_hv_container(access_token, rate_limiter)
     except CardataContainerError as err:
         _LOGGER.error(
             "Failed to create HV container for entry %s: %s",

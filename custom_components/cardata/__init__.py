@@ -143,6 +143,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             port=data.get("mqtt_port", DEFAULT_STREAM_PORT),
             keepalive=mqtt_keepalive,
             error_callback=handle_stream_error_callback,
+            entry_id=entry.entry_id,
         )
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)

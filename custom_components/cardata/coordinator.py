@@ -617,9 +617,10 @@ class CardataCoordinator:
 
         old_value = current_state.value
 
-        # ALWAYS send same values - sensors might be 'unknown' and need them!
+        # Value didn't change - DON'T send signal (sensor already has it)
+        # Sensors restore from storage on startup, they don't need unchanged values
         if old_value == new_value:
-            return True  # Let sensors decide!
+            return False  # Skip Unchanged
 
         # For numeric values, check threshold
         if isinstance(new_value, (int, float)) and isinstance(old_value, (int, float)):

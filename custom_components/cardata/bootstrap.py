@@ -33,6 +33,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.debug("Starting bootstrap sequence for entry %s", entry.entry_id)
 
     quota = runtime.quota_manager
+    rate_limiter = runtime.rate_limit_tracker
 
     try:
         from .auth import refresh_tokens_for_entry
@@ -76,7 +77,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             entry.entry_id
         )
 
-    vins = await async_fetch_primary_vins(runtime.session, headers, entry.entry_id, quota)
+    vins = await async_fetch_primary_vins(runtime.session, headers, entry.entry_id, quota, rate_limiter)
     if not vins:
         await async_mark_bootstrap_complete(hass, entry)
         return
@@ -118,7 +119,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     container_id = entry.data.get("hv_container_id")
     if container_id:
         created_entities = await async_seed_telematic_data(
-            runtime, entry.entry_id, headers, container_id, vins, quota
+            runtime, entry.entry_id, headers, container_id, vins, quota, rate_limiter
         )
     else:
         _LOGGER.debug(
@@ -145,6 +146,7 @@ async def async_fetch_primary_vins(
     headers: dict[str, str],
     entry_id: str,
     quota: QuotaManager | None,
+    rate_limiter: Any | None = None,
 ) -> list[str]:
     """Fetch list of primary vehicle VINs from vehicle mappings."""
     url = f"{API_BASE_URL}/customers/vehicles/mappings"
@@ -166,6 +168,7 @@ async def async_fetch_primary_vins(
         url,
         headers=headers,
         context=f"Bootstrap mapping request for entry {entry_id}",
+        rate_limiter=rate_limiter,
     )
 
     if error:
@@ -251,6 +254,7 @@ async def async_seed_telematic_data(
     container_id: str,
     vins: list[str],
     quota: QuotaManager | None,
+    rate_limiter: Any | None = None,
 ) -> bool:
     """Fetch initial telematic data for each VIN to seed descriptors."""
     session = runtime.session
@@ -283,6 +287,7 @@ async def async_seed_telematic_data(
             headers=headers,
             params=params,
             context=f"Bootstrap telematic request for {redacted_vin}",
+            rate_limiter=rate_limiter,
         )
 
         if error:
