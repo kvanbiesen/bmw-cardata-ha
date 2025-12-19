@@ -654,7 +654,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
         flow_result = await self.hass.config_entries.flow.async_init(
             DOMAIN,
-            context={"source": config_entries.SOURCE_REAUTH},
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
             data={"client_id": client_id, "entry_id": entry.entry_id},
         )
         if flow_result["type"] == FlowResultType.ABORT:
