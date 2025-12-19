@@ -637,11 +637,11 @@ class CardataCoordinator:
         Note: GPS coordinates are sent immediately inline in async_handle_message,
         so this only handles non-GPS updates which are batched every 5 seconds.
         """
-        if self._update_debounce_handle:
-            return
+        # Always acquire lock first to avoid race conditions.
+        # The lock is fast and ensures atomic check-and-schedule.
         async with self._debounce_lock:
-            # Cancel existing debounce timer if any
-            if self._update_debounce_handle:
+            # Already scheduled - nothing to do
+            if self._update_debounce_handle is not None:
                 return
 
             # Schedule new update with 5 second delay
