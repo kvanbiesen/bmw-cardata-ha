@@ -170,7 +170,7 @@ class CardataContainerManager:
                          self._entry_id, created_id)
             return self._container_id
 
-    async def async_reset_hv_container(self, access_token: Optional[str]) -> Optional[str]:
+    async def async_reset_hv_container(self, access_token: Optional[str], rate_limiter: Any | None = None) -> Optional[str]:
         """Delete existing HV telemetry containers and create a fresh one."""
 
         if not access_token:
