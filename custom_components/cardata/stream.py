@@ -535,17 +535,17 @@ class CardataStreamManager:
                     unauthorized_protection = runtime.unauthorized_protection
 
             if unauthorized_protection:
-                can_retry, block_reason = runtime.unauthorized_protection.can_retry()
+                can_retry, block_reason = unauthorized_protection.can_retry()
                 if not can_retry:
                     _LOGGER.error(
                         "BMW MQTT unauthorized retry blocked: %s",
                         block_reason
                     )
-                await self.async_stop()
-                if self._status_callback:
-                    await self._status_callback("unauthorized_blocked", block_reason)
-                return
-            runtime.unauthorized_protection.record_attempt()
+                    await self.async_stop()
+                    if self._status_callback:
+                        await self._status_callback("unauthorized_blocked", block_reason)
+                    return
+                unauthorized_protection.record_attempt()
 
             self._awaiting_new_credentials = True
             if not self._reauth_notified:
