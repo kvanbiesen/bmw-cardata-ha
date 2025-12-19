@@ -362,7 +362,7 @@ class CardataStreamManager:
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                 if runtime and runtime.unauthorized_protection:
                     runtime.unauthorized_protection.record_success()
-            
+
             topic = userdata.get("topic")
             if topic:
                 result = client.subscribe(topic)
@@ -533,7 +533,7 @@ class CardataStreamManager:
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                 if runtime:
                     unauthorized_protection = runtime.unauthorized_protection
-                    
+
             if unauthorized_protection:
                 can_retry, block_reason = runtime.unauthorized_protection.can_retry()
                 if not can_retry:
@@ -546,7 +546,7 @@ class CardataStreamManager:
                     await self._status_callback("unauthorized_blocked", block_reason)
                 return
             runtime.unauthorized_protection.record_attempt()
-                
+
             self._awaiting_new_credentials = True
             if not self._reauth_notified:
                 self._reauth_notified = True
