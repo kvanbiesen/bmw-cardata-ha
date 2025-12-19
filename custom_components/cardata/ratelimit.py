@@ -236,6 +236,9 @@ class UnauthorizedLoopProtection:
 class ContainerRateLimiter:
     """Rate limiter specifically for container operations."""
 
+    # Safety limit to prevent unbounded list growth
+    _MAX_LIST_SIZE: int = 100
+
     def __init__(self, max_per_hour: int = 3, max_per_day: int = 10) -> None:
         """Initialize container rate limiter.
 
@@ -248,20 +251,42 @@ class ContainerRateLimiter:
         self._operations_hour: list[float] = []
         self._operations_day: list[float] = []
 
+    def _cleanup_expired(self) -> None:
+        """Remove expired entries from operation lists.
+
+        Called automatically by other methods to ensure lists don't grow unbounded.
+        """
+        now = time.time()
+        hour_ago = now - 3600
+        day_ago = now - 86400
+
+        self._operations_hour = [
+            t for t in self._operations_hour if t > hour_ago
+        ]
+        self._operations_day = [
+            t for t in self._operations_day if t > day_ago
+        ]
+
+        # Safety limit: if lists are still too large (shouldn't happen), truncate
+        if len(self._operations_hour) > self._MAX_LIST_SIZE:
+            _LOGGER.warning(
+                "Container rate limiter hourly list exceeded safety limit; truncating"
+            )
+            self._operations_hour = self._operations_hour[-self._MAX_LIST_SIZE:]
+        if len(self._operations_day) > self._MAX_LIST_SIZE:
+            _LOGGER.warning(
+                "Container rate limiter daily list exceeded safety limit; truncating"
+            )
+            self._operations_day = self._operations_day[-self._MAX_LIST_SIZE:]
+
     def can_create_container(self) -> tuple[bool, str | None]:
         """Check if we can create a container.
 
         Returns:
             Tuple of (can_create, reason_if_blocked)
         """
+        self._cleanup_expired()
         now = time.time()
-        hour_ago = now - 3600
-        day_ago = now - 86400
-
-        # Clean old operations
-        self._operations_hour = [
-            t for t in self._operations_hour if t > hour_ago]
-        self._operations_day = [t for t in self._operations_day if t > day_ago]
 
         # Check hourly limit
         if len(self._operations_hour) >= self._max_per_hour:
@@ -291,6 +316,7 @@ class ContainerRateLimiter:
 
     def record_creation(self) -> None:
         """Record a container creation."""
+        self._cleanup_expired()
         now = time.time()
         self._operations_hour.append(now)
         self._operations_day.append(now)
@@ -307,6 +333,7 @@ class ContainerRateLimiter:
         Returns:
             Dictionary with status information
         """
+        self._cleanup_expired()
         return {
             "creations_last_hour": len(self._operations_hour),
             "creations_last_day": len(self._operations_day),

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import ssl
+import threading
 import time
 from concurrent.futures import Future as ConcurrentFuture
 from enum import Enum
@@ -92,6 +93,9 @@ class CardataStreamManager:
         self._bootstrap_complete_event: asyncio.Event = asyncio.Event()
         # Connection timeout for MQTT
         self._connect_timeout = 30.0
+        # Threading event for connection synchronization (avoids global socket timeout)
+        self._connect_event: Optional[threading.Event] = None
+        self._connect_rc: Optional[int] = None
 
     def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run coroutine from MQTT callback thread with exception logging.
@@ -110,8 +114,19 @@ class CardataStreamManager:
         future.add_done_callback(_done_callback)
 
     async def async_start(self) -> None:
-        async with self._connect_lock:
+        # Acquire lock with timeout to prevent indefinite blocking
+        try:
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Connect lock acquisition timed out after 60s; skipping start"
+            )
+            raise ConnectionError("Connect lock acquisition timed out")
+
+        try:
             await self._async_start_locked()
+        finally:
+            self._connect_lock.release()
 
     def _check_circuit_breaker(self) -> bool:
         """Check if circuit breaker is open. Returns True if connection should be blocked."""
@@ -164,13 +179,81 @@ class CardataStreamManager:
                 int(now - self._failure_window_start),
                 self._circuit_breaker_duration,
             )
+            # Persist state so it survives HA restart
+            self._persist_circuit_breaker_state()
 
     def _record_success(self) -> None:
         """Record a successful connection."""
+        was_open = self._circuit_open
         self._failure_count = 0
         self._failure_window_start = None
         self._circuit_open = False
         self._circuit_open_until = None
+        # Clear persisted state if circuit was open
+        if was_open:
+            self._persist_circuit_breaker_state()
+
+    def get_circuit_breaker_state(self) -> dict:
+        """Get circuit breaker state for persistence. Uses absolute timestamps."""
+        if not self._circuit_open or self._circuit_open_until is None:
+            return {"circuit_open": False}
+
+        # Convert monotonic to absolute time for persistence
+        now_monotonic = time.monotonic()
+        now_absolute = time.time()
+        remaining = self._circuit_open_until - now_monotonic
+        if remaining <= 0:
+            return {"circuit_open": False}
+
+        return {
+            "circuit_open": True,
+            "circuit_open_until": now_absolute + remaining,
+            "failure_count": self._failure_count,
+        }
+
+    def restore_circuit_breaker_state(self, state: dict) -> None:
+        """Restore circuit breaker state from persistence. Converts absolute to monotonic."""
+        if not state or not state.get("circuit_open"):
+            return
+
+        open_until_absolute = state.get("circuit_open_until")
+        if open_until_absolute is None:
+            return
+
+        now_absolute = time.time()
+        remaining = open_until_absolute - now_absolute
+        if remaining <= 0:
+            # Circuit breaker expired while HA was down
+            _LOGGER.info("Circuit breaker expired during restart; allowing connections")
+            return
+
+        # Restore circuit breaker with remaining time
+        now_monotonic = time.monotonic()
+        self._circuit_open = True
+        self._circuit_open_until = now_monotonic + remaining
+        self._failure_count = state.get("failure_count", self._max_failures_per_window)
+        _LOGGER.warning(
+            "Restored circuit breaker state: blocking connections for %.0f more seconds",
+            remaining,
+        )
+
+    def _persist_circuit_breaker_state(self) -> None:
+        """Persist circuit breaker state to config entry."""
+        if not self._entry_id:
+            return
+        state = self.get_circuit_breaker_state()
+        # Schedule persistence in event loop (called from sync context)
+        self._run_coro_safe(self._async_persist_circuit_breaker(state))
+
+    async def _async_persist_circuit_breaker(self, state: dict) -> None:
+        """Async helper to persist circuit breaker state."""
+        from .runtime import async_update_entry_data
+
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry:
+            await async_update_entry_data(
+                self.hass, entry, {"circuit_breaker_state": state}
+            )
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress
@@ -220,8 +303,22 @@ class CardataStreamManager:
             raise
 
     async def async_stop(self) -> None:
-        async with self._connect_lock:
+        # Acquire lock with timeout to prevent indefinite blocking
+        try:
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Connect lock acquisition timed out after 60s during stop; "
+                "proceeding with forced stop"
+            )
+            # Still attempt to stop even without lock - resource cleanup is critical
             await self._async_stop_locked()
+            return
+
+        try:
+            await self._async_stop_locked()
+        finally:
+            self._connect_lock.release()
 
     async def _async_stop_locked(self) -> None:
         # Mark as intentional disconnect to prevent reconnection callbacks
@@ -325,34 +422,67 @@ class CardataStreamManager:
         client.on_disconnect = self._handle_disconnect
         context = ssl.create_default_context()
         if hasattr(ssl, "TLSVersion"):
+            # Set minimum TLS 1.2, allow TLS 1.3 if supported by server
             context.minimum_version = ssl.TLSVersion.TLSv1_2
-            if hasattr(context, "maximum_version"):
-                context.maximum_version = ssl.TLSVersion.TLSv1_2
         client.tls_set_context(context)
         client.tls_insecure_set(False)
         client.reconnect_delay_set(min_delay=5, max_delay=60)
 
-        try:
-            # Set socket timeout to prevent hanging indefinitely
-            import socket
-            old_timeout = socket.getdefaulttimeout()
-            socket.setdefaulttimeout(self._connect_timeout)
-            try:
-                client.connect(self._host, self._port, keepalive=self._keepalive)
-            finally:
-                socket.setdefaulttimeout(old_timeout)
-        except socket.timeout:
-            _LOGGER.error("BMW MQTT connection timed out after %.0f seconds", self._connect_timeout)
-            client.loop_stop()
-            raise
-        except Exception as err:
-            _LOGGER.error("Unable to connect to BMW MQTT: %s", err)
-            client.loop_stop()
-            raise
+        # Use connect_async() with threading.Event to avoid modifying global socket timeout
+        # which could affect other concurrent connections in Home Assistant
+        self._connect_event = threading.Event()
+        self._connect_rc = None
+
+        # Start the network loop first (required for connect_async)
         client.loop_start()
+
+        try:
+            # Initiate async connection - actual connection happens in loop thread
+            client.connect_async(self._host, self._port, keepalive=self._keepalive)
+
+            # Wait for on_connect callback to signal completion
+            if not self._connect_event.wait(timeout=self._connect_timeout):
+                _LOGGER.error(
+                    "BMW MQTT connection timed out after %.0f seconds",
+                    self._connect_timeout
+                )
+                client.loop_stop()
+                self._connect_event = None
+                raise TimeoutError(
+                    f"MQTT connection timed out after {self._connect_timeout} seconds"
+                )
+
+            # Check connection result from on_connect callback
+            rc = self._connect_rc
+            self._connect_event = None
+
+            if rc is None or rc != 0:
+                error_reasons = {
+                    1: "Incorrect protocol version",
+                    2: "Invalid client identifier",
+                    3: "Server unavailable",
+                    4: "Bad username or password",
+                    5: "Not authorized",
+                }
+                error_reason = error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
+                _LOGGER.error("BMW MQTT connection failed: %s", error_reason)
+                client.loop_stop()
+                raise ConnectionError(f"MQTT connection failed: {error_reason}")
+
+        except Exception as err:
+            self._connect_event = None
+            if not isinstance(err, (TimeoutError, ConnectionError)):
+                _LOGGER.error("Unable to connect to BMW MQTT: %s", err)
+                client.loop_stop()
+            raise
         self._client = client
 
     def _handle_connect(self, client: mqtt.Client, userdata, flags, rc) -> None:
+        # Signal the connect event for synchronous waiters (used during initial connection)
+        self._connect_rc = rc
+        if self._connect_event is not None:
+            self._connect_event.set()
+
         if rc == 0:
             self._connection_state = ConnectionState.CONNECTED
             self._record_success()
@@ -502,7 +632,17 @@ class CardataStreamManager:
                 )
 
     async def _async_reconnect(self) -> None:
-        async with self._connect_lock:
+        # Acquire lock with timeout to prevent indefinite blocking
+        try:
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Connect lock acquisition timed out after 60s during reconnect; "
+                "skipping this reconnect attempt"
+            )
+            return
+
+        try:
             if self._check_circuit_breaker():
                 if debug_enabled():
                     _LOGGER.debug(
@@ -519,6 +659,8 @@ class CardataStreamManager:
                     self._reconnect_backoff * 2, self._max_backoff)
             else:
                 self._reconnect_backoff = 5
+        finally:
+            self._connect_lock.release()
 
     async def _handle_unauthorized(self) -> None:
         async with self._unauthorized_lock:
@@ -535,17 +677,17 @@ class CardataStreamManager:
                     unauthorized_protection = runtime.unauthorized_protection
 
             if unauthorized_protection:
-                can_retry, block_reason = runtime.unauthorized_protection.can_retry()
+                can_retry, block_reason = unauthorized_protection.can_retry()
                 if not can_retry:
                     _LOGGER.error(
                         "BMW MQTT unauthorized retry blocked: %s",
                         block_reason
                     )
-                await self.async_stop()
-                if self._status_callback:
-                    await self._status_callback("unauthorized_blocked", block_reason)
-                return
-            runtime.unauthorized_protection.record_attempt()
+                    await self.async_stop()
+                    if self._status_callback:
+                        await self._status_callback("unauthorized_blocked", block_reason)
+                    return
+                unauthorized_protection.record_attempt()
 
             self._awaiting_new_credentials = True
             if not self._reauth_notified:

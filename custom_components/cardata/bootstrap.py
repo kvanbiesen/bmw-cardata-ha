@@ -16,7 +16,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
-from .utils import redact_vin, redact_vin_in_text
+from .utils import is_valid_vin, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -264,6 +264,13 @@ async def async_seed_telematic_data(
 
     for vin in vins:
         redacted_vin = redact_vin(vin)
+        # Validate VIN format before using in URL to prevent injection
+        if not is_valid_vin(vin):
+            _LOGGER.warning(
+                "Bootstrap telematic request skipped for invalid VIN format %s",
+                redacted_vin,
+            )
+            continue
         if coordinator.data.get(vin):
             continue
 

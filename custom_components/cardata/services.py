@@ -28,6 +28,7 @@ from .const import (
 )
 from .runtime import CardataRuntimeData
 from .utils import (
+    is_valid_vin,
     redact_sensitive_data,
     redact_vin,
     redact_vin_in_text,
@@ -240,6 +241,12 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
     if not vin:
         _LOGGER.error(
             "Cardata fetch_basic_data: no VIN available; provide vin parameter"
+        )
+        return
+    # Validate VIN format before using in URL to prevent injection
+    if not is_valid_vin(vin):
+        _LOGGER.error(
+            "Cardata fetch_basic_data: invalid VIN format provided"
         )
         return
     redacted_vin = redact_vin(vin)
