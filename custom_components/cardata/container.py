@@ -109,7 +109,7 @@ class CardataContainerManager:
                         self._container_id,
                     )
                 return self._container_id
-            
+    
             if rate_limiter:
                 can_create, block_reason = rate_limiter.can_create_container()
                 if not can_create:
@@ -193,7 +193,7 @@ class CardataContainerManager:
                     raise CardataContainerError(
                         f"Container creatin rate limited: {block_reason}"
                     )
-            
+
             containers = await self._list_containers(access_token)
             deleted_ids: List[str] = []
             for container in containers:
