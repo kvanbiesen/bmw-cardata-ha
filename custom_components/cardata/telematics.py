@@ -56,6 +56,12 @@ async def async_perform_telematic_fetch(
     # Build list of VINs to fetch
     vins: list[str]
     if vin_override:
+        # Validate user-supplied VIN early to provide clear error
+        if not is_valid_vin(vin_override):
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: invalid VIN format provided"
+            )
+            return TelematicFetchResult(None, "invalid_vin")
         vins = [vin_override]
     else:
         vins = []
