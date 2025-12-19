@@ -533,13 +533,13 @@ class CardataStreamManager:
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                 if runtime:
                     unauthorized_protection = runtime.unauthorized_protection
-                
+                    
             if unauthorized_protection:
                 can_retry, block_reason = runtime.unauthorized_protection.can_retry()
                 if not can_retry:
                     _LOGGER.error(
-                            "BMW MQTT unauthorized retry blocked: %s",
-                            block_reason
+                        "BMW MQTT unauthorized retry blocked: %s",
+                        block_reason
                     )
                 await self.async_stop()
                 if self._status_callback:
