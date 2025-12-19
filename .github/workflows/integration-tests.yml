@@ -20,6 +20,8 @@ jobs:
       - name: Install Home Assistant test deps
         run: |
           python -m pip install --upgrade pip
+          # Ensure compatible DNS bindings for aiodns on 3.13
+          pip install "pycares>=4.4.0"
           # Install latest HA and test stack
           pip install homeassistant pytest pytest-asyncio pytest-homeassistant-custom-component paho-mqtt
 
