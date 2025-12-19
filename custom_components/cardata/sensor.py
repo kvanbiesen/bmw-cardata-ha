@@ -853,15 +853,6 @@ async def async_setup_entry(
         # ):
         #    return
 
-        if not is_electric_vehicle(vin):
-            descriptor_lower = descriptor.lower()
-            if any(keyword in descriptor_lower for keyword in [
-                "charging", "electricengine", "battery", "soc", "hvbattery"
-            ]):
-                _LOGGER.debug(
-                    "Skipping electric sensor for non-electric %s", descriptor)
-                return
-
         # Skip boolean values (they're binary sensors)
         state = coordinator.get_state(vin, descriptor)
         if state and isinstance(state.value, bool):
