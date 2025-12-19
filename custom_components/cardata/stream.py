@@ -247,7 +247,6 @@ class CardataStreamManager:
 
     async def _async_persist_circuit_breaker(self, state: dict) -> None:
         """Async helper to persist circuit breaker state."""
-        from .const import DOMAIN
         from .runtime import async_update_entry_data
 
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
