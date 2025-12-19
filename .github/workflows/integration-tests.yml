@@ -20,12 +20,14 @@ jobs:
       - name: Install Home Assistant test deps
         run: |
           python -m pip install --upgrade pip
-          # Ensure compatible DNS bindings for aiodns on 3.13
-          python -m pip install --upgrade "pycares>=4.4.0" "aiodns>=3.2.0"
+          # Force a compatible pycares/aiodns combo before installing HA
+          python -m pip uninstall -y pycares || true
+          python -m pip install --no-binary=pycares "pycares==4.4.0"
+          python -m pip install "aiodns==3.2.0"
           # Install latest HA and test stack
           python -m pip install homeassistant pytest pytest-asyncio pytest-homeassistant-custom-component paho-mqtt
-          # Reinstate pycares in case HA deps pulled an older build
-          python -m pip install --upgrade "pycares>=4.4.0"
+          # Reinstate pinned pycares in case dependencies downgraded it
+          python -m pip install --no-binary=pycares --force-reinstall "pycares==4.4.0"
 
       - name: Run mocked config/setup tests
         env:
