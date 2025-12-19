@@ -73,7 +73,7 @@ class CardataContainerManager:
 
         self._container_id = container_id
 
-    async def async_ensure_hv_container(self, access_token: Optional[str]) -> Optional[str]:
+    async def async_ensure_hv_container(self, access_token: Optional[str], rate_limiter: Any | None = None,) -> Optional[str]:
         """Ensure the HV battery container exists and is active.
 
         Behavior controlled by CONTAINER_REUSE_EXISTING in const.py:
