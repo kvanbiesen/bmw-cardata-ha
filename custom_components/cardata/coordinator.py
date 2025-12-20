@@ -279,6 +279,8 @@ class CardataCoordinator:
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
     _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
+    _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
+    _pending_updates_started: Optional[datetime] = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
 
@@ -666,6 +668,9 @@ class CardataCoordinator:
                     if len(pending_set) < self._MAX_PENDING_PER_VIN:
                         pending_set.add(descriptor)
                         schedule_debounce = True
+                        # Track when pending updates started accumulating
+                        if self._pending_updates_started is None:
+                            self._pending_updates_started = now
                     elif descriptor not in pending_set:
                         _LOGGER.warning(
                             "Pending updates limit reached for VIN %s (%d items); "
@@ -769,6 +774,7 @@ class CardataCoordinator:
         self._pending_updates.clear()
         self._pending_new_sensors.clear()
         self._pending_new_binary.clear()
+        self._pending_updates_started = None  # Reset staleness tracking
 
         if debug_enabled():
             total_updates = sum(len(descriptors)
@@ -932,6 +938,40 @@ class CardataCoordinator:
         if self._cleanup_counter >= self._CLEANUP_INTERVAL:
             self._cleanup_counter = 0
             await self._async_cleanup_stale_vins()
+
+        # Check for stale pending updates (debounce timer failed to fire)
+        await self._async_check_stale_pending_updates(now)
+
+    async def _async_check_stale_pending_updates(self, now: datetime) -> None:
+        """Clear pending updates if they've been accumulating too long.
+
+        This prevents memory leaks if the debounce timer fails to fire
+        (e.g., event loop issues, shutdown race conditions).
+        """
+        if self._pending_updates_started is None:
+            return
+
+        age_seconds = (now - self._pending_updates_started).total_seconds()
+        if age_seconds > self._MAX_PENDING_AGE_SECONDS:
+            pending_count = sum(len(d) for d in self._pending_updates.values())
+            if pending_count > 0:
+                _LOGGER.warning(
+                    "Clearing %d stale pending updates (age: %.1fs, max: %.1fs) - "
+                    "debounce timer may have failed",
+                    pending_count,
+                    age_seconds,
+                    self._MAX_PENDING_AGE_SECONDS,
+                )
+                self._pending_updates.clear()
+                self._pending_new_sensors.clear()
+                self._pending_new_binary.clear()
+            self._pending_updates_started = None
+
+            # Cancel stale debounce handle if it exists
+            async with self._debounce_lock:
+                if self._update_debounce_handle is not None:
+                    self._update_debounce_handle.cancel()
+                    self._update_debounce_handle = None
 
     async def _async_cleanup_stale_vins(self) -> None:
         """Remove tracking data for VINs no longer in self.data.
