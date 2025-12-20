@@ -22,6 +22,10 @@ from .utils import redact_sensitive_data, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
+# Timeout for container API requests (seconds)
+# Increased from 15s to handle slow networks and server load
+CONTAINER_REQUEST_TIMEOUT = 30
+
 
 class CardataContainerError(Exception):
     """Raised when BMW CarData container management fails."""
@@ -338,7 +342,7 @@ class CardataContainerManager:
                 url,
                 headers=headers,
                 json=json_body,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=CONTAINER_REQUEST_TIMEOUT),
             ) as response:
                 if response.status in (200, 201):
                     try:
@@ -361,7 +365,7 @@ class CardataContainerManager:
                 )
         except asyncio.TimeoutError as err:
             raise CardataContainerError(
-                "Request timed out after 15 seconds"
+                f"Request timed out after {CONTAINER_REQUEST_TIMEOUT} seconds"
             ) from err
         except aiohttp.ClientError as err:
             raise CardataContainerError(
