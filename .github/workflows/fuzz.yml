@@ -1,10 +1,6 @@
 name: Continuous Fuzzing
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: ["**"]
   schedule:
     - cron: "0 1 * * *"
   workflow_dispatch:
