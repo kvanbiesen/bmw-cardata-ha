@@ -96,6 +96,9 @@ class CardataStreamManager:
         # Threading event for connection synchronization (avoids global socket timeout)
         self._connect_event: Optional[threading.Event] = None
         self._connect_rc: Optional[int] = None
+        # Circuit breaker persistence serialization
+        self._persist_lock = asyncio.Lock()
+        self._persist_pending = False
 
     def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run coroutine from MQTT callback thread with exception logging.
@@ -238,22 +241,48 @@ class CardataStreamManager:
         )
 
     def _persist_circuit_breaker_state(self) -> None:
-        """Persist circuit breaker state to config entry."""
+        """Persist circuit breaker state to config entry.
+
+        Uses a pending flag to coalesce rapid state changes and avoid race conditions.
+        Only the latest state will be persisted.
+        """
         if not self._entry_id:
             return
-        state = self.get_circuit_breaker_state()
         # Schedule persistence in event loop (called from sync context)
-        self._run_coro_safe(self._async_persist_circuit_breaker(state))
+        # The async helper will get the latest state when it actually runs
+        self._run_coro_safe(self._async_persist_circuit_breaker())
 
-    async def _async_persist_circuit_breaker(self, state: dict) -> None:
-        """Async helper to persist circuit breaker state."""
+    async def _async_persist_circuit_breaker(self) -> None:
+        """Async helper to persist circuit breaker state.
+
+        Uses a lock to serialize persistence and a pending flag to coalesce
+        rapid state changes. If persistence is already in progress, marks
+        as pending so the latest state is persisted after current write completes.
+        """
         from .runtime import async_update_entry_data
 
-        entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        if entry:
-            await async_update_entry_data(
-                self.hass, entry, {"circuit_breaker_state": state}
-            )
+        # If already persisting, mark as pending and return
+        # The in-progress persist will handle it
+        if self._persist_lock.locked():
+            self._persist_pending = True
+            return
+
+        async with self._persist_lock:
+            while True:
+                self._persist_pending = False
+                # Get the latest state NOW, inside the lock
+                state = self.get_circuit_breaker_state()
+
+                entry = self.hass.config_entries.async_get_entry(self._entry_id)
+                if entry:
+                    await async_update_entry_data(
+                        self.hass, entry, {"circuit_breaker_state": state}
+                    )
+
+                # If another persist was requested while we were writing,
+                # loop to persist the latest state
+                if not self._persist_pending:
+                    break
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress
