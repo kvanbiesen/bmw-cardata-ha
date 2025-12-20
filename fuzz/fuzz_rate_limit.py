@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 
@@ -12,6 +13,21 @@ with atheris.instrument_imports():
     import ratelimit
 
 
+logging.getLogger("ratelimit").setLevel(logging.CRITICAL)
+
+
+class _FuzzClock:
+    def __init__(self, start: int) -> None:
+        self._now = float(start)
+
+    def advance(self, seconds: int) -> None:
+        if seconds > 0:
+            self._now += seconds
+
+    def time(self) -> float:
+        return self._now
+
+
 def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
     text = fdp.ConsumeUnicodeNoSurrogates(max_len)
     return text or "API"
@@ -19,6 +35,9 @@ def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
 
 def TestOneInput(data: bytes) -> None:
     fdp = atheris.FuzzedDataProvider(data)
+    fake_time = _FuzzClock(fdp.ConsumeIntInRange(1_600_000_000, 1_900_000_000))
+    ratelimit.time.time = fake_time.time
+
     max_attempts = fdp.ConsumeIntInRange(1, 6)
     cooldown_hours = fdp.ConsumeIntInRange(0, 6)
     max_per_hour = fdp.ConsumeIntInRange(1, 10)
@@ -35,6 +54,7 @@ def TestOneInput(data: bytes) -> None:
     )
 
     for _ in range(fdp.ConsumeIntInRange(1, 60)):
+        fake_time.advance(fdp.ConsumeIntInRange(0, 200_000))
         action = fdp.ConsumeIntInRange(0, 9)
         if action == 0:
             tracker.record_429(endpoint=_consume_text(fdp, 20))
