@@ -102,29 +102,26 @@ async def async_perform_telematic_fetch(
         # Fatal: missing container
         return TelematicFetchResult(None, "missing_container")
 
-    try:
-        from .auth import refresh_tokens_for_entry
+    # Proactively check and refresh token only if expired or about to expire
+    from .auth import async_ensure_valid_token
 
-        await refresh_tokens_for_entry(
-            entry,
-            runtime.session,
-            runtime.stream,
-            runtime.container_manager,
-        )
-    except Exception as err:
+    token_valid = await async_ensure_valid_token(
+        entry,
+        runtime.session,
+        runtime.stream,
+        runtime.container_manager,
+    )
+    if not token_valid:
         _LOGGER.error(
-            "Cardata fetch_telematic_data: token refresh failed for entry %s: %s",
+            "Cardata fetch_telematic_data: token refresh failed for entry %s",
             target_entry_id,
-            err,
         )
-        # Fatal: token refresh failed
         return TelematicFetchResult(None, "token_refresh_failed")
 
     access_token = entry.data.get("access_token")
     if not access_token:
         _LOGGER.error(
-            "Cardata fetch_telematic_data: access token missing after refresh")
-        # Fatal: auth failed
+            "Cardata fetch_telematic_data: access token missing")
         return TelematicFetchResult(None, "missing_access_token")
 
     headers = {

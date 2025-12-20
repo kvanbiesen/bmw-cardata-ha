@@ -35,18 +35,18 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     quota = runtime.quota_manager
     rate_limiter = runtime.rate_limit_tracker
 
-    try:
-        from .auth import refresh_tokens_for_entry
+    # Proactively check and refresh token only if expired or about to expire
+    from .auth import async_ensure_valid_token
 
-        await refresh_tokens_for_entry(
-            entry,
-            runtime.session,
-            runtime.stream,
-            runtime.container_manager,
-        )
-    except Exception as err:
+    token_valid = await async_ensure_valid_token(
+        entry,
+        runtime.session,
+        runtime.stream,
+        runtime.container_manager,
+    )
+    if not token_valid:
         _LOGGER.warning(
-            "Bootstrap token refresh failed for entry %s: %s", entry.entry_id, err)
+            "Bootstrap token refresh failed for entry %s", entry.entry_id)
         return
 
     data = entry.data
