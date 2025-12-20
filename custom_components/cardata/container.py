@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import hashlib
 from typing import Any, Dict, Iterable, List, Optional
@@ -340,7 +341,16 @@ class CardataContainerManager:
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as response:
                 if response.status in (200, 201):
-                    return await response.json(content_type=None)
+                    try:
+                        return await response.json(content_type=None)
+                    except (json.JSONDecodeError, aiohttp.ContentTypeError) as err:
+                        # API returned success status but invalid/non-JSON body
+                        text = await response.text()
+                        safe_text = redact_vin_in_text(text[:200].strip()) if text else "empty"
+                        raise CardataContainerError(
+                            f"Invalid JSON in response: {safe_text}",
+                            status=response.status,
+                        ) from err
                 if response.status == 204:
                     return {}
                 text = await response.text()
