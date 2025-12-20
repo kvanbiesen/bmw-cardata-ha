@@ -279,6 +279,8 @@ class CardataCoordinator:
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
     _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
+    _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
+    _cleanup_counter: int = field(default=0, init=False)
 
     @property
     def signal_new_sensor(self) -> str:
@@ -924,6 +926,54 @@ class CardataCoordinator:
         for vin in updated_vins:
             self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         self._safe_dispatcher_send(self.signal_diagnostics)
+
+        # Periodically cleanup stale VIN tracking data
+        self._cleanup_counter += 1
+        if self._cleanup_counter >= self._CLEANUP_INTERVAL:
+            self._cleanup_counter = 0
+            await self._async_cleanup_stale_vins()
+
+    async def _async_cleanup_stale_vins(self) -> None:
+        """Remove tracking data for VINs no longer in self.data.
+
+        This prevents memory leaks when vehicles are removed from the account.
+        """
+        async with self._lock:
+            valid_vins = set(self.data.keys())
+            if not valid_vins:
+                # No valid VINs yet (bootstrap not complete), skip cleanup
+                return
+
+            # Collect all VINs from tracking dicts
+            tracking_dicts = [
+                self._soc_tracking,
+                self._soc_rate,
+                self._soc_estimate,
+                self._testing_soc_tracking,
+                self._testing_soc_estimate,
+                self._avg_aux_power_w,
+                self._charging_power_w,
+                self._direct_power_w,
+                self._ac_voltage_v,
+                self._ac_current_a,
+                self._ac_phase_count,
+                self._pending_updates,
+                self._pending_new_sensors,
+                self._pending_new_binary,
+            ]
+
+            stale_vins: set[str] = set()
+            for d in tracking_dicts:
+                stale_vins.update(k for k in d.keys() if k not in valid_vins)
+
+            if stale_vins:
+                for vin in stale_vins:
+                    for d in tracking_dicts:
+                        d.pop(vin, None)
+                _LOGGER.debug(
+                    "Cleaned up tracking data for %d stale VIN(s)",
+                    len(stale_vins),
+                )
 
     def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
         """Apply SOC estimate calculation. Must be called while holding _lock."""
