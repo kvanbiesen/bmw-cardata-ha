@@ -115,7 +115,7 @@ async def poll_for_tokens(
                 "access_token", "refresh_token", "id_token")}
             raise CardataAuthError(
                 f"Token polling failed ({resp.status}): {safe_data}")
-            
+
 async def refresh_tokens(
     session: aiohttp.ClientSession,
     *,
