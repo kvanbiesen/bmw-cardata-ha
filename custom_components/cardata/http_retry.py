@@ -26,6 +26,7 @@ def _jittered_backoff(backoff: float) -> float:
     half = backoff / 2
     return half + random.uniform(0, half)
 
+
 # HTTP status codes that should trigger a retry
 RETRYABLE_STATUS_CODES = {
     408,  # Request Timeout
