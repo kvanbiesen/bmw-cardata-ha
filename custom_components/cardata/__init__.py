@@ -60,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     session = aiohttp.ClientSession()
     refresh_task: asyncio.Task | None = None
+    setup_succeeded = False
 
     try:
         # Prepare configuration
@@ -78,7 +79,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gcid = data.get("gcid")
         id_token = data.get("id_token")
         if not gcid or not id_token:
-            await session.close()
             raise ConfigEntryNotReady("Missing GCID or ID token")
 
         # Set up coordinator
@@ -169,7 +169,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 err,
             )
         except Exception as err:
-            await session.close()
             raise ConfigEntryNotReady(
                 f"Initial token refresh failed: {err}") from err
 
@@ -281,7 +280,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
                 }
             )
-            await session.close()
             raise ConfigEntryNotReady(
                 f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
             )
@@ -300,7 +298,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("Starting MQTT connection after bootstrap")
                 await manager.async_start()
             except Exception as err:
-                await session.close()
                 if refreshed_token:
                     raise ConfigEntryNotReady(
                         f"Unable to connect to BMW MQTT after token refresh: {err}"
@@ -330,6 +327,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             async_telematic_poll_loop(hass, entry.entry_id)
         )
 
+        setup_succeeded = True
         return True
 
     except Exception:
@@ -352,18 +350,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 with suppress(asyncio.CancelledError):
                     await runtime.telematic_task
 
-            # Stop coordinator watchdog if started
-            await runtime.coordinator.async_stop_watchdog()
+            # Stop coordinator watchdog if started (wrapped to prevent masking original error)
+            try:
+                await runtime.coordinator.async_stop_watchdog()
+            except Exception as cleanup_err:
+                _LOGGER.debug("Error stopping watchdog during cleanup: %s", cleanup_err)
 
-            # Stop stream manager if started
-            await runtime.stream.async_stop()
+            # Stop stream manager if started (wrapped to prevent masking original error)
+            try:
+                await runtime.stream.async_stop()
+            except Exception as cleanup_err:
+                _LOGGER.debug("Error stopping stream during cleanup: %s", cleanup_err)
 
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-
-        # Close session safely (may already be closed by earlier error handling)
-        if not session.closed:
-            await session.close()
         raise
+
+    finally:
+        # Guarantee session cleanup on any failure path
+        if not setup_succeeded and not session.closed:
+            await session.close()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
