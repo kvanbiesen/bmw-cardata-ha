@@ -66,6 +66,8 @@ async def poll_for_tokens(
         "code_verifier": code_verifier,
     }
     request_timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+    consecutive_500s = 0  # Track consecutive 500 errors
+    max_consecutive_500s = 3  # Give up after 3 consecutive 500s
 
     while True:
         if time.monotonic() - start > timeout:
@@ -79,16 +81,41 @@ async def poll_for_tokens(
 
             error = data.get("error")
             if error in {"authorization_pending", "slow_down"}:
+                consecutive_500s = 0  # Reset counter on normal pending response
                 await asyncio.sleep(interval if error == "authorization_pending" else interval + 5)
                 continue
 
-            # Redact sensitive data from error response
+            # Handle 500 errors with retry logic (BMW's API can be flaky)
+            if 500 <= resp.status < 600:
+                consecutive_500s += 1
+                if consecutive_500s <= max_consecutive_500s:
+                    safe_data = {k: v for k, v in data.items() if k not in (
+                        "access_token", "refresh_token", "id_token")}
+                    _LOGGER.warning(
+                        "Token polling got %d: %s (attempt %d/%d, retrying in %ds)",
+                        resp.status,
+                        safe_data,
+                        consecutive_500s,
+                        max_consecutive_500s,
+                        interval,
+                    )
+                    await asyncio.sleep(interval)
+                    continue
+                # Too many consecutive 500s - give up
+                safe_data = {k: v for k, v in data.items() if k not in (
+                    "access_token", "refresh_token", "id_token")}
+                raise CardataAuthError(
+                    f"Token polling failed after {max_consecutive_500s} consecutive 500 errors: {safe_data}. "
+                    f"Please try again later or contact BMW support if this persists."
+                )
+
+            # Other errors (401, 403, etc.) - fail immediately
+            consecutive_500s = 0
             safe_data = {k: v for k, v in data.items() if k not in (
                 "access_token", "refresh_token", "id_token")}
             raise CardataAuthError(
                 f"Token polling failed ({resp.status}): {safe_data}")
-
-
+            
 async def refresh_tokens(
     session: aiohttp.ClientSession,
     *,
