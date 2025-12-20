@@ -87,6 +87,10 @@ class CardataStreamManager:
         self._max_failures_per_window = 10
         self._failure_window_seconds = 60
         self._circuit_breaker_duration = 300  # 5 minutes
+        # Reconnect attempt tracking for extended backoff
+        self._consecutive_reconnect_failures = 0
+        self._extended_backoff_threshold = 10  # After this many failures, use extended backoff
+        self._extended_backoff = 1800  # 30 minutes extended backoff
         # Flag to prevent MQTT start during bootstrap
         self._bootstrap_in_progress: bool = False
         # Event signaled when bootstrap completes (for efficient waiting)
@@ -96,6 +100,9 @@ class CardataStreamManager:
         # Threading event for connection synchronization (avoids global socket timeout)
         self._connect_event: Optional[threading.Event] = None
         self._connect_rc: Optional[int] = None
+        # Circuit breaker persistence serialization
+        self._persist_lock = asyncio.Lock()
+        self._persist_pending = False
 
     def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run coroutine from MQTT callback thread with exception logging.
@@ -238,22 +245,48 @@ class CardataStreamManager:
         )
 
     def _persist_circuit_breaker_state(self) -> None:
-        """Persist circuit breaker state to config entry."""
+        """Persist circuit breaker state to config entry.
+
+        Uses a pending flag to coalesce rapid state changes and avoid race conditions.
+        Only the latest state will be persisted.
+        """
         if not self._entry_id:
             return
-        state = self.get_circuit_breaker_state()
         # Schedule persistence in event loop (called from sync context)
-        self._run_coro_safe(self._async_persist_circuit_breaker(state))
+        # The async helper will get the latest state when it actually runs
+        self._run_coro_safe(self._async_persist_circuit_breaker())
 
-    async def _async_persist_circuit_breaker(self, state: dict) -> None:
-        """Async helper to persist circuit breaker state."""
+    async def _async_persist_circuit_breaker(self) -> None:
+        """Async helper to persist circuit breaker state.
+
+        Uses a lock to serialize persistence and a pending flag to coalesce
+        rapid state changes. If persistence is already in progress, marks
+        as pending so the latest state is persisted after current write completes.
+        """
         from .runtime import async_update_entry_data
 
-        entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        if entry:
-            await async_update_entry_data(
-                self.hass, entry, {"circuit_breaker_state": state}
-            )
+        # If already persisting, mark as pending and return
+        # The in-progress persist will handle it
+        if self._persist_lock.locked():
+            self._persist_pending = True
+            return
+
+        async with self._persist_lock:
+            while True:
+                self._persist_pending = False
+                # Get the latest state NOW, inside the lock
+                state = self.get_circuit_breaker_state()
+
+                entry = self.hass.config_entries.async_get_entry(self._entry_id)
+                if entry:
+                    await async_update_entry_data(
+                        self.hass, entry, {"circuit_breaker_state": state}
+                    )
+
+                # If another persist was requested while we were writing,
+                # loop to persist the latest state
+                if not self._persist_pending:
+                    break
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress
@@ -546,22 +579,33 @@ class CardataStreamManager:
                           mid, granted_qos)
 
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
-        payload = msg.payload.decode(errors="ignore")
-        if debug_enabled():
-            _LOGGER.debug(
-                "BMW MQTT message on %s: %s",
-                redact_vin_in_text(msg.topic),
-                redact_vin_payload(payload),
-            )
-        if not self._message_callback:
-            return
+        """Handle incoming MQTT message with full exception protection.
+
+        This method is called from the MQTT client's network thread. Any unhandled
+        exception here would crash the MQTT message processing loop, so we wrap
+        everything in try/except to ensure robustness.
+        """
         try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            return
-        self._run_coro_safe(
-            cast(Coroutine[Any, Any, None], self._message_callback(data))
-        )
+            payload = msg.payload.decode(errors="ignore")
+            if debug_enabled():
+                _LOGGER.debug(
+                    "BMW MQTT message on %s: %s",
+                    redact_vin_in_text(msg.topic),
+                    redact_vin_payload(payload),
+                )
+            if not self._message_callback:
+                return
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                _LOGGER.debug("Failed to parse MQTT message as JSON: %s", payload[:100])
+                return
+            self._run_coro_safe(
+                cast(Coroutine[Any, Any, None], self._message_callback(data))
+            )
+        except Exception as err:
+            # Catch-all to prevent crashing the MQTT callback thread
+            _LOGGER.exception("Unexpected error in MQTT message handler: %s", err)
 
     def _handle_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
         reason = {
@@ -650,14 +694,40 @@ class CardataStreamManager:
                 return
 
             await self._async_stop_locked()
-            await asyncio.sleep(self._reconnect_backoff)
+
+            # Use extended backoff after many consecutive failures
+            if self._consecutive_reconnect_failures >= self._extended_backoff_threshold:
+                wait_time = self._extended_backoff
+                _LOGGER.warning(
+                    "Many consecutive MQTT failures (%d); using extended backoff of %.0f minutes",
+                    self._consecutive_reconnect_failures,
+                    wait_time / 60,
+                )
+            else:
+                wait_time = self._reconnect_backoff
+
+            await asyncio.sleep(wait_time)
             try:
                 await self._async_start_locked()
             except Exception as err:
-                _LOGGER.error("BMW MQTT reconnect failed: %s", err)
+                self._consecutive_reconnect_failures += 1
+                _LOGGER.error(
+                    "BMW MQTT reconnect failed (attempt %d): %s",
+                    self._consecutive_reconnect_failures,
+                    err,
+                )
                 self._reconnect_backoff = min(
                     self._reconnect_backoff * 2, self._max_backoff)
+                # Schedule another reconnect attempt (will use extended backoff if threshold reached)
+                self._run_coro_safe(self._async_reconnect())
             else:
+                # Success - reset counters
+                if self._consecutive_reconnect_failures > 0:
+                    _LOGGER.info(
+                        "MQTT reconnected successfully after %d failed attempts",
+                        self._consecutive_reconnect_failures,
+                    )
+                self._consecutive_reconnect_failures = 0
                 self._reconnect_backoff = 5
         finally:
             self._connect_lock.release()

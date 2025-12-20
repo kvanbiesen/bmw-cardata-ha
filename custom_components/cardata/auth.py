@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
-from typing import Optional
+from typing import Optional, Tuple
 
 import aiohttp
 
@@ -21,6 +21,94 @@ from .stream import CardataStreamManager
 from .runtime import CardataRuntimeData, async_update_entry_data
 
 _LOGGER = logging.getLogger(__name__)
+
+# Refresh token if it expires within this many seconds
+TOKEN_EXPIRY_BUFFER_SECONDS = 300  # 5 minutes
+
+
+def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS) -> Tuple[bool, Optional[int]]:
+    """Check if the access token is expired or about to expire.
+
+    Args:
+        entry: Config entry containing token data
+        buffer_seconds: Consider token expired if it expires within this many seconds
+
+    Returns:
+        Tuple of (is_expired, seconds_until_expiry or None if unknown)
+    """
+    data = entry.data
+    expires_in = data.get("expires_in")
+    received_at = data.get("received_at")
+
+    # If we don't have expiry info, assume token might be expired
+    if expires_in is None or received_at is None:
+        _LOGGER.debug("Token expiry info not available, assuming refresh needed")
+        return True, None
+
+    try:
+        expires_in = int(expires_in)
+        received_at = float(received_at)
+    except (TypeError, ValueError):
+        _LOGGER.debug("Invalid token expiry data, assuming refresh needed")
+        return True, None
+
+    # Calculate when the token expires
+    expiry_time = received_at + expires_in
+    now = time.time()
+    seconds_until_expiry = int(expiry_time - now)
+
+    # Token is expired or will expire within buffer
+    if seconds_until_expiry <= buffer_seconds:
+        _LOGGER.debug(
+            "Token expires in %d seconds (buffer: %d), refresh needed",
+            seconds_until_expiry,
+            buffer_seconds
+        )
+        return True, seconds_until_expiry
+
+    return False, seconds_until_expiry
+
+
+async def async_ensure_valid_token(
+    entry: ConfigEntry,
+    session: aiohttp.ClientSession,
+    manager: "CardataStreamManager",
+    container_manager: Optional["CardataContainerManager"] = None,
+    buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS,
+) -> bool:
+    """Ensure the access token is valid, refreshing if necessary.
+
+    This function checks token expiry proactively and only refreshes when needed,
+    avoiding unnecessary API calls and quota usage.
+
+    Args:
+        entry: Config entry
+        session: aiohttp session
+        manager: Stream manager
+        container_manager: Optional container manager
+        buffer_seconds: Refresh if token expires within this many seconds
+
+    Returns:
+        True if token is valid (or was successfully refreshed), False on failure
+    """
+    expired, seconds_left = is_token_expired(entry, buffer_seconds)
+
+    if not expired:
+        if seconds_left is not None:
+            _LOGGER.debug("Token still valid for %d seconds, skipping refresh", seconds_left)
+        return True
+
+    # Token is expired or about to expire, refresh it
+    _LOGGER.debug("Proactively refreshing token (expires in %s seconds)", seconds_left)
+    try:
+        await refresh_tokens_for_entry(entry, session, manager, container_manager)
+        return True
+    except CardataAuthError as err:
+        _LOGGER.error("Proactive token refresh failed: %s", err)
+        return False
+    except Exception as err:
+        _LOGGER.exception("Unexpected error during proactive token refresh: %s", err)
+        return False
 
 
 async def refresh_tokens_for_entry(

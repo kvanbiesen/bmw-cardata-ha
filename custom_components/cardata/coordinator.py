@@ -172,13 +172,17 @@ class SocTracking:
         if self.last_update is not None:
             time_since_actual = (now - self.last_update).total_seconds()
             if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
-                # Estimate is stale - fall back to last known actual value
+                # Estimate is stale - clear stale state and fall back to last known actual value
                 _LOGGER.debug(
                     "SOC estimate stale (%.0f seconds since last actual); "
-                    "returning last known value %.1f%%",
+                    "clearing estimate and returning last known value %.1f%%",
                     time_since_actual,
                     self.last_soc_percent or 0.0,
                 )
+                # Clear stale estimate state so next call reinitializes from last_soc_percent
+                self.estimated_percent = None
+                self.last_estimate_time = None
+                self.charging_active = False  # Assume charging stopped if no updates
                 return self.last_soc_percent
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
@@ -275,6 +279,10 @@ class CardataCoordinator:
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
     _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
+    _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
+    _pending_updates_started: Optional[datetime] = field(default=None, init=False)
+    _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
+    _cleanup_counter: int = field(default=0, init=False)
 
     @property
     def signal_new_sensor(self) -> str:
@@ -660,6 +668,9 @@ class CardataCoordinator:
                     if len(pending_set) < self._MAX_PENDING_PER_VIN:
                         pending_set.add(descriptor)
                         schedule_debounce = True
+                        # Track when pending updates started accumulating
+                        if self._pending_updates_started is None:
+                            self._pending_updates_started = now
                     elif descriptor not in pending_set:
                         _LOGGER.warning(
                             "Pending updates limit reached for VIN %s (%d items); "
@@ -763,6 +774,7 @@ class CardataCoordinator:
         self._pending_updates.clear()
         self._pending_new_sensors.clear()
         self._pending_new_binary.clear()
+        self._pending_updates_started = None  # Reset staleness tracking
 
         if debug_enabled():
             total_updates = sum(len(descriptors)
@@ -804,15 +816,22 @@ class CardataCoordinator:
         Returns a copy to minimize race condition impact. For guaranteed
         thread-safety, use async_get_state() instead.
         """
-        # Snapshot the nested dict access to minimize race window
-        vehicle_data = self.data.get(vin)
-        if vehicle_data is None:
+        # Copy the vehicle dict to get a consistent snapshot, minimizing race window
+        # with concurrent modifications from async_handle_message
+        try:
+            vehicle_data = self.data.get(vin)
+            if vehicle_data is None:
+                return None
+            # Take a shallow copy to get consistent view of descriptors
+            vehicle_snapshot = dict(vehicle_data)
+            state = vehicle_snapshot.get(descriptor)
+            if state is None:
+                return None
+            # Return a copy to avoid mutations during read
+            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
+        except (KeyError, RuntimeError, AttributeError):
+            # Handle edge cases where dict structure changes during access
             return None
-        state = vehicle_data.get(descriptor)
-        if state is None:
-            return None
-        # Return a copy to avoid mutations during read
-        return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
     async def async_get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         """Get state for a descriptor with proper lock acquisition."""
@@ -913,6 +932,88 @@ class CardataCoordinator:
         for vin in updated_vins:
             self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         self._safe_dispatcher_send(self.signal_diagnostics)
+
+        # Periodically cleanup stale VIN tracking data
+        self._cleanup_counter += 1
+        if self._cleanup_counter >= self._CLEANUP_INTERVAL:
+            self._cleanup_counter = 0
+            await self._async_cleanup_stale_vins()
+
+        # Check for stale pending updates (debounce timer failed to fire)
+        await self._async_check_stale_pending_updates(now)
+
+    async def _async_check_stale_pending_updates(self, now: datetime) -> None:
+        """Clear pending updates if they've been accumulating too long.
+
+        This prevents memory leaks if the debounce timer fails to fire
+        (e.g., event loop issues, shutdown race conditions).
+        """
+        if self._pending_updates_started is None:
+            return
+
+        age_seconds = (now - self._pending_updates_started).total_seconds()
+        if age_seconds > self._MAX_PENDING_AGE_SECONDS:
+            pending_count = sum(len(d) for d in self._pending_updates.values())
+            if pending_count > 0:
+                _LOGGER.warning(
+                    "Clearing %d stale pending updates (age: %.1fs, max: %.1fs) - "
+                    "debounce timer may have failed",
+                    pending_count,
+                    age_seconds,
+                    self._MAX_PENDING_AGE_SECONDS,
+                )
+                self._pending_updates.clear()
+                self._pending_new_sensors.clear()
+                self._pending_new_binary.clear()
+            self._pending_updates_started = None
+
+            # Cancel stale debounce handle if it exists
+            async with self._debounce_lock:
+                if self._update_debounce_handle is not None:
+                    self._update_debounce_handle.cancel()
+                    self._update_debounce_handle = None
+
+    async def _async_cleanup_stale_vins(self) -> None:
+        """Remove tracking data for VINs no longer in self.data.
+
+        This prevents memory leaks when vehicles are removed from the account.
+        """
+        async with self._lock:
+            valid_vins = set(self.data.keys())
+            if not valid_vins:
+                # No valid VINs yet (bootstrap not complete), skip cleanup
+                return
+
+            # Collect all VINs from tracking dicts
+            tracking_dicts: list[Dict[str, Any]] = [
+                self._soc_tracking,
+                self._soc_rate,
+                self._soc_estimate,
+                self._testing_soc_tracking,
+                self._testing_soc_estimate,
+                self._avg_aux_power_w,
+                self._charging_power_w,
+                self._direct_power_w,
+                self._ac_voltage_v,
+                self._ac_current_a,
+                self._ac_phase_count,
+                self._pending_updates,
+                self._pending_new_sensors,
+                self._pending_new_binary,
+            ]
+
+            stale_vins: set[str] = set()
+            for d in tracking_dicts:
+                stale_vins.update(k for k in d.keys() if k not in valid_vins)
+
+            if stale_vins:
+                for vin in stale_vins:
+                    for d in tracking_dicts:
+                        d.pop(vin, None)
+                _LOGGER.debug(
+                    "Cleaned up tracking data for %d stale VIN(s)",
+                    len(stale_vins),
+                )
 
     def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
         """Apply SOC estimate calculation. Must be called while holding _lock."""

@@ -46,9 +46,6 @@ class CardataRuntimeData:
     unauthorized_protection: UnauthorizedLoopProtection | None = None
     container_rate_limiter: ContainerRateLimiter | None = None
 
-    # Lock to protect concurrent config entry updates
-    _entry_update_lock: asyncio.Lock | None = None
-
     # Lock to protect concurrent token refresh operations
     _token_refresh_lock: asyncio.Lock | None = None
 
@@ -66,13 +63,6 @@ class CardataRuntimeData:
                 max_per_hour=3,
                 max_per_day=10
             )
-        if self._entry_update_lock is None:
-            self._entry_update_lock = asyncio.Lock()
-
-    @property
-    def entry_update_lock(self) -> asyncio.Lock | None:
-        """Get the entry update lock."""
-        return self._entry_update_lock
 
     @property
     def token_refresh_lock(self) -> asyncio.Lock | None:
@@ -80,8 +70,28 @@ class CardataRuntimeData:
         return self._token_refresh_lock
 
 
-# Module-level lock used during setup before runtime is available
-_setup_update_lock = asyncio.Lock()
+# Per-entry lock registry to ensure consistent locking across setup and runtime
+# Maps entry_id -> asyncio.Lock
+_entry_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _get_entry_lock(entry_id: str) -> asyncio.Lock:
+    """Get or create a lock for a specific config entry.
+
+    This ensures the same lock is always used for the same entry,
+    regardless of whether runtime data is available yet.
+    """
+    if entry_id not in _entry_locks:
+        _entry_locks[entry_id] = asyncio.Lock()
+    return _entry_locks[entry_id]
+
+
+def cleanup_entry_lock(entry_id: str) -> None:
+    """Remove the lock for an entry when it's unloaded.
+
+    Call this during entry unload to prevent memory leaks.
+    """
+    _entry_locks.pop(entry_id, None)
 
 
 async def async_update_entry_data(
@@ -91,21 +101,18 @@ async def async_update_entry_data(
 ) -> None:
     """Safely update config entry data with lock to prevent race conditions.
 
-    This function acquires a lock before reading and updating entry data,
+    This function acquires a per-entry lock before reading and updating entry data,
     preventing concurrent updates from overwriting each other's changes.
+
+    The lock is always the same for a given entry_id, ensuring consistency
+    whether called during setup (before runtime exists) or during normal operation.
 
     Args:
         hass: Home Assistant instance
         entry: Config entry to update
         updates: Dictionary of key-value pairs to merge into entry.data
     """
-    from .const import DOMAIN
-
-    runtime: CardataRuntimeData | None = hass.data.get(
-        DOMAIN, {}).get(entry.entry_id)
-
-    # Choose appropriate lock: runtime lock if available, module-level lock during setup
-    lock = (runtime.entry_update_lock if runtime and runtime.entry_update_lock else _setup_update_lock)
+    lock = _get_entry_lock(entry.entry_id)
 
     async with lock:
         # Re-read entry.data inside lock to get latest state

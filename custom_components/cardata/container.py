@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import hashlib
 from typing import Any, Dict, Iterable, List, Optional
@@ -20,6 +21,10 @@ from .debug import debug_enabled
 from .utils import redact_sensitive_data, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
+
+# Timeout for container API requests (seconds)
+# Increased from 15s to handle slow networks and server load
+CONTAINER_REQUEST_TIMEOUT = 30
 
 
 class CardataContainerError(Exception):
@@ -337,10 +342,19 @@ class CardataContainerManager:
                 url,
                 headers=headers,
                 json=json_body,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=CONTAINER_REQUEST_TIMEOUT),
             ) as response:
                 if response.status in (200, 201):
-                    return await response.json(content_type=None)
+                    try:
+                        return await response.json(content_type=None)
+                    except (json.JSONDecodeError, aiohttp.ContentTypeError) as err:
+                        # API returned success status but invalid/non-JSON body
+                        text = await response.text()
+                        safe_text = redact_vin_in_text(text[:200].strip()) if text else "empty"
+                        raise CardataContainerError(
+                            f"Invalid JSON in response: {safe_text}",
+                            status=response.status,
+                        ) from err
                 if response.status == 204:
                     return {}
                 text = await response.text()
@@ -351,7 +365,7 @@ class CardataContainerManager:
                 )
         except asyncio.TimeoutError as err:
             raise CardataContainerError(
-                "Request timed out after 15 seconds"
+                f"Request timed out after {CONTAINER_REQUEST_TIMEOUT} seconds"
             ) from err
         except aiohttp.ClientError as err:
             raise CardataContainerError(

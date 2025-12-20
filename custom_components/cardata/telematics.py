@@ -24,6 +24,11 @@ from .utils import is_valid_vin, redact_vin, redact_vin_payload, redact_vin_in_t
 
 _LOGGER = logging.getLogger(__name__)
 
+# Max consecutive auth failures before pausing polling until reauth completes
+MAX_AUTH_FAILURES = 3
+# How long to wait before checking if reauth completed
+REAUTH_CHECK_INTERVAL = 60.0  # seconds
+
 
 @dataclass
 class TelematicFetchResult:
@@ -102,29 +107,26 @@ async def async_perform_telematic_fetch(
         # Fatal: missing container
         return TelematicFetchResult(None, "missing_container")
 
-    try:
-        from .auth import refresh_tokens_for_entry
+    # Proactively check and refresh token only if expired or about to expire
+    from .auth import async_ensure_valid_token
 
-        await refresh_tokens_for_entry(
-            entry,
-            runtime.session,
-            runtime.stream,
-            runtime.container_manager,
-        )
-    except Exception as err:
+    token_valid = await async_ensure_valid_token(
+        entry,
+        runtime.session,
+        runtime.stream,
+        runtime.container_manager,
+    )
+    if not token_valid:
         _LOGGER.error(
-            "Cardata fetch_telematic_data: token refresh failed for entry %s: %s",
+            "Cardata fetch_telematic_data: token refresh failed for entry %s",
             target_entry_id,
-            err,
         )
-        # Fatal: token refresh failed
         return TelematicFetchResult(None, "token_refresh_failed")
 
     access_token = entry.data.get("access_token")
     if not access_token:
         _LOGGER.error(
-            "Cardata fetch_telematic_data: access token missing after refresh")
-        # Fatal: auth failed
+            "Cardata fetch_telematic_data: access token missing")
         return TelematicFetchResult(None, "missing_access_token")
 
     headers = {
@@ -275,6 +277,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     base_interval = TELEMATIC_POLL_INTERVAL
     max_backoff = max(base_interval * 6, base_interval)
     consecutive_failures = 0
+    consecutive_auth_failures = 0  # Track auth failures separately
     # Track last poll locally to prevent spin if config entry update fails
     last_poll_local: float = 0.0
 
@@ -288,6 +291,30 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 _LOGGER.debug(
                     "Entry %s removed, stopping telematic poll loop", entry_id)
                 return
+
+            # Check if reauth is in progress or too many auth failures
+            # Skip polling until reauth completes to avoid wasting quota
+            if runtime.reauth_in_progress or consecutive_auth_failures >= MAX_AUTH_FAILURES:
+                if runtime.reauth_in_progress:
+                    _LOGGER.debug(
+                        "Reauth in progress for entry %s, pausing telematic polling",
+                        entry_id,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Too many auth failures (%d) for entry %s, waiting for reauth",
+                        consecutive_auth_failures,
+                        entry_id,
+                    )
+                await asyncio.sleep(REAUTH_CHECK_INTERVAL)
+                # Reset auth failure count if reauth completed successfully
+                if not runtime.reauth_in_progress and not runtime.reauth_pending:
+                    consecutive_auth_failures = 0
+                    _LOGGER.info(
+                        "Reauth appears complete for entry %s, resuming telematic polling",
+                        entry_id,
+                    )
+                continue
 
             # Use local timestamp for loop control, fall back to persisted on first run
             if last_poll_local == 0.0:
@@ -330,6 +357,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             if result.status is True:
                 # Data fetched successfully
                 consecutive_failures = 0
+                consecutive_auth_failures = 0  # Reset auth failures on success
                 await async_update_last_telematic_poll(hass, entry, now)
                 _LOGGER.debug(
                     "Telematic poll succeeded for entry %s", entry_id)
@@ -337,6 +365,12 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             # False or None: attempted but failed
             consecutive_failures += 1
+            is_auth_failure = result.reason in (
+                "token_refresh_failed", "auth_error", "missing_access_token"
+            )
+            if is_auth_failure:
+                consecutive_auth_failures += 1
+
             backoff_interval = (
                 base_interval
                 if consecutive_failures == 0
@@ -353,7 +387,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     next_interval / 60,
                 )
                 # Trigger reauth flow for auth-related failures
-                if result.reason in ("token_refresh_failed", "auth_error", "missing_access_token"):
+                if is_auth_failure:
                     from .auth import handle_stream_error
                     try:
                         await handle_stream_error(hass, entry, "unauthorized")
