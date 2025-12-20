@@ -808,15 +808,22 @@ class CardataCoordinator:
         Returns a copy to minimize race condition impact. For guaranteed
         thread-safety, use async_get_state() instead.
         """
-        # Snapshot the nested dict access to minimize race window
-        vehicle_data = self.data.get(vin)
-        if vehicle_data is None:
+        # Copy the vehicle dict to get a consistent snapshot, minimizing race window
+        # with concurrent modifications from async_handle_message
+        try:
+            vehicle_data = self.data.get(vin)
+            if vehicle_data is None:
+                return None
+            # Take a shallow copy to get consistent view of descriptors
+            vehicle_snapshot = dict(vehicle_data)
+            state = vehicle_snapshot.get(descriptor)
+            if state is None:
+                return None
+            # Return a copy to avoid mutations during read
+            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
+        except (KeyError, RuntimeError, AttributeError):
+            # Handle edge cases where dict structure changes during access
             return None
-        state = vehicle_data.get(descriptor)
-        if state is None:
-            return None
-        # Return a copy to avoid mutations during read
-        return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
     async def async_get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         """Get state for a descriptor with proper lock acquisition."""
