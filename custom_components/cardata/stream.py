@@ -87,6 +87,10 @@ class CardataStreamManager:
         self._max_failures_per_window = 10
         self._failure_window_seconds = 60
         self._circuit_breaker_duration = 300  # 5 minutes
+        # Reconnect attempt tracking for extended backoff
+        self._consecutive_reconnect_failures = 0
+        self._extended_backoff_threshold = 10  # After this many failures, use extended backoff
+        self._extended_backoff = 1800  # 30 minutes extended backoff
         # Flag to prevent MQTT start during bootstrap
         self._bootstrap_in_progress: bool = False
         # Event signaled when bootstrap completes (for efficient waiting)
@@ -690,14 +694,40 @@ class CardataStreamManager:
                 return
 
             await self._async_stop_locked()
-            await asyncio.sleep(self._reconnect_backoff)
+
+            # Use extended backoff after many consecutive failures
+            if self._consecutive_reconnect_failures >= self._extended_backoff_threshold:
+                wait_time = self._extended_backoff
+                _LOGGER.warning(
+                    "Many consecutive MQTT failures (%d); using extended backoff of %.0f minutes",
+                    self._consecutive_reconnect_failures,
+                    wait_time / 60,
+                )
+            else:
+                wait_time = self._reconnect_backoff
+
+            await asyncio.sleep(wait_time)
             try:
                 await self._async_start_locked()
             except Exception as err:
-                _LOGGER.error("BMW MQTT reconnect failed: %s", err)
+                self._consecutive_reconnect_failures += 1
+                _LOGGER.error(
+                    "BMW MQTT reconnect failed (attempt %d): %s",
+                    self._consecutive_reconnect_failures,
+                    err,
+                )
                 self._reconnect_backoff = min(
                     self._reconnect_backoff * 2, self._max_backoff)
+                # Schedule another reconnect attempt (will use extended backoff if threshold reached)
+                self._run_coro_safe(self._async_reconnect())
             else:
+                # Success - reset counters
+                if self._consecutive_reconnect_failures > 0:
+                    _LOGGER.info(
+                        "MQTT reconnected successfully after %d failed attempts",
+                        self._consecutive_reconnect_failures,
+                    )
+                self._consecutive_reconnect_failures = 0
                 self._reconnect_backoff = 5
         finally:
             self._connect_lock.release()
