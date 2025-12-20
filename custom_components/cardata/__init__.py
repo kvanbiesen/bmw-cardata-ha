@@ -35,7 +35,7 @@ from .debug import set_debug_enabled
 from .device_flow import CardataAuthError
 from .metadata import async_restore_vehicle_metadata
 from .quota import QuotaManager
-from .runtime import CardataRuntimeData
+from .runtime import CardataRuntimeData, cleanup_entry_lock
 from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
@@ -412,6 +412,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if not domain_data or not remaining_entries:
         hass.data.pop(DOMAIN, None)
+
+    # Clean up the per-entry lock from the registry
+    cleanup_entry_lock(entry.entry_id)
 
     return True
 
