@@ -319,7 +319,7 @@ class CardataSensor(CardataEntity, SensorEntity):
             UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT,
             UnitOfPressure.KPA, UnitOfPressure.BAR, UnitOfPressure.PSI,
             UnitOfElectricCurrent.AMPERE, UnitOfElectricCurrent.MILLIAMPERE,
-            UnitOfElectricPotential.VOLT,
+            UnitOfElectricPotential.VOLT, UnitOfVolume.LITERS, UnitOfVolume.GALLONS, 
             "%",  # Battery percentage
         ):
             return SensorStateClass.MEASUREMENT
