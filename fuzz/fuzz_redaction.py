@@ -3,6 +3,9 @@ import sys
 
 import atheris
 
+# Default fuzz duration in seconds (4 hours) - exits cleanly when reached
+DEFAULT_MAX_TIME = 4 * 60 * 60
+
 CARDATA_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "custom_components", "cardata")
 )
@@ -61,8 +64,18 @@ def TestOneInput(data: bytes) -> None:
 
 
 def main() -> None:
-    atheris.Setup(sys.argv, TestOneInput)
+    # Add default time limit if not specified via command line
+    # This ensures the fuzzer exits cleanly instead of being killed by CI timeout
+    args = sys.argv[:]
+    has_max_time = any(arg.startswith("-max_total_time=") for arg in args)
+    if not has_max_time:
+        max_time = int(os.environ.get("FUZZ_MAX_TIME", DEFAULT_MAX_TIME))
+        args.append(f"-max_total_time={max_time}")
+        print(f"Fuzzing for {max_time} seconds ({max_time / 3600:.1f} hours)")
+
+    atheris.Setup(args, TestOneInput)
     atheris.Fuzz()
+    print("Fuzzing completed successfully - no issues found!")
 
 
 if __name__ == "__main__":
