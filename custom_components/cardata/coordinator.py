@@ -985,7 +985,7 @@ class CardataCoordinator:
                 return
 
             # Collect all VINs from tracking dicts
-            tracking_dicts = [
+            tracking_dicts: list[Dict[str, Any]] = [
                 self._soc_tracking,
                 self._soc_rate,
                 self._soc_estimate,
