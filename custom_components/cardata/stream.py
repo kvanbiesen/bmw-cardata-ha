@@ -546,22 +546,33 @@ class CardataStreamManager:
                           mid, granted_qos)
 
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
-        payload = msg.payload.decode(errors="ignore")
-        if debug_enabled():
-            _LOGGER.debug(
-                "BMW MQTT message on %s: %s",
-                redact_vin_in_text(msg.topic),
-                redact_vin_payload(payload),
-            )
-        if not self._message_callback:
-            return
+        """Handle incoming MQTT message with full exception protection.
+
+        This method is called from the MQTT client's network thread. Any unhandled
+        exception here would crash the MQTT message processing loop, so we wrap
+        everything in try/except to ensure robustness.
+        """
         try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            return
-        self._run_coro_safe(
-            cast(Coroutine[Any, Any, None], self._message_callback(data))
-        )
+            payload = msg.payload.decode(errors="ignore")
+            if debug_enabled():
+                _LOGGER.debug(
+                    "BMW MQTT message on %s: %s",
+                    redact_vin_in_text(msg.topic),
+                    redact_vin_payload(payload),
+                )
+            if not self._message_callback:
+                return
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                _LOGGER.debug("Failed to parse MQTT message as JSON: %s", payload[:100])
+                return
+            self._run_coro_safe(
+                cast(Coroutine[Any, Any, None], self._message_callback(data))
+            )
+        except Exception as err:
+            # Catch-all to prevent crashing the MQTT callback thread
+            _LOGGER.exception("Unexpected error in MQTT message handler: %s", err)
 
     def _handle_disconnect(self, client: mqtt.Client, userdata, rc) -> None:
         reason = {
