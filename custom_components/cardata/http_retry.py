@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
@@ -13,6 +14,17 @@ from .const import HTTP_TIMEOUT
 from .utils import redact_sensitive_data, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _jittered_backoff(backoff: float) -> float:
+    """Apply jitter to backoff delay to prevent thundering herd.
+
+    Uses "equal jitter" strategy: half the backoff is guaranteed,
+    plus a random portion up to the other half. This balances
+    spread with reasonable minimum delay.
+    """
+    half = backoff / 2
+    return half + random.uniform(0, half)
 
 # HTTP status codes that should trigger a retry
 RETRYABLE_STATUS_CODES = {
@@ -201,15 +213,16 @@ async def async_request_with_retry(
                 if response.status in RETRYABLE_STATUS_CODES:
                     last_response = http_response
                     if attempt < max_retries:
+                        jittered = _jittered_backoff(backoff)
                         _LOGGER.debug(
                             "%s failed with status %d, retrying in %.1fs (attempt %d/%d)",
                             context,
                             response.status,
-                            backoff,
+                            jittered,
                             attempt + 1,
                             max_retries + 1,
                         )
-                        await asyncio.sleep(backoff)
+                        await asyncio.sleep(jittered)
                         backoff = min(
                             backoff * backoff_multiplier, max_backoff)
                         continue
@@ -220,30 +233,32 @@ async def async_request_with_retry(
         except asyncio.TimeoutError as err:
             last_error = err
             if attempt < max_retries:
+                jittered = _jittered_backoff(backoff)
                 _LOGGER.debug(
                     "%s timed out, retrying in %.1fs (attempt %d/%d)",
                     context,
-                    backoff,
+                    jittered,
                     attempt + 1,
                     max_retries + 1,
                 )
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(jittered)
                 backoff = min(backoff * backoff_multiplier, max_backoff)
                 continue
 
         except aiohttp.ClientError as err:
             last_error = err
             if attempt < max_retries:
+                jittered = _jittered_backoff(backoff)
                 _LOGGER.debug(
                     "%s failed with %s: %s, retrying in %.1fs (attempt %d/%d)",
                     context,
                     type(err).__name__,
                     redact_sensitive_data(str(err)),
-                    backoff,
+                    jittered,
                     attempt + 1,
                     max_retries + 1,
                 )
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(jittered)
                 backoff = min(backoff * backoff_multiplier, max_backoff)
                 continue
 
