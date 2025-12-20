@@ -172,13 +172,17 @@ class SocTracking:
         if self.last_update is not None:
             time_since_actual = (now - self.last_update).total_seconds()
             if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
-                # Estimate is stale - fall back to last known actual value
+                # Estimate is stale - clear stale state and fall back to last known actual value
                 _LOGGER.debug(
                     "SOC estimate stale (%.0f seconds since last actual); "
-                    "returning last known value %.1f%%",
+                    "clearing estimate and returning last known value %.1f%%",
                     time_since_actual,
                     self.last_soc_percent or 0.0,
                 )
+                # Clear stale estimate state so next call reinitializes from last_soc_percent
+                self.estimated_percent = None
+                self.last_estimate_time = None
+                self.charging_active = False  # Assume charging stopped if no updates
                 return self.last_soc_percent
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
