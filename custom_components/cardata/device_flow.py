@@ -76,6 +76,10 @@ async def poll_for_tokens(
 
         async with session.post(token_url, data=payload, timeout=request_timeout) as resp:
             data = await resp.json(content_type=None)
+            if not isinstance(data, dict):
+                raise CardataAuthError(
+                    f"Token polling failed ({resp.status}): invalid response payload"
+                )
             if resp.status == 200:
                 return data
 
@@ -146,6 +150,10 @@ async def refresh_tokens(
         try:
             async with session.post(token_url, data=payload, timeout=timeout) as resp:
                 data = await resp.json(content_type=None)
+                if not isinstance(data, dict):
+                    raise CardataAuthError(
+                        f"Token refresh failed ({resp.status}): invalid response payload"
+                    )
                 if resp.status == 200:
                     if attempt > 0:
                         _LOGGER.debug(
