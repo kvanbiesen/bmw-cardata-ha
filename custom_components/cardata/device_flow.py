@@ -76,14 +76,15 @@ async def poll_for_tokens(
 
         async with session.post(token_url, data=payload, timeout=request_timeout) as resp:
             data = await resp.json(content_type=None)
-            if not isinstance(data, dict):
-                raise CardataAuthError(
-                    f"Token polling failed ({resp.status}): invalid response payload"
-                )
+            data_dict = data if isinstance(data, dict) else {}
             if resp.status == 200:
+                if not isinstance(data, dict):
+                    raise CardataAuthError(
+                        "Token polling failed (200): invalid response payload"
+                    )
                 return data
 
-            error = data.get("error")
+            error = data_dict.get("error")
             if error in {"authorization_pending", "slow_down"}:
                 consecutive_500s = 0  # Reset counter on normal pending response
                 await asyncio.sleep(interval if error == "authorization_pending" else interval + 5)
@@ -93,7 +94,7 @@ async def poll_for_tokens(
             if 500 <= resp.status < 600:
                 consecutive_500s += 1
                 if consecutive_500s <= max_consecutive_500s:
-                    safe_data = {k: v for k, v in data.items() if k not in (
+                    safe_data = {k: v for k, v in data_dict.items() if k not in (
                         "access_token", "refresh_token", "id_token")}
                     _LOGGER.warning(
                         "Token polling got %d: %s (attempt %d/%d, retrying in %ds)",
@@ -106,7 +107,7 @@ async def poll_for_tokens(
                     await asyncio.sleep(interval)
                     continue
                 # Too many consecutive 500s - give up
-                safe_data = {k: v for k, v in data.items() if k not in (
+                safe_data = {k: v for k, v in data_dict.items() if k not in (
                     "access_token", "refresh_token", "id_token")}
                 raise CardataAuthError(
                     f"Token polling failed after {max_consecutive_500s} consecutive 500 errors: {safe_data}. "
@@ -115,7 +116,7 @@ async def poll_for_tokens(
 
             # Other errors (401, 403, etc.) - fail immediately
             consecutive_500s = 0
-            safe_data = {k: v for k, v in data.items() if k not in (
+            safe_data = {k: v for k, v in data_dict.items() if k not in (
                 "access_token", "refresh_token", "id_token")}
             raise CardataAuthError(
                 f"Token polling failed ({resp.status}): {safe_data}")
@@ -150,11 +151,12 @@ async def refresh_tokens(
         try:
             async with session.post(token_url, data=payload, timeout=timeout) as resp:
                 data = await resp.json(content_type=None)
-                if not isinstance(data, dict):
-                    raise CardataAuthError(
-                        f"Token refresh failed ({resp.status}): invalid response payload"
-                    )
+                data_dict = data if isinstance(data, dict) else {}
                 if resp.status == 200:
+                    if not isinstance(data, dict):
+                        raise CardataAuthError(
+                            "Token refresh failed (200): invalid response payload"
+                        )
                     if attempt > 0:
                         _LOGGER.debug(
                             "Token refresh succeeded after %d retries", attempt)
@@ -163,7 +165,7 @@ async def refresh_tokens(
                 # Auth errors (401, 403) - don't retry
                 if resp.status in (401, 403):
                     # Redact sensitive data from error response
-                    safe_data = {k: v for k, v in data.items() if k not in (
+                    safe_data = {k: v for k, v in data_dict.items() if k not in (
                         "access_token", "refresh_token", "id_token")}
                     raise CardataAuthError(
                         f"Token refresh failed ({resp.status}): {safe_data}")
@@ -182,7 +184,7 @@ async def refresh_tokens(
                     continue
 
                 # Other errors - fail
-                safe_data = {k: v for k, v in data.items() if k not in (
+                safe_data = {k: v for k, v in data_dict.items() if k not in (
                     "access_token", "refresh_token", "id_token")}
                 raise CardataAuthError(
                     f"Token refresh failed ({resp.status}): {safe_data}")
