@@ -31,6 +31,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
+from .utils import redact_vin
 
 from .const import (
     DOMAIN,
@@ -839,28 +840,24 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities, True)
 
-    def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False) -> None:
+    def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False, from_signal: bool = False) -> None:
         """Ensure sensor entity exists for VIN + descriptor."""
         ensure_soc_tracking_entities(vin)
 
         if (vin, descriptor) in entities:
             return
 
-        # Skip location descriptors (used by device_tracker)
-        # not needed since device tracker is working
-        # if descriptor in (LOCATION_LATITUDE_DESCRIPTOR,
-        #    LOCATION_LONGITUDE_DESCRIPTOR,
-        #    LOCATION_ALTITUDE_DESCRIPTOR,
-        #    LOCATION_HEADING_DESCRIPTOR
-        # ):
-        #    return
-
         # Skip boolean values (they're binary sensors)
         state = coordinator.get_state(vin, descriptor)
         if state and isinstance(state.value, bool):
             return
 
-        if not state and not assume_sensor:
+        if not state and not assume_sensor and not from_signal:
+            _LOGGER.debug(
+                "Skipping sensor creation for %s - no coordinator state (vin=%s)",
+                descriptor,
+                redact_vin(vin)
+            )
             return
 
         entity = CardataSensor(coordinator, vin, descriptor)
@@ -891,13 +888,21 @@ async def async_setup_entry(
     # This prevents race conditions where descriptors arrive between iter_descriptors
     # and signal subscription
     async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
+        ensure_entity(vin, descriptor, from_signal=True)
 
     entry.async_on_unload(
         async_dispatcher_connect(
             hass, coordinator.signal_new_sensor, async_handle_new_sensor)
     )
 
+    # also subscribe to updates
+
+    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor, from_signal=True)  # ← Trust the signal!
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
+    )
     # Note: We don't subscribe to signal_update for entity creation here.
     # - signal_new_sensor handles new descriptors
     # - iter_descriptors() loop below handles existing data
