@@ -95,6 +95,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
     _attr_force_update = False
     _attr_translation_key = "car"
+    _NAME_WAIT = 2.0  # seconds to wait for coordinator name before continuing
 
     # Timing thresholds for coordinate pairing logic
     _PAIR_WINDOW = 2.0  # seconds - lat/lon come in separate messages
@@ -139,7 +140,15 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         # CRITICAL: Ensure VIN names are available before restoring state
         # Entity restore can happen before names exist, causing missing prefix
+        deadline = time.monotonic() + self._NAME_WAIT
         while not self._coordinator.names.get(self._vin):
+            if time.monotonic() >= deadline:
+                _LOGGER.debug(
+                    "Device tracker setup continuing without vehicle name for %s after %.1fs",
+                    self._redacted_vin,
+                    self._NAME_WAIT,
+                )
+                break
             await asyncio.sleep(0.1)
 
         # Restore last known location
