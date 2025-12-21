@@ -793,7 +793,7 @@ async def async_setup_entry(
 
         if not drive_train:
             _LOGGER.debug("VIN %s: No metadata yet, defaulting to electric (will check later)", vin)
-            return True  # Don't cache this - let it check again when metadata loads
+            return False  # Don't cache this - let it check again when metadata loads
 
         is_electric = any(x in drive_train for x in [
                           "electric", "phev", "bev", "plugin", "hybrid", "mhev"])
@@ -817,8 +817,13 @@ async def async_setup_entry(
     def ensure_soc_tracking_entities(vin: str) -> None:
         ensure_metadata_sensor(vin)
 
+        electric_status = is_electric_vehicle(vin)
+        if electric_status is None:
+            # wait for meta, so skip
+            return
+        
         # Skip SOC sensors for non-electric vehicles
-        if not is_electric_vehicle(vin):
+        if not electric_status:
             return
 
         new_entities = []
