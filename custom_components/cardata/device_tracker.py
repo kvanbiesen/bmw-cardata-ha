@@ -141,7 +141,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # CRITICAL: Ensure VIN names are available before restoring state
         # Entity restore can happen before names exist, causing missing prefix
         deadline = time.monotonic() + self._NAME_WAIT
-        while not self._coordinator.names.get(self._vin):
+        while not self._get_vehicle_name():
             if time.monotonic() >= deadline:
                 _LOGGER.debug(
                     "Device tracker setup continuing without vehicle name for %s after %.1fs",
