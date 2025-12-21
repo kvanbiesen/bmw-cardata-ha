@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, Optional
@@ -75,7 +76,14 @@ async def poll_for_tokens(
                 "Timed out waiting for device authorization")
 
         async with session.post(token_url, data=payload, timeout=request_timeout) as resp:
-            data = await resp.json(content_type=None)
+            try:
+                data = await resp.json(content_type=None)
+            except (aiohttp.ContentTypeError, json.JSONDecodeError, ValueError) as err:
+                if resp.status == 200:
+                    raise CardataAuthError(
+                        "Token polling failed (200): invalid JSON response"
+                    ) from err
+                data = {}
             data_dict = data if isinstance(data, dict) else {}
             if resp.status == 200:
                 if not isinstance(data, dict):
@@ -150,7 +158,14 @@ async def refresh_tokens(
     for attempt in range(max_retries + 1):
         try:
             async with session.post(token_url, data=payload, timeout=timeout) as resp:
-                data = await resp.json(content_type=None)
+                try:
+                    data = await resp.json(content_type=None)
+                except (aiohttp.ContentTypeError, json.JSONDecodeError, ValueError) as err:
+                    if resp.status == 200:
+                        raise CardataAuthError(
+                            "Token refresh failed (200): invalid JSON response"
+                        ) from err
+                    data = {}
                 data_dict = data if isinstance(data, dict) else {}
                 if resp.status == 200:
                     if not isinstance(data, dict):
