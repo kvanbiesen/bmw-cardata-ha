@@ -52,6 +52,8 @@ class QuotaManager:
         if not isinstance(data, dict):
             data = {}
         raw_timestamps = data.get("timestamps", [])
+        if not isinstance(raw_timestamps, list):
+            raw_timestamps = []
         values: list[float] = []
 
         for item in raw_timestamps:
