@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from dataclasses import dataclass
@@ -20,6 +19,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError
 from .runtime import CardataRuntimeData
+from .api_parsing import extract_telematic_payload, try_parse_json
 from .utils import is_valid_vin, redact_vin, redact_vin_payload, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
@@ -218,18 +218,14 @@ async def async_perform_telematic_fetch(
             )
             continue
 
-        try:
-            payload = json.loads(response.text)
-        except json.JSONDecodeError:
+        ok, payload = try_parse_json(response.text)
+        if not ok:
             payload = response.text
         safe_payload = redact_vin_payload(payload)
 
         _LOGGER.info("Cardata telematic data for %s: %s",
                      redacted_vin, safe_payload)
-        telematic_payload = None
-        if isinstance(payload, dict):
-            telematic_payload = payload.get(
-                "telematicData") or payload.get("data")
+        telematic_payload = extract_telematic_payload(payload)
 
         if isinstance(telematic_payload, dict):
             await runtime.coordinator.async_handle_message(

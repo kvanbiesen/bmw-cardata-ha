@@ -17,6 +17,7 @@ from .const import (
     HV_BATTERY_CONTAINER_PURPOSE,
     HV_BATTERY_DESCRIPTORS,
 )
+from .api_parsing import extract_container_items
 from .debug import debug_enabled
 from .utils import redact_sensitive_data, redact_vin_in_text
 
@@ -259,18 +260,7 @@ class CardataContainerManager:
 
     async def _list_containers(self, access_token: str) -> List[Dict[str, Any]]:
         response = await self._request("GET", "/customers/containers", access_token)
-        if isinstance(response, list):
-            containers = [item for item in response if isinstance(item, dict)]
-        elif isinstance(response, dict):
-            possible = response.get("containers")
-            if isinstance(possible, list):
-                containers = [
-                    item for item in possible if isinstance(item, dict)]
-            else:
-                containers = []
-        else:
-            containers = []
-        return containers
+        return extract_container_items(response)
 
     def _matches_hv_container(self, container: Dict[str, Any]) -> bool:
         """Check if container matches HV battery container criteria.

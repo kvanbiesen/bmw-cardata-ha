@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -16,6 +15,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData
+from .api_parsing import extract_primary_vins, extract_telematic_payload, try_parse_json
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
@@ -208,9 +208,8 @@ async def async_fetch_primary_vins(
         )
         return []
 
-    try:
-        payload = json.loads(response.text)
-    except json.JSONDecodeError:
+    ok, payload = try_parse_json(response.text)
+    if not ok:
         error_excerpt = redact_vin_in_text(response.text[:200])
         _LOGGER.warning(
             "Bootstrap mapping response malformed for entry %s: %s",
@@ -219,23 +218,7 @@ async def async_fetch_primary_vins(
         )
         return []
 
-    mappings: list[dict[str, Any]]
-    if isinstance(payload, list):
-        mappings = [item for item in payload if isinstance(item, dict)]
-    elif isinstance(payload, dict):
-        possible = payload.get("mappings") or payload.get("vehicles") or []
-        mappings = [item for item in possible if isinstance(item, dict)]
-    else:
-        mappings = []
-
-    vins: list[str] = []
-    for mapping in mappings:
-        mapping_type = mapping.get("mappingType")
-        if mapping_type and mapping_type.upper() != "PRIMARY":
-            continue
-        vin = mapping.get("vin")
-        if isinstance(vin, str):
-            vins.append(vin)
+    vins = extract_primary_vins(payload)
 
     if not vins:
         _LOGGER.info(
@@ -334,9 +317,8 @@ async def async_seed_telematic_data(
             )
             continue
 
-        try:
-            payload = json.loads(response.text)
-        except json.JSONDecodeError:
+        ok, payload = try_parse_json(response.text)
+        if not ok:
             error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.debug(
                 "Bootstrap telematic payload invalid for %s: %s",
@@ -345,12 +327,9 @@ async def async_seed_telematic_data(
             )
             continue
 
-        telematic_data = None
-        if isinstance(payload, dict):
-            telematic_data = payload.get(
-                "telematicData") or payload.get("data")
+        telematic_data = extract_telematic_payload(payload)
 
-        if not isinstance(telematic_data, dict) or not telematic_data:
+        if not telematic_data:
             continue
 
         message = {"vin": vin, "data": telematic_data}
