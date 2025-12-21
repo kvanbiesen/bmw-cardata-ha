@@ -1265,6 +1265,14 @@ class CardataCoordinator:
         )
         brand = payload.get("brand") or "BMW"
         raw_payload = dict(payload)
+        charging_modes = raw_payload.get("chargingModes") or []
+        if isinstance(charging_modes, list):
+            charging_modes_text = ", ".join(
+                str(item) for item in charging_modes if item is not None
+            )
+        else:
+            charging_modes_text = ""
+
         display_attrs: Dict[str, Any] = {
             "vin": raw_payload.get("vin") or vin,
             "model_name": model_name,
@@ -1277,7 +1285,7 @@ class CardataCoordinator:
             "drive_train": raw_payload.get("driveTrain"),
             "propulsion_type": raw_payload.get("propulsionType"),
             "engine_code": raw_payload.get("engine"),
-            "charging_modes": ", ".join(raw_payload.get("chargingModes") or []),
+            "charging_modes": charging_modes_text,
             "navigation_installed": raw_payload.get("hasNavi"),
             "sunroof": raw_payload.get("hasSunRoof"),
             "head_unit": raw_payload.get("headUnit"),
