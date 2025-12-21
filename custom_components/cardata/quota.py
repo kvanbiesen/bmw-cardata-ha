@@ -48,7 +48,9 @@ class QuotaManager:
         """Create and initialize a QuotaManager."""
         store = Store(hass, REQUEST_LOG_VERSION,
                       f"{DOMAIN}_{entry_id}_{REQUEST_LOG}")
-        data = await store.async_load() or {}
+        data = await store.async_load()
+        if not isinstance(data, dict):
+            data = {}
         raw_timestamps = data.get("timestamps", [])
         values: list[float] = []
 
