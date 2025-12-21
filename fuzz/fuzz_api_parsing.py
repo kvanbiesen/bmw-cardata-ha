@@ -105,15 +105,40 @@ def TestOneInput(data: bytes) -> None:
         api_parsing.extract_container_items(candidate)
 
 
+def _safe_parse_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _existing_max_total_time(args):
+    existing = None
+    for idx, arg in enumerate(args):
+        if arg.startswith("-max_total_time="):
+            parsed = _safe_parse_int(arg.split("=", 1)[1])
+            if parsed is not None:
+                existing = parsed
+        elif arg == "-max_total_time" and idx + 1 < len(args):
+            parsed = _safe_parse_int(args[idx + 1])
+            if parsed is not None:
+                existing = parsed
+    if existing is not None and existing <= 0:
+        return None
+    return existing
+
+
 def main() -> None:
-    # Add default time limit if not specified via command line
-    # This ensures the fuzzer exits cleanly instead of being killed by CI timeout
+    # Ensure max time is capped so fuzzers exit before CI timeout.
     args = sys.argv[:]
-    has_max_time = any(arg.startswith("-max_total_time=") for arg in args)
-    if not has_max_time:
-        max_time = int(os.environ.get("FUZZ_MAX_TIME", DEFAULT_MAX_TIME))
-        args.append(f"-max_total_time={max_time}")
-        print(f"Fuzzing for {max_time} seconds ({max_time / 3600:.1f} hours)")
+    max_time_env = os.environ.get("FUZZ_MAX_TIME", DEFAULT_MAX_TIME)
+    max_time = _safe_parse_int(max_time_env) or DEFAULT_MAX_TIME
+    if max_time <= 0:
+        max_time = DEFAULT_MAX_TIME
+    existing_max = _existing_max_total_time(args)
+    effective_max = min(existing_max, max_time) if existing_max else max_time
+    args.append(f"-max_total_time={effective_max}")
+    print(f"Fuzzing for {effective_max} seconds ({effective_max / 3600:.1f} hours)")
 
     atheris.Setup(args, TestOneInput)
     atheris.Fuzz()
