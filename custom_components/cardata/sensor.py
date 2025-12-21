@@ -821,7 +821,7 @@ async def async_setup_entry(
         if electric_status is None:
             # wait for meta, so skip
             return
-        
+
         # Skip SOC sensors for non-electric vehicles
         if not electric_status:
             return
