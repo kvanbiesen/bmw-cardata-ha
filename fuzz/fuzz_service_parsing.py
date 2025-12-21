@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -12,6 +13,7 @@ CARDATA_PATH = os.path.abspath(
 sys.path.insert(0, CARDATA_PATH)
 
 with atheris.instrument_imports():
+    import api_parsing
     import utils
 
 
@@ -19,48 +21,47 @@ def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
     return fdp.ConsumeUnicodeNoSurrogates(max_len)
 
 
-def _consume_payload(fdp: atheris.FuzzedDataProvider, depth: int = 0) -> object:
-    if depth >= 3:
-        return _consume_text(fdp, 40)
+def _consume_json_value(fdp: atheris.FuzzedDataProvider, depth: int = 0):
+    if depth >= 2:
+        return _consume_text(fdp, 60)
 
     choice = fdp.ConsumeIntInRange(0, 6)
     if choice == 0:
         return _consume_text(fdp, 120)
     if choice == 1:
-        return fdp.ConsumeIntInRange(-1_000_000, 1_000_000)
+        value = fdp.ConsumeIntInRange(-1_000_000, 1_000_000)
+        if fdp.ConsumeBool():
+            return value / 100.0
+        return value
     if choice == 2:
         return fdp.ConsumeBool()
     if choice == 3:
-        return [
-            _consume_payload(fdp, depth + 1)
-            for _ in range(fdp.ConsumeIntInRange(0, 4))
-        ]
+        return None
     if choice == 4:
-        payload = {}
-        for _ in range(fdp.ConsumeIntInRange(0, 4)):
-            key = _consume_text(fdp, 20)
-            payload[key] = _consume_payload(fdp, depth + 1)
-        return payload
-    if choice == 5:
-        return tuple(
-            _consume_payload(fdp, depth + 1)
-            for _ in range(fdp.ConsumeIntInRange(0, 4))
-        )
-    return {_consume_text(fdp, 20) for _ in range(fdp.ConsumeIntInRange(0, 4))}
+        return [
+            _consume_json_value(fdp, depth + 1)
+            for _ in range(fdp.ConsumeIntInRange(0, 5))
+        ]
+    payload = {}
+    for _ in range(fdp.ConsumeIntInRange(0, 5)):
+        key = _consume_text(fdp, 16)
+        payload[key] = _consume_json_value(fdp, depth + 1)
+    return payload
 
 
-def TestOneInput(data: bytes) -> None:
-    fdp = atheris.FuzzedDataProvider(data)
-    text = _consume_text(fdp, 240)
-    vin = _consume_text(fdp, 20)
-    payload = _consume_payload(fdp)
-
-    utils.redact_sensitive_data(text)
-    utils.redact_vin_in_text(text)
-    utils.is_valid_vin(vin)
-    utils.redact_vin(vin)
-    utils.redact_vins([vin, text])
-    utils.redact_vin_payload(payload)
+def _build_text_payload(fdp: atheris.FuzzedDataProvider) -> str:
+    choice = fdp.ConsumeIntInRange(0, 3)
+    if choice == 0:
+        return _consume_text(fdp, 200)
+    if choice == 1:
+        payload = _consume_json_value(fdp)
+        try:
+            return json.dumps(payload, ensure_ascii=True)
+        except (TypeError, ValueError):
+            return _consume_text(fdp, 120)
+    if choice == 2:
+        return _consume_text(fdp, 60) + "{" + _consume_text(fdp, 60)
+    return ""
 
 
 def _safe_parse_int(value):
@@ -84,6 +85,24 @@ def _existing_max_total_time(args):
     if existing is not None and existing <= 0:
         return None
     return existing
+
+
+def TestOneInput(data: bytes) -> None:
+    fdp = atheris.FuzzedDataProvider(data)
+    iterations = fdp.ConsumeIntInRange(1, 6)
+    for _ in range(iterations):
+        text = _build_text_payload(fdp)
+        ok, payload = api_parsing.try_parse_json(text)
+        if not ok:
+            payload = text
+
+        # Mapping/basic data services log redacted payloads.
+        utils.redact_vin_payload(payload)
+
+        # Container list service expects JSON; invalid JSON -> empty list.
+        ok, container_payload = api_parsing.try_parse_json(text)
+        if ok:
+            api_parsing.extract_container_items(container_payload)
 
 
 def main() -> None:

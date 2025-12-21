@@ -12,55 +12,55 @@ CARDATA_PATH = os.path.abspath(
 sys.path.insert(0, CARDATA_PATH)
 
 with atheris.instrument_imports():
-    import utils
+    import units
+
+
+UNIT_SAMPLES = [
+    "percent",
+    "Percent",
+    " PERCENT ",
+    "%",
+    "W",
+    "w",
+    "kW",
+    " kw ",
+    "A",
+    "V",
+    "",
+    "   ",
+]
 
 
 def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
     return fdp.ConsumeUnicodeNoSurrogates(max_len)
 
 
-def _consume_payload(fdp: atheris.FuzzedDataProvider, depth: int = 0) -> object:
-    if depth >= 3:
-        return _consume_text(fdp, 40)
-
+def _consume_misc_value(fdp: atheris.FuzzedDataProvider):
     choice = fdp.ConsumeIntInRange(0, 6)
     if choice == 0:
-        return _consume_text(fdp, 120)
+        return None
     if choice == 1:
         return fdp.ConsumeIntInRange(-1_000_000, 1_000_000)
     if choice == 2:
         return fdp.ConsumeBool()
     if choice == 3:
-        return [
-            _consume_payload(fdp, depth + 1)
-            for _ in range(fdp.ConsumeIntInRange(0, 4))
-        ]
+        value = fdp.ConsumeIntInRange(-1_000_000, 1_000_000)
+        return value / 100.0
     if choice == 4:
-        payload = {}
-        for _ in range(fdp.ConsumeIntInRange(0, 4)):
-            key = _consume_text(fdp, 20)
-            payload[key] = _consume_payload(fdp, depth + 1)
-        return payload
+        return fdp.ConsumeBytes(fdp.ConsumeIntInRange(0, 40))
     if choice == 5:
-        return tuple(
-            _consume_payload(fdp, depth + 1)
-            for _ in range(fdp.ConsumeIntInRange(0, 4))
-        )
-    return {_consume_text(fdp, 20) for _ in range(fdp.ConsumeIntInRange(0, 4))}
+        return [fdp.ConsumeIntInRange(0, 255) for _ in range(fdp.ConsumeIntInRange(0, 10))]
+    payload = {}
+    for _ in range(fdp.ConsumeIntInRange(0, 5)):
+        payload[_consume_text(fdp, 8)] = _consume_text(fdp, 12)
+    return payload
 
 
-def TestOneInput(data: bytes) -> None:
-    fdp = atheris.FuzzedDataProvider(data)
-    text = _consume_text(fdp, 240)
-    vin = _consume_text(fdp, 20)
-    payload = _consume_payload(fdp)
-
-    utils.redact_sensitive_data(text)
-    utils.redact_vin_in_text(text)
-    utils.is_valid_vin(vin)
-    utils.redact_vin(vin)
-    utils.redact_vins([vin, text])
-    utils.redact_vin_payload(payload)
+def _consume_unit_candidate(fdp: atheris.FuzzedDataProvider) -> str:
+    if fdp.ConsumeBool():
+        return UNIT_SAMPLES[fdp.ConsumeIntInRange(0, len(UNIT_SAMPLES) - 1)]
+    text = _consume_text(fdp, 12)
+    return text if text else "percent"
 
 
 def _safe_parse_int(value):
@@ -84,6 +84,20 @@ def _existing_max_total_time(args):
     if existing is not None and existing <= 0:
         return None
     return existing
+
+
+def TestOneInput(data: bytes) -> None:
+    fdp = atheris.FuzzedDataProvider(data)
+    iterations = fdp.ConsumeIntInRange(1, 40)
+    for _ in range(iterations):
+        if fdp.ConsumeBool():
+            value = _consume_unit_candidate(fdp)
+        else:
+            value = _consume_misc_value(fdp)
+
+        normalized = units.normalize_unit(value)
+        # Re-run normalization to cover idempotence and None handling.
+        units.normalize_unit(normalized)
 
 
 def main() -> None:

@@ -19,48 +19,30 @@ def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
     return fdp.ConsumeUnicodeNoSurrogates(max_len)
 
 
-def _consume_payload(fdp: atheris.FuzzedDataProvider, depth: int = 0) -> object:
-    if depth >= 3:
-        return _consume_text(fdp, 40)
-
-    choice = fdp.ConsumeIntInRange(0, 6)
+def _consume_candidate(fdp: atheris.FuzzedDataProvider):
+    choice = fdp.ConsumeIntInRange(0, 7)
     if choice == 0:
-        return _consume_text(fdp, 120)
+        return _consume_text(fdp, 40)
     if choice == 1:
-        return fdp.ConsumeIntInRange(-1_000_000, 1_000_000)
+        return _consume_text(fdp, 5)
     if choice == 2:
-        return fdp.ConsumeBool()
+        length = fdp.ConsumeIntInRange(0, 30)
+        chars = []
+        for _ in range(length):
+            if fdp.ConsumeBool():
+                chars.append(chr(fdp.ConsumeIntInRange(48, 90)))
+            else:
+                chars.append(chr(fdp.ConsumeIntInRange(65, 122)))
+        return "".join(chars)
     if choice == 3:
-        return [
-            _consume_payload(fdp, depth + 1)
-            for _ in range(fdp.ConsumeIntInRange(0, 4))
-        ]
+        return None
     if choice == 4:
-        payload = {}
-        for _ in range(fdp.ConsumeIntInRange(0, 4)):
-            key = _consume_text(fdp, 20)
-            payload[key] = _consume_payload(fdp, depth + 1)
-        return payload
+        return fdp.ConsumeIntInRange(-1_000_000, 1_000_000)
     if choice == 5:
-        return tuple(
-            _consume_payload(fdp, depth + 1)
-            for _ in range(fdp.ConsumeIntInRange(0, 4))
-        )
-    return {_consume_text(fdp, 20) for _ in range(fdp.ConsumeIntInRange(0, 4))}
-
-
-def TestOneInput(data: bytes) -> None:
-    fdp = atheris.FuzzedDataProvider(data)
-    text = _consume_text(fdp, 240)
-    vin = _consume_text(fdp, 20)
-    payload = _consume_payload(fdp)
-
-    utils.redact_sensitive_data(text)
-    utils.redact_vin_in_text(text)
-    utils.is_valid_vin(vin)
-    utils.redact_vin(vin)
-    utils.redact_vins([vin, text])
-    utils.redact_vin_payload(payload)
+        return fdp.ConsumeBytes(fdp.ConsumeIntInRange(0, 40))
+    if choice == 6:
+        return [_consume_text(fdp, 8) for _ in range(fdp.ConsumeIntInRange(0, 4))]
+    return {"vin": _consume_text(fdp, 20)}
 
 
 def _safe_parse_int(value):
@@ -84,6 +66,20 @@ def _existing_max_total_time(args):
     if existing is not None and existing <= 0:
         return None
     return existing
+
+
+def TestOneInput(data: bytes) -> None:
+    fdp = atheris.FuzzedDataProvider(data)
+    iterations = fdp.ConsumeIntInRange(1, 50)
+    for _ in range(iterations):
+        candidate = _consume_candidate(fdp)
+        utils.is_valid_vin(candidate)
+        utils.redact_vin(candidate)
+        if isinstance(candidate, str):
+            utils.redact_vin_in_text(candidate)
+            utils.redact_vin_payload(candidate)
+        utils.redact_vin_payload([candidate, _consume_text(fdp, 12)])
+        utils.redact_vin_payload({"vin": candidate, "text": _consume_text(fdp, 12)})
 
 
 def main() -> None:

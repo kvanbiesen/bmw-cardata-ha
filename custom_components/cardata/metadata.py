@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -24,6 +23,7 @@ from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text
+from .api_parsing import try_parse_json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,9 +119,8 @@ async def async_fetch_and_store_basic_data(
             )
             continue
 
-        try:
-            payload = json.loads(response.text)
-        except json.JSONDecodeError:
+        ok, payload = try_parse_json(response.text)
+        if not ok:
             _LOGGER.debug(
                 "Basic data payload invalid for %s: %s",
                 redacted_vin,
