@@ -55,6 +55,7 @@ def _install_homeassistant_stubs() -> None:
     entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
     restore_state = types.ModuleType("homeassistant.helpers.restore_state")
     device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+    storage = types.ModuleType("homeassistant.helpers.storage")
     util = types.ModuleType("homeassistant.util")
     dt = types.ModuleType("homeassistant.util.dt")
 
@@ -106,6 +107,16 @@ def _install_homeassistant_stubs() -> None:
     def async_call_later(*_args, **_kwargs):
         return lambda: None
 
+    class Store:
+        def __init__(self, *args, **kwargs) -> None:
+            return
+
+        async def async_load(self):
+            return {}
+
+        async def async_save(self, _data) -> None:
+            return None
+
     def parse_datetime(value):
         if not isinstance(value, str):
             return None
@@ -126,6 +137,7 @@ def _install_homeassistant_stubs() -> None:
     entity_platform.AddEntitiesCallback = object
     restore_state.RestoreEntity = RestoreEntity
     device_registry.DeviceInfo = dict
+    storage.Store = Store
     dt.parse_datetime = parse_datetime
     util.dt = dt
 
@@ -139,6 +151,7 @@ def _install_homeassistant_stubs() -> None:
     helpers.entity_platform = entity_platform
     helpers.restore_state = restore_state
     helpers.device_registry = device_registry
+    helpers.storage = storage
 
     sys.modules["homeassistant"] = homeassistant
     sys.modules["homeassistant.components"] = components
@@ -151,6 +164,7 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.helpers.entity_platform"] = entity_platform
     sys.modules["homeassistant.helpers.restore_state"] = restore_state
     sys.modules["homeassistant.helpers.device_registry"] = device_registry
+    sys.modules["homeassistant.helpers.storage"] = storage
     sys.modules["homeassistant.util"] = util
     sys.modules["homeassistant.util.dt"] = dt
 
