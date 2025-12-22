@@ -12,6 +12,36 @@ CARDATA_PATH = os.path.abspath(
 )
 sys.path.insert(0, CARDATA_PATH)
 
+
+def _install_aiohttp_stub() -> None:
+    if "aiohttp" in sys.modules:
+        return
+    try:
+        import aiohttp  # noqa: F401
+        return
+    except Exception:
+        pass
+
+    aiohttp = types.ModuleType("aiohttp")
+
+    class ClientTimeout:
+        def __init__(self, total=None) -> None:
+            self.total = total
+
+    class ClientError(Exception):
+        pass
+
+    class ContentTypeError(Exception):
+        pass
+
+    aiohttp.ClientTimeout = ClientTimeout
+    aiohttp.ClientError = ClientError
+    aiohttp.ContentTypeError = ContentTypeError
+    sys.modules["aiohttp"] = aiohttp
+
+
+_install_aiohttp_stub()
+
 with atheris.instrument_imports():
     import container as container_module
     import api_parsing
