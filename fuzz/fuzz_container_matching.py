@@ -40,11 +40,20 @@ def _install_aiohttp_stub() -> None:
     sys.modules["aiohttp"] = aiohttp
 
 
+def _install_cardata_package() -> None:
+    if "cardata" in sys.modules:
+        return
+    package = types.ModuleType("cardata")
+    package.__path__ = [CARDATA_PATH]
+    sys.modules["cardata"] = package
+
+
 _install_aiohttp_stub()
+_install_cardata_package()
 
 with atheris.instrument_imports():
-    import container as container_module
-    import api_parsing
+    from cardata import api_parsing
+    from cardata import container as container_module
 
 
 def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
