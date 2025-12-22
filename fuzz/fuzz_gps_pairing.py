@@ -13,6 +13,33 @@ CARDATA_PATH = os.path.abspath(
 )
 
 
+def _install_aiohttp_stub() -> None:
+    if "aiohttp" in sys.modules:
+        return
+    try:
+        import aiohttp  # noqa: F401
+        return
+    except Exception:
+        pass
+
+    aiohttp = types.ModuleType("aiohttp")
+
+    class ClientTimeout:
+        def __init__(self, total=None) -> None:
+            self.total = total
+
+    class ClientError(Exception):
+        pass
+
+    class ContentTypeError(Exception):
+        pass
+
+    aiohttp.ClientTimeout = ClientTimeout
+    aiohttp.ClientError = ClientError
+    aiohttp.ContentTypeError = ContentTypeError
+    sys.modules["aiohttp"] = aiohttp
+
+
 def _install_homeassistant_stubs() -> None:
     if "homeassistant" in sys.modules:
         return
@@ -137,6 +164,7 @@ def _install_cardata_package() -> None:
 
 
 _install_homeassistant_stubs()
+_install_aiohttp_stub()
 _install_cardata_package()
 
 with atheris.instrument_imports():
