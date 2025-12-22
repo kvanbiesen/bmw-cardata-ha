@@ -39,6 +39,24 @@ _TIMESTAMPED_SOC_DESCRIPTORS = {
     "vehicle.drivetrain.electricEngine.charging.phaseNumber",
 }
 
+_BOOLEAN_DESCRIPTORS = {
+    "vehicle.isMoving",
+}
+
+_BOOLEAN_VALUE_MAP = {
+    "asn_istrue": True,
+    "asn_isfalse": False,
+    "asn_isunknown": None,
+    "true": True,
+    "false": False,
+    "1": True,
+    "0": False,
+    "yes": True,
+    "no": False,
+    "on": True,
+    "off": False,
+}
+
 
 @dataclass
 class DescriptorState:
@@ -612,6 +630,19 @@ class CardataCoordinator:
             self._adjust_power_for_testing(vin, effective_power), timestamp
         )
 
+    def _normalize_boolean_value(self, descriptor: str, value: Any) -> Any:
+        if descriptor not in _BOOLEAN_DESCRIPTORS:
+            return value
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(int(value))
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in _BOOLEAN_VALUE_MAP:
+                return _BOOLEAN_VALUE_MAP[normalized]
+        return value
+
     async def async_handle_message(self, payload: Dict[str, Any]) -> None:
         vin = payload.get("vin")
         data = payload.get("data") or {}
@@ -651,7 +682,9 @@ class CardataCoordinator:
         for descriptor, descriptor_payload in data.items():
             if not isinstance(descriptor_payload, dict):
                 continue
-            value = descriptor_payload.get("value")
+            value = self._normalize_boolean_value(
+                descriptor, descriptor_payload.get("value")
+            )
             unit = normalize_unit(descriptor_payload.get("unit"))
             timestamp = descriptor_payload.get("timestamp")
             parsed_ts = None
