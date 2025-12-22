@@ -13,6 +13,34 @@ CARDATA_PATH = os.path.abspath(
 )
 
 
+def _install_paho_stub() -> None:
+    if "paho.mqtt.client" in sys.modules:
+        return
+
+    paho = types.ModuleType("paho")
+    mqtt = types.ModuleType("paho.mqtt")
+    client = types.ModuleType("paho.mqtt.client")
+
+    class Client:
+        def __init__(self, *args, **kwargs) -> None:
+            return
+
+    class MQTTMessage:
+        def __init__(self, payload=None, topic=None) -> None:
+            self.payload = payload
+            self.topic = topic
+
+    client.Client = Client
+    client.MQTTMessage = MQTTMessage
+    client.MQTTv311 = 4
+    mqtt.client = client
+    paho.mqtt = mqtt
+
+    sys.modules["paho"] = paho
+    sys.modules["paho.mqtt"] = mqtt
+    sys.modules["paho.mqtt.client"] = client
+
+
 def _install_aiohttp_stub() -> None:
     if "aiohttp" in sys.modules:
         return
@@ -178,6 +206,7 @@ def _install_cardata_package() -> None:
 
 
 _install_homeassistant_stubs()
+_install_paho_stub()
 _install_aiohttp_stub()
 _install_cardata_package()
 
