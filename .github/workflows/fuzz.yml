@@ -9,15 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build matrix
+        id: set-matrix
+        run: |
+          python - <<'PY'
+          import json
+          import glob
+          import os
+
+          files = sorted(os.path.basename(p) for p in glob.glob("fuzz/fuzz_*.py"))
+          matrix = json.dumps({"fuzzer": files})
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"matrix={matrix}\n")
+          PY
+
   fuzz:
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
       fail-fast: false
-      matrix:
-        fuzzer:
-          - fuzz_redaction.py
-          - fuzz_rate_limit.py
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
