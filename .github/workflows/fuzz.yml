@@ -58,3 +58,65 @@ jobs:
       - name: Run fuzzer
         run: |
           python fuzz/${{ matrix.fuzzer }} -max_total_time=18000 -timeout=30
+
+  report_failure:
+    needs: fuzz
+    if: ${{ always() && needs.fuzz.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Create or update failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runId = context.runId;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${runId}`;
+            const title = "Fuzzing failure detected";
+
+            const jobs = await github.paginate(
+              github.rest.actions.listJobsForWorkflowRun,
+              { owner, repo, run_id: runId, per_page: 100 }
+            );
+            const failedJobs = jobs
+              .filter((job) => job.conclusion === "failure" || job.conclusion === "cancelled")
+              .map((job) => job.name);
+            const failedList = failedJobs.length
+              ? failedJobs.map((name) => `- ${name}`).join("\n")
+              : "- (unknown)";
+
+            const body = [
+              "Automated report: the scheduled fuzzing workflow failed.",
+              "",
+              `Run: ${runUrl}`,
+              "",
+              "Failed jobs:",
+              failedList,
+              "",
+              "Please review the workflow logs and reproduce locally if needed."
+            ].join("\n");
+
+            const query = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
+            const search = await github.rest.search.issuesAndPullRequests({ q: query });
+            if (search.data.total_count > 0) {
+              const issueNumber = search.data.items[0].number;
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                body,
+              });
+              core.info(`Updated existing issue #${issueNumber}`);
+            } else {
+              const issue = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+              });
+              core.info(`Created issue #${issue.data.number}`);
+            }
