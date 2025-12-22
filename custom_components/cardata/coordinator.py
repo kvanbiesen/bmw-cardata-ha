@@ -72,6 +72,19 @@ class SocTracking:
     DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
     DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
 
+    def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
+        if timestamp is None or not isinstance(timestamp, datetime):
+            return None
+        as_utc = getattr(dt_util, "as_utc", None)
+        if callable(as_utc):
+            try:
+                return as_utc(timestamp)
+            except (TypeError, ValueError):
+                return None
+        if timestamp.tzinfo is None:
+            return timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.astimezone(timezone.utc)
+
     def update_max_energy(self, value: Optional[float]) -> None:
         if value is None:
             return
@@ -82,7 +95,7 @@ class SocTracking:
 
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
         """Update with actual SOC value, detecting and correcting drift."""
-        ts = timestamp or datetime.now(timezone.utc)
+        ts = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
 
         # Check for drift between estimate and actual
         if self.estimated_percent is not None:
@@ -119,7 +132,7 @@ class SocTracking:
     def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
         if power_w is None:
             return
-        target_time = timestamp or datetime.now(timezone.utc)
+        target_time = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
         # Advance the running estimate to the moment this power sample was taken
         # so the previous charging rate is accounted for before we swap in the
         # new value.
@@ -141,6 +154,7 @@ class SocTracking:
         if percent is None:
             self.target_soc_percent = None
             return
+        normalized_ts = self._normalize_timestamp(timestamp)
         self.target_soc_percent = percent
         if (
             self.estimated_percent is not None
@@ -149,41 +163,55 @@ class SocTracking:
             and self.estimated_percent > percent
         ):
             self.estimated_percent = percent
-            self.last_estimate_time = timestamp or datetime.now(timezone.utc)
+            self.last_estimate_time = normalized_ts or datetime.now(timezone.utc)
 
     def estimate(self, now: datetime) -> Optional[float]:
         """Estimate current SOC based on charging rate and elapsed time.
 
         Returns None if estimate is stale (no actual update for MAX_ESTIMATE_AGE_SECONDS).
         """
+        now = self._normalize_timestamp(now) or datetime.now(timezone.utc)
         if self.estimated_percent is None:
             base = self.last_soc_percent
             if base is None:
                 return None
             self.estimated_percent = base
-            self.last_estimate_time = self.last_update or now
+            normalized_last_update = self._normalize_timestamp(self.last_update)
+            if normalized_last_update is not None:
+                self.last_update = normalized_last_update
+            self.last_estimate_time = normalized_last_update or now
             return self.estimated_percent
 
         if self.last_estimate_time is None:
             self.last_estimate_time = now
             return self.estimated_percent
+        normalized_estimate_time = self._normalize_timestamp(self.last_estimate_time)
+        if normalized_estimate_time is None:
+            self.last_estimate_time = now
+            return self.estimated_percent
+        self.last_estimate_time = normalized_estimate_time
 
         # Check if estimate is stale (no actual SOC update for too long)
         if self.last_update is not None:
-            time_since_actual = (now - self.last_update).total_seconds()
-            if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
-                # Estimate is stale - clear stale state and fall back to last known actual value
-                _LOGGER.debug(
-                    "SOC estimate stale (%.0f seconds since last actual); "
-                    "clearing estimate and returning last known value %.1f%%",
-                    time_since_actual,
-                    self.last_soc_percent or 0.0,
-                )
-                # Clear stale estimate state so next call reinitializes from last_soc_percent
-                self.estimated_percent = None
-                self.last_estimate_time = None
-                self.charging_active = False  # Assume charging stopped if no updates
-                return self.last_soc_percent
+            normalized_last_update = self._normalize_timestamp(self.last_update)
+            if normalized_last_update is None:
+                self.last_update = None
+            else:
+                self.last_update = normalized_last_update
+                time_since_actual = (now - normalized_last_update).total_seconds()
+                if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
+                    # Estimate is stale - clear stale state and fall back to last known actual value
+                    _LOGGER.debug(
+                        "SOC estimate stale (%.0f seconds since last actual); "
+                        "clearing estimate and returning last known value %.1f%%",
+                        time_since_actual,
+                        self.last_soc_percent or 0.0,
+                    )
+                    # Clear stale estimate state so next call reinitializes from last_soc_percent
+                    self.estimated_percent = None
+                    self.last_estimate_time = None
+                    self.charging_active = False  # Assume charging stopped if no updates
+                    return self.last_soc_percent
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
         if delta_seconds <= 0:
