@@ -13,6 +13,61 @@ CARDATA_PATH = os.path.abspath(
 )
 
 
+def _install_paho_stub() -> None:
+    if "paho.mqtt.client" in sys.modules:
+        return
+
+    paho = types.ModuleType("paho")
+    mqtt = types.ModuleType("paho.mqtt")
+    client = types.ModuleType("paho.mqtt.client")
+
+    class Client:
+        def __init__(self, *args, **kwargs) -> None:
+            return
+
+    class MQTTMessage:
+        def __init__(self, payload=None, topic=None) -> None:
+            self.payload = payload
+            self.topic = topic
+
+    client.Client = Client
+    client.MQTTMessage = MQTTMessage
+    client.MQTTv311 = 4
+    mqtt.client = client
+    paho.mqtt = mqtt
+
+    sys.modules["paho"] = paho
+    sys.modules["paho.mqtt"] = mqtt
+    sys.modules["paho.mqtt.client"] = client
+
+
+def _install_aiohttp_stub() -> None:
+    if "aiohttp" in sys.modules:
+        return
+    try:
+        import aiohttp  # noqa: F401
+        return
+    except Exception:
+        pass
+
+    aiohttp = types.ModuleType("aiohttp")
+
+    class ClientTimeout:
+        def __init__(self, total=None) -> None:
+            self.total = total
+
+    class ClientError(Exception):
+        pass
+
+    class ContentTypeError(Exception):
+        pass
+
+    aiohttp.ClientTimeout = ClientTimeout
+    aiohttp.ClientError = ClientError
+    aiohttp.ContentTypeError = ContentTypeError
+    sys.modules["aiohttp"] = aiohttp
+
+
 def _install_homeassistant_stubs() -> None:
     if "homeassistant" in sys.modules:
         return
@@ -24,9 +79,13 @@ def _install_homeassistant_stubs() -> None:
     core = types.ModuleType("homeassistant.core")
     helpers = types.ModuleType("homeassistant.helpers")
     dispatcher = types.ModuleType("homeassistant.helpers.dispatcher")
+    event = types.ModuleType("homeassistant.helpers.event")
     entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
     restore_state = types.ModuleType("homeassistant.helpers.restore_state")
     device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+    storage = types.ModuleType("homeassistant.helpers.storage")
+    util = types.ModuleType("homeassistant.util")
+    dt = types.ModuleType("homeassistant.util.dt")
 
     class HomeAssistant:
         def __init__(self) -> None:
@@ -70,23 +129,57 @@ def _install_homeassistant_stubs() -> None:
     def async_dispatcher_connect(*_args, **_kwargs):
         return lambda: None
 
+    def async_dispatcher_send(*_args, **_kwargs) -> None:
+        return None
+
+    def async_call_later(*_args, **_kwargs):
+        return lambda: None
+
+    class Store:
+        def __init__(self, *args, **kwargs) -> None:
+            return
+
+        async def async_load(self):
+            return {}
+
+        async def async_save(self, _data) -> None:
+            return None
+
+    def parse_datetime(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
     device_tracker.SourceType = SourceType
     device_tracker.TrackerEntity = TrackerEntity
     config_entries.ConfigEntry = ConfigEntry
     core.HomeAssistant = HomeAssistant
     dispatcher.async_dispatcher_connect = async_dispatcher_connect
+    dispatcher.async_dispatcher_send = async_dispatcher_send
+    event.async_call_later = async_call_later
     entity_platform.AddEntitiesCallback = object
     restore_state.RestoreEntity = RestoreEntity
     device_registry.DeviceInfo = dict
+    storage.Store = Store
+    dt.parse_datetime = parse_datetime
+    util.dt = dt
 
     homeassistant.components = components
     homeassistant.config_entries = config_entries
     homeassistant.core = core
     homeassistant.helpers = helpers
+    homeassistant.util = util
     helpers.dispatcher = dispatcher
+    helpers.event = event
     helpers.entity_platform = entity_platform
     helpers.restore_state = restore_state
     helpers.device_registry = device_registry
+    helpers.storage = storage
 
     sys.modules["homeassistant"] = homeassistant
     sys.modules["homeassistant.components"] = components
@@ -95,9 +188,13 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.core"] = core
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.dispatcher"] = dispatcher
+    sys.modules["homeassistant.helpers.event"] = event
     sys.modules["homeassistant.helpers.entity_platform"] = entity_platform
     sys.modules["homeassistant.helpers.restore_state"] = restore_state
     sys.modules["homeassistant.helpers.device_registry"] = device_registry
+    sys.modules["homeassistant.helpers.storage"] = storage
+    sys.modules["homeassistant.util"] = util
+    sys.modules["homeassistant.util.dt"] = dt
 
 
 def _install_cardata_package() -> None:
@@ -109,6 +206,8 @@ def _install_cardata_package() -> None:
 
 
 _install_homeassistant_stubs()
+_install_paho_stub()
+_install_aiohttp_stub()
 _install_cardata_package()
 
 with atheris.instrument_imports():

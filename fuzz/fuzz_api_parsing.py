@@ -128,15 +128,32 @@ def _existing_max_total_time(args):
     return existing
 
 
+def _strip_max_total_time_args(args: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg.startswith("-max_total_time="):
+            continue
+        if arg == "-max_total_time":
+            skip_next = True
+            continue
+        cleaned.append(arg)
+    return cleaned
+
+
 def main() -> None:
     # Ensure max time is capped so fuzzers exit before CI timeout.
-    args = sys.argv[:]
+    original_args = sys.argv[:]
     max_time_env = os.environ.get("FUZZ_MAX_TIME", DEFAULT_MAX_TIME)
     max_time = _safe_parse_int(max_time_env) or DEFAULT_MAX_TIME
     if max_time <= 0:
         max_time = DEFAULT_MAX_TIME
-    existing_max = _existing_max_total_time(args)
+    existing_max = _existing_max_total_time(original_args)
     effective_max = min(existing_max, max_time) if existing_max else max_time
+    args = _strip_max_total_time_args(original_args)
     args.append(f"-max_total_time={effective_max}")
     print(f"Fuzzing for {effective_max} seconds ({effective_max / 3600:.1f} hours)")
 
