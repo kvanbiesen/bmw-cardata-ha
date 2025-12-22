@@ -24,9 +24,12 @@ def _install_homeassistant_stubs() -> None:
     core = types.ModuleType("homeassistant.core")
     helpers = types.ModuleType("homeassistant.helpers")
     dispatcher = types.ModuleType("homeassistant.helpers.dispatcher")
+    event = types.ModuleType("homeassistant.helpers.event")
     entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
     restore_state = types.ModuleType("homeassistant.helpers.restore_state")
     device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+    util = types.ModuleType("homeassistant.util")
+    dt = types.ModuleType("homeassistant.util.dt")
 
     class HomeAssistant:
         def __init__(self) -> None:
@@ -70,20 +73,42 @@ def _install_homeassistant_stubs() -> None:
     def async_dispatcher_connect(*_args, **_kwargs):
         return lambda: None
 
+    def async_dispatcher_send(*_args, **_kwargs) -> None:
+        return None
+
+    def async_call_later(*_args, **_kwargs):
+        return lambda: None
+
+    def parse_datetime(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
     device_tracker.SourceType = SourceType
     device_tracker.TrackerEntity = TrackerEntity
     config_entries.ConfigEntry = ConfigEntry
     core.HomeAssistant = HomeAssistant
     dispatcher.async_dispatcher_connect = async_dispatcher_connect
+    dispatcher.async_dispatcher_send = async_dispatcher_send
+    event.async_call_later = async_call_later
     entity_platform.AddEntitiesCallback = object
     restore_state.RestoreEntity = RestoreEntity
     device_registry.DeviceInfo = dict
+    dt.parse_datetime = parse_datetime
+    util.dt = dt
 
     homeassistant.components = components
     homeassistant.config_entries = config_entries
     homeassistant.core = core
     homeassistant.helpers = helpers
+    homeassistant.util = util
     helpers.dispatcher = dispatcher
+    helpers.event = event
     helpers.entity_platform = entity_platform
     helpers.restore_state = restore_state
     helpers.device_registry = device_registry
@@ -95,9 +120,12 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.core"] = core
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.dispatcher"] = dispatcher
+    sys.modules["homeassistant.helpers.event"] = event
     sys.modules["homeassistant.helpers.entity_platform"] = entity_platform
     sys.modules["homeassistant.helpers.restore_state"] = restore_state
     sys.modules["homeassistant.helpers.device_registry"] = device_registry
+    sys.modules["homeassistant.util"] = util
+    sys.modules["homeassistant.util.dt"] = dt
 
 
 def _install_cardata_package() -> None:
