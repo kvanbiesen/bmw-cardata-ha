@@ -84,6 +84,7 @@ class SocTracking:
     last_drift_check: Optional[datetime] = None
     cumulative_drift: float = 0.0
     drift_corrections: int = 0
+    _stale_logged: bool = field(default=False, init=False)
 
     # Class-level constants for drift correction
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
@@ -122,7 +123,7 @@ class SocTracking:
             self.last_drift_check = ts
 
             if drift >= self.DRIFT_CORRECTION_THRESHOLD:
-                _LOGGER.warning(
+                _LOGGER.info(
                     "SOC estimate drift correction: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
                     self.estimated_percent,
                     percent,
@@ -198,6 +199,7 @@ class SocTracking:
             if normalized_last_update is not None:
                 self.last_update = normalized_last_update
             self.last_estimate_time = normalized_last_update or now
+            self._stale_logged = False
             return self.estimated_percent
 
         if self.last_estimate_time is None:
@@ -218,18 +220,26 @@ class SocTracking:
                 self.last_update = normalized_last_update
                 time_since_actual = (now - normalized_last_update).total_seconds()
                 if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
-                    # Estimate is stale - clear stale state and fall back to last known actual value
-                    _LOGGER.debug(
-                        "SOC estimate stale (%.0f seconds since last actual); "
-                        "clearing estimate and returning last known value %.1f%%",
-                        time_since_actual,
-                        self.last_soc_percent or 0.0,
-                    )
-                    # Clear stale estimate state so next call reinitializes from last_soc_percent
-                    self.estimated_percent = None
-                    self.last_estimate_time = None
-                    self.charging_active = False  # Assume charging stopped if no updates
-                    return self.last_soc_percent
+                    if not self._stale_logged:  # only log once in debug mode
+                        # Estimate is stale - clear stale state and fall back to last known actual value
+                        _LOGGER.debug(
+                            "SOC estimate stale (%.0f seconds since last actual); "
+                            "clearing estimate and returning last known value %.1f%%",
+                            time_since_actual,
+                            self.last_soc_percent or 0.0,
+                        )
+                        self._stale_logged = True  # Dont spam log in debug mode til update
+
+                        # Clear stale estimate state so next call reinitializes from last_soc_percent
+                        self.estimated_percent = None
+                        self.last_estimate_time = None
+                        self.charging_active = False  # Assume charging stopped if no updates
+                        return self.last_soc_percent
+
+        # Got here = estimate is not stale, reset flag
+        if self._stale_logged:
+            _LOGGER.debug("SOC estimate refreshed with new actual data")
+            self._stale_logged = False
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
         if delta_seconds <= 0:
