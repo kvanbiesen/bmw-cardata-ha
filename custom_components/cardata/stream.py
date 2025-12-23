@@ -533,9 +533,8 @@ class CardataStreamManager:
                     _LOGGER.debug("Subscribed to %s result=%s",
                                   redact_vin_in_text(topic), result)
             if self._reauth_notified:
-                self._reauth_notified = False
-                self._awaiting_new_credentials = False
-                self._run_coro_safe(self._notify_recovered())
+                # Schedule async reset of flags with proper locking
+                self._run_coro_safe(self._async_clear_reauth_state())
             self._cancel_retry()
             self._last_disconnect = None
             self._retry_backoff = 3
@@ -738,38 +737,42 @@ class CardataStreamManager:
                 return
             self._unauthorized_retry_in_progress = True
 
-        try:
-            unauthorized_protection = None
-            if self._entry_id:
-                from .const import DOMAIN
-                runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-                if runtime:
-                    unauthorized_protection = runtime.unauthorized_protection
+            try:
+                unauthorized_protection = None
+                if self._entry_id:
+                    from .const import DOMAIN
+                    runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+                    if runtime:
+                        unauthorized_protection = runtime.unauthorized_protection
 
-            if unauthorized_protection:
-                can_retry, block_reason = unauthorized_protection.can_retry()
-                if not can_retry:
-                    _LOGGER.error(
-                        "BMW MQTT unauthorized retry blocked: %s",
-                        block_reason
-                    )
-                    await self.async_stop()
-                    if self._status_callback:
-                        await self._status_callback("unauthorized_blocked", block_reason)
-                    return
-                unauthorized_protection.record_attempt()
+                if unauthorized_protection:
+                    can_retry, block_reason = unauthorized_protection.can_retry()
+                    if not can_retry:
+                        _LOGGER.error(
+                            "BMW MQTT unauthorized retry blocked: %s",
+                            block_reason
+                        )
+                        await self.async_stop()
+                        if self._status_callback:
+                            await self._status_callback("unauthorized_blocked", block_reason)
+                        return
+                    unauthorized_protection.record_attempt()
 
-            self._awaiting_new_credentials = True
-            if not self._reauth_notified:
-                self._reauth_notified = True
-                await self._notify_error("unauthorized")
-            else:
-                await self.async_stop()
-            if self._status_callback:
-                await self._status_callback("unauthorized", "MQTT rc=5")
-        finally:
-            async with self._unauthorized_lock:
+                # Update flags while holding the lock to prevent races
+                self._awaiting_new_credentials = True
+                should_notify = not self._reauth_notified
+                if should_notify:
+                    self._reauth_notified = True
+            finally:
                 self._unauthorized_retry_in_progress = False
+
+        # Perform callbacks outside the lock to avoid deadlocks
+        if should_notify:
+            await self._notify_error("unauthorized")
+        else:
+            await self.async_stop()
+        if self._status_callback:
+            await self._status_callback("unauthorized", "MQTT rc=5")
 
     async def _notify_error(self, reason: str) -> None:
         await self.async_stop()
@@ -779,6 +782,16 @@ class CardataStreamManager:
     async def _notify_recovered(self) -> None:
         if self._error_callback:
             await self._error_callback("recovered")
+
+    async def _async_clear_reauth_state(self) -> None:
+        """Clear reauth state flags with proper locking.
+
+        Called from on_connect callback when connection is restored after reauth.
+        """
+        async with self._unauthorized_lock:
+            self._reauth_notified = False
+            self._awaiting_new_credentials = False
+        await self._notify_recovered()
 
     async def async_update_credentials(
         self,
@@ -812,16 +825,19 @@ class CardataStreamManager:
                 reconnect_required = True
 
             if not reconnect_required:
-                if self._awaiting_new_credentials:
-                    self._awaiting_new_credentials = False
-                    if self._client is None:
-                        try:
-                            await self.async_start()
-                        except Exception as err:
-                            _LOGGER.error(
-                                "BMW MQTT reconnect failed after credential refresh: %s",
-                                err,
-                            )
+                # Check and clear flag under lock to prevent races
+                async with self._unauthorized_lock:
+                    was_awaiting = self._awaiting_new_credentials
+                    if was_awaiting:
+                        self._awaiting_new_credentials = False
+                if was_awaiting and self._client is None:
+                    try:
+                        await self.async_start()
+                    except Exception as err:
+                        _LOGGER.error(
+                            "BMW MQTT reconnect failed after credential refresh: %s",
+                            err,
+                        )
                 return
 
             if self._client:
@@ -829,7 +845,8 @@ class CardataStreamManager:
                 await self.async_stop()
 
             self._reconnect_backoff = 5
-            if self._awaiting_new_credentials:
+            # Clear flag under lock to prevent races
+            async with self._unauthorized_lock:
                 self._awaiting_new_credentials = False
 
             delay = 0.0
