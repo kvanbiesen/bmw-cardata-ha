@@ -38,6 +38,10 @@ DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row2.passenger.isOpen",
 )
 
+MOTION_DESCRIPTORS = (
+    "vehicle.isMoving",
+)
+
 
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
@@ -52,6 +56,8 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
 
         if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR
+        elif descriptor in MOTION_DESCRIPTORS:
+            self._attr_device_class = BinarySensorDeviceClass.MOVING
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -122,6 +128,14 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
                 return "mdi:circle-outline"
             else:
                 return "mdi:circle"
+
+        # Motion sensors - dynamic icon based on state
+        if self.descriptor and self.descriptor in MOTION_DESCRIPTORS:
+            is_moving = getattr(self, "_attr_is_on", False)
+            if is_moving:
+                return "mdi:car-arrow-right"
+            else:
+                return "mdi:car-brake-parking"
 
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)
