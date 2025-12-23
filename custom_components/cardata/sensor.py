@@ -491,7 +491,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self):
+    def native_value(self) -> datetime | str | None:
         """Return native value."""
         return self._attr_native_value
 
@@ -561,7 +561,7 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> str | None:
         """Return metadata status."""
         return self._attr_native_value
 
