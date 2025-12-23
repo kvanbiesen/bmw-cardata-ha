@@ -108,10 +108,10 @@ async def async_request_with_retry(
         data: Optional form data
         json_data: Optional JSON body
         timeout: Request timeout in seconds (default: HTTP_TIMEOUT)
-        max_retries: Maximum number of retry attempts (default: 3)
-        initial_backoff: Initial backoff delay in seconds (default: 1.0)
-        max_backoff: Maximum backoff delay in seconds (default: 30.0)
-        backoff_multiplier: Backoff multiplier for exponential backoff (default: 2.0)
+        max_retries: Maximum number of retry attempts (default: 3, clamped 0-10)
+        initial_backoff: Initial backoff delay in seconds (default: 1.0, min 0.1)
+        max_backoff: Maximum backoff delay in seconds (default: 30.0, min initial_backoff)
+        backoff_multiplier: Backoff multiplier for exponential backoff (default: 2.0, min 1.0)
         context: Description for logging (default: "HTTP request")
         rate_limiter: Optional RateLimitTracker to check/record rate limits
 
@@ -124,6 +124,12 @@ async def async_request_with_retry(
         - Auth errors (401, 403) are returned immediately without retry
         - Server errors (5xx) and network errors trigger retries
     """
+    # Validate and clamp retry parameters to prevent infinite loops or negative sleeps
+    max_retries = max(0, min(int(max_retries), 10))  # Clamp to 0-10
+    initial_backoff = max(0.1, float(initial_backoff))  # Min 100ms
+    max_backoff = max(initial_backoff, float(max_backoff))  # Must be >= initial
+    backoff_multiplier = max(1.0, float(backoff_multiplier))  # Must be >= 1.0
+
     if rate_limiter:
         can_request, block_reason = rate_limiter.can_make_request()
         if not can_request:
