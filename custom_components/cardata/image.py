@@ -73,9 +73,13 @@ class CardataImage(CardataEntity, ImageEntity):
     _attr_translation_key = "vehicle_image"
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        """Initialize the image entity."""
+        """Initialize the image entity.
+
+        Note: Explicit parent __init__ calls are required here because
+        CardataEntity and ImageEntity have incompatible __init__ signatures.
+        Using super() would not correctly initialize both parents.
+        """
         CardataEntity.__init__(self, coordinator, vin, "image")
-        # Then initialize ImageEntity with hass
         ImageEntity.__init__(self, coordinator.hass)
 
         self._base_name = "Vehicle Image"

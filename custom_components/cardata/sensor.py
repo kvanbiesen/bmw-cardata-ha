@@ -491,7 +491,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self):
+    def native_value(self) -> datetime | str | None:
         """Return native value."""
         return self._attr_native_value
 
@@ -561,7 +561,7 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> str | None:
         """Return metadata status."""
         return self._attr_native_value
 
@@ -851,7 +851,16 @@ async def async_setup_entry(
             async_add_entities(new_entities, True)
 
     def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False, from_signal: bool = False) -> None:
-        """Ensure sensor entity exists for VIN + descriptor."""
+        """Ensure sensor entity exists for VIN + descriptor.
+
+        Args:
+            vin: Vehicle identification number.
+            descriptor: The telematic descriptor (e.g., "vehicle.speed").
+            assume_sensor: If True, create entity even without coordinator state.
+                Used when restoring entities from entity registry.
+            from_signal: If True, trust the signal and create entity even without
+                coordinator state. Used when called from dispatcher signals.
+        """
         ensure_soc_tracking_entities(vin)
 
         if (vin, descriptor) in entities:
@@ -913,11 +922,11 @@ async def async_setup_entry(
     entry.async_on_unload(
         async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
     )
-    # Note: We don't subscribe to signal_update for entity creation here.
-    # - signal_new_sensor handles new descriptors
-    # - iter_descriptors() loop below handles existing data
-    # - Individual entities subscribe to signal_update for their own state updates
-    # This avoids duplicate processing on every update.
+    # Note: signal_update subscription above handles entity creation for updates.
+    # - signal_new_sensor handles truly new descriptors
+    # - signal_update handles updates that may require entity creation
+    # - iter_descriptors() loop below handles existing data at startup
+    # - Individual entities also subscribe to signal_update for their own state updates
 
     async def async_handle_soc_update(vin: str) -> None:
         ensure_soc_tracking_entities(vin)

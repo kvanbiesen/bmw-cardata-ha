@@ -127,6 +127,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self._current_lon: float | None = None
         self._heading: float | None = None
         self._altitude: float | None = None
+        self._altitude_unit: str | None = None
 
         # Track timing of individual coordinate updates
         self._last_lat: float | None = None
