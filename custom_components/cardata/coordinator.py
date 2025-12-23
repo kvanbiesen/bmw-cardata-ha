@@ -335,6 +335,7 @@ class CardataCoordinator:
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
     _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
+    _MAX_PENDING_VINS: int = 20  # Max number of VINs to track (generous limit for fleets)
     _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
     _pending_updates_started: Optional[datetime] = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
@@ -732,10 +733,18 @@ class CardataCoordinator:
                     immediate_updates.append((vin, descriptor))
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
+                    # Enforce VIN limit to prevent unbounded dict growth
                     if vin not in self._pending_updates:
+                        if len(self._pending_updates) >= self._MAX_PENDING_VINS:
+                            _LOGGER.warning(
+                                "Max pending VINs (%d) reached; dropping update for new VIN %s",
+                                self._MAX_PENDING_VINS,
+                                redact_vin(vin),
+                            )
+                            continue
                         self._pending_updates[vin] = set()
                     pending_set = self._pending_updates[vin]
-                    # Enforce size limit to prevent unbounded memory growth
+                    # Enforce per-VIN size limit to prevent unbounded memory growth
                     if len(pending_set) < self._MAX_PENDING_PER_VIN:
                         pending_set.add(descriptor)
                         schedule_debounce = True
@@ -763,15 +772,38 @@ class CardataCoordinator:
 
         # Queue new entities for immediate notification
         if new_sensor:
-            pending_sensors = self._pending_new_sensors.setdefault(vin, set())
-            if len(pending_sensors) < self._MAX_PENDING_PER_VIN:
-                pending_sensors.update(new_sensor)
-            schedule_debounce = True
+            if vin not in self._pending_new_sensors:
+                if len(self._pending_new_sensors) >= self._MAX_PENDING_VINS:
+                    _LOGGER.warning(
+                        "Max pending VINs reached for new sensors; dropping for VIN %s",
+                        redact_vin(vin),
+                    )
+                else:
+                    self._pending_new_sensors[vin] = set()
+            if vin in self._pending_new_sensors:
+                pending_sensors = self._pending_new_sensors[vin]
+                # Add items one by one to respect the limit
+                available = self._MAX_PENDING_PER_VIN - len(pending_sensors)
+                for item in new_sensor[:available]:
+                    pending_sensors.add(item)
+                schedule_debounce = True
+
         if new_binary:
-            pending_binary = self._pending_new_binary.setdefault(vin, set())
-            if len(pending_binary) < self._MAX_PENDING_PER_VIN:
-                pending_binary.update(new_binary)
-            schedule_debounce = True
+            if vin not in self._pending_new_binary:
+                if len(self._pending_new_binary) >= self._MAX_PENDING_VINS:
+                    _LOGGER.warning(
+                        "Max pending VINs reached for new binary; dropping for VIN %s",
+                        redact_vin(vin),
+                    )
+                else:
+                    self._pending_new_binary[vin] = set()
+            if vin in self._pending_new_binary:
+                pending_binary = self._pending_new_binary[vin]
+                # Add items one by one to respect the limit
+                available = self._MAX_PENDING_PER_VIN - len(pending_binary)
+                for item in new_binary[:available]:
+                    pending_binary.add(item)
+                schedule_debounce = True
 
         self._apply_soc_estimate(vin, now)
 
