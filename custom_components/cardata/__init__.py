@@ -190,11 +190,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # MQTT auto-start is now prevented by _bootstrap_in_progress flag
         # We'll explicitly start it after bootstrap completes
 
-        # Create refresh loop
+        # Create refresh loop with backoff for repeated failures
         async def refresh_loop() -> None:
+            consecutive_auth_failures = 0
+            max_auth_failures = 3  # Trigger reauth after 3 consecutive auth failures
+            base_backoff = DEFAULT_REFRESH_INTERVAL
+            max_backoff = 4 * 60 * 60  # Cap at 4 hours
+
             try:
                 while True:
-                    await asyncio.sleep(DEFAULT_REFRESH_INTERVAL)
+                    # Calculate backoff: normal interval, or exponential if failing
+                    if consecutive_auth_failures > 0:
+                        # Exponential backoff: 45min -> 90min -> 180min (capped at 4h)
+                        backoff = min(
+                            base_backoff * (2 ** consecutive_auth_failures),
+                            max_backoff
+                        )
+                        _LOGGER.debug(
+                            "Token refresh backoff: %d seconds (failure %d/%d)",
+                            backoff,
+                            consecutive_auth_failures,
+                            max_auth_failures,
+                        )
+                    else:
+                        backoff = base_backoff
+
+                    await asyncio.sleep(backoff)
+
                     try:
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
@@ -203,15 +225,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             ),
                             timeout=60.0
                         )
+                        # Success - reset failure counter
+                        if consecutive_auth_failures > 0:
+                            _LOGGER.info(
+                                "Token refresh succeeded after %d consecutive failures",
+                                consecutive_auth_failures,
+                            )
+                        consecutive_auth_failures = 0
+
                     except CardataAuthError as err:
-                        _LOGGER.error("Token refresh failed: %s", err)
+                        consecutive_auth_failures += 1
+                        _LOGGER.error(
+                            "Token refresh failed (%d/%d): %s",
+                            consecutive_auth_failures,
+                            max_auth_failures,
+                            err,
+                        )
+
+                        # After max failures, trigger reauth flow and stop retrying
+                        if consecutive_auth_failures >= max_auth_failures:
+                            _LOGGER.error(
+                                "Token refresh failed %d consecutive times; "
+                                "triggering reauth flow",
+                                consecutive_auth_failures,
+                            )
+                            await handle_stream_error(hass, entry, "unauthorized")
+                            # Continue loop but with max backoff until reauth succeeds
+                            # The reauth flow will update credentials and reset state
+
                     except asyncio.TimeoutError:
                         _LOGGER.warning("Token refresh timed out after 60 seconds")
+                        # Timeout is transient - don't count as auth failure
+
                     except aiohttp.ClientError as err:
                         _LOGGER.warning("Token refresh network error: %s", err)
+                        # Network errors are transient - don't count as auth failure
+
                     except Exception as err:
                         _LOGGER.exception(
                             "Token refresh crashed with unexpected error: %s", err)
+                        # Unknown errors - don't count as auth failure but log
+
             except asyncio.CancelledError:
                 return
 
