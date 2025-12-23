@@ -66,9 +66,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Prepare configuration
         data = entry.data
         options = dict(entry.options) if entry.options else {}
-        mqtt_keepalive = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
-        diagnostic_interval = options.get(
+
+        # Validate and clamp mqtt_keepalive (10-300 seconds)
+        mqtt_keepalive_raw = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
+        try:
+            mqtt_keepalive = max(10, min(int(mqtt_keepalive_raw), 300))
+            if mqtt_keepalive != mqtt_keepalive_raw:
+                _LOGGER.warning(
+                    "mqtt_keepalive value %s out of range, clamped to %d",
+                    mqtt_keepalive_raw,
+                    mqtt_keepalive,
+                )
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                "Invalid mqtt_keepalive value %s, using default %d",
+                mqtt_keepalive_raw,
+                MQTT_KEEPALIVE,
+            )
+            mqtt_keepalive = MQTT_KEEPALIVE
+
+        # Validate and clamp diagnostic_interval (10-3600 seconds)
+        diagnostic_interval_raw = options.get(
             OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL)
+        try:
+            diagnostic_interval = max(10, min(int(diagnostic_interval_raw), 3600))
+            if diagnostic_interval != diagnostic_interval_raw:
+                _LOGGER.warning(
+                    "diagnostic_interval value %s out of range, clamped to %d",
+                    diagnostic_interval_raw,
+                    diagnostic_interval,
+                )
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                "Invalid diagnostic_interval value %s, using default %d",
+                diagnostic_interval_raw,
+                DIAGNOSTIC_LOG_INTERVAL,
+            )
+            diagnostic_interval = DIAGNOSTIC_LOG_INTERVAL
+
         debug_option = options.get(OPTION_DEBUG_LOG)
         debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
 
