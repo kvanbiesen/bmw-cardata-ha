@@ -126,9 +126,12 @@ class CardataStreamManager:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
         except asyncio.TimeoutError:
             _LOGGER.warning(
-                "Connect lock acquisition timed out after 60s; skipping start"
+                "Connect lock acquisition timed out after 60s; scheduling retry in 30s"
             )
-            raise ConnectionError("Connect lock acquisition timed out")
+            # Schedule a reconnect attempt instead of just failing
+            await asyncio.sleep(30.0)
+            self._run_coro_safe(self._async_reconnect())
+            raise ConnectionError("Connect lock acquisition timed out; retry scheduled")
 
         try:
             await self._async_start_locked()
@@ -681,8 +684,11 @@ class CardataStreamManager:
         except asyncio.TimeoutError:
             _LOGGER.warning(
                 "Connect lock acquisition timed out after 60s during reconnect; "
-                "skipping this reconnect attempt"
+                "scheduling retry in 30s"
             )
+            # Schedule another attempt after a delay instead of giving up
+            await asyncio.sleep(30.0)
+            self._run_coro_safe(self._async_reconnect())
             return
 
         try:
