@@ -792,7 +792,7 @@ async def async_setup_entry(
             # drive_train changed, re-evaluate below
 
         if not drive_train:
-            _LOGGER.debug("VIN %s: No metadata yet, defaulting to electric (will check later)", vin)
+            _LOGGER.debug("VIN %s: No metadata yet, defaulting to electric (will check later)", redact_vin(vin))
             return False  # Don't cache this - let it check again when metadata loads
 
         is_electric = any(x in drive_train for x in [
@@ -802,7 +802,7 @@ async def async_setup_entry(
         _electric_vehicle_cache[vin] = (drive_train, is_electric)
 
         _LOGGER.debug("VIN %s is %s (drive_train: %s)",
-                      vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
+                      redact_vin(vin), "electric/hybrid" if is_electric else "NOT electric", drive_train)
 
         return is_electric
 
