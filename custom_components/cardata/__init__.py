@@ -254,12 +254,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await container_manager.async_ensure_hv_container(
                     entry.data.get("access_token")
                 )
+            except aiohttp.ClientError as err:
+                # Network errors - treat same as MQTT network errors
+                _LOGGER.warning(
+                    "Network error ensuring HV container for entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
+                if not container_manager.container_id:
+                    raise ConfigEntryNotReady(
+                        f"Unable to ensure HV container (network error): {err}"
+                    ) from err
             except Exception as err:
+                # Other errors - log and check if we have a fallback
                 _LOGGER.warning(
                     "Unable to ensure HV container for entry %s: %s",
                     entry.entry_id,
                     err,
                 )
+                if not container_manager.container_id:
+                    # No container at all - telematic polling won't work
+                    _LOGGER.error(
+                        "No HV container available for entry %s; "
+                        "telematic data polling will be unavailable until container is created",
+                        entry.entry_id,
+                    )
+                    # Continue anyway - MQTT streaming will still work
 
         # MQTT auto-start is now prevented by _bootstrap_in_progress flag
         # We'll explicitly start it after bootstrap completes
