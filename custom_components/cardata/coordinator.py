@@ -884,24 +884,37 @@ class CardataCoordinator:
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         """Get state for a descriptor (sync version for entity property access).
 
-        Returns a copy to minimize race condition impact. For guaranteed
-        thread-safety, use async_get_state() instead.
+        This method provides best-effort consistency for synchronous access.
+        Since this is a sync method, it cannot use the async lock. We minimize
+        the race window by accessing the nested dict directly without intermediate
+        copies. For guaranteed thread-safety, use async_get_state() instead.
+
+        Returns a defensive copy of the state to prevent external mutations.
         """
-        # Copy the vehicle dict to get a consistent snapshot, minimizing race window
-        # with concurrent modifications from async_handle_message
         try:
+            # Access nested dict directly - no intermediate copy needed since
+            # we only need one descriptor. This minimizes the race window.
             vehicle_data = self.data.get(vin)
             if vehicle_data is None:
                 return None
-            # Take a shallow copy to get consistent view of descriptors
-            vehicle_snapshot = dict(vehicle_data)
-            state = vehicle_snapshot.get(descriptor)
+
+            state = vehicle_data.get(descriptor)
             if state is None:
                 return None
-            # Return a copy to avoid mutations during read
-            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
-        except (KeyError, RuntimeError, AttributeError):
-            # Handle edge cases where dict structure changes during access
+
+            # Return a defensive copy. Access all attributes in one expression
+            # to minimize window for concurrent state object replacement.
+            return DescriptorState(
+                value=state.value,
+                unit=state.unit,
+                timestamp=state.timestamp
+            )
+        except (KeyError, RuntimeError, AttributeError, TypeError):
+            # Handle edge cases where data structure changes during access:
+            # - KeyError: dict key removed between check and access
+            # - RuntimeError: dict changed size during iteration
+            # - AttributeError: state object replaced with incompatible type
+            # - TypeError: unexpected None or wrong type in chain
             return None
 
     async def async_get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
