@@ -93,7 +93,8 @@ def map_unit_to_ha(unit: str | None) -> str | None:
         "l": UnitOfVolume.LITERS,
         "celsius": UnitOfTemperature.CELSIUS,
         "weeks": UnitOfTime.DAYS,
-        "w": UnitOfTime.DAYS,
+        # Note: "w" is NOT mapped here - it's ambiguous (could be watts or weeks)
+        # BMW uses "weeks" explicitly for time, and "W" or "kW" for power
         "months": UnitOfTime.DAYS,
         "kPa": UnitOfPressure.KPA,
         "kpa": UnitOfPressure.KPA,
@@ -158,8 +159,8 @@ def convert_value_for_unit(
     except (TypeError, ValueError):
         return value
 
-    # Convert weeks to days
-    if original_unit in ("weeks", "w") and normalized_unit == UnitOfTime.DAYS:
+    # Convert weeks to days (only explicit "weeks", not "w" which could be watts)
+    if original_unit == "weeks" and normalized_unit == UnitOfTime.DAYS:
         return numeric_value * 7
 
     # Convert months to days (approximate)
