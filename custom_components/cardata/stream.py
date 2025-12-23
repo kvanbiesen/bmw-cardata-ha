@@ -204,17 +204,23 @@ class CardataStreamManager:
             self._persist_circuit_breaker_state()
 
     def get_circuit_breaker_state(self) -> dict:
-        """Get circuit breaker state for persistence. Uses absolute timestamps."""
+        """Get circuit breaker state for persistence.
+
+        Internally we use monotonic time (immune to clock changes), but for
+        persistence across restarts we must convert to wall clock time.
+        We store the remaining duration added to current wall clock time.
+        """
         if not self._circuit_open or self._circuit_open_until is None:
             return {"circuit_open": False}
 
-        # Convert monotonic to absolute time for persistence
+        # Get both timestamps as close together as possible to minimize drift
         now_monotonic = time.monotonic()
-        now_absolute = time.time()
         remaining = self._circuit_open_until - now_monotonic
         if remaining <= 0:
             return {"circuit_open": False}
 
+        # Convert remaining duration to absolute deadline for persistence
+        now_absolute = time.time()
         return {
             "circuit_open": True,
             "circuit_open_until": now_absolute + remaining,
@@ -222,7 +228,12 @@ class CardataStreamManager:
         }
 
     def restore_circuit_breaker_state(self, state: dict) -> None:
-        """Restore circuit breaker state from persistence. Converts absolute to monotonic."""
+        """Restore circuit breaker state from persistence.
+
+        Converts the persisted wall clock deadline back to monotonic time
+        by calculating remaining duration and adding to current monotonic time.
+        This handles clock changes that occurred while HA was stopped.
+        """
         if not state or not state.get("circuit_open"):
             return
 
@@ -230,14 +241,26 @@ class CardataStreamManager:
         if open_until_absolute is None:
             return
 
+        # Calculate remaining time from persisted wall clock deadline
         now_absolute = time.time()
         remaining = open_until_absolute - now_absolute
+
         if remaining <= 0:
             # Circuit breaker expired while HA was down
             _LOGGER.info("Circuit breaker expired during restart; allowing connections")
             return
 
-        # Restore circuit breaker with remaining time
+        # Cap remaining time to prevent issues from clock drift or corruption
+        max_remaining = self._circuit_breaker_duration * 2
+        if remaining > max_remaining:
+            _LOGGER.warning(
+                "Circuit breaker remaining time (%.0fs) exceeds maximum; capping to %.0fs",
+                remaining,
+                max_remaining,
+            )
+            remaining = max_remaining
+
+        # Convert remaining duration to monotonic deadline
         now_monotonic = time.monotonic()
         self._circuit_open = True
         self._circuit_open_until = now_monotonic + remaining
