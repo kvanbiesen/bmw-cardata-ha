@@ -52,6 +52,45 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+async def _async_cleanup_on_failure(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    refresh_task: asyncio.Task | None,
+) -> None:
+    """Clean up all tasks and resources on setup failure."""
+    if refresh_task:
+        refresh_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await refresh_task
+
+    # Clean up runtime data tasks if they were created
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime:
+        if runtime.bootstrap_task:
+            runtime.bootstrap_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await runtime.bootstrap_task
+
+        if runtime.telematic_task:
+            runtime.telematic_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await runtime.telematic_task
+
+        # Stop coordinator watchdog if started (wrapped to prevent masking original error)
+        try:
+            await runtime.coordinator.async_stop_watchdog()
+        except Exception as cleanup_err:
+            _LOGGER.debug("Error stopping watchdog during cleanup: %s", cleanup_err)
+
+        # Stop stream manager if started (wrapped to prevent masking original error)
+        try:
+            await runtime.stream.async_stop()
+        except Exception as cleanup_err:
+            _LOGGER.debug("Error stopping stream during cleanup: %s", cleanup_err)
+
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CarData from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -419,39 +458,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         setup_succeeded = True
         return True
 
-    except Exception:
-        # Clean up all tasks and resources on setup failure
-        if refresh_task:
-            refresh_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await refresh_task
+    except ConfigEntryNotReady:
+        # Expected exception for setup retries - clean up and re-raise without extra logging
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
+        raise
 
-        # Clean up runtime data tasks if they were created
-        runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-        if runtime:
-            if runtime.bootstrap_task:
-                runtime.bootstrap_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await runtime.bootstrap_task
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        # Network/timeout errors - expected during connectivity issues
+        _LOGGER.warning("Setup failed due to network error: %s", err)
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
+        raise ConfigEntryNotReady(f"Network error during setup: {err}") from err
 
-            if runtime.telematic_task:
-                runtime.telematic_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await runtime.telematic_task
-
-            # Stop coordinator watchdog if started (wrapped to prevent masking original error)
-            try:
-                await runtime.coordinator.async_stop_watchdog()
-            except Exception as cleanup_err:
-                _LOGGER.debug("Error stopping watchdog during cleanup: %s", cleanup_err)
-
-            # Stop stream manager if started (wrapped to prevent masking original error)
-            try:
-                await runtime.stream.async_stop()
-            except Exception as cleanup_err:
-                _LOGGER.debug("Error stopping stream during cleanup: %s", cleanup_err)
-
-        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    except Exception as err:
+        # Unexpected errors - log with full traceback for debugging
+        _LOGGER.exception("Setup failed with unexpected error: %s", err)
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
         raise
 
     finally:
