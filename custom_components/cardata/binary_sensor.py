@@ -182,7 +182,16 @@ async def async_setup_entry(
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
 
     def ensure_entity(vin: str, descriptor: str, *, assume_binary: bool = False, from_signal: bool = False) -> None:
-        """Ensure binary sensor entity exists for VIN + descriptor."""
+        """Ensure binary sensor entity exists for VIN + descriptor.
+
+        Args:
+            vin: Vehicle identification number.
+            descriptor: The telematic descriptor (e.g., "vehicle.cabin.door.row1.driver.isOpen").
+            assume_binary: If True, create entity even without coordinator state.
+                Used when restoring entities from entity registry.
+            from_signal: If True, trust the signal and create entity even without
+                coordinator state. Used when called from dispatcher signals.
+        """
         if (vin, descriptor) in entities:
             return
 
