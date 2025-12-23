@@ -188,7 +188,9 @@ async def async_request_with_retry(
                 # Rate limit - return immediately, caller handles quota
                 if http_response.is_rate_limited:
                     if rate_limiter:
-                        rate_limiter.record_429()
+                        # Pass Retry-After header to respect server's cooldown
+                        retry_after = http_response.headers.get("Retry-After")
+                        rate_limiter.record_429(endpoint=context, retry_after=retry_after)
                     _LOGGER.warning(
                         "%s rate limited (429): %s",
                         context,
