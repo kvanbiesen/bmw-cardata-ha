@@ -93,7 +93,8 @@ def map_unit_to_ha(unit: str | None) -> str | None:
         "l": UnitOfVolume.LITERS,
         "celsius": UnitOfTemperature.CELSIUS,
         "weeks": UnitOfTime.DAYS,
-        "w": UnitOfTime.DAYS,
+        # Note: "w" is NOT mapped here - it's ambiguous (could be watts or weeks)
+        # BMW uses "weeks" explicitly for time, and "W" or "kW" for power
         "months": UnitOfTime.DAYS,
         "kPa": UnitOfPressure.KPA,
         "kpa": UnitOfPressure.KPA,
@@ -158,8 +159,8 @@ def convert_value_for_unit(
     except (TypeError, ValueError):
         return value
 
-    # Convert weeks to days
-    if original_unit in ("weeks", "w") and normalized_unit == UnitOfTime.DAYS:
+    # Convert weeks to days (only explicit "weeks", not "w" which could be watts)
+    if original_unit == "weeks" and normalized_unit == UnitOfTime.DAYS:
         return numeric_value * 7
 
     # Convert months to days (approximate)
@@ -778,8 +779,12 @@ async def async_setup_entry(
     # Cache stores (drive_train_value, is_electric_result) to detect metadata changes
     _electric_vehicle_cache: dict[str, tuple[str, bool]] = {}
 
-    def is_electric_vehicle(vin: str) -> bool:
-        """Check if vehicle is electric/hybrid based on metadata (cached with invalidation)."""
+    def is_electric_vehicle(vin: str) -> bool | None:
+        """Check if vehicle is electric/hybrid based on metadata (cached with invalidation).
+
+        Returns:
+            True if electric/hybrid, False if not, None if metadata not yet available.
+        """
         metadata = coordinator.device_metadata.get(vin, {})
         extra = metadata.get("extra_attributes", {})
         drive_train = extra.get("drive_train", "").lower()
@@ -792,8 +797,8 @@ async def async_setup_entry(
             # drive_train changed, re-evaluate below
 
         if not drive_train:
-            _LOGGER.debug("VIN %s: No metadata yet, defaulting to electric (will check later)", vin)
-            return False  # Don't cache this - let it check again when metadata loads
+            _LOGGER.debug("VIN %s: No metadata yet, will check again later", redact_vin(vin))
+            return None  # Don't cache - let caller decide to wait for metadata
 
         is_electric = any(x in drive_train for x in [
                           "electric", "phev", "bev", "plugin", "hybrid", "mhev"])
@@ -802,7 +807,7 @@ async def async_setup_entry(
         _electric_vehicle_cache[vin] = (drive_train, is_electric)
 
         _LOGGER.debug("VIN %s is %s (drive_train: %s)",
-                      vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
+                      redact_vin(vin), "electric/hybrid" if is_electric else "NOT electric", drive_train)
 
         return is_electric
 

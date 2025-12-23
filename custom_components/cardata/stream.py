@@ -126,9 +126,12 @@ class CardataStreamManager:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
         except asyncio.TimeoutError:
             _LOGGER.warning(
-                "Connect lock acquisition timed out after 60s; skipping start"
+                "Connect lock acquisition timed out after 60s; scheduling retry in 30s"
             )
-            raise ConnectionError("Connect lock acquisition timed out")
+            # Schedule a reconnect attempt instead of just failing
+            await asyncio.sleep(30.0)
+            self._run_coro_safe(self._async_reconnect())
+            raise ConnectionError("Connect lock acquisition timed out; retry scheduled")
 
         try:
             await self._async_start_locked()
@@ -201,17 +204,23 @@ class CardataStreamManager:
             self._persist_circuit_breaker_state()
 
     def get_circuit_breaker_state(self) -> dict:
-        """Get circuit breaker state for persistence. Uses absolute timestamps."""
+        """Get circuit breaker state for persistence.
+
+        Internally we use monotonic time (immune to clock changes), but for
+        persistence across restarts we must convert to wall clock time.
+        We store the remaining duration added to current wall clock time.
+        """
         if not self._circuit_open or self._circuit_open_until is None:
             return {"circuit_open": False}
 
-        # Convert monotonic to absolute time for persistence
+        # Get both timestamps as close together as possible to minimize drift
         now_monotonic = time.monotonic()
-        now_absolute = time.time()
         remaining = self._circuit_open_until - now_monotonic
         if remaining <= 0:
             return {"circuit_open": False}
 
+        # Convert remaining duration to absolute deadline for persistence
+        now_absolute = time.time()
         return {
             "circuit_open": True,
             "circuit_open_until": now_absolute + remaining,
@@ -219,7 +228,12 @@ class CardataStreamManager:
         }
 
     def restore_circuit_breaker_state(self, state: dict) -> None:
-        """Restore circuit breaker state from persistence. Converts absolute to monotonic."""
+        """Restore circuit breaker state from persistence.
+
+        Converts the persisted wall clock deadline back to monotonic time
+        by calculating remaining duration and adding to current monotonic time.
+        This handles clock changes that occurred while HA was stopped.
+        """
         if not state or not state.get("circuit_open"):
             return
 
@@ -227,14 +241,26 @@ class CardataStreamManager:
         if open_until_absolute is None:
             return
 
+        # Calculate remaining time from persisted wall clock deadline
         now_absolute = time.time()
         remaining = open_until_absolute - now_absolute
+
         if remaining <= 0:
             # Circuit breaker expired while HA was down
             _LOGGER.info("Circuit breaker expired during restart; allowing connections")
             return
 
-        # Restore circuit breaker with remaining time
+        # Cap remaining time to prevent issues from clock drift or corruption
+        max_remaining = self._circuit_breaker_duration * 2
+        if remaining > max_remaining:
+            _LOGGER.warning(
+                "Circuit breaker remaining time (%.0fs) exceeds maximum; capping to %.0fs",
+                remaining,
+                max_remaining,
+            )
+            remaining = max_remaining
+
+        # Convert remaining duration to monotonic deadline
         now_monotonic = time.monotonic()
         self._circuit_open = True
         self._circuit_open_until = now_monotonic + remaining
@@ -533,9 +559,8 @@ class CardataStreamManager:
                     _LOGGER.debug("Subscribed to %s result=%s",
                                   redact_vin_in_text(topic), result)
             if self._reauth_notified:
-                self._reauth_notified = False
-                self._awaiting_new_credentials = False
-                self._run_coro_safe(self._notify_recovered())
+                # Schedule async reset of flags with proper locking
+                self._run_coro_safe(self._async_clear_reauth_state())
             self._cancel_retry()
             self._last_disconnect = None
             self._retry_backoff = 3
@@ -682,8 +707,11 @@ class CardataStreamManager:
         except asyncio.TimeoutError:
             _LOGGER.warning(
                 "Connect lock acquisition timed out after 60s during reconnect; "
-                "skipping this reconnect attempt"
+                "scheduling retry in 30s"
             )
+            # Schedule another attempt after a delay instead of giving up
+            await asyncio.sleep(30.0)
+            self._run_coro_safe(self._async_reconnect())
             return
 
         try:
@@ -738,38 +766,42 @@ class CardataStreamManager:
                 return
             self._unauthorized_retry_in_progress = True
 
-        try:
-            unauthorized_protection = None
-            if self._entry_id:
-                from .const import DOMAIN
-                runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-                if runtime:
-                    unauthorized_protection = runtime.unauthorized_protection
+            try:
+                unauthorized_protection = None
+                if self._entry_id:
+                    from .const import DOMAIN
+                    runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+                    if runtime:
+                        unauthorized_protection = runtime.unauthorized_protection
 
-            if unauthorized_protection:
-                can_retry, block_reason = unauthorized_protection.can_retry()
-                if not can_retry:
-                    _LOGGER.error(
-                        "BMW MQTT unauthorized retry blocked: %s",
-                        block_reason
-                    )
-                    await self.async_stop()
-                    if self._status_callback:
-                        await self._status_callback("unauthorized_blocked", block_reason)
-                    return
-                unauthorized_protection.record_attempt()
+                if unauthorized_protection:
+                    can_retry, block_reason = unauthorized_protection.can_retry()
+                    if not can_retry:
+                        _LOGGER.error(
+                            "BMW MQTT unauthorized retry blocked: %s",
+                            block_reason
+                        )
+                        await self.async_stop()
+                        if self._status_callback:
+                            await self._status_callback("unauthorized_blocked", block_reason)
+                        return
+                    unauthorized_protection.record_attempt()
 
-            self._awaiting_new_credentials = True
-            if not self._reauth_notified:
-                self._reauth_notified = True
-                await self._notify_error("unauthorized")
-            else:
-                await self.async_stop()
-            if self._status_callback:
-                await self._status_callback("unauthorized", "MQTT rc=5")
-        finally:
-            async with self._unauthorized_lock:
+                # Update flags while holding the lock to prevent races
+                self._awaiting_new_credentials = True
+                should_notify = not self._reauth_notified
+                if should_notify:
+                    self._reauth_notified = True
+            finally:
                 self._unauthorized_retry_in_progress = False
+
+        # Perform callbacks outside the lock to avoid deadlocks
+        if should_notify:
+            await self._notify_error("unauthorized")
+        else:
+            await self.async_stop()
+        if self._status_callback:
+            await self._status_callback("unauthorized", "MQTT rc=5")
 
     async def _notify_error(self, reason: str) -> None:
         await self.async_stop()
@@ -779,6 +811,16 @@ class CardataStreamManager:
     async def _notify_recovered(self) -> None:
         if self._error_callback:
             await self._error_callback("recovered")
+
+    async def _async_clear_reauth_state(self) -> None:
+        """Clear reauth state flags with proper locking.
+
+        Called from on_connect callback when connection is restored after reauth.
+        """
+        async with self._unauthorized_lock:
+            self._reauth_notified = False
+            self._awaiting_new_credentials = False
+        await self._notify_recovered()
 
     async def async_update_credentials(
         self,
@@ -812,16 +854,19 @@ class CardataStreamManager:
                 reconnect_required = True
 
             if not reconnect_required:
-                if self._awaiting_new_credentials:
-                    self._awaiting_new_credentials = False
-                    if self._client is None:
-                        try:
-                            await self.async_start()
-                        except Exception as err:
-                            _LOGGER.error(
-                                "BMW MQTT reconnect failed after credential refresh: %s",
-                                err,
-                            )
+                # Check and clear flag under lock to prevent races
+                async with self._unauthorized_lock:
+                    was_awaiting = self._awaiting_new_credentials
+                    if was_awaiting:
+                        self._awaiting_new_credentials = False
+                if was_awaiting and self._client is None:
+                    try:
+                        await self.async_start()
+                    except Exception as err:
+                        _LOGGER.error(
+                            "BMW MQTT reconnect failed after credential refresh: %s",
+                            err,
+                        )
                 return
 
             if self._client:
@@ -829,7 +874,8 @@ class CardataStreamManager:
                 await self.async_stop()
 
             self._reconnect_backoff = 5
-            if self._awaiting_new_credentials:
+            # Clear flag under lock to prevent races
+            async with self._unauthorized_lock:
                 self._awaiting_new_credentials = False
 
             delay = 0.0

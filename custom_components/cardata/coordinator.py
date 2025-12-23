@@ -335,6 +335,7 @@ class CardataCoordinator:
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
     _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
+    _MAX_PENDING_VINS: int = 20  # Max number of VINs to track (generous limit for fleets)
     _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
     _pending_updates_started: Optional[datetime] = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
@@ -732,10 +733,18 @@ class CardataCoordinator:
                     immediate_updates.append((vin, descriptor))
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
+                    # Enforce VIN limit to prevent unbounded dict growth
                     if vin not in self._pending_updates:
+                        if len(self._pending_updates) >= self._MAX_PENDING_VINS:
+                            _LOGGER.warning(
+                                "Max pending VINs (%d) reached; dropping update for new VIN %s",
+                                self._MAX_PENDING_VINS,
+                                redact_vin(vin),
+                            )
+                            continue
                         self._pending_updates[vin] = set()
                     pending_set = self._pending_updates[vin]
-                    # Enforce size limit to prevent unbounded memory growth
+                    # Enforce per-VIN size limit to prevent unbounded memory growth
                     if len(pending_set) < self._MAX_PENDING_PER_VIN:
                         pending_set.add(descriptor)
                         schedule_debounce = True
@@ -763,15 +772,38 @@ class CardataCoordinator:
 
         # Queue new entities for immediate notification
         if new_sensor:
-            pending_sensors = self._pending_new_sensors.setdefault(vin, set())
-            if len(pending_sensors) < self._MAX_PENDING_PER_VIN:
-                pending_sensors.update(new_sensor)
-            schedule_debounce = True
+            if vin not in self._pending_new_sensors:
+                if len(self._pending_new_sensors) >= self._MAX_PENDING_VINS:
+                    _LOGGER.warning(
+                        "Max pending VINs reached for new sensors; dropping for VIN %s",
+                        redact_vin(vin),
+                    )
+                else:
+                    self._pending_new_sensors[vin] = set()
+            if vin in self._pending_new_sensors:
+                pending_sensors = self._pending_new_sensors[vin]
+                # Add items one by one to respect the limit
+                available = self._MAX_PENDING_PER_VIN - len(pending_sensors)
+                for item in new_sensor[:available]:
+                    pending_sensors.add(item)
+                schedule_debounce = True
+
         if new_binary:
-            pending_binary = self._pending_new_binary.setdefault(vin, set())
-            if len(pending_binary) < self._MAX_PENDING_PER_VIN:
-                pending_binary.update(new_binary)
-            schedule_debounce = True
+            if vin not in self._pending_new_binary:
+                if len(self._pending_new_binary) >= self._MAX_PENDING_VINS:
+                    _LOGGER.warning(
+                        "Max pending VINs reached for new binary; dropping for VIN %s",
+                        redact_vin(vin),
+                    )
+                else:
+                    self._pending_new_binary[vin] = set()
+            if vin in self._pending_new_binary:
+                pending_binary = self._pending_new_binary[vin]
+                # Add items one by one to respect the limit
+                available = self._MAX_PENDING_PER_VIN - len(pending_binary)
+                for item in new_binary[:available]:
+                    pending_binary.add(item)
+                schedule_debounce = True
 
         self._apply_soc_estimate(vin, now)
 
@@ -884,24 +916,37 @@ class CardataCoordinator:
     def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
         """Get state for a descriptor (sync version for entity property access).
 
-        Returns a copy to minimize race condition impact. For guaranteed
-        thread-safety, use async_get_state() instead.
+        This method provides best-effort consistency for synchronous access.
+        Since this is a sync method, it cannot use the async lock. We minimize
+        the race window by accessing the nested dict directly without intermediate
+        copies. For guaranteed thread-safety, use async_get_state() instead.
+
+        Returns a defensive copy of the state to prevent external mutations.
         """
-        # Copy the vehicle dict to get a consistent snapshot, minimizing race window
-        # with concurrent modifications from async_handle_message
         try:
+            # Access nested dict directly - no intermediate copy needed since
+            # we only need one descriptor. This minimizes the race window.
             vehicle_data = self.data.get(vin)
             if vehicle_data is None:
                 return None
-            # Take a shallow copy to get consistent view of descriptors
-            vehicle_snapshot = dict(vehicle_data)
-            state = vehicle_snapshot.get(descriptor)
+
+            state = vehicle_data.get(descriptor)
             if state is None:
                 return None
-            # Return a copy to avoid mutations during read
-            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
-        except (KeyError, RuntimeError, AttributeError):
-            # Handle edge cases where dict structure changes during access
+
+            # Return a defensive copy. Access all attributes in one expression
+            # to minimize window for concurrent state object replacement.
+            return DescriptorState(
+                value=state.value,
+                unit=state.unit,
+                timestamp=state.timestamp
+            )
+        except (KeyError, RuntimeError, AttributeError, TypeError):
+            # Handle edge cases where data structure changes during access:
+            # - KeyError: dict key removed between check and access
+            # - RuntimeError: dict changed size during iteration
+            # - AttributeError: state object replaced with incompatible type
+            # - TypeError: unexpected None or wrong type in chain
             return None
 
     async def async_get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:

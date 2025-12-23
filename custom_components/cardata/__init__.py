@@ -52,6 +52,45 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+async def _async_cleanup_on_failure(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    refresh_task: asyncio.Task | None,
+) -> None:
+    """Clean up all tasks and resources on setup failure."""
+    if refresh_task:
+        refresh_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await refresh_task
+
+    # Clean up runtime data tasks if they were created
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime:
+        if runtime.bootstrap_task:
+            runtime.bootstrap_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await runtime.bootstrap_task
+
+        if runtime.telematic_task:
+            runtime.telematic_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await runtime.telematic_task
+
+        # Stop coordinator watchdog if started (wrapped to prevent masking original error)
+        try:
+            await runtime.coordinator.async_stop_watchdog()
+        except Exception as cleanup_err:
+            _LOGGER.debug("Error stopping watchdog during cleanup: %s", cleanup_err)
+
+        # Stop stream manager if started (wrapped to prevent masking original error)
+        try:
+            await runtime.stream.async_stop()
+        except Exception as cleanup_err:
+            _LOGGER.debug("Error stopping stream during cleanup: %s", cleanup_err)
+
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CarData from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -66,9 +105,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Prepare configuration
         data = entry.data
         options = dict(entry.options) if entry.options else {}
-        mqtt_keepalive = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
-        diagnostic_interval = options.get(
+
+        # Validate and clamp mqtt_keepalive (10-300 seconds)
+        mqtt_keepalive_raw = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
+        try:
+            mqtt_keepalive = max(10, min(int(mqtt_keepalive_raw), 300))
+            if mqtt_keepalive != mqtt_keepalive_raw:
+                _LOGGER.warning(
+                    "mqtt_keepalive value %s out of range, clamped to %d",
+                    mqtt_keepalive_raw,
+                    mqtt_keepalive,
+                )
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                "Invalid mqtt_keepalive value %s, using default %d",
+                mqtt_keepalive_raw,
+                MQTT_KEEPALIVE,
+            )
+            mqtt_keepalive = MQTT_KEEPALIVE
+
+        # Validate and clamp diagnostic_interval (10-3600 seconds)
+        diagnostic_interval_raw = options.get(
             OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL)
+        try:
+            diagnostic_interval = max(10, min(int(diagnostic_interval_raw), 3600))
+            if diagnostic_interval != diagnostic_interval_raw:
+                _LOGGER.warning(
+                    "diagnostic_interval value %s out of range, clamped to %d",
+                    diagnostic_interval_raw,
+                    diagnostic_interval,
+                )
+        except (TypeError, ValueError):
+            _LOGGER.warning(
+                "Invalid diagnostic_interval value %s, using default %d",
+                diagnostic_interval_raw,
+                DIAGNOSTIC_LOG_INTERVAL,
+            )
+            diagnostic_interval = DIAGNOSTIC_LOG_INTERVAL
+
         debug_option = options.get(OPTION_DEBUG_LOG)
         debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
 
@@ -180,21 +254,63 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await container_manager.async_ensure_hv_container(
                     entry.data.get("access_token")
                 )
+            except aiohttp.ClientError as err:
+                # Network errors - treat same as MQTT network errors
+                _LOGGER.warning(
+                    "Network error ensuring HV container for entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
+                if not container_manager.container_id:
+                    raise ConfigEntryNotReady(
+                        f"Unable to ensure HV container (network error): {err}"
+                    ) from err
             except Exception as err:
+                # Other errors - log and check if we have a fallback
                 _LOGGER.warning(
                     "Unable to ensure HV container for entry %s: %s",
                     entry.entry_id,
                     err,
                 )
+                if not container_manager.container_id:
+                    # No container at all - telematic polling won't work
+                    _LOGGER.error(
+                        "No HV container available for entry %s; "
+                        "telematic data polling will be unavailable until container is created",
+                        entry.entry_id,
+                    )
+                    # Continue anyway - MQTT streaming will still work
 
         # MQTT auto-start is now prevented by _bootstrap_in_progress flag
         # We'll explicitly start it after bootstrap completes
 
-        # Create refresh loop
+        # Create refresh loop with backoff for repeated failures
         async def refresh_loop() -> None:
+            consecutive_auth_failures = 0
+            max_auth_failures = 3  # Trigger reauth after 3 consecutive auth failures
+            base_backoff = DEFAULT_REFRESH_INTERVAL
+            max_backoff = 4 * 60 * 60  # Cap at 4 hours
+
             try:
                 while True:
-                    await asyncio.sleep(DEFAULT_REFRESH_INTERVAL)
+                    # Calculate backoff: normal interval, or exponential if failing
+                    if consecutive_auth_failures > 0:
+                        # Exponential backoff: 45min -> 90min -> 180min (capped at 4h)
+                        backoff = min(
+                            base_backoff * (2 ** consecutive_auth_failures),
+                            max_backoff
+                        )
+                        _LOGGER.debug(
+                            "Token refresh backoff: %d seconds (failure %d/%d)",
+                            backoff,
+                            consecutive_auth_failures,
+                            max_auth_failures,
+                        )
+                    else:
+                        backoff = base_backoff
+
+                    await asyncio.sleep(backoff)
+
                     try:
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
@@ -203,15 +319,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             ),
                             timeout=60.0
                         )
+                        # Success - reset failure counter
+                        if consecutive_auth_failures > 0:
+                            _LOGGER.info(
+                                "Token refresh succeeded after %d consecutive failures",
+                                consecutive_auth_failures,
+                            )
+                        consecutive_auth_failures = 0
+
                     except CardataAuthError as err:
-                        _LOGGER.error("Token refresh failed: %s", err)
+                        consecutive_auth_failures += 1
+                        _LOGGER.error(
+                            "Token refresh failed (%d/%d): %s",
+                            consecutive_auth_failures,
+                            max_auth_failures,
+                            err,
+                        )
+
+                        # After max failures, trigger reauth flow and stop retrying
+                        if consecutive_auth_failures >= max_auth_failures:
+                            _LOGGER.error(
+                                "Token refresh failed %d consecutive times; "
+                                "triggering reauth flow",
+                                consecutive_auth_failures,
+                            )
+                            await handle_stream_error(hass, entry, "unauthorized")
+                            # Continue loop but with max backoff until reauth succeeds
+                            # The reauth flow will update credentials and reset state
+
                     except asyncio.TimeoutError:
                         _LOGGER.warning("Token refresh timed out after 60 seconds")
+                        # Timeout is transient - don't count as auth failure
+
                     except aiohttp.ClientError as err:
                         _LOGGER.warning("Token refresh network error: %s", err)
+                        # Network errors are transient - don't count as auth failure
+
                     except Exception as err:
                         _LOGGER.exception(
                             "Token refresh crashed with unexpected error: %s", err)
+                        # Unknown errors - don't count as auth failure but log
+
             except asyncio.CancelledError:
                 return
 
@@ -330,39 +478,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         setup_succeeded = True
         return True
 
-    except Exception:
-        # Clean up all tasks and resources on setup failure
-        if refresh_task:
-            refresh_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await refresh_task
+    except ConfigEntryNotReady:
+        # Expected exception for setup retries - clean up and re-raise without extra logging
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
+        raise
 
-        # Clean up runtime data tasks if they were created
-        runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-        if runtime:
-            if runtime.bootstrap_task:
-                runtime.bootstrap_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await runtime.bootstrap_task
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        # Network/timeout errors - expected during connectivity issues
+        _LOGGER.warning("Setup failed due to network error: %s", err)
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
+        raise ConfigEntryNotReady(f"Network error during setup: {err}") from err
 
-            if runtime.telematic_task:
-                runtime.telematic_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await runtime.telematic_task
-
-            # Stop coordinator watchdog if started (wrapped to prevent masking original error)
-            try:
-                await runtime.coordinator.async_stop_watchdog()
-            except Exception as cleanup_err:
-                _LOGGER.debug("Error stopping watchdog during cleanup: %s", cleanup_err)
-
-            # Stop stream manager if started (wrapped to prevent masking original error)
-            try:
-                await runtime.stream.async_stop()
-            except Exception as cleanup_err:
-                _LOGGER.debug("Error stopping stream during cleanup: %s", cleanup_err)
-
-        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    except Exception as err:
+        # Unexpected errors - log with full traceback for debugging
+        _LOGGER.exception("Setup failed with unexpected error: %s", err)
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
         raise
 
     finally:

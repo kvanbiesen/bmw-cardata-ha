@@ -20,33 +20,78 @@ class RateLimitTracker:
         self._last_429_time: float | None = None
         self._successful_calls: int = 0
 
-    def record_429(self, endpoint: str = "API") -> None:
+    def record_429(self, endpoint: str = "API", retry_after: str | int | None = None) -> None:
         """Record a 429 rate limit error and set cooldown.
 
         Args:
             endpoint: Which API endpoint hit the limit
+            retry_after: Value from Retry-After header (seconds or HTTP-date string)
         """
         now = time.time()
         self._429_count += 1
         self._last_429_time = now
 
-        # Exponential cooldown: 1h, 2h, 4h, 8h, max 24h
-        cooldown_hours = min(2 ** (self._429_count - 1), 24)
-        cooldown_seconds = cooldown_hours * 3600
-        self._rate_limited_until = now + cooldown_seconds
+        # Try to use server's Retry-After header if provided
+        server_cooldown = self._parse_retry_after(retry_after)
 
+        if server_cooldown is not None:
+            # Use server-specified cooldown, but enforce minimum of 60s and max of 24h
+            cooldown_seconds = max(60, min(server_cooldown, 24 * 3600))
+            cooldown_source = "server Retry-After"
+        else:
+            # Fall back to exponential cooldown: 1h, 2h, 4h, 8h, max 24h
+            cooldown_hours = min(2 ** (self._429_count - 1), 24)
+            cooldown_seconds = cooldown_hours * 3600
+            cooldown_source = "exponential backoff"
+
+        self._rate_limited_until = now + cooldown_seconds
         reset_time = datetime.fromtimestamp(self._rate_limited_until)
+        cooldown_hours_display = cooldown_seconds / 3600
 
         _LOGGER.error(
             "BMW API rate limit hit (429) on %s! This is attempt #%d. "
-            "Cooling down for %d hours until %s. "
+            "Cooling down for %.1f hours until %s (using %s). "
             "BMW's daily quota is typically 500 calls/day and resets at midnight UTC. "
             "The integration will pause API calls during cooldown.",
             endpoint,
             self._429_count,
-            cooldown_hours,
-            reset_time.strftime("%Y-%m-%d %H:%M:%S")
+            cooldown_hours_display,
+            reset_time.strftime("%Y-%m-%d %H:%M:%S"),
+            cooldown_source,
         )
+
+    def _parse_retry_after(self, retry_after: str | int | None) -> int | None:
+        """Parse Retry-After header value.
+
+        Args:
+            retry_after: Value from Retry-After header (seconds or HTTP-date)
+
+        Returns:
+            Cooldown in seconds, or None if parsing fails
+        """
+        if retry_after is None:
+            return None
+
+        # If it's already an int, use it directly
+        if isinstance(retry_after, int):
+            return retry_after if retry_after > 0 else None
+
+        # Try parsing as integer seconds
+        try:
+            seconds = int(retry_after)
+            return seconds if seconds > 0 else None
+        except ValueError:
+            pass
+
+        # Try parsing as HTTP-date (e.g., "Wed, 21 Oct 2024 07:28:00 GMT")
+        from email.utils import parsedate_to_datetime
+        try:
+            retry_date = parsedate_to_datetime(retry_after)
+            delta = retry_date.timestamp() - time.time()
+            return int(delta) if delta > 0 else None
+        except (ValueError, TypeError):
+            _LOGGER.debug("Could not parse Retry-After header: %s", retry_after)
+            return None
 
     def can_make_request(self) -> tuple[bool, str | None]:
         """Check if we can make an API request.
