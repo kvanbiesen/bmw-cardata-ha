@@ -88,6 +88,10 @@ async def _async_cleanup_on_failure(
         except Exception as cleanup_err:
             _LOGGER.debug("Error stopping stream during cleanup: %s", cleanup_err)
 
+        # Signal bootstrap complete event to unblock any waiters
+        if hasattr(runtime.stream, "_bootstrap_complete_event"):
+            runtime.stream._bootstrap_complete_event.set()
+
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
 
 
@@ -438,8 +442,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         # NOW clear the bootstrap flag and signal completion event
         # This ensures MQTT doesn't create entities before we have vehicle names
-        manager._bootstrap_in_progress = False
+        # IMPORTANT: Set event FIRST, then clear flag - ensures waiters unblock
+        # before other code sees the flag cleared (avoids inconsistent state)
         manager._bootstrap_complete_event.set()
+        manager._bootstrap_in_progress = False
 
         if manager.client is None:
             try:

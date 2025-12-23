@@ -913,11 +913,11 @@ async def async_setup_entry(
     entry.async_on_unload(
         async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation)
     )
-    # Note: We don't subscribe to signal_update for entity creation here.
-    # - signal_new_sensor handles new descriptors
-    # - iter_descriptors() loop below handles existing data
-    # - Individual entities subscribe to signal_update for their own state updates
-    # This avoids duplicate processing on every update.
+    # Note: signal_update subscription above handles entity creation for updates.
+    # - signal_new_sensor handles truly new descriptors
+    # - signal_update handles updates that may require entity creation
+    # - iter_descriptors() loop below handles existing data at startup
+    # - Individual entities also subscribe to signal_update for their own state updates
 
     async def async_handle_soc_update(vin: str) -> None:
         ensure_soc_tracking_entities(vin)
