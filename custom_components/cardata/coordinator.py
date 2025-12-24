@@ -116,6 +116,19 @@ class SocTracking:
         """Update with actual SOC value, detecting and correcting drift."""
         ts = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
 
+        # Reject out-of-order messages (stale data arriving late)
+        if self.last_update is not None:
+            normalized_last = self._normalize_timestamp(self.last_update)
+            if normalized_last is not None and ts < normalized_last:
+                _LOGGER.debug(
+                    "Ignoring out-of-order SOC update: received=%.1f%% ts=%s, "
+                    "but already have ts=%s",
+                    percent,
+                    ts.isoformat(),
+                    normalized_last.isoformat(),
+                )
+                return
+
         # Check for drift between estimate and actual
         if self.estimated_percent is not None:
             drift = abs(self.estimated_percent - percent)
@@ -281,6 +294,8 @@ class SocTracking:
             or self.max_energy_kwh is None
             or self.max_energy_kwh == 0
         ):
+            # Clear stale rate when power drops to 0 to prevent estimate overshoot
+            self.rate_per_hour = None
             return
         self.rate_per_hour = (self.last_power_w / 1000.0) / \
             self.max_energy_kwh * 100.0
