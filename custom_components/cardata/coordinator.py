@@ -217,7 +217,6 @@ class SocTracking:
             if normalized_last_update is not None:
                 self.last_update = normalized_last_update
             self.last_estimate_time = normalized_last_update or now
-            self._stale_logged = False
             return self.estimated_percent
 
         if self.last_estimate_time is None:
