@@ -84,7 +84,7 @@ class SocTracking:
     last_drift_check: Optional[datetime] = None
     cumulative_drift: float = 0.0
     drift_corrections: int = 0
-    _stale_logged: bool = field(default=False, init=False)
+    _stale_logged: bool = False
 
     # Class-level constants for drift correction
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
@@ -115,6 +115,11 @@ class SocTracking:
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
         """Update with actual SOC value, detecting and correcting drift."""
         ts = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
+
+        # Got here = estimate is not stale, reset flag
+        if self._stale_logged:
+            _LOGGER.debug("SOC estimate refreshed with new actual data")
+            self._stale_logged = False
 
         # Reject out-of-order messages (stale data arriving late)
         if self.last_update is not None:
@@ -248,11 +253,6 @@ class SocTracking:
                         self.last_estimate_time = None
                         self.charging_active = False  # Assume charging stopped if no updates
                         return self.last_soc_percent
-
-        # Got here = estimate is not stale, reset flag
-        if self._stale_logged:
-            _LOGGER.debug("SOC estimate refreshed with new actual data")
-            self._stale_logged = False
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
         if delta_seconds <= 0:
