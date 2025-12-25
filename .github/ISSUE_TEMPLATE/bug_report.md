@@ -28,7 +28,7 @@ Please provide the following details:
   (e.g. 2024.12.1)
 
 * **BMW CarData HA integration version:**
-  (e.g. v1.2.0)
+  (e.g. v4.2.0)
 
 * **Installation method:**
 
@@ -70,6 +70,8 @@ If you have screenshots or screen recordings, please add them here.
 
 Please include relevant logs so we can diagnose the issue.
 
+If there is no debug logs attached, there we wont prolly look at the problem...
+
 ### Enable Debug Logging
 
 If possible, enable debug logging for the integration and reproduce the issue.
@@ -103,7 +105,7 @@ Before submitting, please confirm:
 
 * [ ] I’m using the latest version of the integration
 * [ ] I’ve searched existing issues to avoid duplicates
-* [ ] I’ve included logs and version information
+* [ ] I’ve included debug logs and version information
 
 ---
 
