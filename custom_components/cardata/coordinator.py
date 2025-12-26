@@ -77,6 +77,7 @@ class SocTracking:
     smoothed_power_w: Optional[float] = None  # EMA-smoothed power for stable rate
     charging_active: bool = False
     charging_paused: bool = False  # Power=0 while charging_active=true
+    _consecutive_zero_power: int = 0  # Counter for pause hysteresis
     last_soc_percent: Optional[float] = None
     rate_per_hour: Optional[float] = None
     estimated_percent: Optional[float] = None
@@ -118,6 +119,9 @@ class SocTracking:
     # EMA smoothing for power readings to reduce rate jitter from noisy samples
     # Alpha=0.3 gives ~3-5 sample smoothing window while still responding to changes
     POWER_EMA_ALPHA: ClassVar[float] = 0.3
+    # Hysteresis for charging pause detection: require N consecutive zero readings
+    # to avoid false positives from sensor noise or sampling artifacts
+    PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
 
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
@@ -606,6 +610,7 @@ class SocTracking:
             self._last_efficiency_soc = None  # Reset efficiency sampling
             self._last_efficiency_time = None
             self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
+            self._consecutive_zero_power = 0  # Reset hysteresis counter
             if self.charging_paused:
                 self.charging_paused = False
             return
@@ -615,17 +620,25 @@ class SocTracking:
             or self.max_energy_kwh is None
             or self.max_energy_kwh == 0
         ):
-            # Detect charging pause: power=0 but charging_active=true
-            if not self.charging_paused and self.last_power_w == 0:
-                self.charging_paused = True
-                _LOGGER.debug(
-                    "Charging paused: power dropped to 0 while charging active"
-                )
+            # Detect charging pause with hysteresis: require consecutive zero readings
+            # to avoid false positives from sensor noise
+            if self.last_power_w == 0:
+                self._consecutive_zero_power += 1
+                if (
+                    not self.charging_paused
+                    and self._consecutive_zero_power >= self.PAUSE_ZERO_COUNT_THRESHOLD
+                ):
+                    self.charging_paused = True
+                    _LOGGER.debug(
+                        "Charging paused: power at 0 for %d consecutive readings",
+                        self._consecutive_zero_power,
+                    )
             # Clear stale rate and smoothed power when power drops to 0
             self.rate_per_hour = None
             self.smoothed_power_w = None
             return
-        # Detect resume from pause
+        # Power > 0: reset hysteresis counter and detect resume from pause
+        self._consecutive_zero_power = 0
         if self.charging_paused:
             self.charging_paused = False
             # Reset efficiency tracking on resume to start fresh from this point
