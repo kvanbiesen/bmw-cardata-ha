@@ -74,6 +74,7 @@ class SocTracking:
     last_update: Optional[datetime] = None
     last_power_w: Optional[float] = None
     last_power_time: Optional[datetime] = None
+    smoothed_power_w: Optional[float] = None  # EMA-smoothed power for stable rate
     charging_active: bool = False
     last_soc_percent: Optional[float] = None
     rate_per_hour: Optional[float] = None
@@ -97,6 +98,9 @@ class SocTracking:
     # significantly in absorption phase (80-100%) due to CC-CV charging profile
     BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
     ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.5  # Rate multiplier above threshold
+    # EMA smoothing for power readings to reduce rate jitter from noisy samples
+    # Alpha=0.3 gives ~3-5 sample smoothing window while still responding to changes
+    POWER_EMA_ALPHA: ClassVar[float] = 0.3
 
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
@@ -228,6 +232,14 @@ class SocTracking:
         self.estimate(target_time)
         self.last_power_w = power_w
         self.last_power_time = target_time
+        # Apply EMA smoothing to reduce rate jitter from noisy power samples
+        if self.smoothed_power_w is None:
+            self.smoothed_power_w = power_w
+        else:
+            self.smoothed_power_w = (
+                self.POWER_EMA_ALPHA * power_w
+                + (1 - self.POWER_EMA_ALPHA) * self.smoothed_power_w
+            )
         self._recalculate_rate()
 
     def update_status(self, status: Optional[str]) -> None:
@@ -366,10 +378,13 @@ class SocTracking:
             or self.max_energy_kwh is None
             or self.max_energy_kwh == 0
         ):
-            # Clear stale rate when power drops to 0 to prevent estimate overshoot
+            # Clear stale rate and smoothed power when power drops to 0
             self.rate_per_hour = None
+            self.smoothed_power_w = None
             return
-        self.rate_per_hour = (self.last_power_w / 1000.0) / \
+        # Use smoothed power for rate calculation to reduce jitter
+        power_for_rate = self.smoothed_power_w or self.last_power_w
+        self.rate_per_hour = (power_for_rate / 1000.0) / \
             self.max_energy_kwh * 100.0 * self.CHARGING_EFFICIENCY
 
 
