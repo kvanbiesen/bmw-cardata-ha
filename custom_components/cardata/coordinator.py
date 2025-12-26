@@ -134,6 +134,14 @@ class SocTracking:
                 )
                 return
 
+        # Validate percent is in valid range [0, 100]
+        if percent < 0.0 or percent > 100.0:
+            _LOGGER.warning(
+                "Ignoring invalid SOC value: %.1f%% (must be 0-100)",
+                percent,
+            )
+            return
+
         # Check for drift between estimate and actual
         if self.estimated_percent is not None:
             drift = abs(self.estimated_percent - percent)
@@ -248,9 +256,11 @@ class SocTracking:
                         self._stale_logged = True  # Dont spam log in debug mode til update
 
                         # Clear stale estimate state so next call reinitializes from last_soc_percent
+                        # Note: Do NOT clear charging_active here - stale data doesn't mean charging stopped,
+                        # it means we lost connectivity. Let charging_active be updated only by actual
+                        # status messages from the vehicle.
                         self.estimated_percent = None
                         self.last_estimate_time = None
-                        self.charging_active = False  # Assume charging stopped if no updates
                         return self.last_soc_percent
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
@@ -1317,7 +1327,10 @@ class CardataCoordinator:
             tracking.rate_per_hour = rate if rate != 0 else None
             if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
-                tracking.charging_active = True
+                # Note: Do NOT set charging_active = True here. The restored rate is stale
+                # and we don't know if charging is still active. Let charging_active be set
+                # only by actual status updates from the vehicle. The rate is stored but
+                # won't be used for estimation until a status update confirms charging.
                 if tracking.max_energy_kwh is not None and tracking.max_energy_kwh != 0:
                     tracking.last_power_w = (
                         tracking.rate_per_hour / 100.0
