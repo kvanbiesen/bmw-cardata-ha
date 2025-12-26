@@ -553,8 +553,6 @@ class SocTracking:
             # Detect charging pause: power=0 but charging_active=true
             if not self.charging_paused and self.last_power_w == 0:
                 self.charging_paused = True
-                self._last_efficiency_soc = None  # Reset efficiency sampling on pause
-                self._last_efficiency_time = None
                 _LOGGER.debug(
                     "Charging paused: power dropped to 0 while charging active"
                 )
@@ -565,6 +563,9 @@ class SocTracking:
         # Detect resume from pause
         if self.charging_paused:
             self.charging_paused = False
+            # Reset efficiency tracking on resume to start fresh from this point
+            self._last_efficiency_soc = None
+            self._last_efficiency_time = None
             _LOGGER.debug(
                 "Charging resumed: power restored to %.0fW", self.last_power_w
             )
