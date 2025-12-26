@@ -409,8 +409,8 @@ class SocTracking:
             # new value.
             self.estimate(target_time)
 
-            # Integrate energy for efficiency learning (power × time since last reading)
-            # Uses previous power value for rectangular integration
+            # Integrate energy for efficiency learning using trapezoidal integration
+            # (average of old and new power × time) for better accuracy during ramps
             if (
                 self.charging_active
                 and self.last_power_w is not None
@@ -422,7 +422,10 @@ class SocTracking:
                     try:
                         delta_hours = (target_time - normalized_last).total_seconds() / 3600.0
                         if delta_hours > 0:
-                            self._efficiency_energy_kwh += (self.last_power_w / 1000.0) * delta_hours
+                            # Trapezoidal: average of old and new power (clamp new to 0 min)
+                            new_power_clamped = max(power_w, 0.0)
+                            avg_power_w = (self.last_power_w + new_power_clamped) / 2.0
+                            self._efficiency_energy_kwh += (avg_power_w / 1000.0) * delta_hours
                     except (TypeError, OverflowError):
                         pass  # Skip integration on datetime errors
 
