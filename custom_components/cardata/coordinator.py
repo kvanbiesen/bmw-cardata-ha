@@ -664,14 +664,27 @@ class CardataCoordinator:
             self._direct_power_w[vin] = max(power_w, 0.0)
         self._apply_effective_power(vin, timestamp)
 
+    # AC power sanity check constants
+    _AC_VOLTAGE_MIN: float = 100.0  # Minimum valid voltage (V)
+    _AC_VOLTAGE_MAX: float = 500.0  # Maximum valid voltage (V) - covers 400V 3-phase
+    _AC_CURRENT_MAX: float = 100.0  # Maximum valid current (A) - industrial chargers
+    _AC_PHASE_MAX: int = 3  # Maximum valid phases
+    _AC_POWER_MAX_W: float = 22000.0  # Maximum AC power (22kW) - highest onboard charger
+
     def _set_ac_voltage(
         self, vin: str, voltage_v: Optional[float], timestamp: Optional[datetime]
     ) -> None:
         """Set AC voltage. Must be called while holding _lock."""
         if voltage_v is None:
             self._ac_voltage_v.pop(vin, None)
+        elif voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
+            _LOGGER.warning(
+                "Ignoring invalid AC voltage: %.1fV (expected %d-%dV)",
+                voltage_v, int(self._AC_VOLTAGE_MIN), int(self._AC_VOLTAGE_MAX),
+            )
+            return
         else:
-            self._ac_voltage_v[vin] = max(voltage_v, 0.0)
+            self._ac_voltage_v[vin] = voltage_v
         self._apply_effective_power(vin, timestamp)
 
     def _set_ac_current(
@@ -680,8 +693,14 @@ class CardataCoordinator:
         """Set AC current. Must be called while holding _lock."""
         if current_a is None:
             self._ac_current_a.pop(vin, None)
+        elif current_a < 0 or current_a > self._AC_CURRENT_MAX:
+            _LOGGER.warning(
+                "Ignoring invalid AC current: %.1fA (expected 0-%dA)",
+                current_a, int(self._AC_CURRENT_MAX),
+            )
+            return
         else:
-            self._ac_current_a[vin] = max(current_a, 0.0)
+            self._ac_current_a[vin] = current_a
         self._apply_effective_power(vin, timestamp)
 
     def _set_ac_phase(
@@ -696,7 +715,7 @@ class CardataCoordinator:
                 parsed = int(phase_value)
             except (TypeError, ValueError):
                 parsed = None
-            phase_count = parsed if parsed and parsed > 0 else None
+            phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
         elif isinstance(phase_value, str):
             match = re.match(r"(\d+)", phase_value)
             if match:
@@ -704,9 +723,15 @@ class CardataCoordinator:
                     parsed = int(match.group(1))
                 except (TypeError, ValueError):
                     parsed = None
-                phase_count = parsed if parsed and parsed > 0 else None
+                phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
         if phase_count is None:
             self._ac_phase_count.pop(vin, None)
+            if phase_value is not None:
+                _LOGGER.warning(
+                    "Ignoring invalid AC phase count: %s (expected 1-%d)",
+                    phase_value, self._AC_PHASE_MAX,
+                )
+                return
         else:
             self._ac_phase_count[vin] = phase_count
         self._apply_effective_power(vin, timestamp)
@@ -718,7 +743,14 @@ class CardataCoordinator:
         phases = self._ac_phase_count.get(vin)
         if voltage is None or current is None or phases is None:
             return None
-        return max(voltage * current * phases, 0.0)
+        derived = voltage * current * phases
+        if derived > self._AC_POWER_MAX_W:
+            _LOGGER.warning(
+                "Derived AC power exceeds maximum: %.0fW (V=%.1f, A=%.1f, phases=%d) > %.0fW max",
+                derived, voltage, current, phases, self._AC_POWER_MAX_W,
+            )
+            return None
+        return max(derived, 0.0)
 
     def _compute_effective_power(self, vin: str) -> Optional[float]:
         """Compute effective charging power (direct or derived from AC). Must be called while holding _lock."""
