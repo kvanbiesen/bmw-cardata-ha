@@ -467,23 +467,24 @@ class SocTracking:
                     _LOGGER.warning("Datetime arithmetic failed in staleness check: %s", exc)
                     time_since_actual = self.MAX_ESTIMATE_AGE_SECONDS + 1  # Treat as stale
                 if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
-                    if not self._stale_logged:  # only log once in debug mode
-                        # Estimate is stale - clear stale state and fall back to last known actual value
+                    if not self._stale_logged:  # only log once per stale episode
                         _LOGGER.debug(
                             "SOC estimate stale (%.0f seconds since last actual); "
                             "clearing estimate and returning last known value %.1f%%",
                             time_since_actual,
                             self.last_soc_percent or 0.0,
                         )
-                        self._stale_logged = True  # Dont spam log in debug mode til update
-
-                        # Clear stale estimate state so next call reinitializes from last_soc_percent
-                        # Note: Do NOT clear charging_active here - stale data doesn't mean charging stopped,
-                        # it means we lost connectivity. Let charging_active be updated only by actual
-                        # status messages from the vehicle.
-                        self.estimated_percent = None
-                        self.last_estimate_time = None
-                        return self.last_soc_percent
+                        self._stale_logged = True
+                    # Always clear stale state and return (not just on first detection)
+                    # Note: Do NOT clear charging_active here - stale data doesn't mean charging stopped,
+                    # it means we lost connectivity. Let charging_active be updated only by actual
+                    # status messages from the vehicle.
+                    self.estimated_percent = None
+                    self.last_estimate_time = None
+                    return self.last_soc_percent
+                else:
+                    # Not stale anymore - reset flag for next stale episode
+                    self._stale_logged = False
 
         try:
             delta_seconds = (now - self.last_estimate_time).total_seconds()
