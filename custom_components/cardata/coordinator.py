@@ -95,6 +95,7 @@ class SocTracking:
     learned_efficiency: Optional[float] = None  # Learned from drift patterns
     _last_efficiency_soc: Optional[float] = None  # SOC at last efficiency sample
     _last_efficiency_time: Optional[datetime] = None  # Time at last efficiency sample
+    _efficiency_energy_kwh: float = 0.0  # Integrated energy since last efficiency sample
 
     # Class-level constants for drift correction
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
@@ -246,12 +247,14 @@ class SocTracking:
             # Reset tracking when not charging
             self._last_efficiency_soc = actual_soc if self.charging_active else None
             self._last_efficiency_time = ts if self.charging_active else None
+            self._efficiency_energy_kwh = 0.0
             return
 
         # Need previous sample to calculate change
         if self._last_efficiency_soc is None or self._last_efficiency_time is None:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0  # Start fresh energy accumulation
             return
 
         # Calculate time elapsed
@@ -270,15 +273,22 @@ class SocTracking:
         if actual_change <= 0:  # Only learn from positive charging
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
             return
 
-        # Calculate expected change (assuming 100% efficiency)
-        power_kw = self.smoothed_power_w / 1000.0
-        expected_change = (power_kw / self.max_energy_kwh) * 100.0 * elapsed_hours
+        # Calculate expected change using integrated energy (not instantaneous power)
+        # This correctly handles varying power levels during the measurement period
+        if self._efficiency_energy_kwh <= 0 or self.max_energy_kwh is None:
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0
+            return
+        expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
 
         if expected_change <= 0:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0
             return
 
         # Calculate observed efficiency
@@ -287,11 +297,13 @@ class SocTracking:
         # Sanity check bounds
         if observed_efficiency < self.EFFICIENCY_MIN or observed_efficiency > self.EFFICIENCY_MAX:
             _LOGGER.debug(
-                "Observed efficiency %.1f%% outside bounds, ignoring",
+                "Observed efficiency %.1f%% outside bounds (from %.3f kWh), ignoring",
                 observed_efficiency * 100,
+                self._efficiency_energy_kwh,
             )
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0  # Reset for next sample
             return
 
         # Blend into learned efficiency using EMA
@@ -310,14 +322,16 @@ class SocTracking:
         )
 
         _LOGGER.debug(
-            "Efficiency learning: observed=%.1f%%, learned=%.1f%%",
+            "Efficiency learning: observed=%.1f%% (from %.3f kWh input), learned=%.1f%%",
             observed_efficiency * 100,
+            self._efficiency_energy_kwh,
             self.learned_efficiency * 100,
         )
 
         # Update tracking for next sample
         self._last_efficiency_soc = actual_soc
         self._last_efficiency_time = ts
+        self._efficiency_energy_kwh = 0.0  # Reset energy accumulator for next sample
 
     def _analyze_drift_pattern(self, signed_drift: float) -> None:
         """Analyze drift direction pattern to detect systematic rate errors."""
@@ -388,6 +402,24 @@ class SocTracking:
             # so the previous charging rate is accounted for before we swap in the
             # new value.
             self.estimate(target_time)
+
+            # Integrate energy for efficiency learning (power × time since last reading)
+            # Uses previous power value for rectangular integration
+            if (
+                self.charging_active
+                and self.last_power_w is not None
+                and self.last_power_w > 0
+                and self.last_power_time is not None
+            ):
+                normalized_last = self._normalize_timestamp(self.last_power_time)
+                if normalized_last is not None:
+                    try:
+                        delta_hours = (target_time - normalized_last).total_seconds() / 3600.0
+                        if delta_hours > 0:
+                            self._efficiency_energy_kwh += (self.last_power_w / 1000.0) * delta_hours
+                    except (TypeError, OverflowError):
+                        pass  # Skip integration on datetime errors
+
             self.last_power_w = power_w
             self.last_power_time = target_time
             # Apply EMA smoothing to reduce rate jitter from noisy power samples
@@ -560,6 +592,7 @@ class SocTracking:
             self.smoothed_power_w = None  # Clear to avoid polluting next charge session
             self._last_efficiency_soc = None  # Reset efficiency sampling
             self._last_efficiency_time = None
+            self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
             if self.charging_paused:
                 self.charging_paused = False
             return
@@ -585,6 +618,7 @@ class SocTracking:
             # Reset efficiency tracking on resume to start fresh from this point
             self._last_efficiency_soc = None
             self._last_efficiency_time = None
+            self._efficiency_energy_kwh = 0.0
             _LOGGER.debug(
                 "Charging resumed: power restored to %.0fW", self.last_power_w
             )
