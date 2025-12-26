@@ -562,8 +562,11 @@ class SocTracking:
             current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
             if current_soc <= self.BULK_PHASE_THRESHOLD:
                 taper_factor = 1.0
+            elif current_soc >= 100.0 or self.BULK_PHASE_THRESHOLD >= 100.0:
+                # At or above 100% SOC, or threshold misconfigured - use minimum taper
+                taper_factor = self.ABSORPTION_TAPER_FACTOR
             else:
-                # Linear interpolation: 1.0 at 80% -> ABSORPTION_TAPER_FACTOR at 100%
+                # Linear interpolation: 1.0 at threshold -> ABSORPTION_TAPER_FACTOR at 100%
                 progress = (current_soc - self.BULK_PHASE_THRESHOLD) / (100.0 - self.BULK_PHASE_THRESHOLD)
                 taper_factor = 1.0 - progress * (1.0 - self.ABSORPTION_TAPER_FACTOR)
             effective_rate = rate * taper_factor
