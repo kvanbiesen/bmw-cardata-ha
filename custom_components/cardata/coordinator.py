@@ -638,6 +638,13 @@ class CardataCoordinator:
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
 
+    @staticmethod
+    def _safe_vin_suffix(vin: Optional[str]) -> str:
+        """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
+        if not vin:
+            return "<unknown>"
+        return vin[-6:] if len(vin) >= 6 else vin
+
     @property
     def signal_new_sensor(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_new_sensor"
@@ -729,14 +736,14 @@ class CardataCoordinator:
                 _LOGGER.warning(
                     "Aux power exceeds charging power for %s: aux=%.0fW, charging=%.0fW "
                     "(net charging is zero - battery not gaining charge)",
-                    vin[-6:], aux_power, power_w,
+                    self._safe_vin_suffix(vin), aux_power, power_w,
                 )
                 self._aux_exceeds_charging_warned[vin] = True
         elif self._aux_exceeds_charging_warned.get(vin):
             # Condition resolved
             _LOGGER.debug(
                 "Aux power no longer exceeds charging for %s: aux=%.0fW, charging=%.0fW",
-                vin[-6:], aux_power, power_w,
+                self._safe_vin_suffix(vin), aux_power, power_w,
             )
             self._aux_exceeds_charging_warned[vin] = False
 
@@ -1005,12 +1012,12 @@ class CardataCoordinator:
         if tracking.charging_active and power_w < min_charging_power:
             _LOGGER.debug(
                 "Power/status inconsistency for %s: charging_active=True but power=%.0fW",
-                vin[-6:], power_w,
+                self._safe_vin_suffix(vin), power_w,
             )
         elif not tracking.charging_active and power_w >= min_charging_power:
             _LOGGER.debug(
                 "Power/status inconsistency for %s: charging_active=False but power=%.0fW",
-                vin[-6:], power_w,
+                self._safe_vin_suffix(vin), power_w,
             )
 
     def _normalize_boolean_value(self, descriptor: str, value: Any) -> Any:
