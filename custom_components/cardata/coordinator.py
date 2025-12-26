@@ -487,7 +487,7 @@ class SocTracking:
         previous_estimate = self.estimated_percent
         # Apply non-linear charging curve: taper rate in absorption phase (above 80%)
         effective_rate = rate
-        current_soc = self.estimated_percent or 0.0
+        current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
         if current_soc >= self.BULK_PHASE_THRESHOLD:
             effective_rate = rate * self.ABSORPTION_TAPER_FACTOR
         increment = effective_rate * (delta_seconds / 3600.0)
