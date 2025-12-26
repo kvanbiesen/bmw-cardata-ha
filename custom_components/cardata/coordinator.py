@@ -108,10 +108,13 @@ class SocTracking:
     # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
     # Typical EV charging efficiency is 88-95%, using 92% as conservative default
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
-    # Adaptive efficiency learning bounds and rate
+    # Adaptive efficiency learning bounds and time constant
     EFFICIENCY_MIN: ClassVar[float] = 0.70  # Minimum plausible efficiency (70%)
     EFFICIENCY_MAX: ClassVar[float] = 0.98  # Maximum plausible efficiency (98%)
-    EFFICIENCY_LEARN_ALPHA: ClassVar[float] = 0.2  # EMA learning rate for efficiency
+    # Time constant for efficiency learning EMA (similar to power EMA).
+    # Longer observations get more weight: alpha = 1 - exp(-dt/tau)
+    # 10 minutes balances responsiveness with stability for typical SOC update intervals.
+    EFFICIENCY_LEARN_TAU_SECONDS: ClassVar[float] = 600.0
     # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
     # significantly in absorption phase (80-100%) due to CC-CV charging profile.
     # Uses smooth linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC.
@@ -347,13 +350,16 @@ class SocTracking:
             # we get a valid observation that spans a longer period
             return
 
-        # Blend into learned efficiency using EMA
+        # Blend into learned efficiency using time-weighted EMA
+        # Longer observation windows get more weight: alpha = 1 - exp(-dt/tau)
         if self.learned_efficiency is None:
             self.learned_efficiency = observed_efficiency
         else:
+            window_seconds = energy_window_hours * 3600.0
+            alpha = 1.0 - math.exp(-window_seconds / self.EFFICIENCY_LEARN_TAU_SECONDS)
             self.learned_efficiency = (
-                self.EFFICIENCY_LEARN_ALPHA * observed_efficiency
-                + (1 - self.EFFICIENCY_LEARN_ALPHA) * self.learned_efficiency
+                alpha * observed_efficiency
+                + (1 - alpha) * self.learned_efficiency
             )
 
         # Clamp learned efficiency to valid bounds (can drift via EMA)
