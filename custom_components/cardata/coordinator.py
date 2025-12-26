@@ -90,6 +90,9 @@ class SocTracking:
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
     DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
     DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
+    # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
+    # Typical EV charging efficiency is 88-95%, using 92% as conservative default
+    CHARGING_EFFICIENCY: ClassVar[float] = 0.92
 
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
@@ -321,7 +324,7 @@ class SocTracking:
             self.rate_per_hour = None
             return
         self.rate_per_hour = (self.last_power_w / 1000.0) / \
-            self.max_energy_kwh * 100.0
+            self.max_energy_kwh * 100.0 * self.CHARGING_EFFICIENCY
 
 
 @dataclass
