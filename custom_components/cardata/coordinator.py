@@ -178,6 +178,20 @@ class SocTracking:
         if power_w is None:
             return
         target_time = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
+
+        # Reject out-of-order messages (stale power data arriving late)
+        if self.last_power_time is not None:
+            normalized_last = self._normalize_timestamp(self.last_power_time)
+            if normalized_last is not None and target_time < normalized_last:
+                _LOGGER.debug(
+                    "Ignoring out-of-order power update: received=%.0fW ts=%s, "
+                    "but already have ts=%s",
+                    power_w,
+                    target_time.isoformat(),
+                    normalized_last.isoformat(),
+                )
+                return
+
         # Advance the running estimate to the moment this power sample was taken
         # so the previous charging rate is accounted for before we swap in the
         # new value.
