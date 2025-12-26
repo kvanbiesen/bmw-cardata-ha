@@ -159,12 +159,17 @@ class SocTracking:
 
             if drift >= self.DRIFT_CORRECTION_THRESHOLD:
                 _LOGGER.info(
-                    "SOC estimate drift correction: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
+                    "SOC estimate drift correction: estimated=%.1f%% actual=%.1f%% "
+                    "(drift=%.1f%%, cumulative=%.1f%%, corrections=%d)",
                     self.estimated_percent,
                     percent,
                     drift,
+                    self.cumulative_drift,
+                    self.drift_corrections,
                 )
                 self.drift_corrections += 1
+                # Reset cumulative drift after significant correction to track fresh
+                self.cumulative_drift = 0.0
             elif drift >= self.DRIFT_WARNING_THRESHOLD:
                 _LOGGER.debug(
                     "SOC estimate drift detected: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
