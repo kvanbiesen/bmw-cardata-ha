@@ -212,8 +212,13 @@ class SocTracking:
     def update_status(self, status: Optional[str]) -> None:
         if status is None:
             return
-        self.charging_active = status in {
+        new_charging_active = status in {
             "CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
+        # Snap estimate forward when charging stops, so we don't freeze mid-way
+        # Must be done BEFORE clearing charging_active, otherwise rate won't apply
+        if self.charging_active and not new_charging_active:
+            self.estimate(datetime.now(timezone.utc))
+        self.charging_active = new_charging_active
         self._recalculate_rate()
 
     def update_target_soc(
