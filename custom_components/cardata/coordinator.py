@@ -110,6 +110,12 @@ class SocTracking:
     def update_max_energy(self, value: Optional[float]) -> None:
         if value is None:
             return
+        if value <= 0:
+            _LOGGER.warning(
+                "Ignoring invalid max_energy value: %.2f kWh (must be positive)",
+                value,
+            )
+            return
         self.max_energy_kwh = value
         if self.last_soc_percent is not None and self.energy_kwh is None:
             self.energy_kwh = value * self.last_soc_percent / 100.0
