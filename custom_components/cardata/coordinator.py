@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -74,7 +75,10 @@ class SocTracking:
     last_update: Optional[datetime] = None
     last_power_w: Optional[float] = None
     last_power_time: Optional[datetime] = None
+    smoothed_power_w: Optional[float] = None  # EMA-smoothed power for stable rate
     charging_active: bool = False
+    charging_paused: bool = False  # Power=0 while charging_active=true
+    _consecutive_zero_power: int = 0  # Counter for pause hysteresis
     last_soc_percent: Optional[float] = None
     rate_per_hour: Optional[float] = None
     estimated_percent: Optional[float] = None
@@ -85,15 +89,50 @@ class SocTracking:
     cumulative_drift: float = 0.0
     drift_corrections: int = 0
     _stale_logged: bool = False
+    # Drift direction analysis for rate adjustment diagnostics
+    _consecutive_overshoots: int = 0  # Estimate > actual consecutively
+    _consecutive_undershoots: int = 0  # Estimate < actual consecutively
+    _drift_pattern_warned: bool = False  # Avoid spamming pattern warnings
+    # Adaptive efficiency learning
+    learned_efficiency: Optional[float] = None  # Learned from drift patterns
+    _last_efficiency_soc: Optional[float] = None  # SOC at last efficiency sample
+    _last_efficiency_time: Optional[datetime] = None  # Time at last efficiency sample
+    _efficiency_energy_kwh: float = 0.0  # Integrated energy since last efficiency sample
+    _efficiency_energy_start: Optional[datetime] = None  # When energy started accumulating
 
     # Class-level constants for drift correction
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
     DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
     DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
+    DRIFT_PATTERN_THRESHOLD: ClassVar[int] = 3  # Consecutive same-direction drifts to warn
+    # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
+    # Typical EV charging efficiency is 88-95%, using 92% as conservative default
+    CHARGING_EFFICIENCY: ClassVar[float] = 0.92
+    # Adaptive efficiency learning bounds and rate
+    EFFICIENCY_MIN: ClassVar[float] = 0.70  # Minimum plausible efficiency (70%)
+    EFFICIENCY_MAX: ClassVar[float] = 0.98  # Maximum plausible efficiency (98%)
+    EFFICIENCY_LEARN_ALPHA: ClassVar[float] = 0.2  # EMA learning rate for efficiency
+    # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
+    # significantly in absorption phase (80-100%) due to CC-CV charging profile.
+    # Uses smooth linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC.
+    # Real EV charging typically tapers to 10-20% of peak power near full charge.
+    BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
+    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.2  # Rate multiplier at 100% SOC (20% of peak)
+    # Time-weighted EMA smoothing for power readings to reduce rate jitter.
+    # Uses time constant (tau) instead of fixed alpha to handle variable sample intervals.
+    # Alpha = 1 - exp(-dt/tau), so longer intervals get more weight on new sample.
+    # 30 seconds gives good smoothing while responding to real changes within ~1 minute.
+    POWER_EMA_TAU_SECONDS: ClassVar[float] = 30.0
+    # Hysteresis for charging pause detection: require N consecutive zero readings
+    # to avoid false positives from sensor noise or sampling artifacts
+    PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
 
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
             return None
+        # Fast path: already normalized to UTC, skip conversion
+        if timestamp.tzinfo is timezone.utc:
+            return timestamp
         as_utc = getattr(dt_util, "as_utc", None)
         if callable(as_utc):
             try:
@@ -105,178 +144,537 @@ class SocTracking:
         return timestamp.astimezone(timezone.utc)
 
     def update_max_energy(self, value: Optional[float]) -> None:
-        if value is None:
-            return
-        self.max_energy_kwh = value
-        if self.last_soc_percent is not None and self.energy_kwh is None:
-            self.energy_kwh = value * self.last_soc_percent / 100.0
-        self._recalculate_rate()
+        try:
+            if value is None:
+                return
+            if value <= 0:
+                _LOGGER.warning(
+                    "Ignoring invalid max_energy value: %.2f kWh (must be positive)",
+                    value,
+                )
+                return
+            self.max_energy_kwh = value
+            if self.last_soc_percent is not None and self.energy_kwh is None:
+                self.energy_kwh = value * self.last_soc_percent / 100.0
+            self._recalculate_rate()
+        except Exception:
+            _LOGGER.exception("Unexpected error in update_max_energy")
 
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
         """Update with actual SOC value, detecting and correcting drift."""
-        ts = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
+        try:
+            # Fallback chain: parsed timestamp -> last known update -> now
+            # This prevents jumps when timestamp parsing fails
+            ts = (
+                self._normalize_timestamp(timestamp)
+                or self._normalize_timestamp(self.last_update)
+                or datetime.now(timezone.utc)
+            )
 
-        # Got here = estimate is not stale, reset flag
-        if self._stale_logged:
-            _LOGGER.debug("SOC estimate refreshed with new actual data")
+            # Fresh actual data arrived - unconditionally reset stale flag
+            # (no check needed, avoids race condition with estimate())
             self._stale_logged = False
 
-        # Reject out-of-order messages (stale data arriving late)
-        if self.last_update is not None:
-            normalized_last = self._normalize_timestamp(self.last_update)
-            if normalized_last is not None and ts < normalized_last:
-                _LOGGER.debug(
-                    "Ignoring out-of-order SOC update: received=%.1f%% ts=%s, "
-                    "but already have ts=%s",
+            # Reject out-of-order messages (stale data arriving late)
+            if self.last_update is not None:
+                normalized_last = self._normalize_timestamp(self.last_update)
+                if normalized_last is not None and ts < normalized_last:
+                    _LOGGER.debug(
+                        "Ignoring out-of-order SOC update: received=%.1f%% ts=%s, "
+                        "but already have ts=%s",
+                        percent,
+                        ts.isoformat(),
+                        normalized_last.isoformat(),
+                    )
+                    return
+
+            # Validate percent is in valid range [0, 100]
+            if percent < 0.0 or percent > 100.0:
+                _LOGGER.warning(
+                    "Ignoring invalid SOC value: %.1f%% (must be 0-100)",
                     percent,
-                    ts.isoformat(),
-                    normalized_last.isoformat(),
                 )
                 return
 
-        # Check for drift between estimate and actual
-        if self.estimated_percent is not None:
-            drift = abs(self.estimated_percent - percent)
-            self.cumulative_drift += drift
-            self.last_drift_check = ts
+            # Check for drift between estimate and actual
+            if self.estimated_percent is not None:
+                drift = abs(self.estimated_percent - percent)
+                signed_drift = self.estimated_percent - percent  # positive = overshoot
+                self.last_drift_check = ts
 
-            if drift >= self.DRIFT_CORRECTION_THRESHOLD:
-                _LOGGER.info(
-                    "SOC estimate drift correction: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
-                    self.estimated_percent,
-                    percent,
-                    drift,
-                )
-                self.drift_corrections += 1
-            elif drift >= self.DRIFT_WARNING_THRESHOLD:
-                _LOGGER.debug(
-                    "SOC estimate drift detected: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
-                    self.estimated_percent,
-                    percent,
-                    drift,
-                )
+                if drift >= self.DRIFT_CORRECTION_THRESHOLD:
+                    self.drift_corrections += 1
+                    _LOGGER.info(
+                        "SOC estimate drift correction #%d: estimated=%.1f%% actual=%.1f%% "
+                        "(drift=%.1f%%, prior_cumulative=%.1f%%)",
+                        self.drift_corrections,
+                        self.estimated_percent,
+                        percent,
+                        drift,
+                        self.cumulative_drift,
+                    )
+                    # Reset cumulative after major correction (don't add this drift -
+                    # it was logged and corrected, start fresh for next period)
+                    self.cumulative_drift = 0.0
+                else:
+                    # Accumulate smaller drifts for tracking between major corrections
+                    self.cumulative_drift += drift
+                    if drift >= self.DRIFT_WARNING_THRESHOLD:
+                        _LOGGER.debug(
+                            "SOC estimate drift detected: estimated=%.1f%% actual=%.1f%% "
+                            "(drift=%.1f%%, cumulative=%.1f%%)",
+                            self.estimated_percent,
+                            percent,
+                            drift,
+                            self.cumulative_drift,
+                        )
 
-        self.last_soc_percent = percent
-        self.last_update = ts
-        if self.max_energy_kwh:
-            self.energy_kwh = self.max_energy_kwh * percent / 100.0
+                # Analyze drift direction pattern for rate adjustment diagnostics
+                self._analyze_drift_pattern(signed_drift)
+
+            # Learn efficiency from actual vs expected SOC change during charging
+            self._learn_efficiency(percent, ts)
+
+            self.last_soc_percent = percent
+            self.last_update = ts
+            if self.max_energy_kwh:
+                self.energy_kwh = self.max_energy_kwh * percent / 100.0
+            else:
+                self.energy_kwh = None
+            # Reset estimate to actual value (correction)
+            self.estimated_percent = percent
+            self.last_estimate_time = ts
+        except Exception:
+            _LOGGER.exception("Unexpected error in update_actual_soc")
+
+    def _learn_efficiency(self, actual_soc: float, ts: datetime) -> None:
+        """Learn charging efficiency from actual vs expected SOC change."""
+        # Only learn during active charging with valid power data
+        if (
+            not self.charging_active
+            or self.charging_paused
+            or self.smoothed_power_w is None
+            or self.smoothed_power_w <= 0
+            or self.max_energy_kwh is None
+            or self.max_energy_kwh <= 0
+        ):
+            # Reset tracking when not charging
+            self._last_efficiency_soc = actual_soc if self.charging_active else None
+            self._last_efficiency_time = ts if self.charging_active else None
+            self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
+            return
+
+        # Need previous sample to calculate change
+        if self._last_efficiency_soc is None or self._last_efficiency_time is None:
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0  # Start fresh energy accumulation
+            self._efficiency_energy_start = None
+            _LOGGER.debug(
+                "Efficiency learning: initialized baseline at %.1f%% SOC "
+                "(need 2+ SOC updates to learn)",
+                actual_soc,
+            )
+            return
+
+        # Check if we have enough energy data (use energy window, not SOC window)
+        # This ensures the time threshold is synced with actual energy accumulation
+        if self._efficiency_energy_start is None:
+            # No energy accumulated yet - wait for power readings
+            _LOGGER.debug(
+                "Efficiency learning: skipped, no energy accumulated yet"
+            )
+            return
+        try:
+            energy_window_hours = (ts - self._efficiency_energy_start).total_seconds() / 3600.0
+        except (TypeError, OverflowError) as exc:
+            _LOGGER.debug("Datetime arithmetic failed in efficiency learning: %s", exc)
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
+            return
+        if energy_window_hours < 0.05:  # Need at least ~3 minutes of energy data
+            _LOGGER.debug(
+                "Efficiency learning: skipped, only %.1f minutes of energy data (need 3+)",
+                energy_window_hours * 60,
+            )
+            return
+
+        # Calculate actual SOC change
+        actual_change = actual_soc - self._last_efficiency_soc
+        if actual_change <= 0:  # Only learn from positive charging
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
+            self._efficiency_energy_start = None
+            return
+
+        # Calculate expected change using integrated energy (not instantaneous power)
+        # This correctly handles varying power levels during the measurement period
+        if self._efficiency_energy_kwh <= 0 or self.max_energy_kwh is None:
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
+            return
+        expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
+
+        if expected_change <= 0:
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
+            return
+
+        # Calculate observed efficiency
+        observed_efficiency = actual_change / expected_change
+
+        # Sanity check bounds - if out of range, keep baseline and energy intact
+        # so spurious SOC readings get averaged out by the next valid observation
+        if observed_efficiency < self.EFFICIENCY_MIN or observed_efficiency > self.EFFICIENCY_MAX:
+            _LOGGER.debug(
+                "Observed efficiency %.1f%% outside bounds [%.0f%%-%.0f%%] "
+                "(from %.3f kWh over %.1f%% SOC change), keeping baseline for next observation",
+                observed_efficiency * 100,
+                self.EFFICIENCY_MIN * 100,
+                self.EFFICIENCY_MAX * 100,
+                self._efficiency_energy_kwh,
+                actual_change,
+            )
+            # Do NOT reset baselines or energy - continue accumulating until
+            # we get a valid observation that spans a longer period
+            return
+
+        # Blend into learned efficiency using EMA
+        if self.learned_efficiency is None:
+            self.learned_efficiency = observed_efficiency
         else:
-            self.energy_kwh = None
-        # Reset estimate to actual value (correction)
-        self.estimated_percent = percent
-        self.last_estimate_time = ts
+            self.learned_efficiency = (
+                self.EFFICIENCY_LEARN_ALPHA * observed_efficiency
+                + (1 - self.EFFICIENCY_LEARN_ALPHA) * self.learned_efficiency
+            )
+
+        # Clamp learned efficiency to valid bounds (can drift via EMA)
+        self.learned_efficiency = max(
+            self.EFFICIENCY_MIN,
+            min(self.EFFICIENCY_MAX, self.learned_efficiency)
+        )
+
+        _LOGGER.debug(
+            "Efficiency learning: observed=%.1f%% (from %.3f kWh input), learned=%.1f%%",
+            observed_efficiency * 100,
+            self._efficiency_energy_kwh,
+            self.learned_efficiency * 100,
+        )
+
+        # Update tracking for next sample
+        self._last_efficiency_soc = actual_soc
+        self._last_efficiency_time = ts
+        self._efficiency_energy_kwh = 0.0  # Reset energy accumulator for next sample
+        self._efficiency_energy_start = None
+
+    def _analyze_drift_pattern(self, signed_drift: float) -> None:
+        """Analyze drift direction pattern to detect systematic rate errors."""
+        # Noise threshold - drifts smaller than this are not statistically meaningful
+        noise_threshold = 1.0
+
+        if signed_drift > noise_threshold:
+            # Significant overshoot: estimate was too high
+            self._consecutive_overshoots += 1
+            self._consecutive_undershoots = 0
+        elif signed_drift < -noise_threshold:
+            # Significant undershoot: estimate was too low
+            self._consecutive_undershoots += 1
+            self._consecutive_overshoots = 0
+        else:
+            # Small drift (noise) - check if opposite direction breaks current pattern
+            if self._consecutive_overshoots > 0 and signed_drift < 0:
+                # Small undershoot breaks overshoot pattern
+                self._consecutive_overshoots = 0
+                self._drift_pattern_warned = False
+            elif self._consecutive_undershoots > 0 and signed_drift > 0:
+                # Small overshoot breaks undershoot pattern
+                self._consecutive_undershoots = 0
+                self._drift_pattern_warned = False
+            # Small same-direction drift: ignore (don't count, don't break pattern)
+            return
+
+        # Check for systematic pattern
+        if self._consecutive_overshoots >= self.DRIFT_PATTERN_THRESHOLD:
+            if not self._drift_pattern_warned:
+                _LOGGER.info(
+                    "Systematic rate overestimate detected: %d consecutive overshoots. "
+                    "Rate may be too high (efficiency=%.0f%%, learned=%.0f%%).",
+                    self._consecutive_overshoots,
+                    self.CHARGING_EFFICIENCY * 100,
+                    (self.learned_efficiency or self.CHARGING_EFFICIENCY) * 100,
+                )
+                self._drift_pattern_warned = True
+        elif self._consecutive_undershoots >= self.DRIFT_PATTERN_THRESHOLD:
+            if not self._drift_pattern_warned:
+                _LOGGER.info(
+                    "Systematic rate underestimate detected: %d consecutive undershoots. "
+                    "Rate may be too low (efficiency=%.0f%%, learned=%.0f%%).",
+                    self._consecutive_undershoots,
+                    self.CHARGING_EFFICIENCY * 100,
+                    (self.learned_efficiency or self.CHARGING_EFFICIENCY) * 100,
+                )
+                self._drift_pattern_warned = True
+        else:
+            # Pattern broken by significant opposite drift, reset warning flag
+            self._drift_pattern_warned = False
 
     def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
-        if power_w is None:
-            return
-        target_time = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
-        # Advance the running estimate to the moment this power sample was taken
-        # so the previous charging rate is accounted for before we swap in the
-        # new value.
-        self.estimate(target_time)
-        self.last_power_w = power_w
-        self.last_power_time = target_time
-        self._recalculate_rate()
+        try:
+            if power_w is None:
+                return
+            # Fallback chain: parsed timestamp -> last known power time -> now
+            # This prevents jumps when timestamp parsing fails
+            target_time = (
+                self._normalize_timestamp(timestamp)
+                or self._normalize_timestamp(self.last_power_time)
+                or datetime.now(timezone.utc)
+            )
+
+            # Reject out-of-order messages (stale power data arriving late)
+            if self.last_power_time is not None:
+                normalized_last = self._normalize_timestamp(self.last_power_time)
+                if normalized_last is not None and target_time < normalized_last:
+                    _LOGGER.debug(
+                        "Ignoring out-of-order power update: received=%.0fW ts=%s, "
+                        "but already have ts=%s",
+                        power_w,
+                        target_time.isoformat(),
+                        normalized_last.isoformat(),
+                    )
+                    return
+
+            # Advance the running estimate to the moment this power sample was taken
+            # so the previous charging rate is accounted for before we swap in the
+            # new value.
+            self.estimate(target_time)
+
+            # Integrate energy for efficiency learning using trapezoidal integration
+            # (average of old and new power × time) for better accuracy during ramps.
+            # Allow integration if EITHER power is positive to capture transitions:
+            # - Ramp-down: last > 0, new = 0 → triangular area captured
+            # - Ramp-up: last = 0, new > 0 → triangular area captured
+            if (
+                self.charging_active
+                and self.last_power_w is not None
+                and (self.last_power_w > 0 or power_w > 0)
+                and self.last_power_time is not None
+            ):
+                normalized_last = self._normalize_timestamp(self.last_power_time)
+                if normalized_last is not None:
+                    try:
+                        delta_hours = (target_time - normalized_last).total_seconds() / 3600.0
+                        if delta_hours > 0:
+                            # Track when energy started accumulating for this window
+                            if self._efficiency_energy_start is None:
+                                self._efficiency_energy_start = normalized_last
+                            # Trapezoidal: average of old and new power (clamp new to 0 min)
+                            new_power_clamped = max(power_w, 0.0)
+                            avg_power_w = (self.last_power_w + new_power_clamped) / 2.0
+                            self._efficiency_energy_kwh += (avg_power_w / 1000.0) * delta_hours
+                    except (TypeError, OverflowError):
+                        pass  # Skip integration on datetime errors
+
+            # Apply time-weighted EMA smoothing to reduce rate jitter from noisy power samples.
+            # Alpha varies with sample interval: alpha = 1 - exp(-dt/tau)
+            # Short intervals → small alpha (less weight on new sample)
+            # Long intervals → large alpha (more weight, approaching reset)
+            if self.smoothed_power_w is None:
+                self.smoothed_power_w = power_w
+            elif self.last_power_time is not None:
+                normalized_prev = self._normalize_timestamp(self.last_power_time)
+                if normalized_prev is not None:
+                    try:
+                        dt_seconds = (target_time - normalized_prev).total_seconds()
+                        if dt_seconds > 0:
+                            alpha = 1.0 - math.exp(-dt_seconds / self.POWER_EMA_TAU_SECONDS)
+                            self.smoothed_power_w = (
+                                alpha * power_w
+                                + (1 - alpha) * self.smoothed_power_w
+                            )
+                        else:
+                            # Non-positive dt, just use new value
+                            self.smoothed_power_w = power_w
+                    except (TypeError, OverflowError):
+                        self.smoothed_power_w = power_w
+                else:
+                    self.smoothed_power_w = power_w
+            else:
+                self.smoothed_power_w = power_w
+
+            self.last_power_w = power_w
+            self.last_power_time = target_time
+            self._recalculate_rate()
+        except Exception:
+            _LOGGER.exception("Unexpected error in update_power")
 
     def update_status(self, status: Optional[str]) -> None:
-        if status is None:
-            return
-        self.charging_active = status in {
-            "CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
-        self._recalculate_rate()
+        try:
+            if status is None:
+                return
+            new_charging_active = status in {
+                "CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
+            # Snap estimate forward when charging stops, so we don't freeze mid-way
+            # Must be done BEFORE clearing charging_active, otherwise rate won't apply
+            if self.charging_active and not new_charging_active:
+                self.estimate(datetime.now(timezone.utc))
+            # Reset efficiency tracking on charging state transitions to avoid
+            # mixing data between sessions
+            if self.charging_active != new_charging_active:
+                self._last_efficiency_soc = None
+                self._last_efficiency_time = None
+                self._efficiency_energy_kwh = 0.0
+            self.charging_active = new_charging_active
+            self._recalculate_rate()
+        except Exception:
+            _LOGGER.exception("Unexpected error in update_status")
 
     def update_target_soc(
         self, percent: Optional[float], timestamp: Optional[datetime] = None
     ) -> None:
-        if percent is None:
-            self.target_soc_percent = None
-            return
-        normalized_ts = self._normalize_timestamp(timestamp)
-        self.target_soc_percent = percent
-        if (
-            self.estimated_percent is not None
-            and self.last_soc_percent is not None
-            and self.last_soc_percent <= percent
-            and self.estimated_percent > percent
-        ):
-            self.estimated_percent = percent
-            self.last_estimate_time = normalized_ts or datetime.now(timezone.utc)
+        try:
+            if percent is None:
+                self.target_soc_percent = None
+                return
+            if percent < 0.0 or percent > 100.0:
+                _LOGGER.warning(
+                    "Ignoring invalid target SOC: %.1f%% (must be 0-100)",
+                    percent,
+                )
+                return
+            normalized_ts = self._normalize_timestamp(timestamp)
+            self.target_soc_percent = percent
+            # Clamp estimate if it exceeds the new target
+            # (handles both target being lowered and estimate having overshot)
+            if self.estimated_percent is not None and self.estimated_percent > percent:
+                self.estimated_percent = percent
+                self.last_estimate_time = normalized_ts or datetime.now(timezone.utc)
+        except Exception:
+            _LOGGER.exception("Unexpected error in update_target_soc")
 
     def estimate(self, now: datetime) -> Optional[float]:
         """Estimate current SOC based on charging rate and elapsed time.
 
         Returns None if estimate is stale (no actual update for MAX_ESTIMATE_AGE_SECONDS).
         """
-        now = self._normalize_timestamp(now) or datetime.now(timezone.utc)
-        if self.estimated_percent is None:
-            base = self.last_soc_percent
-            if base is None:
-                return None
-            self.estimated_percent = base
-            normalized_last_update = self._normalize_timestamp(self.last_update)
-            if normalized_last_update is not None:
-                self.last_update = normalized_last_update
-            self.last_estimate_time = normalized_last_update or now
-            return self.estimated_percent
+        try:
+            now = self._normalize_timestamp(now) or datetime.now(timezone.utc)
+            if self.estimated_percent is None:
+                base = self.last_soc_percent
+                if base is None:
+                    return None
+                self.estimated_percent = base
+                normalized_last_update = self._normalize_timestamp(self.last_update)
+                if normalized_last_update is not None:
+                    self.last_update = normalized_last_update
+                self.last_estimate_time = normalized_last_update or now
+                return self.estimated_percent
 
-        if self.last_estimate_time is None:
-            self.last_estimate_time = now
-            return self.estimated_percent
-        normalized_estimate_time = self._normalize_timestamp(self.last_estimate_time)
-        if normalized_estimate_time is None:
-            self.last_estimate_time = now
-            return self.estimated_percent
-        self.last_estimate_time = normalized_estimate_time
+            if self.last_estimate_time is None:
+                self.last_estimate_time = now
+                return self.estimated_percent
+            normalized_estimate_time = self._normalize_timestamp(self.last_estimate_time)
+            if normalized_estimate_time is None:
+                self.last_estimate_time = now
+                return self.estimated_percent
+            self.last_estimate_time = normalized_estimate_time
 
-        # Check if estimate is stale (no actual SOC update for too long)
-        if self.last_update is not None:
-            normalized_last_update = self._normalize_timestamp(self.last_update)
-            if normalized_last_update is None:
-                self.last_update = None
-            else:
-                self.last_update = normalized_last_update
-                time_since_actual = (now - normalized_last_update).total_seconds()
-                if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
-                    if not self._stale_logged:  # only log once in debug mode
-                        # Estimate is stale - clear stale state and fall back to last known actual value
-                        _LOGGER.debug(
-                            "SOC estimate stale (%.0f seconds since last actual); "
-                            "clearing estimate and returning last known value %.1f%%",
-                            time_since_actual,
-                            self.last_soc_percent or 0.0,
-                        )
-                        self._stale_logged = True  # Dont spam log in debug mode til update
-
-                        # Clear stale estimate state so next call reinitializes from last_soc_percent
+            # Check if estimate is stale (no actual SOC update for too long)
+            if self.last_update is not None:
+                normalized_last_update = self._normalize_timestamp(self.last_update)
+                if normalized_last_update is None:
+                    self.last_update = None
+                else:
+                    self.last_update = normalized_last_update
+                    try:
+                        time_since_actual = (now - normalized_last_update).total_seconds()
+                    except (TypeError, OverflowError) as exc:
+                        _LOGGER.warning("Datetime arithmetic failed in staleness check: %s", exc)
+                        time_since_actual = self.MAX_ESTIMATE_AGE_SECONDS + 1  # Treat as stale
+                    if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
+                        if not self._stale_logged:  # only log once per stale episode
+                            _LOGGER.debug(
+                                "SOC estimate stale (%.0f seconds since last actual); "
+                                "clearing estimate and returning last known value %.1f%%",
+                                time_since_actual,
+                                self.last_soc_percent or 0.0,
+                            )
+                            self._stale_logged = True
+                        # Always clear stale state and return (not just on first detection)
+                        # Note: Do NOT clear charging_active here - stale data doesn't mean charging stopped,
+                        # it means we lost connectivity. Let charging_active be updated only by actual
+                        # status messages from the vehicle.
                         self.estimated_percent = None
                         self.last_estimate_time = None
-                        self.charging_active = False  # Assume charging stopped if no updates
                         return self.last_soc_percent
+                    # Note: _stale_logged is reset only in update_actual_soc() when
+                    # fresh data arrives, avoiding race conditions with this method
 
-        delta_seconds = (now - self.last_estimate_time).total_seconds()
-        if delta_seconds <= 0:
-            return self.estimated_percent
+            try:
+                delta_seconds = (now - self.last_estimate_time).total_seconds()
+            except (TypeError, OverflowError) as exc:
+                _LOGGER.warning("Datetime arithmetic failed in estimate update: %s", exc)
+                self.last_estimate_time = now
+                return self.estimated_percent
+            if delta_seconds <= 0:
+                # Clock went backwards (NTP correction, DST, etc.) - reset baseline to now
+                _LOGGER.warning(
+                    "Clock went backwards by %.1f seconds, resetting estimate baseline",
+                    -delta_seconds,
+                )
+                self.last_estimate_time = now
+                return self.estimated_percent
 
-        rate = self.current_rate_per_hour()
-        if not self.charging_active or rate is None or rate == 0:
+            rate = self.current_rate_per_hour()
+            if not self.charging_active or rate is None or rate == 0:
+                self.last_estimate_time = now
+                return self.estimated_percent
+
+            previous_estimate = self.estimated_percent
+            # Apply non-linear charging curve: exponential taper in CV phase (above 80%)
+            # Real Li-ion batteries use constant-voltage charging above ~80% SOC, which
+            # causes current (and thus power) to decay exponentially as the battery fills.
+            # Uses exponential interpolation: TAPER_FACTOR^progress
+            # At 80% SOC (progress=0): taper = 0.2^0 = 1.0 (full rate)
+            # At 100% SOC (progress=1): taper = 0.2^1 = 0.2 (minimum rate)
+            current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
+            if current_soc <= self.BULK_PHASE_THRESHOLD:
+                taper_factor = 1.0
+            elif current_soc >= 100.0 or self.BULK_PHASE_THRESHOLD >= 100.0:
+                # At or above 100% SOC, or threshold misconfigured - use minimum taper
+                taper_factor = self.ABSORPTION_TAPER_FACTOR
+            else:
+                # Exponential decay: 1.0 at threshold -> ABSORPTION_TAPER_FACTOR at 100%
+                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / (100.0 - self.BULK_PHASE_THRESHOLD)
+                taper_factor = self.ABSORPTION_TAPER_FACTOR ** progress
+            effective_rate = rate * taper_factor
+            increment = effective_rate * (delta_seconds / 3600.0)
+            self.estimated_percent = current_soc + increment
+            # Clamp at target SOC: either when crossing it, or if already above it
+            if self.target_soc_percent is not None:
+                crossed_target = (
+                    previous_estimate is not None
+                    and previous_estimate <= self.target_soc_percent <= self.estimated_percent
+                )
+                above_target = self.estimated_percent > self.target_soc_percent
+                if crossed_target or above_target:
+                    self.estimated_percent = self.target_soc_percent
+            if self.estimated_percent > 100.0:
+                self.estimated_percent = 100.0
+            elif self.estimated_percent < 0.0:
+                self.estimated_percent = 0.0
             self.last_estimate_time = now
             return self.estimated_percent
-
-        previous_estimate = self.estimated_percent
-        increment = rate * (delta_seconds / 3600.0)
-        self.estimated_percent = (self.estimated_percent or 0.0) + increment
-        if (
-            self.target_soc_percent is not None
-            and previous_estimate is not None
-            and previous_estimate <= self.target_soc_percent <= self.estimated_percent
-        ):
-            self.estimated_percent = self.target_soc_percent
-        if self.estimated_percent > 100.0:
-            self.estimated_percent = 100.0
-        elif self.estimated_percent < 0.0:
-            self.estimated_percent = 0.0
-        self.last_estimate_time = now
-        return self.estimated_percent
+        except Exception:
+            _LOGGER.exception("Unexpected error in estimate")
+            return self.estimated_percent
 
     def current_rate_per_hour(self) -> Optional[float]:
         if not self.charging_active:
@@ -286,6 +684,13 @@ class SocTracking:
     def _recalculate_rate(self) -> None:
         if not self.charging_active:
             self.rate_per_hour = None
+            self.smoothed_power_w = None  # Clear to avoid polluting next charge session
+            self._last_efficiency_soc = None  # Reset efficiency sampling
+            self._last_efficiency_time = None
+            self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
+            self._consecutive_zero_power = 0  # Reset hysteresis counter
+            if self.charging_paused:
+                self.charging_paused = False
             return
         if (
             self.last_power_w is None
@@ -293,11 +698,44 @@ class SocTracking:
             or self.max_energy_kwh is None
             or self.max_energy_kwh == 0
         ):
-            # Clear stale rate when power drops to 0 to prevent estimate overshoot
+            # Detect charging pause with hysteresis: require consecutive zero readings
+            # to avoid false positives from sensor noise
+            if self.last_power_w == 0:
+                self._consecutive_zero_power += 1
+                if (
+                    not self.charging_paused
+                    and self._consecutive_zero_power >= self.PAUSE_ZERO_COUNT_THRESHOLD
+                ):
+                    self.charging_paused = True
+                    _LOGGER.debug(
+                        "Charging paused: power at 0 for %d consecutive readings",
+                        self._consecutive_zero_power,
+                    )
+            # Clear stale rate and smoothed power when power drops to 0
+            self.rate_per_hour = None
+            self.smoothed_power_w = None
+            return
+        # Power > 0: reset hysteresis counter and detect resume from pause
+        self._consecutive_zero_power = 0
+        if self.charging_paused:
+            self.charging_paused = False
+            # Reset efficiency tracking on resume to start fresh from this point
+            self._last_efficiency_soc = None
+            self._last_efficiency_time = None
+            self._efficiency_energy_kwh = 0.0
+            _LOGGER.debug(
+                "Charging resumed: power restored to %.0fW", self.last_power_w
+            )
+        # Use smoothed power for rate calculation to reduce jitter
+        power_for_rate = self.smoothed_power_w or self.last_power_w
+        # Defensive check: ensure we have valid values before division
+        if not power_for_rate or not self.max_energy_kwh:
             self.rate_per_hour = None
             return
-        self.rate_per_hour = (self.last_power_w / 1000.0) / \
-            self.max_energy_kwh * 100.0
+        # Use learned efficiency if available, otherwise fall back to default
+        efficiency = self.learned_efficiency or self.CHARGING_EFFICIENCY
+        self.rate_per_hour = (power_for_rate / 1000.0) / \
+            self.max_energy_kwh * 100.0 * efficiency
 
 
 @dataclass
@@ -328,6 +766,8 @@ class CardataCoordinator:
         default_factory=dict, init=False)
     _avg_aux_power_w: Dict[str, float] = field(
         default_factory=dict, init=False)
+    _aux_exceeds_charging_warned: Dict[str, bool] = field(
+        default_factory=dict, init=False)  # Track if we warned about aux > charging
     _charging_power_w: Dict[str, float] = field(
         default_factory=dict, init=False)
     _direct_power_w: Dict[str, float] = field(default_factory=dict, init=False)
@@ -354,6 +794,13 @@ class CardataCoordinator:
     _pending_updates_started: Optional[datetime] = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
+
+    @staticmethod
+    def _safe_vin_suffix(vin: Optional[str]) -> str:
+        """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
+        if not vin:
+            return "<unknown>"
+        return vin[-6:] if len(vin) >= 6 else vin
 
     @property
     def signal_new_sensor(self) -> str:
@@ -432,8 +879,32 @@ class CardataCoordinator:
         """Adjust power for testing by subtracting aux power. Must be called while holding _lock."""
         aux_power = self._avg_aux_power_w.get(vin)
         if aux_power is None:
+            self._aux_exceeds_charging_warned.pop(vin, None)
             return max(power_w, 0.0)
-        return max(power_w - aux_power, 0.0)
+
+        adjusted = power_w - aux_power
+
+        # Check if aux power exceeds charging power (net zero charging)
+        tracking = self._soc_tracking.get(vin)
+        is_charging = tracking and tracking.charging_active and power_w > 0
+
+        if is_charging and adjusted <= 0:
+            if not self._aux_exceeds_charging_warned.get(vin):
+                _LOGGER.warning(
+                    "Aux power exceeds charging power for %s: aux=%.0fW, charging=%.0fW "
+                    "(net charging is zero - battery not gaining charge)",
+                    self._safe_vin_suffix(vin), aux_power, power_w,
+                )
+                self._aux_exceeds_charging_warned[vin] = True
+        elif self._aux_exceeds_charging_warned.get(vin):
+            # Condition resolved
+            _LOGGER.debug(
+                "Aux power no longer exceeds charging for %s: aux=%.0fW, charging=%.0fW",
+                self._safe_vin_suffix(vin), aux_power, power_w,
+            )
+            self._aux_exceeds_charging_warned[vin] = False
+
+        return max(adjusted, 0.0)
 
     def _update_testing_power(self, vin: str, timestamp: Optional[datetime]) -> None:
         """Update testing power tracking. Must be called while holding _lock."""
@@ -576,14 +1047,27 @@ class CardataCoordinator:
             self._direct_power_w[vin] = max(power_w, 0.0)
         self._apply_effective_power(vin, timestamp)
 
+    # AC power sanity check constants
+    _AC_VOLTAGE_MIN: float = 100.0  # Minimum valid voltage (V)
+    _AC_VOLTAGE_MAX: float = 500.0  # Maximum valid voltage (V) - covers 400V 3-phase
+    _AC_CURRENT_MAX: float = 100.0  # Maximum valid current (A) - industrial chargers
+    _AC_PHASE_MAX: int = 3  # Maximum valid phases
+    _AC_POWER_MAX_W: float = 22000.0  # Maximum AC power (22kW) - highest onboard charger
+
     def _set_ac_voltage(
         self, vin: str, voltage_v: Optional[float], timestamp: Optional[datetime]
     ) -> None:
         """Set AC voltage. Must be called while holding _lock."""
         if voltage_v is None:
             self._ac_voltage_v.pop(vin, None)
+        elif voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
+            _LOGGER.warning(
+                "Ignoring invalid AC voltage: %.1fV (expected %d-%dV)",
+                voltage_v, int(self._AC_VOLTAGE_MIN), int(self._AC_VOLTAGE_MAX),
+            )
+            return
         else:
-            self._ac_voltage_v[vin] = max(voltage_v, 0.0)
+            self._ac_voltage_v[vin] = voltage_v
         self._apply_effective_power(vin, timestamp)
 
     def _set_ac_current(
@@ -592,8 +1076,14 @@ class CardataCoordinator:
         """Set AC current. Must be called while holding _lock."""
         if current_a is None:
             self._ac_current_a.pop(vin, None)
+        elif current_a < 0 or current_a > self._AC_CURRENT_MAX:
+            _LOGGER.warning(
+                "Ignoring invalid AC current: %.1fA (expected 0-%dA)",
+                current_a, int(self._AC_CURRENT_MAX),
+            )
+            return
         else:
-            self._ac_current_a[vin] = max(current_a, 0.0)
+            self._ac_current_a[vin] = current_a
         self._apply_effective_power(vin, timestamp)
 
     def _set_ac_phase(
@@ -608,7 +1098,7 @@ class CardataCoordinator:
                 parsed = int(phase_value)
             except (TypeError, ValueError):
                 parsed = None
-            phase_count = parsed if parsed and parsed > 0 else None
+            phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
         elif isinstance(phase_value, str):
             match = re.match(r"(\d+)", phase_value)
             if match:
@@ -616,9 +1106,15 @@ class CardataCoordinator:
                     parsed = int(match.group(1))
                 except (TypeError, ValueError):
                     parsed = None
-                phase_count = parsed if parsed and parsed > 0 else None
+                phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
         if phase_count is None:
             self._ac_phase_count.pop(vin, None)
+            if phase_value is not None:
+                _LOGGER.warning(
+                    "Ignoring invalid AC phase count: %s (expected 1-%d)",
+                    phase_value, self._AC_PHASE_MAX,
+                )
+                return
         else:
             self._ac_phase_count[vin] = phase_count
         self._apply_effective_power(vin, timestamp)
@@ -630,7 +1126,14 @@ class CardataCoordinator:
         phases = self._ac_phase_count.get(vin)
         if voltage is None or current is None or phases is None:
             return None
-        return max(voltage * current * phases, 0.0)
+        derived = voltage * current * phases
+        if derived > self._AC_POWER_MAX_W:
+            _LOGGER.warning(
+                "Derived AC power exceeds maximum: %.0fW (V=%.1f, A=%.1f, phases=%d) > %.0fW max",
+                derived, voltage, current, phases, self._AC_POWER_MAX_W,
+            )
+            return None
+        return max(derived, 0.0)
 
     def _compute_effective_power(self, vin: str) -> Optional[float]:
         """Compute effective charging power (direct or derived from AC). Must be called while holding _lock."""
@@ -654,6 +1157,25 @@ class CardataCoordinator:
         testing_tracking.update_power(
             self._adjust_power_for_testing(vin, effective_power), timestamp
         )
+        # Consistency check: warn if power and charging status don't match
+        self._check_power_status_consistency(vin, tracking, effective_power)
+
+    def _check_power_status_consistency(
+        self, vin: str, tracking: SocTracking, power_w: float
+    ) -> None:
+        """Log warning if power and charging status are inconsistent."""
+        # Define threshold for "meaningful" power (avoid false positives from noise)
+        min_charging_power = 100.0  # Watts
+        if tracking.charging_active and power_w < min_charging_power:
+            _LOGGER.debug(
+                "Power/status inconsistency for %s: charging_active=True but power=%.0fW",
+                self._safe_vin_suffix(vin), power_w,
+            )
+        elif not tracking.charging_active and power_w >= min_charging_power:
+            _LOGGER.debug(
+                "Power/status inconsistency for %s: charging_active=False but power=%.0fW",
+                self._safe_vin_suffix(vin), power_w,
+            )
 
     def _normalize_boolean_value(self, descriptor: str, value: Any) -> Any:
         if descriptor not in _BOOLEAN_DESCRIPTORS:
@@ -1317,7 +1839,10 @@ class CardataCoordinator:
             tracking.rate_per_hour = rate if rate != 0 else None
             if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
-                tracking.charging_active = True
+                # Note: Do NOT set charging_active = True here. The restored rate is stale
+                # and we don't know if charging is still active. Let charging_active be set
+                # only by actual status updates from the vehicle. The rate is stored but
+                # won't be used for estimation until a status update confirms charging.
                 if tracking.max_energy_kwh is not None and tracking.max_energy_kwh != 0:
                     tracking.last_power_w = (
                         tracking.rate_per_hour / 100.0
