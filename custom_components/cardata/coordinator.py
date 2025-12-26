@@ -87,6 +87,10 @@ class SocTracking:
     cumulative_drift: float = 0.0
     drift_corrections: int = 0
     _stale_logged: bool = False
+    # Adaptive efficiency learning
+    learned_efficiency: Optional[float] = None  # Learned from drift patterns
+    _last_efficiency_soc: Optional[float] = None  # SOC at last efficiency sample
+    _last_efficiency_time: Optional[datetime] = None  # Time at last efficiency sample
 
     # Class-level constants for drift correction
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
@@ -95,6 +99,10 @@ class SocTracking:
     # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
     # Typical EV charging efficiency is 88-95%, using 92% as conservative default
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
+    # Adaptive efficiency learning bounds and rate
+    EFFICIENCY_MIN: ClassVar[float] = 0.70  # Minimum plausible efficiency (70%)
+    EFFICIENCY_MAX: ClassVar[float] = 0.98  # Maximum plausible efficiency (98%)
+    EFFICIENCY_LEARN_ALPHA: ClassVar[float] = 0.2  # EMA learning rate for efficiency
     # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
     # significantly in absorption phase (80-100%) due to CC-CV charging profile
     BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
@@ -193,6 +201,9 @@ class SocTracking:
                     drift,
                 )
 
+        # Learn efficiency from actual vs expected SOC change during charging
+        self._learn_efficiency(percent, ts)
+
         self.last_soc_percent = percent
         self.last_update = ts
         if self.max_energy_kwh:
@@ -202,6 +213,81 @@ class SocTracking:
         # Reset estimate to actual value (correction)
         self.estimated_percent = percent
         self.last_estimate_time = ts
+
+    def _learn_efficiency(self, actual_soc: float, ts: datetime) -> None:
+        """Learn charging efficiency from actual vs expected SOC change."""
+        # Only learn during active charging with valid power data
+        if (
+            not self.charging_active
+            or self.charging_paused
+            or self.smoothed_power_w is None
+            or self.smoothed_power_w <= 0
+            or self.max_energy_kwh is None
+            or self.max_energy_kwh <= 0
+        ):
+            # Reset tracking when not charging
+            self._last_efficiency_soc = actual_soc if self.charging_active else None
+            self._last_efficiency_time = ts if self.charging_active else None
+            return
+
+        # Need previous sample to calculate change
+        if self._last_efficiency_soc is None or self._last_efficiency_time is None:
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            return
+
+        # Calculate time elapsed
+        elapsed_hours = (ts - self._last_efficiency_time).total_seconds() / 3600.0
+        if elapsed_hours < 0.05:  # Need at least ~3 minutes of data
+            return
+
+        # Calculate actual SOC change
+        actual_change = actual_soc - self._last_efficiency_soc
+        if actual_change <= 0:  # Only learn from positive charging
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            return
+
+        # Calculate expected change (assuming 100% efficiency)
+        power_kw = self.smoothed_power_w / 1000.0
+        expected_change = (power_kw / self.max_energy_kwh) * 100.0 * elapsed_hours
+
+        if expected_change <= 0:
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            return
+
+        # Calculate observed efficiency
+        observed_efficiency = actual_change / expected_change
+
+        # Sanity check bounds
+        if observed_efficiency < self.EFFICIENCY_MIN or observed_efficiency > self.EFFICIENCY_MAX:
+            _LOGGER.debug(
+                "Observed efficiency %.1f%% outside bounds, ignoring",
+                observed_efficiency * 100,
+            )
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            return
+
+        # Blend into learned efficiency using EMA
+        if self.learned_efficiency is None:
+            self.learned_efficiency = observed_efficiency
+        else:
+            self.learned_efficiency = (
+                self.EFFICIENCY_LEARN_ALPHA * observed_efficiency
+                + (1 - self.EFFICIENCY_LEARN_ALPHA) * self.learned_efficiency
+            )
+
+        _LOGGER.debug(
+            "Efficiency learning: observed=%.1f%%, learned=%.1f%%",
+            observed_efficiency * 100,
+            self.learned_efficiency * 100,
+        )
+
+        # Update tracking for next sample
+        self._last_efficiency_soc = actual_soc
+        self._last_efficiency_time = ts
 
     def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
         if power_w is None:
@@ -399,8 +485,10 @@ class SocTracking:
             )
         # Use smoothed power for rate calculation to reduce jitter
         power_for_rate = self.smoothed_power_w or self.last_power_w
+        # Use learned efficiency if available, otherwise fall back to default
+        efficiency = self.learned_efficiency or self.CHARGING_EFFICIENCY
         self.rate_per_hour = (power_for_rate / 1000.0) / \
-            self.max_energy_kwh * 100.0 * self.CHARGING_EFFICIENCY
+            self.max_energy_kwh * 100.0 * efficiency
 
 
 @dataclass
