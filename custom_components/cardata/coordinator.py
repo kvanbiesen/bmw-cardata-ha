@@ -93,6 +93,10 @@ class SocTracking:
     # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
     # Typical EV charging efficiency is 88-95%, using 92% as conservative default
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
+    # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
+    # significantly in absorption phase (80-100%) due to CC-CV charging profile
+    BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
+    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.5  # Rate multiplier above threshold
 
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
@@ -324,8 +328,13 @@ class SocTracking:
             return self.estimated_percent
 
         previous_estimate = self.estimated_percent
-        increment = rate * (delta_seconds / 3600.0)
-        self.estimated_percent = (self.estimated_percent or 0.0) + increment
+        # Apply non-linear charging curve: taper rate in absorption phase (above 80%)
+        effective_rate = rate
+        current_soc = self.estimated_percent or 0.0
+        if current_soc >= self.BULK_PHASE_THRESHOLD:
+            effective_rate = rate * self.ABSORPTION_TAPER_FACTOR
+        increment = effective_rate * (delta_seconds / 3600.0)
+        self.estimated_percent = current_soc + increment
         if (
             self.target_soc_percent is not None
             and previous_estimate is not None
