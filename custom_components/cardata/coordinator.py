@@ -76,6 +76,7 @@ class SocTracking:
     last_power_time: Optional[datetime] = None
     smoothed_power_w: Optional[float] = None  # EMA-smoothed power for stable rate
     charging_active: bool = False
+    charging_paused: bool = False  # Power=0 while charging_active=true
     last_soc_percent: Optional[float] = None
     rate_per_hour: Optional[float] = None
     estimated_percent: Optional[float] = None
@@ -371,6 +372,8 @@ class SocTracking:
     def _recalculate_rate(self) -> None:
         if not self.charging_active:
             self.rate_per_hour = None
+            if self.charging_paused:
+                self.charging_paused = False
             return
         if (
             self.last_power_w is None
@@ -378,10 +381,22 @@ class SocTracking:
             or self.max_energy_kwh is None
             or self.max_energy_kwh == 0
         ):
+            # Detect charging pause: power=0 but charging_active=true
+            if not self.charging_paused and self.last_power_w == 0:
+                self.charging_paused = True
+                _LOGGER.debug(
+                    "Charging paused: power dropped to 0 while charging active"
+                )
             # Clear stale rate and smoothed power when power drops to 0
             self.rate_per_hour = None
             self.smoothed_power_w = None
             return
+        # Detect resume from pause
+        if self.charging_paused:
+            self.charging_paused = False
+            _LOGGER.debug(
+                "Charging resumed: power restored to %.0fW", self.last_power_w
+            )
         # Use smoothed power for rate calculation to reduce jitter
         power_for_rate = self.smoothed_power_w or self.last_power_w
         self.rate_per_hour = (power_for_rate / 1000.0) / \
