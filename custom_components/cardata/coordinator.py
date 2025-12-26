@@ -110,9 +110,10 @@ class SocTracking:
     EFFICIENCY_MAX: ClassVar[float] = 0.98  # Maximum plausible efficiency (98%)
     EFFICIENCY_LEARN_ALPHA: ClassVar[float] = 0.2  # EMA learning rate for efficiency
     # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
-    # significantly in absorption phase (80-100%) due to CC-CV charging profile
+    # significantly in absorption phase (80-100%) due to CC-CV charging profile.
+    # Uses smooth linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC.
     BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
-    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.5  # Rate multiplier above threshold
+    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.5  # Rate multiplier at 100% SOC
     # EMA smoothing for power readings to reduce rate jitter from noisy samples
     # Alpha=0.3 gives ~3-5 sample smoothing window while still responding to changes
     POWER_EMA_ALPHA: ClassVar[float] = 0.3
@@ -555,11 +556,16 @@ class SocTracking:
                 return self.estimated_percent
 
             previous_estimate = self.estimated_percent
-            # Apply non-linear charging curve: taper rate in absorption phase (above 80%)
-            effective_rate = rate
+            # Apply non-linear charging curve: smooth taper in absorption phase (above 80%)
+            # Uses linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC
             current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
-            if current_soc >= self.BULK_PHASE_THRESHOLD:
-                effective_rate = rate * self.ABSORPTION_TAPER_FACTOR
+            if current_soc <= self.BULK_PHASE_THRESHOLD:
+                taper_factor = 1.0
+            else:
+                # Linear interpolation: 1.0 at 80% -> ABSORPTION_TAPER_FACTOR at 100%
+                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / (100.0 - self.BULK_PHASE_THRESHOLD)
+                taper_factor = 1.0 - progress * (1.0 - self.ABSORPTION_TAPER_FACTOR)
+            effective_rate = rate * taper_factor
             increment = effective_rate * (delta_seconds / 3600.0)
             self.estimated_percent = current_soc + increment
             # Clamp at target SOC: either when crossing it, or if already above it
