@@ -222,6 +222,12 @@ class SocTracking:
         if percent is None:
             self.target_soc_percent = None
             return
+        if percent < 0.0 or percent > 100.0:
+            _LOGGER.warning(
+                "Ignoring invalid target SOC: %.1f%% (must be 0-100)",
+                percent,
+            )
+            return
         normalized_ts = self._normalize_timestamp(timestamp)
         self.target_soc_percent = percent
         if (
