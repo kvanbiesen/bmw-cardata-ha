@@ -163,10 +163,9 @@ class SocTracking:
                 or datetime.now(timezone.utc)
             )
 
-            # Got here = estimate is not stale, reset flag
-            if self._stale_logged:
-                _LOGGER.debug("SOC estimate refreshed with new actual data")
-                self._stale_logged = False
+            # Fresh actual data arrived - unconditionally reset stale flag
+            # (no check needed, avoids race condition with estimate())
+            self._stale_logged = False
 
             # Reject out-of-order messages (stale data arriving late)
             if self.last_update is not None:
@@ -532,9 +531,8 @@ class SocTracking:
                         self.estimated_percent = None
                         self.last_estimate_time = None
                         return self.last_soc_percent
-                    else:
-                        # Not stale anymore - reset flag for next stale episode
-                        self._stale_logged = False
+                    # Note: _stale_logged is reset only in update_actual_soc() when
+                    # fresh data arrives, avoiding race conditions with this method
 
             try:
                 delta_seconds = (now - self.last_estimate_time).total_seconds()
