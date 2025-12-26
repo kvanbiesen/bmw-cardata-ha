@@ -456,31 +456,17 @@ class SocTracking:
             # new value.
             self.estimate(target_time)
 
-            # Integrate energy for efficiency learning using trapezoidal integration
-            # (average of old and new power × time) for better accuracy during ramps.
-            # Allow integration if EITHER power is positive to capture transitions:
-            # - Ramp-down: last > 0, new = 0 → triangular area captured
-            # - Ramp-up: last = 0, new > 0 → triangular area captured
-            if (
-                self.charging_active
-                and self.last_power_w is not None
-                and (self.last_power_w > 0 or power_w > 0)
-                and self.last_power_time is not None
-            ):
-                normalized_last = self._normalize_timestamp(self.last_power_time)
-                if normalized_last is not None:
-                    try:
-                        delta_hours = (target_time - normalized_last).total_seconds() / 3600.0
-                        if delta_hours > 0:
-                            # Track when energy started accumulating for this window
-                            if self._efficiency_energy_start is None:
-                                self._efficiency_energy_start = normalized_last
-                            # Trapezoidal: average of old and new power (clamp new to 0 min)
-                            new_power_clamped = max(power_w, 0.0)
-                            avg_power_w = (self.last_power_w + new_power_clamped) / 2.0
-                            self._efficiency_energy_kwh += (avg_power_w / 1000.0) * delta_hours
-                    except (TypeError, OverflowError):
-                        pass  # Skip integration on datetime errors
+            # Compute time delta and new smoothed power FIRST, so we can use smoothed
+            # power for energy integration (consistency: efficiency is learned from
+            # smoothed power and applied to smoothed power in rate calculation)
+            old_smoothed = self.smoothed_power_w
+            normalized_prev = self._normalize_timestamp(self.last_power_time)
+            dt_seconds = 0.0
+            if normalized_prev is not None:
+                try:
+                    dt_seconds = (target_time - normalized_prev).total_seconds()
+                except (TypeError, OverflowError):
+                    dt_seconds = 0.0
 
             # Apply time-weighted EMA smoothing to reduce rate jitter from noisy power samples.
             # Alpha varies with sample interval: alpha = 1 - exp(-dt/tau)
@@ -488,26 +474,36 @@ class SocTracking:
             # Long intervals → large alpha (more weight, approaching reset)
             if self.smoothed_power_w is None:
                 self.smoothed_power_w = power_w
-            elif self.last_power_time is not None:
-                normalized_prev = self._normalize_timestamp(self.last_power_time)
-                if normalized_prev is not None:
-                    try:
-                        dt_seconds = (target_time - normalized_prev).total_seconds()
-                        if dt_seconds > 0:
-                            alpha = 1.0 - math.exp(-dt_seconds / self.POWER_EMA_TAU_SECONDS)
-                            self.smoothed_power_w = (
-                                alpha * power_w
-                                + (1 - alpha) * self.smoothed_power_w
-                            )
-                        else:
-                            # Non-positive dt, just use new value
-                            self.smoothed_power_w = power_w
-                    except (TypeError, OverflowError):
-                        self.smoothed_power_w = power_w
-                else:
-                    self.smoothed_power_w = power_w
+            elif dt_seconds > 0:
+                alpha = 1.0 - math.exp(-dt_seconds / self.POWER_EMA_TAU_SECONDS)
+                self.smoothed_power_w = (
+                    alpha * power_w
+                    + (1 - alpha) * self.smoothed_power_w
+                )
             else:
+                # Non-positive dt or no previous time, just use new value
                 self.smoothed_power_w = power_w
+
+            # Integrate energy for efficiency learning using trapezoidal integration
+            # of SMOOTHED power (same basis as rate calculation where efficiency is applied).
+            # Allow integration if EITHER power is positive to capture transitions:
+            # - Ramp-down: last > 0, new = 0 → triangular area captured
+            # - Ramp-up: last = 0, new > 0 → triangular area captured
+            if (
+                self.charging_active
+                and old_smoothed is not None
+                and (old_smoothed > 0 or self.smoothed_power_w > 0)
+                and dt_seconds > 0
+            ):
+                # Track when energy started accumulating for this window
+                if self._efficiency_energy_start is None and normalized_prev is not None:
+                    self._efficiency_energy_start = normalized_prev
+                # Trapezoidal: average of old and new smoothed power (clamp to 0 min)
+                old_clamped = max(old_smoothed, 0.0)
+                new_clamped = max(self.smoothed_power_w, 0.0)
+                avg_power_w = (old_clamped + new_clamped) / 2.0
+                delta_hours = dt_seconds / 3600.0
+                self._efficiency_energy_kwh += (avg_power_w / 1000.0) * delta_hours
 
             self.last_power_w = power_w
             self.last_power_time = target_time
@@ -688,6 +684,7 @@ class SocTracking:
             self._last_efficiency_soc = None  # Reset efficiency sampling
             self._last_efficiency_time = None
             self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
+            self._efficiency_energy_start = None
             self._consecutive_zero_power = 0  # Reset hysteresis counter
             if self.charging_paused:
                 self.charging_paused = False
@@ -723,6 +720,7 @@ class SocTracking:
             self._last_efficiency_soc = None
             self._last_efficiency_time = None
             self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
             _LOGGER.debug(
                 "Charging resumed: power restored to %.0fW", self.last_power_w
             )
