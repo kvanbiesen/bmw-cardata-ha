@@ -470,12 +470,9 @@ class SocTracking:
                 return
             normalized_ts = self._normalize_timestamp(timestamp)
             self.target_soc_percent = percent
-            if (
-                self.estimated_percent is not None
-                and self.last_soc_percent is not None
-                and self.last_soc_percent <= percent
-                and self.estimated_percent > percent
-            ):
+            # Clamp estimate if it exceeds the new target
+            # (handles both target being lowered and estimate having overshot)
+            if self.estimated_percent is not None and self.estimated_percent > percent:
                 self.estimated_percent = percent
                 self.last_estimate_time = normalized_ts or datetime.now(timezone.utc)
         except Exception:
