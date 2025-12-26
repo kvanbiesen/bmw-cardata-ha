@@ -249,7 +249,13 @@ class SocTracking:
             return
 
         # Calculate time elapsed
-        elapsed_hours = (ts - self._last_efficiency_time).total_seconds() / 3600.0
+        try:
+            elapsed_hours = (ts - self._last_efficiency_time).total_seconds() / 3600.0
+        except (TypeError, OverflowError) as exc:
+            _LOGGER.debug("Datetime arithmetic failed in efficiency learning: %s", exc)
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            return
         if elapsed_hours < 0.05:  # Need at least ~3 minutes of data
             return
 
@@ -455,7 +461,11 @@ class SocTracking:
                 self.last_update = None
             else:
                 self.last_update = normalized_last_update
-                time_since_actual = (now - normalized_last_update).total_seconds()
+                try:
+                    time_since_actual = (now - normalized_last_update).total_seconds()
+                except (TypeError, OverflowError) as exc:
+                    _LOGGER.warning("Datetime arithmetic failed in staleness check: %s", exc)
+                    time_since_actual = self.MAX_ESTIMATE_AGE_SECONDS + 1  # Treat as stale
                 if time_since_actual > self.MAX_ESTIMATE_AGE_SECONDS:
                     if not self._stale_logged:  # only log once in debug mode
                         # Estimate is stale - clear stale state and fall back to last known actual value
@@ -475,7 +485,12 @@ class SocTracking:
                         self.last_estimate_time = None
                         return self.last_soc_percent
 
-        delta_seconds = (now - self.last_estimate_time).total_seconds()
+        try:
+            delta_seconds = (now - self.last_estimate_time).total_seconds()
+        except (TypeError, OverflowError) as exc:
+            _LOGGER.warning("Datetime arithmetic failed in estimate update: %s", exc)
+            self.last_estimate_time = now
+            return self.estimated_percent
         if delta_seconds <= 0:
             # Clock went backwards (NTP correction, DST, etc.) - reset baseline to now
             _LOGGER.warning(
