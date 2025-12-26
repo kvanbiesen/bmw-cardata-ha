@@ -335,12 +335,15 @@ class SocTracking:
             effective_rate = rate * self.ABSORPTION_TAPER_FACTOR
         increment = effective_rate * (delta_seconds / 3600.0)
         self.estimated_percent = current_soc + increment
-        if (
-            self.target_soc_percent is not None
-            and previous_estimate is not None
-            and previous_estimate <= self.target_soc_percent <= self.estimated_percent
-        ):
-            self.estimated_percent = self.target_soc_percent
+        # Clamp at target SOC: either when crossing it, or if already above it
+        if self.target_soc_percent is not None:
+            crossed_target = (
+                previous_estimate is not None
+                and previous_estimate <= self.target_soc_percent <= self.estimated_percent
+            )
+            above_target = self.estimated_percent > self.target_soc_percent
+            if crossed_target or above_target:
+                self.estimated_percent = self.target_soc_percent
         if self.estimated_percent > 100.0:
             self.estimated_percent = 100.0
         elif self.estimated_percent < 0.0:
