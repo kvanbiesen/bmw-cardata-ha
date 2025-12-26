@@ -192,29 +192,34 @@ class SocTracking:
             if self.estimated_percent is not None:
                 drift = abs(self.estimated_percent - percent)
                 signed_drift = self.estimated_percent - percent  # positive = overshoot
-                self.cumulative_drift += drift
                 self.last_drift_check = ts
 
                 if drift >= self.DRIFT_CORRECTION_THRESHOLD:
+                    self.drift_corrections += 1
                     _LOGGER.info(
-                        "SOC estimate drift correction: estimated=%.1f%% actual=%.1f%% "
-                        "(drift=%.1f%%, cumulative=%.1f%%, corrections=%d)",
+                        "SOC estimate drift correction #%d: estimated=%.1f%% actual=%.1f%% "
+                        "(drift=%.1f%%, prior_cumulative=%.1f%%)",
+                        self.drift_corrections,
                         self.estimated_percent,
                         percent,
                         drift,
                         self.cumulative_drift,
-                        self.drift_corrections,
                     )
-                    self.drift_corrections += 1
-                    # Reset cumulative drift after significant correction to track fresh
+                    # Reset cumulative after major correction (don't add this drift -
+                    # it was logged and corrected, start fresh for next period)
                     self.cumulative_drift = 0.0
-                elif drift >= self.DRIFT_WARNING_THRESHOLD:
-                    _LOGGER.debug(
-                        "SOC estimate drift detected: estimated=%.1f%% actual=%.1f%% (drift=%.1f%%)",
-                        self.estimated_percent,
-                        percent,
-                        drift,
-                    )
+                else:
+                    # Accumulate smaller drifts for tracking between major corrections
+                    self.cumulative_drift += drift
+                    if drift >= self.DRIFT_WARNING_THRESHOLD:
+                        _LOGGER.debug(
+                            "SOC estimate drift detected: estimated=%.1f%% actual=%.1f%% "
+                            "(drift=%.1f%%, cumulative=%.1f%%)",
+                            self.estimated_percent,
+                            percent,
+                            drift,
+                            self.cumulative_drift,
+                        )
 
                 # Analyze drift direction pattern for rate adjustment diagnostics
                 self._analyze_drift_pattern(signed_drift)
