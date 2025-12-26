@@ -324,11 +324,16 @@ class SocTracking:
             return
         expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
 
-        if expected_change <= 0:
-            self._last_efficiency_soc = actual_soc
-            self._last_efficiency_time = ts
-            self._efficiency_energy_kwh = 0.0
-            self._efficiency_energy_start = None
+        # Require minimum expected change to avoid extreme efficiency ratios from
+        # near-zero denominators (e.g., 1% actual / 0.001% expected = 1000x efficiency)
+        min_expected_change = 0.1  # At least 0.1% SOC worth of energy
+        if expected_change < min_expected_change:
+            _LOGGER.debug(
+                "Efficiency learning: expected change %.3f%% below minimum %.1f%%, skipping",
+                expected_change,
+                min_expected_change,
+            )
+            # Keep accumulating energy until we have enough for a valid measurement
             return
 
         # Calculate observed efficiency
@@ -462,9 +467,8 @@ class SocTracking:
             # new value.
             self.estimate(target_time)
 
-            # Compute time delta and new smoothed power FIRST, so we can use smoothed
-            # power for energy integration (consistency: efficiency is learned from
-            # smoothed power and applied to smoothed power in rate calculation)
+            # Compute all new values FIRST before modifying any state.
+            # This ensures atomic-ish updates: if any computation fails, state unchanged.
             old_smoothed = self.smoothed_power_w
             normalized_prev = self._normalize_timestamp(self.last_power_time)
             dt_seconds = 0.0
@@ -474,45 +478,41 @@ class SocTracking:
                 except (TypeError, OverflowError):
                     dt_seconds = 0.0
 
-            # Apply time-weighted EMA smoothing to reduce rate jitter from noisy power samples.
+            # Compute new smoothed power (time-weighted EMA)
             # Alpha varies with sample interval: alpha = 1 - exp(-dt/tau)
-            # Short intervals → small alpha (less weight on new sample)
-            # Long intervals → large alpha (more weight, approaching reset)
-            if self.smoothed_power_w is None:
-                self.smoothed_power_w = power_w
+            # Short intervals → small alpha, long intervals → large alpha
+            if old_smoothed is None:
+                new_smoothed = power_w
             elif dt_seconds > 0:
                 alpha = 1.0 - math.exp(-dt_seconds / self.POWER_EMA_TAU_SECONDS)
-                self.smoothed_power_w = (
-                    alpha * power_w
-                    + (1 - alpha) * self.smoothed_power_w
-                )
+                new_smoothed = alpha * power_w + (1 - alpha) * old_smoothed
             else:
-                # Non-positive dt or no previous time, just use new value
-                self.smoothed_power_w = power_w
+                new_smoothed = power_w
 
-            # Integrate energy for efficiency learning using trapezoidal integration
-            # of SMOOTHED power (same basis as rate calculation where efficiency is applied).
-            # Allow integration if EITHER power is positive to capture transitions:
-            # - Ramp-down: last > 0, new = 0 → triangular area captured
-            # - Ramp-up: last = 0, new > 0 → triangular area captured
+            # Compute energy increment for efficiency learning (trapezoidal integration)
+            # Uses smoothed power for consistency with rate calculation
+            energy_increment = 0.0
+            new_energy_start = self._efficiency_energy_start
             if (
                 self.charging_active
                 and old_smoothed is not None
-                and (old_smoothed > 0 or self.smoothed_power_w > 0)
+                and (old_smoothed > 0 or new_smoothed > 0)
                 and dt_seconds > 0
             ):
-                # Track when energy started accumulating for this window
-                if self._efficiency_energy_start is None and normalized_prev is not None:
-                    self._efficiency_energy_start = normalized_prev
-                # Trapezoidal: average of old and new smoothed power (clamp to 0 min)
+                if new_energy_start is None and normalized_prev is not None:
+                    new_energy_start = normalized_prev
                 old_clamped = max(old_smoothed, 0.0)
-                new_clamped = max(self.smoothed_power_w, 0.0)
+                new_clamped = max(new_smoothed, 0.0)
                 avg_power_w = (old_clamped + new_clamped) / 2.0
                 delta_hours = dt_seconds / 3600.0
-                self._efficiency_energy_kwh += (avg_power_w / 1000.0) * delta_hours
+                energy_increment = (avg_power_w / 1000.0) * delta_hours
 
+            # All computations succeeded - now apply state updates atomically
+            self.smoothed_power_w = new_smoothed
             self.last_power_w = power_w
             self.last_power_time = target_time
+            self._efficiency_energy_start = new_energy_start
+            self._efficiency_energy_kwh += energy_increment
             self._recalculate_rate()
         except Exception:
             _LOGGER.exception("Unexpected error in update_power")
@@ -692,6 +692,10 @@ class SocTracking:
             self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
             self._efficiency_energy_start = None
             self._consecutive_zero_power = 0  # Reset hysteresis counter
+            # Reset drift pattern tracking for next charge session
+            self._consecutive_overshoots = 0
+            self._consecutive_undershoots = 0
+            self._drift_pattern_warned = False
             if self.charging_paused:
                 self.charging_paused = False
             return
@@ -731,9 +735,10 @@ class SocTracking:
                 "Charging resumed: power restored to %.0fW", self.last_power_w
             )
         # Use smoothed power for rate calculation to reduce jitter
-        power_for_rate = self.smoothed_power_w or self.last_power_w
+        power_for_rate = self.smoothed_power_w if self.smoothed_power_w is not None else self.last_power_w
         # Defensive check: ensure we have valid values before division
-        if not power_for_rate or not self.max_energy_kwh:
+        # Use explicit None check for power (0.0 is valid), but reject zero max_energy
+        if power_for_rate is None or self.max_energy_kwh is None or self.max_energy_kwh == 0:
             self.rate_per_hour = None
             return
         # Use learned efficiency if available, otherwise fall back to default
