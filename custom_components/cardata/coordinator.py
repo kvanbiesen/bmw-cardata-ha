@@ -434,11 +434,14 @@ class SocTracking:
             self.estimate(target_time)
 
             # Integrate energy for efficiency learning using trapezoidal integration
-            # (average of old and new power × time) for better accuracy during ramps
+            # (average of old and new power × time) for better accuracy during ramps.
+            # Allow integration if EITHER power is positive to capture transitions:
+            # - Ramp-down: last > 0, new = 0 → triangular area captured
+            # - Ramp-up: last = 0, new > 0 → triangular area captured
             if (
                 self.charging_active
                 and self.last_power_w is not None
-                and self.last_power_w > 0
+                and (self.last_power_w > 0 or power_w > 0)
                 and self.last_power_time is not None
             ):
                 normalized_last = self._normalize_timestamp(self.last_power_time)
