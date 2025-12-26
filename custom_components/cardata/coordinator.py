@@ -265,6 +265,11 @@ class SocTracking:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
             self._efficiency_energy_kwh = 0.0  # Start fresh energy accumulation
+            _LOGGER.debug(
+                "Efficiency learning: initialized baseline at %.1f%% SOC "
+                "(need 2+ SOC updates to learn)",
+                actual_soc,
+            )
             return
 
         # Calculate time elapsed
@@ -276,6 +281,10 @@ class SocTracking:
             self._last_efficiency_time = ts
             return
         if elapsed_hours < 0.05:  # Need at least ~3 minutes of data
+            _LOGGER.debug(
+                "Efficiency learning: skipped, only %.1f minutes elapsed (need 3+)",
+                elapsed_hours * 60,
+            )
             return
 
         # Calculate actual SOC change
