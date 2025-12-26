@@ -291,6 +291,12 @@ class SocTracking:
                 + (1 - self.EFFICIENCY_LEARN_ALPHA) * self.learned_efficiency
             )
 
+        # Clamp learned efficiency to valid bounds (can drift via EMA)
+        self.learned_efficiency = max(
+            self.EFFICIENCY_MIN,
+            min(self.EFFICIENCY_MAX, self.learned_efficiency)
+        )
+
         _LOGGER.debug(
             "Efficiency learning: observed=%.1f%%, learned=%.1f%%",
             observed_efficiency * 100,
@@ -510,6 +516,9 @@ class SocTracking:
     def _recalculate_rate(self) -> None:
         if not self.charging_active:
             self.rate_per_hour = None
+            self.smoothed_power_w = None  # Clear to avoid polluting next charge session
+            self._last_efficiency_soc = None  # Reset efficiency sampling
+            self._last_efficiency_time = None
             if self.charging_paused:
                 self.charging_paused = False
             return
@@ -522,6 +531,8 @@ class SocTracking:
             # Detect charging pause: power=0 but charging_active=true
             if not self.charging_paused and self.last_power_w == 0:
                 self.charging_paused = True
+                self._last_efficiency_soc = None  # Reset efficiency sampling on pause
+                self._last_efficiency_time = None
                 _LOGGER.debug(
                     "Charging paused: power dropped to 0 while charging active"
                 )
