@@ -87,6 +87,10 @@ class SocTracking:
     cumulative_drift: float = 0.0
     drift_corrections: int = 0
     _stale_logged: bool = False
+    # Drift direction analysis for rate adjustment diagnostics
+    _consecutive_overshoots: int = 0  # Estimate > actual consecutively
+    _consecutive_undershoots: int = 0  # Estimate < actual consecutively
+    _drift_pattern_warned: bool = False  # Avoid spamming pattern warnings
     # Adaptive efficiency learning
     learned_efficiency: Optional[float] = None  # Learned from drift patterns
     _last_efficiency_soc: Optional[float] = None  # SOC at last efficiency sample
@@ -96,6 +100,7 @@ class SocTracking:
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
     DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
     DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
+    DRIFT_PATTERN_THRESHOLD: ClassVar[int] = 3  # Consecutive same-direction drifts to warn
     # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
     # Typical EV charging efficiency is 88-95%, using 92% as conservative default
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
@@ -180,6 +185,7 @@ class SocTracking:
         # Check for drift between estimate and actual
         if self.estimated_percent is not None:
             drift = abs(self.estimated_percent - percent)
+            signed_drift = self.estimated_percent - percent  # positive = overshoot
             self.cumulative_drift += drift
             self.last_drift_check = ts
 
@@ -203,6 +209,9 @@ class SocTracking:
                     percent,
                     drift,
                 )
+
+            # Analyze drift direction pattern for rate adjustment diagnostics
+            self._analyze_drift_pattern(signed_drift)
 
         # Learn efficiency from actual vs expected SOC change during charging
         self._learn_efficiency(percent, ts)
@@ -291,6 +300,46 @@ class SocTracking:
         # Update tracking for next sample
         self._last_efficiency_soc = actual_soc
         self._last_efficiency_time = ts
+
+    def _analyze_drift_pattern(self, signed_drift: float) -> None:
+        """Analyze drift direction pattern to detect systematic rate errors."""
+        # Only analyze meaningful drift (ignore noise < 1%)
+        if abs(signed_drift) < 1.0:
+            return
+
+        if signed_drift > 0:
+            # Overshoot: estimate was too high
+            self._consecutive_overshoots += 1
+            self._consecutive_undershoots = 0
+        else:
+            # Undershoot: estimate was too low
+            self._consecutive_undershoots += 1
+            self._consecutive_overshoots = 0
+
+        # Check for systematic pattern
+        if self._consecutive_overshoots >= self.DRIFT_PATTERN_THRESHOLD:
+            if not self._drift_pattern_warned:
+                _LOGGER.info(
+                    "Systematic rate overestimate detected: %d consecutive overshoots. "
+                    "Rate may be too high (efficiency=%.0f%%, learned=%.0f%%).",
+                    self._consecutive_overshoots,
+                    self.CHARGING_EFFICIENCY * 100,
+                    (self.learned_efficiency or self.CHARGING_EFFICIENCY) * 100,
+                )
+                self._drift_pattern_warned = True
+        elif self._consecutive_undershoots >= self.DRIFT_PATTERN_THRESHOLD:
+            if not self._drift_pattern_warned:
+                _LOGGER.info(
+                    "Systematic rate underestimate detected: %d consecutive undershoots. "
+                    "Rate may be too low (efficiency=%.0f%%, learned=%.0f%%).",
+                    self._consecutive_undershoots,
+                    self.CHARGING_EFFICIENCY * 100,
+                    (self.learned_efficiency or self.CHARGING_EFFICIENCY) * 100,
+                )
+                self._drift_pattern_warned = True
+        else:
+            # Pattern broken, reset warning flag
+            self._drift_pattern_warned = False
 
     def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
         if power_w is None:
