@@ -114,6 +114,9 @@ class SocTracking:
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
             return None
+        # Fast path: already normalized to UTC, skip conversion
+        if timestamp.tzinfo is timezone.utc:
+            return timestamp
         as_utc = getattr(dt_util, "as_utc", None)
         if callable(as_utc):
             try:
