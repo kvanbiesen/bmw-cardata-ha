@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -116,9 +117,11 @@ class SocTracking:
     # Real EV charging typically tapers to 10-20% of peak power near full charge.
     BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
     ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.2  # Rate multiplier at 100% SOC (20% of peak)
-    # EMA smoothing for power readings to reduce rate jitter from noisy samples
-    # Alpha=0.3 gives ~3-5 sample smoothing window while still responding to changes
-    POWER_EMA_ALPHA: ClassVar[float] = 0.3
+    # Time-weighted EMA smoothing for power readings to reduce rate jitter.
+    # Uses time constant (tau) instead of fixed alpha to handle variable sample intervals.
+    # Alpha = 1 - exp(-dt/tau), so longer intervals get more weight on new sample.
+    # 30 seconds gives good smoothing while responding to real changes within ~1 minute.
+    POWER_EMA_TAU_SECONDS: ClassVar[float] = 30.0
     # Hysteresis for charging pause detection: require N consecutive zero readings
     # to avoid false positives from sensor noise or sampling artifacts
     PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
@@ -460,16 +463,35 @@ class SocTracking:
                     except (TypeError, OverflowError):
                         pass  # Skip integration on datetime errors
 
-            self.last_power_w = power_w
-            self.last_power_time = target_time
-            # Apply EMA smoothing to reduce rate jitter from noisy power samples
+            # Apply time-weighted EMA smoothing to reduce rate jitter from noisy power samples.
+            # Alpha varies with sample interval: alpha = 1 - exp(-dt/tau)
+            # Short intervals → small alpha (less weight on new sample)
+            # Long intervals → large alpha (more weight, approaching reset)
             if self.smoothed_power_w is None:
                 self.smoothed_power_w = power_w
+            elif self.last_power_time is not None:
+                normalized_prev = self._normalize_timestamp(self.last_power_time)
+                if normalized_prev is not None:
+                    try:
+                        dt_seconds = (target_time - normalized_prev).total_seconds()
+                        if dt_seconds > 0:
+                            alpha = 1.0 - math.exp(-dt_seconds / self.POWER_EMA_TAU_SECONDS)
+                            self.smoothed_power_w = (
+                                alpha * power_w
+                                + (1 - alpha) * self.smoothed_power_w
+                            )
+                        else:
+                            # Non-positive dt, just use new value
+                            self.smoothed_power_w = power_w
+                    except (TypeError, OverflowError):
+                        self.smoothed_power_w = power_w
+                else:
+                    self.smoothed_power_w = power_w
             else:
-                self.smoothed_power_w = (
-                    self.POWER_EMA_ALPHA * power_w
-                    + (1 - self.POWER_EMA_ALPHA) * self.smoothed_power_w
-                )
+                self.smoothed_power_w = power_w
+
+            self.last_power_w = power_w
+            self.last_power_time = target_time
             self._recalculate_rate()
         except Exception:
             _LOGGER.exception("Unexpected error in update_power")
