@@ -477,6 +477,12 @@ class SocTracking:
 
         delta_seconds = (now - self.last_estimate_time).total_seconds()
         if delta_seconds <= 0:
+            # Clock went backwards (NTP correction, DST, etc.) - reset baseline to now
+            _LOGGER.warning(
+                "Clock went backwards by %.1f seconds, resetting estimate baseline",
+                -delta_seconds,
+            )
+            self.last_estimate_time = now
             return self.estimated_percent
 
         rate = self.current_rate_per_hour()
