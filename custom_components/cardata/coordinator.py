@@ -345,18 +345,29 @@ class SocTracking:
 
     def _analyze_drift_pattern(self, signed_drift: float) -> None:
         """Analyze drift direction pattern to detect systematic rate errors."""
-        # Only analyze meaningful drift (ignore noise < 1%)
-        if abs(signed_drift) < 1.0:
-            return
+        # Noise threshold - drifts smaller than this are not statistically meaningful
+        noise_threshold = 1.0
 
-        if signed_drift > 0:
-            # Overshoot: estimate was too high
+        if signed_drift > noise_threshold:
+            # Significant overshoot: estimate was too high
             self._consecutive_overshoots += 1
             self._consecutive_undershoots = 0
-        else:
-            # Undershoot: estimate was too low
+        elif signed_drift < -noise_threshold:
+            # Significant undershoot: estimate was too low
             self._consecutive_undershoots += 1
             self._consecutive_overshoots = 0
+        else:
+            # Small drift (noise) - check if opposite direction breaks current pattern
+            if self._consecutive_overshoots > 0 and signed_drift < 0:
+                # Small undershoot breaks overshoot pattern
+                self._consecutive_overshoots = 0
+                self._drift_pattern_warned = False
+            elif self._consecutive_undershoots > 0 and signed_drift > 0:
+                # Small overshoot breaks undershoot pattern
+                self._consecutive_undershoots = 0
+                self._drift_pattern_warned = False
+            # Small same-direction drift: ignore (don't count, don't break pattern)
+            return
 
         # Check for systematic pattern
         if self._consecutive_overshoots >= self.DRIFT_PATTERN_THRESHOLD:
@@ -380,7 +391,7 @@ class SocTracking:
                 )
                 self._drift_pattern_warned = True
         else:
-            # Pattern broken, reset warning flag
+            # Pattern broken by significant opposite drift, reset warning flag
             self._drift_pattern_warned = False
 
     def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
