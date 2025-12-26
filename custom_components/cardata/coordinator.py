@@ -548,6 +548,10 @@ class SocTracking:
             )
         # Use smoothed power for rate calculation to reduce jitter
         power_for_rate = self.smoothed_power_w or self.last_power_w
+        # Defensive check: ensure we have valid values before division
+        if not power_for_rate or not self.max_energy_kwh:
+            self.rate_per_hour = None
+            return
         # Use learned efficiency if available, otherwise fall back to default
         efficiency = self.learned_efficiency or self.CHARGING_EFFICIENCY
         self.rate_per_hour = (power_for_rate / 1000.0) / \
