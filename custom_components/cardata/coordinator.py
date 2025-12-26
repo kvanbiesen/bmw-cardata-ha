@@ -112,8 +112,9 @@ class SocTracking:
     # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
     # significantly in absorption phase (80-100%) due to CC-CV charging profile.
     # Uses smooth linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC.
+    # Real EV charging typically tapers to 10-20% of peak power near full charge.
     BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
-    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.5  # Rate multiplier at 100% SOC
+    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.2  # Rate multiplier at 100% SOC (20% of peak)
     # EMA smoothing for power readings to reduce rate jitter from noisy samples
     # Alpha=0.3 gives ~3-5 sample smoothing window while still responding to changes
     POWER_EMA_ALPHA: ClassVar[float] = 0.3
