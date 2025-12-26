@@ -98,6 +98,7 @@ class SocTracking:
     _last_efficiency_soc: Optional[float] = None  # SOC at last efficiency sample
     _last_efficiency_time: Optional[datetime] = None  # Time at last efficiency sample
     _efficiency_energy_kwh: float = 0.0  # Integrated energy since last efficiency sample
+    _efficiency_energy_start: Optional[datetime] = None  # When energy started accumulating
 
     # Class-level constants for drift correction
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
@@ -261,6 +262,7 @@ class SocTracking:
             self._last_efficiency_soc = actual_soc if self.charging_active else None
             self._last_efficiency_time = ts if self.charging_active else None
             self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
             return
 
         # Need previous sample to calculate change
@@ -268,6 +270,7 @@ class SocTracking:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
             self._efficiency_energy_kwh = 0.0  # Start fresh energy accumulation
+            self._efficiency_energy_start = None
             _LOGGER.debug(
                 "Efficiency learning: initialized baseline at %.1f%% SOC "
                 "(need 2+ SOC updates to learn)",
@@ -275,18 +278,27 @@ class SocTracking:
             )
             return
 
-        # Calculate time elapsed
+        # Check if we have enough energy data (use energy window, not SOC window)
+        # This ensures the time threshold is synced with actual energy accumulation
+        if self._efficiency_energy_start is None:
+            # No energy accumulated yet - wait for power readings
+            _LOGGER.debug(
+                "Efficiency learning: skipped, no energy accumulated yet"
+            )
+            return
         try:
-            elapsed_hours = (ts - self._last_efficiency_time).total_seconds() / 3600.0
+            energy_window_hours = (ts - self._efficiency_energy_start).total_seconds() / 3600.0
         except (TypeError, OverflowError) as exc:
             _LOGGER.debug("Datetime arithmetic failed in efficiency learning: %s", exc)
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
             return
-        if elapsed_hours < 0.05:  # Need at least ~3 minutes of data
+        if energy_window_hours < 0.05:  # Need at least ~3 minutes of energy data
             _LOGGER.debug(
-                "Efficiency learning: skipped, only %.1f minutes elapsed (need 3+)",
-                elapsed_hours * 60,
+                "Efficiency learning: skipped, only %.1f minutes of energy data (need 3+)",
+                energy_window_hours * 60,
             )
             return
 
@@ -296,6 +308,7 @@ class SocTracking:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
             self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
+            self._efficiency_energy_start = None
             return
 
         # Calculate expected change using integrated energy (not instantaneous power)
@@ -304,6 +317,7 @@ class SocTracking:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
             self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
             return
         expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
 
@@ -311,6 +325,7 @@ class SocTracking:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
             self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
             return
 
         # Calculate observed efficiency
@@ -358,6 +373,7 @@ class SocTracking:
         self._last_efficiency_soc = actual_soc
         self._last_efficiency_time = ts
         self._efficiency_energy_kwh = 0.0  # Reset energy accumulator for next sample
+        self._efficiency_energy_start = None
 
     def _analyze_drift_pattern(self, signed_drift: float) -> None:
         """Analyze drift direction pattern to detect systematic rate errors."""
@@ -456,6 +472,9 @@ class SocTracking:
                     try:
                         delta_hours = (target_time - normalized_last).total_seconds() / 3600.0
                         if delta_hours > 0:
+                            # Track when energy started accumulating for this window
+                            if self._efficiency_energy_start is None:
+                                self._efficiency_energy_start = normalized_last
                             # Trapezoidal: average of old and new power (clamp new to 0 min)
                             new_power_clamped = max(power_w, 0.0)
                             avg_power_w = (self.last_power_w + new_power_clamped) / 2.0
