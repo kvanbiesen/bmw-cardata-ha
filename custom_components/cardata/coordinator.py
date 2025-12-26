@@ -313,16 +313,20 @@ class SocTracking:
         # Calculate observed efficiency
         observed_efficiency = actual_change / expected_change
 
-        # Sanity check bounds
+        # Sanity check bounds - if out of range, keep baseline and energy intact
+        # so spurious SOC readings get averaged out by the next valid observation
         if observed_efficiency < self.EFFICIENCY_MIN or observed_efficiency > self.EFFICIENCY_MAX:
             _LOGGER.debug(
-                "Observed efficiency %.1f%% outside bounds (from %.3f kWh), ignoring",
+                "Observed efficiency %.1f%% outside bounds [%.0f%%-%.0f%%] "
+                "(from %.3f kWh over %.1f%% SOC change), keeping baseline for next observation",
                 observed_efficiency * 100,
+                self.EFFICIENCY_MIN * 100,
+                self.EFFICIENCY_MAX * 100,
                 self._efficiency_energy_kwh,
+                actual_change,
             )
-            self._last_efficiency_soc = actual_soc
-            self._last_efficiency_time = ts
-            self._efficiency_energy_kwh = 0.0  # Reset for next sample
+            # Do NOT reset baselines or energy - continue accumulating until
+            # we get a valid observation that spans a longer period
             return
 
         # Blend into learned efficiency using EMA
