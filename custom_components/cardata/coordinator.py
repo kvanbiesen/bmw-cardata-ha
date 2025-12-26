@@ -468,6 +468,12 @@ class SocTracking:
             # Must be done BEFORE clearing charging_active, otherwise rate won't apply
             if self.charging_active and not new_charging_active:
                 self.estimate(datetime.now(timezone.utc))
+            # Reset efficiency tracking on charging state transitions to avoid
+            # mixing data between sessions
+            if self.charging_active != new_charging_active:
+                self._last_efficiency_soc = None
+                self._last_efficiency_time = None
+                self._efficiency_energy_kwh = 0.0
             self.charging_active = new_charging_active
             self._recalculate_rate()
         except Exception:
