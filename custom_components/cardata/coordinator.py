@@ -647,14 +647,15 @@ class SocTracking:
             # At 80% SOC (progress=0): taper = 0.2^0 = 1.0 (full rate)
             # At 100% SOC (progress=1): taper = 0.2^1 = 0.2 (minimum rate)
             current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
+            taper_range = 100.0 - self.BULK_PHASE_THRESHOLD
             if current_soc <= self.BULK_PHASE_THRESHOLD:
                 taper_factor = 1.0
-            elif current_soc >= 100.0 or self.BULK_PHASE_THRESHOLD >= 100.0:
+            elif current_soc >= 100.0 or taper_range <= 0.0:
                 # At or above 100% SOC, or threshold misconfigured - use minimum taper
                 taper_factor = self.ABSORPTION_TAPER_FACTOR
             else:
                 # Exponential decay: 1.0 at threshold -> ABSORPTION_TAPER_FACTOR at 100%
-                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / (100.0 - self.BULK_PHASE_THRESHOLD)
+                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / taper_range
                 taper_factor = self.ABSORPTION_TAPER_FACTOR ** progress
             effective_rate = rate * taper_factor
             increment = effective_rate * (delta_seconds / 3600.0)
