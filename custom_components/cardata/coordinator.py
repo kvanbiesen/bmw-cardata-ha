@@ -774,6 +774,25 @@ class CardataCoordinator:
         testing_tracking.update_power(
             self._adjust_power_for_testing(vin, effective_power), timestamp
         )
+        # Consistency check: warn if power and charging status don't match
+        self._check_power_status_consistency(vin, tracking, effective_power)
+
+    def _check_power_status_consistency(
+        self, vin: str, tracking: SocTracking, power_w: float
+    ) -> None:
+        """Log warning if power and charging status are inconsistent."""
+        # Define threshold for "meaningful" power (avoid false positives from noise)
+        min_charging_power = 100.0  # Watts
+        if tracking.charging_active and power_w < min_charging_power:
+            _LOGGER.debug(
+                "Power/status inconsistency for %s: charging_active=True but power=%.0fW",
+                vin[-6:], power_w,
+            )
+        elif not tracking.charging_active and power_w >= min_charging_power:
+            _LOGGER.debug(
+                "Power/status inconsistency for %s: charging_active=False but power=%.0fW",
+                vin[-6:], power_w,
+            )
 
     def _normalize_boolean_value(self, descriptor: str, value: Any) -> Any:
         if descriptor not in _BOOLEAN_DESCRIPTORS:
