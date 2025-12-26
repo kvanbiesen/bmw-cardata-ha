@@ -519,6 +519,8 @@ class CardataCoordinator:
         default_factory=dict, init=False)
     _avg_aux_power_w: Dict[str, float] = field(
         default_factory=dict, init=False)
+    _aux_exceeds_charging_warned: Dict[str, bool] = field(
+        default_factory=dict, init=False)  # Track if we warned about aux > charging
     _charging_power_w: Dict[str, float] = field(
         default_factory=dict, init=False)
     _direct_power_w: Dict[str, float] = field(default_factory=dict, init=False)
@@ -623,8 +625,32 @@ class CardataCoordinator:
         """Adjust power for testing by subtracting aux power. Must be called while holding _lock."""
         aux_power = self._avg_aux_power_w.get(vin)
         if aux_power is None:
+            self._aux_exceeds_charging_warned.pop(vin, None)
             return max(power_w, 0.0)
-        return max(power_w - aux_power, 0.0)
+
+        adjusted = power_w - aux_power
+
+        # Check if aux power exceeds charging power (net zero charging)
+        tracking = self._soc_tracking.get(vin)
+        is_charging = tracking and tracking.charging_active and power_w > 0
+
+        if is_charging and adjusted <= 0:
+            if not self._aux_exceeds_charging_warned.get(vin):
+                _LOGGER.warning(
+                    "Aux power exceeds charging power for %s: aux=%.0fW, charging=%.0fW "
+                    "(net charging is zero - battery not gaining charge)",
+                    vin[-6:], aux_power, power_w,
+                )
+                self._aux_exceeds_charging_warned[vin] = True
+        elif self._aux_exceeds_charging_warned.get(vin):
+            # Condition resolved
+            _LOGGER.debug(
+                "Aux power no longer exceeds charging for %s: aux=%.0fW, charging=%.0fW",
+                vin[-6:], aux_power, power_w,
+            )
+            self._aux_exceeds_charging_warned[vin] = False
+
+        return max(adjusted, 0.0)
 
     def _update_testing_power(self, vin: str, timestamp: Optional[datetime]) -> None:
         """Update testing power tracking. Must be called while holding _lock."""
