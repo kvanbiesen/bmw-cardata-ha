@@ -123,7 +123,13 @@ class SocTracking:
 
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
         """Update with actual SOC value, detecting and correcting drift."""
-        ts = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
+        # Fallback chain: parsed timestamp -> last known update -> now
+        # This prevents jumps when timestamp parsing fails
+        ts = (
+            self._normalize_timestamp(timestamp)
+            or self._normalize_timestamp(self.last_update)
+            or datetime.now(timezone.utc)
+        )
 
         # Got here = estimate is not stale, reset flag
         if self._stale_logged:
@@ -191,7 +197,13 @@ class SocTracking:
     def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
         if power_w is None:
             return
-        target_time = self._normalize_timestamp(timestamp) or datetime.now(timezone.utc)
+        # Fallback chain: parsed timestamp -> last known power time -> now
+        # This prevents jumps when timestamp parsing fails
+        target_time = (
+            self._normalize_timestamp(timestamp)
+            or self._normalize_timestamp(self.last_power_time)
+            or datetime.now(timezone.utc)
+        )
 
         # Reject out-of-order messages (stale power data arriving late)
         if self.last_power_time is not None:
