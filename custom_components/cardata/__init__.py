@@ -434,9 +434,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Bootstrap did not complete within 30 seconds. "
                     "Devices will update names when metadata arrives."
                 )
+                # Cancel the timed-out task to prevent it running in background
+                runtime_data.bootstrap_task.cancel()
+                try:
+                    await runtime_data.bootstrap_task
+                except asyncio.CancelledError:
+                    pass
+                runtime_data.bootstrap_task = None
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
                 bootstrap_error = str(err)
+                runtime_data.bootstrap_task = None
 
         # Check if we have vehicle names after bootstrap attempt
         # If bootstrap was required and explicitly failed, abort setup
