@@ -539,53 +539,56 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     domain_data = hass.data.get(DOMAIN)
     if not domain_data or entry.entry_id not in domain_data:
+        # Still clean up the lock even if no runtime data
+        cleanup_entry_lock(entry.entry_id)
         return True
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
 
-    # Stop coordinator
-    await data.coordinator.async_stop_watchdog()
+    try:
+        # Stop coordinator
+        await data.coordinator.async_stop_watchdog()
 
-    # Unload platforms
-    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        # Unload platforms
+        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    # Cancel tasks
-    data.refresh_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await data.refresh_task
-
-    if data.bootstrap_task:
-        data.bootstrap_task.cancel()
+        # Cancel tasks
+        data.refresh_task.cancel()
         with suppress(asyncio.CancelledError):
-            await data.bootstrap_task
+            await data.refresh_task
 
-    if data.telematic_task:
-        data.telematic_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.telematic_task
+        if data.bootstrap_task:
+            data.bootstrap_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await data.bootstrap_task
 
-    # Close resources
-    if data.quota_manager:
-        await data.quota_manager.async_close()
+        if data.telematic_task:
+            data.telematic_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await data.telematic_task
 
-    await data.stream.async_stop()
-    await data.session.close()
+        # Close resources
+        if data.quota_manager:
+            await data.quota_manager.async_close()
 
-    # Clean up services if this is the last entry
-    remaining_entries = [
-        k for k in domain_data.keys() if not k.startswith("_")]
-    if not remaining_entries:
-        async_unregister_services(hass)
-        domain_data.pop("_service_registered", None)
-        domain_data.pop("_registered_services", None)
+        await data.stream.async_stop()
+        await data.session.close()
 
-    if not domain_data or not remaining_entries:
-        hass.data.pop(DOMAIN, None)
+        # Clean up services if this is the last entry
+        remaining_entries = [
+            k for k in domain_data.keys() if not k.startswith("_")]
+        if not remaining_entries:
+            async_unregister_services(hass)
+            domain_data.pop("_service_registered", None)
+            domain_data.pop("_registered_services", None)
 
-    # Clean up the per-entry lock from the registry
-    cleanup_entry_lock(entry.entry_id)
+        if not domain_data or not remaining_entries:
+            hass.data.pop(DOMAIN, None)
 
-    return True
+        return True
+    finally:
+        # Always clean up the per-entry lock, even if unload fails
+        cleanup_entry_lock(entry.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
