@@ -72,6 +72,8 @@ _AUTHORIZATION_HEADER_PATTERN = re.compile(
     r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]+",
     re.IGNORECASE
 )
+# Maximum text length for regex redaction to prevent ReDoS on huge inputs
+_MAX_REDACT_INPUT_LENGTH = 10000
 
 
 def redact_sensitive_data(text: str | None) -> str:
@@ -82,6 +84,10 @@ def redact_sensitive_data(text: str | None) -> str:
     """
     if not isinstance(text, str):
         return str(text) if text is not None else ""
+
+    # Limit input length to prevent regex performance issues on huge strings
+    if len(text) > _MAX_REDACT_INPUT_LENGTH:
+        text = text[:_MAX_REDACT_INPUT_LENGTH] + "...[truncated]"
 
     # Redact Bearer tokens
     result = _AUTH_TOKEN_PATTERN.sub(r"\1[REDACTED]", text)

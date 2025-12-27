@@ -59,6 +59,34 @@ _BOOLEAN_VALUE_MAP = {
 }
 
 
+# Maximum length for raw timestamp strings to prevent memory issues
+_MAX_TIMESTAMP_STRING_LENGTH = 64
+
+
+def _sanitize_timestamp_string(timestamp: Optional[str]) -> Optional[str]:
+    """Sanitize raw timestamp string for storage.
+
+    - Limits length to prevent memory issues
+    - Validates basic ISO-8601-like format
+    - Returns None for invalid timestamps
+    """
+    if timestamp is None:
+        return None
+    if not isinstance(timestamp, str):
+        return None
+    # Limit length
+    if len(timestamp) > _MAX_TIMESTAMP_STRING_LENGTH:
+        return None
+    # Basic format validation: should look like ISO-8601 (start with digit, contain reasonable chars)
+    if not timestamp or not timestamp[0].isdigit():
+        return None
+    # Only allow characters valid in ISO-8601 timestamps
+    allowed = set("0123456789-:TZ.+ ")
+    if not all(c in allowed for c in timestamp):
+        return None
+    return timestamp
+
+
 @dataclass
 class DescriptorState:
     value: Any
@@ -105,13 +133,18 @@ class SocTracking:
     DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
     DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
     DRIFT_PATTERN_THRESHOLD: ClassVar[int] = 3  # Consecutive same-direction drifts to warn
+    # Maximum counter values to prevent unbounded memory growth from malicious inputs
+    MAX_COUNTER_VALUE: ClassVar[int] = 1000  # Cap counters at reasonable maximum
     # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
     # Typical EV charging efficiency is 88-95%, using 92% as conservative default
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
-    # Adaptive efficiency learning bounds and rate
+    # Adaptive efficiency learning bounds and time constant
     EFFICIENCY_MIN: ClassVar[float] = 0.70  # Minimum plausible efficiency (70%)
     EFFICIENCY_MAX: ClassVar[float] = 0.98  # Maximum plausible efficiency (98%)
-    EFFICIENCY_LEARN_ALPHA: ClassVar[float] = 0.2  # EMA learning rate for efficiency
+    # Time constant for efficiency learning EMA (similar to power EMA).
+    # Longer observations get more weight: alpha = 1 - exp(-dt/tau)
+    # 10 minutes balances responsiveness with stability for typical SOC update intervals.
+    EFFICIENCY_LEARN_TAU_SECONDS: ClassVar[float] = 600.0
     # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
     # significantly in absorption phase (80-100%) due to CC-CV charging profile.
     # Uses smooth linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC.
@@ -127,29 +160,48 @@ class SocTracking:
     # to avoid false positives from sensor noise or sampling artifacts
     PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
 
+    # Maximum allowed timestamp skew from current time (24 hours)
+    MAX_TIMESTAMP_SKEW_SECONDS: ClassVar[float] = 86400.0
+
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
             return None
         # Fast path: already normalized to UTC, skip conversion
         if timestamp.tzinfo is timezone.utc:
-            return timestamp
-        as_utc = getattr(dt_util, "as_utc", None)
-        if callable(as_utc):
-            try:
-                return as_utc(timestamp)
-            except (TypeError, ValueError):
+            normalized = timestamp
+        else:
+            as_utc = getattr(dt_util, "as_utc", None)
+            if callable(as_utc):
+                try:
+                    normalized = as_utc(timestamp)
+                except (TypeError, ValueError):
+                    return None
+            elif timestamp.tzinfo is None:
+                normalized = timestamp.replace(tzinfo=timezone.utc)
+            else:
+                normalized = timestamp.astimezone(timezone.utc)
+        # Reject timestamps too far from current time to prevent injection attacks
+        try:
+            now = datetime.now(timezone.utc)
+            skew = abs((normalized - now).total_seconds())
+            if skew > self.MAX_TIMESTAMP_SKEW_SECONDS:
+                _LOGGER.debug(
+                    "Rejecting timestamp with excessive skew: %s (%.0f seconds from now)",
+                    normalized.isoformat(),
+                    skew,
+                )
                 return None
-        if timestamp.tzinfo is None:
-            return timestamp.replace(tzinfo=timezone.utc)
-        return timestamp.astimezone(timezone.utc)
+        except (TypeError, OverflowError):
+            return None
+        return normalized
 
     def update_max_energy(self, value: Optional[float]) -> None:
         try:
             if value is None:
                 return
-            if value <= 0:
+            if not math.isfinite(value) or value <= 0:
                 _LOGGER.warning(
-                    "Ignoring invalid max_energy value: %.2f kWh (must be positive)",
+                    "Ignoring invalid max_energy value: %s kWh (must be finite positive)",
                     value,
                 )
                 return
@@ -157,8 +209,8 @@ class SocTracking:
             if self.last_soc_percent is not None and self.energy_kwh is None:
                 self.energy_kwh = value * self.last_soc_percent / 100.0
             self._recalculate_rate()
-        except Exception:
-            _LOGGER.exception("Unexpected error in update_max_energy")
+        except (TypeError, ValueError, ArithmeticError) as err:
+            _LOGGER.warning("Error in update_max_energy: %s", err)
 
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
         """Update with actual SOC value, detecting and correcting drift."""
@@ -188,10 +240,10 @@ class SocTracking:
                     )
                     return
 
-            # Validate percent is in valid range [0, 100]
-            if percent < 0.0 or percent > 100.0:
+            # Validate percent is finite and in valid range [0, 100]
+            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
                 _LOGGER.warning(
-                    "Ignoring invalid SOC value: %.1f%% (must be 0-100)",
+                    "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
                     percent,
                 )
                 return
@@ -203,7 +255,7 @@ class SocTracking:
                 self.last_drift_check = ts
 
                 if drift >= self.DRIFT_CORRECTION_THRESHOLD:
-                    self.drift_corrections += 1
+                    self.drift_corrections = min(self.drift_corrections + 1, self.MAX_COUNTER_VALUE)
                     _LOGGER.info(
                         "SOC estimate drift correction #%d: estimated=%.1f%% actual=%.1f%% "
                         "(drift=%.1f%%, prior_cumulative=%.1f%%)",
@@ -244,8 +296,8 @@ class SocTracking:
             # Reset estimate to actual value (correction)
             self.estimated_percent = percent
             self.last_estimate_time = ts
-        except Exception:
-            _LOGGER.exception("Unexpected error in update_actual_soc")
+        except (TypeError, ValueError, ArithmeticError, AttributeError) as err:
+            _LOGGER.warning("Error in update_actual_soc: %s", err)
 
     def _learn_efficiency(self, actual_soc: float, ts: datetime) -> None:
         """Learn charging efficiency from actual vs expected SOC change."""
@@ -321,11 +373,16 @@ class SocTracking:
             return
         expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
 
-        if expected_change <= 0:
-            self._last_efficiency_soc = actual_soc
-            self._last_efficiency_time = ts
-            self._efficiency_energy_kwh = 0.0
-            self._efficiency_energy_start = None
+        # Require minimum expected change to avoid extreme efficiency ratios from
+        # near-zero denominators (e.g., 1% actual / 0.001% expected = 1000x efficiency)
+        min_expected_change = 0.1  # At least 0.1% SOC worth of energy
+        if expected_change < min_expected_change:
+            _LOGGER.debug(
+                "Efficiency learning: expected change %.3f%% below minimum %.1f%%, skipping",
+                expected_change,
+                min_expected_change,
+            )
+            # Keep accumulating energy until we have enough for a valid measurement
             return
 
         # Calculate observed efficiency
@@ -347,14 +404,24 @@ class SocTracking:
             # we get a valid observation that spans a longer period
             return
 
-        # Blend into learned efficiency using EMA
+        # Blend into learned efficiency using time-weighted EMA
+        # Longer observation windows get more weight: alpha = 1 - exp(-dt/tau)
+        # Clamp window to reasonable range to prevent exp() edge cases
         if self.learned_efficiency is None:
             self.learned_efficiency = observed_efficiency
         else:
-            self.learned_efficiency = (
-                self.EFFICIENCY_LEARN_ALPHA * observed_efficiency
-                + (1 - self.EFFICIENCY_LEARN_ALPHA) * self.learned_efficiency
+            # Cap at 1 hour - longer windows just fully adopt new observation (alpha → 1.0)
+            clamped_window_seconds = min(max(energy_window_hours * 3600.0, 0.0), 3600.0)
+            # Guard against zero tau (shouldn't happen, but defensive)
+            tau = max(self.EFFICIENCY_LEARN_TAU_SECONDS, 1.0)
+            alpha = 1.0 - math.exp(-clamped_window_seconds / tau)
+            new_efficiency = (
+                alpha * observed_efficiency
+                + (1 - alpha) * self.learned_efficiency
             )
+            # Validate result is finite before applying
+            if math.isfinite(new_efficiency):
+                self.learned_efficiency = new_efficiency
 
         # Clamp learned efficiency to valid bounds (can drift via EMA)
         self.learned_efficiency = max(
@@ -382,11 +449,11 @@ class SocTracking:
 
         if signed_drift > noise_threshold:
             # Significant overshoot: estimate was too high
-            self._consecutive_overshoots += 1
+            self._consecutive_overshoots = min(self._consecutive_overshoots + 1, self.MAX_COUNTER_VALUE)
             self._consecutive_undershoots = 0
         elif signed_drift < -noise_threshold:
             # Significant undershoot: estimate was too low
-            self._consecutive_undershoots += 1
+            self._consecutive_undershoots = min(self._consecutive_undershoots + 1, self.MAX_COUNTER_VALUE)
             self._consecutive_overshoots = 0
         else:
             # Small drift (noise) - check if opposite direction breaks current pattern
@@ -430,6 +497,13 @@ class SocTracking:
         try:
             if power_w is None:
                 return
+            # Validate power is finite and non-negative
+            if not math.isfinite(power_w) or power_w < 0:
+                _LOGGER.warning(
+                    "Ignoring invalid power value: %s W (must be finite non-negative)",
+                    power_w,
+                )
+                return
             # Fallback chain: parsed timestamp -> last known power time -> now
             # This prevents jumps when timestamp parsing fails
             target_time = (
@@ -456,61 +530,60 @@ class SocTracking:
             # new value.
             self.estimate(target_time)
 
-            # Integrate energy for efficiency learning using trapezoidal integration
-            # (average of old and new power × time) for better accuracy during ramps.
-            # Allow integration if EITHER power is positive to capture transitions:
-            # - Ramp-down: last > 0, new = 0 → triangular area captured
-            # - Ramp-up: last = 0, new > 0 → triangular area captured
+            # Compute all new values FIRST before modifying any state.
+            # This ensures atomic-ish updates: if any computation fails, state unchanged.
+            old_smoothed = self.smoothed_power_w
+            normalized_prev = self._normalize_timestamp(self.last_power_time)
+            dt_seconds = 0.0
+            if normalized_prev is not None:
+                try:
+                    dt_seconds = (target_time - normalized_prev).total_seconds()
+                except (TypeError, OverflowError):
+                    dt_seconds = 0.0
+
+            # Compute new smoothed power (time-weighted EMA)
+            # Alpha varies with sample interval: alpha = 1 - exp(-dt/tau)
+            # Short intervals → small alpha, long intervals → large alpha
+            # Clamp dt to reasonable range to prevent exp() edge cases
+            if old_smoothed is None:
+                new_smoothed = power_w
+            elif dt_seconds > 0:
+                # Clamp to [0, 3600] - longer gaps just reset to new value (alpha → 1.0)
+                clamped_dt = min(max(dt_seconds, 0.0), 3600.0)
+                # Guard against zero tau (shouldn't happen, but defensive)
+                tau = max(self.POWER_EMA_TAU_SECONDS, 1.0)
+                alpha = 1.0 - math.exp(-clamped_dt / tau)
+                candidate = alpha * power_w + (1 - alpha) * old_smoothed
+                # Validate result is finite before applying
+                new_smoothed = candidate if math.isfinite(candidate) else power_w
+            else:
+                # Zero or negative dt (clock skew): use new value directly
+                new_smoothed = power_w
+
+            # Compute energy increment for efficiency learning (trapezoidal integration)
+            # Uses smoothed power for consistency with rate calculation
+            energy_increment = 0.0
+            new_energy_start = self._efficiency_energy_start
             if (
                 self.charging_active
-                and self.last_power_w is not None
-                and (self.last_power_w > 0 or power_w > 0)
-                and self.last_power_time is not None
+                and old_smoothed is not None
+                and (old_smoothed > 0 or new_smoothed > 0)
+                and dt_seconds > 0
             ):
-                normalized_last = self._normalize_timestamp(self.last_power_time)
-                if normalized_last is not None:
-                    try:
-                        delta_hours = (target_time - normalized_last).total_seconds() / 3600.0
-                        if delta_hours > 0:
-                            # Track when energy started accumulating for this window
-                            if self._efficiency_energy_start is None:
-                                self._efficiency_energy_start = normalized_last
-                            # Trapezoidal: average of old and new power (clamp new to 0 min)
-                            new_power_clamped = max(power_w, 0.0)
-                            avg_power_w = (self.last_power_w + new_power_clamped) / 2.0
-                            self._efficiency_energy_kwh += (avg_power_w / 1000.0) * delta_hours
-                    except (TypeError, OverflowError):
-                        pass  # Skip integration on datetime errors
+                if new_energy_start is None and normalized_prev is not None:
+                    new_energy_start = normalized_prev
+                old_clamped = max(old_smoothed, 0.0)
+                new_clamped = max(new_smoothed, 0.0)
+                avg_power_w = (old_clamped + new_clamped) / 2.0
+                delta_hours = dt_seconds / 3600.0
+                energy_increment = (avg_power_w / 1000.0) * delta_hours
 
-            # Apply time-weighted EMA smoothing to reduce rate jitter from noisy power samples.
-            # Alpha varies with sample interval: alpha = 1 - exp(-dt/tau)
-            # Short intervals → small alpha (less weight on new sample)
-            # Long intervals → large alpha (more weight, approaching reset)
-            if self.smoothed_power_w is None:
-                self.smoothed_power_w = power_w
-            elif self.last_power_time is not None:
-                normalized_prev = self._normalize_timestamp(self.last_power_time)
-                if normalized_prev is not None:
-                    try:
-                        dt_seconds = (target_time - normalized_prev).total_seconds()
-                        if dt_seconds > 0:
-                            alpha = 1.0 - math.exp(-dt_seconds / self.POWER_EMA_TAU_SECONDS)
-                            self.smoothed_power_w = (
-                                alpha * power_w
-                                + (1 - alpha) * self.smoothed_power_w
-                            )
-                        else:
-                            # Non-positive dt, just use new value
-                            self.smoothed_power_w = power_w
-                    except (TypeError, OverflowError):
-                        self.smoothed_power_w = power_w
-                else:
-                    self.smoothed_power_w = power_w
-            else:
-                self.smoothed_power_w = power_w
-
+            # All computations succeeded - now apply state updates atomically
+            self.smoothed_power_w = new_smoothed
             self.last_power_w = power_w
             self.last_power_time = target_time
+            self._efficiency_energy_start = new_energy_start
+            self._efficiency_energy_kwh += energy_increment
             self._recalculate_rate()
         except Exception:
             _LOGGER.exception("Unexpected error in update_power")
@@ -543,9 +616,9 @@ class SocTracking:
             if percent is None:
                 self.target_soc_percent = None
                 return
-            if percent < 0.0 or percent > 100.0:
+            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
                 _LOGGER.warning(
-                    "Ignoring invalid target SOC: %.1f%% (must be 0-100)",
+                    "Ignoring invalid target SOC: %s%% (must be finite 0-100)",
                     percent,
                 )
                 return
@@ -645,14 +718,15 @@ class SocTracking:
             # At 80% SOC (progress=0): taper = 0.2^0 = 1.0 (full rate)
             # At 100% SOC (progress=1): taper = 0.2^1 = 0.2 (minimum rate)
             current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
+            taper_range = 100.0 - self.BULK_PHASE_THRESHOLD
             if current_soc <= self.BULK_PHASE_THRESHOLD:
                 taper_factor = 1.0
-            elif current_soc >= 100.0 or self.BULK_PHASE_THRESHOLD >= 100.0:
+            elif current_soc >= 100.0 or taper_range <= 0.0:
                 # At or above 100% SOC, or threshold misconfigured - use minimum taper
                 taper_factor = self.ABSORPTION_TAPER_FACTOR
             else:
                 # Exponential decay: 1.0 at threshold -> ABSORPTION_TAPER_FACTOR at 100%
-                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / (100.0 - self.BULK_PHASE_THRESHOLD)
+                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / taper_range
                 taper_factor = self.ABSORPTION_TAPER_FACTOR ** progress
             effective_rate = rate * taper_factor
             increment = effective_rate * (delta_seconds / 3600.0)
@@ -688,7 +762,12 @@ class SocTracking:
             self._last_efficiency_soc = None  # Reset efficiency sampling
             self._last_efficiency_time = None
             self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
+            self._efficiency_energy_start = None
             self._consecutive_zero_power = 0  # Reset hysteresis counter
+            # Reset drift pattern tracking for next charge session
+            self._consecutive_overshoots = 0
+            self._consecutive_undershoots = 0
+            self._drift_pattern_warned = False
             if self.charging_paused:
                 self.charging_paused = False
             return
@@ -701,7 +780,7 @@ class SocTracking:
             # Detect charging pause with hysteresis: require consecutive zero readings
             # to avoid false positives from sensor noise
             if self.last_power_w == 0:
-                self._consecutive_zero_power += 1
+                self._consecutive_zero_power = min(self._consecutive_zero_power + 1, self.MAX_COUNTER_VALUE)
                 if (
                     not self.charging_paused
                     and self._consecutive_zero_power >= self.PAUSE_ZERO_COUNT_THRESHOLD
@@ -723,13 +802,15 @@ class SocTracking:
             self._last_efficiency_soc = None
             self._last_efficiency_time = None
             self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
             _LOGGER.debug(
                 "Charging resumed: power restored to %.0fW", self.last_power_w
             )
         # Use smoothed power for rate calculation to reduce jitter
-        power_for_rate = self.smoothed_power_w or self.last_power_w
+        power_for_rate = self.smoothed_power_w if self.smoothed_power_w is not None else self.last_power_w
         # Defensive check: ensure we have valid values before division
-        if not power_for_rate or not self.max_energy_kwh:
+        # Use explicit None check for power (0.0 is valid), but reject zero max_energy
+        if power_for_rate is None or self.max_energy_kwh is None or self.max_energy_kwh == 0:
             self.rate_per_hour = None
             return
         # Use learned efficiency if available, otherwise fall back to default
@@ -788,12 +869,15 @@ class CardataCoordinator:
         default_factory=dict, init=False)  # Changed to set to avoid duplicates
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
-    _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
+    _MAX_PENDING_PER_VIN: int = 100  # Max pending items per VIN to prevent unbounded growth
     _MAX_PENDING_VINS: int = 20  # Max number of VINs to track (generous limit for fleets)
+    _MAX_PENDING_TOTAL: int = 2000  # Hard cap on total pending items across all structures
     _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
     _pending_updates_started: Optional[datetime] = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
+    # Track evicted updates for diagnostics visibility
+    _evicted_updates_count: int = field(default=0, init=False)
 
     @staticmethod
     def _safe_vin_suffix(vin: Optional[str]) -> str:
@@ -833,6 +917,47 @@ class CardataCoordinator:
     @property
     def signal_metadata(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_metadata"
+
+    def _get_total_pending_count(self) -> int:
+        """Count total pending items across all structures."""
+        total = 0
+        for pending_set in self._pending_updates.values():
+            total += len(pending_set)
+        for pending_set in self._pending_new_sensors.values():
+            total += len(pending_set)
+        for pending_set in self._pending_new_binary.values():
+            total += len(pending_set)
+        return total
+
+    def _evict_oldest_pending(self) -> int:
+        """Evict oldest pending updates to make room. Returns count evicted."""
+        # Evict half of pending updates from VIN with most pending
+        if not self._pending_updates:
+            return 0
+        # Find VIN with most pending updates
+        max_vin = max(self._pending_updates.keys(),
+                      key=lambda v: len(self._pending_updates.get(v, set())))
+        pending_set = self._pending_updates.get(max_vin)
+        if not pending_set:
+            return 0
+        evict_count = max(1, len(pending_set) // 2)
+        for _ in range(evict_count):
+            if pending_set:
+                pending_set.pop()
+        # Clean up empty sets
+        if not pending_set:
+            self._pending_updates.pop(max_vin, None)
+        return evict_count
+
+    def _evict_oldest_vin_pending(self) -> int:
+        """Evict all pending updates from one VIN. Returns count evicted."""
+        if not self._pending_updates:
+            return 0
+        # Evict VIN with fewest pending (least data loss)
+        min_vin = min(self._pending_updates.keys(),
+                      key=lambda v: len(self._pending_updates.get(v, set())))
+        pending_set = self._pending_updates.pop(min_vin, set())
+        return len(pending_set)
 
     # Track dispatcher exceptions to detect recurring issues
     _dispatcher_exception_count: int = 0
@@ -1003,10 +1128,13 @@ class CardataCoordinator:
             except (TypeError, ValueError):
                 pass
             else:
-                if isinstance(unit, str) and unit.lower() == "w":
-                    aux_w = aux_value
+                if math.isfinite(aux_value):
+                    if isinstance(unit, str) and unit.lower() == "w":
+                        aux_w = aux_value
+                    else:
+                        aux_w = aux_value * 1000.0
                 else:
-                    aux_w = aux_value * 1000.0
+                    _LOGGER.warning("Ignoring invalid aux power: %s (must be finite)", aux_value)
             if aux_w is not None:
                 aux_w = max(aux_w, 0.0)
             if aux_w is None:
@@ -1043,6 +1171,9 @@ class CardataCoordinator:
         """Set direct charging power. Must be called while holding _lock."""
         if power_w is None:
             self._direct_power_w.pop(vin, None)
+        elif not math.isfinite(power_w):
+            _LOGGER.warning("Ignoring invalid direct power: %s W (must be finite)", power_w)
+            return
         else:
             self._direct_power_w[vin] = max(power_w, 0.0)
         self._apply_effective_power(vin, timestamp)
@@ -1060,9 +1191,9 @@ class CardataCoordinator:
         """Set AC voltage. Must be called while holding _lock."""
         if voltage_v is None:
             self._ac_voltage_v.pop(vin, None)
-        elif voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
+        elif not math.isfinite(voltage_v) or voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
             _LOGGER.warning(
-                "Ignoring invalid AC voltage: %.1fV (expected %d-%dV)",
+                "Ignoring invalid AC voltage: %s V (expected finite %d-%dV)",
                 voltage_v, int(self._AC_VOLTAGE_MIN), int(self._AC_VOLTAGE_MAX),
             )
             return
@@ -1076,9 +1207,9 @@ class CardataCoordinator:
         """Set AC current. Must be called while holding _lock."""
         if current_a is None:
             self._ac_current_a.pop(vin, None)
-        elif current_a < 0 or current_a > self._AC_CURRENT_MAX:
+        elif not math.isfinite(current_a) or current_a < 0 or current_a > self._AC_CURRENT_MAX:
             _LOGGER.warning(
-                "Ignoring invalid AC current: %.1fA (expected 0-%dA)",
+                "Ignoring invalid AC current: %s A (expected finite 0-%dA)",
                 current_a, int(self._AC_CURRENT_MAX),
             )
             return
@@ -1100,7 +1231,9 @@ class CardataCoordinator:
                 parsed = None
             phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
         elif isinstance(phase_value, str):
-            match = re.match(r"(\d+)", phase_value)
+            # Limit input length to prevent regex/int DoS on huge digit strings
+            truncated = phase_value[:10] if len(phase_value) > 10 else phase_value
+            match = re.match(r"(\d{1,2})", truncated)  # Max 2 digits (phase 1-3)
             if match:
                 try:
                     parsed = int(match.group(1))
@@ -1233,7 +1366,8 @@ class CardataCoordinator:
                 descriptor, descriptor_payload.get("value")
             )
             unit = normalize_unit(descriptor_payload.get("unit"))
-            timestamp = descriptor_payload.get("timestamp")
+            raw_timestamp = descriptor_payload.get("timestamp")
+            timestamp = _sanitize_timestamp_string(raw_timestamp)
             parsed_ts = None
             if timestamp and descriptor in _TIMESTAMPED_SOC_DESCRIPTORS:
                 parsed_ts = dt_util.parse_datetime(timestamp)
@@ -1269,32 +1403,45 @@ class CardataCoordinator:
                     immediate_updates.append((vin, descriptor))
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
-                    # Enforce VIN limit to prevent unbounded dict growth
+                    # Enforce hard cap on total pending items - evict oldest if at limit
+                    if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
+                        evicted = self._evict_oldest_pending()
+                        if evicted:
+                            self._evicted_updates_count += evicted
+                            _LOGGER.debug(
+                                "Total pending limit reached; evicted %d old updates",
+                                evicted,
+                            )
+                    # Enforce VIN limit - evict oldest VIN's updates if at limit
                     if vin not in self._pending_updates:
                         if len(self._pending_updates) >= self._MAX_PENDING_VINS:
-                            _LOGGER.warning(
-                                "Max pending VINs (%d) reached; dropping update for new VIN %s",
-                                self._MAX_PENDING_VINS,
-                                redact_vin(vin),
-                            )
-                            continue
+                            evicted = self._evict_oldest_vin_pending()
+                            if evicted:
+                                self._evicted_updates_count += evicted
+                                _LOGGER.debug(
+                                    "Max pending VINs reached; evicted %d updates from oldest VIN",
+                                    evicted,
+                                )
                         self._pending_updates[vin] = set()
                     pending_set = self._pending_updates[vin]
-                    # Enforce per-VIN size limit to prevent unbounded memory growth
-                    if len(pending_set) < self._MAX_PENDING_PER_VIN:
-                        pending_set.add(descriptor)
-                        schedule_debounce = True
-                        # Track when pending updates started accumulating
-                        if self._pending_updates_started is None:
-                            self._pending_updates_started = now
-                    elif descriptor not in pending_set:
-                        _LOGGER.warning(
-                            "Pending updates limit reached for VIN %s (%d items); "
-                            "dropping update for %s",
+                    # Enforce per-VIN size limit - evict half if at limit to make room
+                    if len(pending_set) >= self._MAX_PENDING_PER_VIN:
+                        evict_count = len(pending_set) // 2
+                        # Remove arbitrary items (set has no order, but this ensures room)
+                        for _ in range(evict_count):
+                            if pending_set:
+                                pending_set.pop()
+                        self._evicted_updates_count += evict_count
+                        _LOGGER.debug(
+                            "Per-VIN limit reached for %s; evicted %d old updates",
                             redact_vin(vin),
-                            len(pending_set),
-                            descriptor.split('.')[-1],
+                            evict_count,
                         )
+                    pending_set.add(descriptor)
+                    schedule_debounce = True
+                    # Track when pending updates started accumulating
+                    if self._pending_updates_started is None:
+                        self._pending_updates_started = now
                     if debug_enabled():
                         _LOGGER.debug(
                             "Added to pending: %s (total pending: %d)",
@@ -1308,7 +1455,13 @@ class CardataCoordinator:
 
         # Queue new entities for immediate notification
         if new_sensor:
-            if vin not in self._pending_new_sensors:
+            # Enforce hard cap on total pending items
+            if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
+                _LOGGER.warning(
+                    "Total pending limit (%d) reached; dropping new sensors",
+                    self._MAX_PENDING_TOTAL,
+                )
+            elif vin not in self._pending_new_sensors:
                 if len(self._pending_new_sensors) >= self._MAX_PENDING_VINS:
                     _LOGGER.warning(
                         "Max pending VINs reached for new sensors; dropping for VIN %s",
@@ -1319,13 +1472,23 @@ class CardataCoordinator:
             if vin in self._pending_new_sensors:
                 pending_sensors = self._pending_new_sensors[vin]
                 # Add items one by one to respect the limit
-                available = self._MAX_PENDING_PER_VIN - len(pending_sensors)
+                total_pending = self._get_total_pending_count()
+                available = min(
+                    self._MAX_PENDING_PER_VIN - len(pending_sensors),
+                    self._MAX_PENDING_TOTAL - total_pending,
+                )
                 for item in new_sensor[:available]:
                     pending_sensors.add(item)
                 schedule_debounce = True
 
         if new_binary:
-            if vin not in self._pending_new_binary:
+            # Enforce hard cap on total pending items
+            if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
+                _LOGGER.warning(
+                    "Total pending limit (%d) reached; dropping new binary sensors",
+                    self._MAX_PENDING_TOTAL,
+                )
+            elif vin not in self._pending_new_binary:
                 if len(self._pending_new_binary) >= self._MAX_PENDING_VINS:
                     _LOGGER.warning(
                         "Max pending VINs reached for new binary; dropping for VIN %s",
@@ -1336,7 +1499,11 @@ class CardataCoordinator:
             if vin in self._pending_new_binary:
                 pending_binary = self._pending_new_binary[vin]
                 # Add items one by one to respect the limit
-                available = self._MAX_PENDING_PER_VIN - len(pending_binary)
+                total_pending = self._get_total_pending_count()
+                available = min(
+                    self._MAX_PENDING_PER_VIN - len(pending_binary),
+                    self._MAX_PENDING_TOTAL - total_pending,
+                )
                 for item in new_binary[:available]:
                     pending_binary.add(item)
                 schedule_debounce = True
@@ -1760,6 +1927,8 @@ class CardataCoordinator:
 
         Must be called while holding _lock. Use async_restore_descriptor_state for thread-safe access.
         """
+        # Sanitize timestamp string before use
+        timestamp = _sanitize_timestamp_string(timestamp)
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
 
@@ -1831,11 +2000,11 @@ class CardataCoordinator:
         """
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         reference_time = timestamp or datetime.now(timezone.utc)
-        if estimate is not None:
+        if estimate is not None and math.isfinite(estimate):
             tracking.estimated_percent = estimate
             tracking.last_estimate_time = reference_time
             self._soc_estimate[vin] = round(estimate, 2)
-        if rate is not None:
+        if rate is not None and math.isfinite(rate):
             tracking.rate_per_hour = rate if rate != 0 else None
             if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
@@ -1864,7 +2033,7 @@ class CardataCoordinator:
         """
         tracking = self._get_testing_tracking(vin)
         reference_time = timestamp or datetime.now(timezone.utc)
-        if estimate is None:
+        if estimate is None or not math.isfinite(estimate):
             return
         tracking.estimated_percent = estimate
         tracking.last_estimate_time = reference_time

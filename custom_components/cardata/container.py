@@ -153,7 +153,7 @@ class CardataContainerManager:
                         self._entry_id,
                     )
 
-                except Exception as err:
+                except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, TypeError, ValueError) as err:
                     _LOGGER.warning(
                         "[%s] Failed to list existing containers: %s. Will attempt to create new one.",
                         self._entry_id,
@@ -334,23 +334,41 @@ class CardataContainerManager:
                 json=json_body,
                 timeout=aiohttp.ClientTimeout(total=CONTAINER_REQUEST_TIMEOUT),
             ) as response:
+                # Read body once to ensure connection cleanup, then parse
+                try:
+                    body_bytes = await response.read()
+                except (aiohttp.ClientPayloadError, aiohttp.ClientResponseError) as read_err:
+                    raise CardataContainerError(
+                        f"Failed to read response body: {read_err}",
+                        status=response.status,
+                    ) from read_err
+
+                if response.status == 204:
+                    return {}
+
                 if response.status in (200, 201):
                     try:
-                        return await response.json(content_type=None)
-                    except (json.JSONDecodeError, aiohttp.ContentTypeError) as err:
+                        return json.loads(body_bytes)
+                    except (json.JSONDecodeError, UnicodeDecodeError) as err:
                         # API returned success status but invalid/non-JSON body
-                        text = await response.text()
-                        safe_text = redact_vin_in_text(text[:200].strip()) if text else "empty"
+                        try:
+                            text = body_bytes.decode("utf-8", errors="replace")[:200].strip()
+                        except Exception:
+                            text = "undecodable"
+                        safe_text = redact_vin_in_text(text) if text else "empty"
                         raise CardataContainerError(
                             f"Invalid JSON in response: {safe_text}",
                             status=response.status,
                         ) from err
-                if response.status == 204:
-                    return {}
-                text = await response.text()
-                safe_text = redact_vin_in_text(text.strip())
+
+                # Error status - decode body for error message
+                try:
+                    text = body_bytes.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    text = ""
+                safe_text = redact_vin_in_text(text) if text else "no response body"
                 raise CardataContainerError(
-                    f"HTTP {response.status}: {safe_text or 'no response body'}",
+                    f"HTTP {response.status}: {safe_text}",
                     status=response.status,
                 )
         except asyncio.TimeoutError as err:

@@ -28,6 +28,8 @@ _LOGGER = logging.getLogger(__name__)
 MAX_AUTH_FAILURES = 3
 # How long to wait before checking if reauth completed
 REAUTH_CHECK_INTERVAL = 60.0  # seconds
+# Outer timeout for entire telematic fetch operation (allows for retries across VINs)
+TELEMATIC_FETCH_TIMEOUT = 300.0  # 5 minutes
 
 
 @dataclass
@@ -288,6 +290,15 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     "Entry %s removed, stopping telematic poll loop", entry_id)
                 return
 
+            # Verify runtime is still valid (entry not unloaded)
+            current_runtime = hass.data.get(DOMAIN, {}).get(entry_id)
+            if current_runtime is not runtime:
+                _LOGGER.debug(
+                    "Runtime changed for entry %s, stopping telematic poll loop",
+                    entry_id,
+                )
+                return
+
             # Check if reauth is in progress or too many auth failures
             # Skip polling until reauth completes to avoid wasting quota
             if runtime.reauth_in_progress or consecutive_auth_failures >= MAX_AUTH_FAILURES:
@@ -344,11 +355,31 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 )
                 last_poll_local = now
 
-            # Time to poll
-            result = await async_perform_telematic_fetch(hass, entry, runtime)
+            # Time to poll - wrap with timeout to prevent indefinite hangs
+            try:
+                result = await asyncio.wait_for(
+                    async_perform_telematic_fetch(hass, entry, runtime),
+                    timeout=TELEMATIC_FETCH_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "Telematic fetch timed out after %.0f seconds for entry %s",
+                    TELEMATIC_FETCH_TIMEOUT,
+                    entry_id,
+                )
+                result = TelematicFetchResult(False, "timeout")
             now = time.time()
             # Always update local timestamp to prevent spin, regardless of persistence success
             last_poll_local = now
+
+            # Re-fetch entry after async operation - it may have been removed
+            entry = hass.config_entries.async_get_entry(entry_id)
+            if entry is None:
+                _LOGGER.debug(
+                    "Entry %s removed during telematic fetch, stopping poll loop",
+                    entry_id,
+                )
+                return
 
             if result.status is True:
                 # Data fetched successfully
@@ -385,6 +416,14 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 # Trigger reauth flow for auth-related failures
                 if is_auth_failure:
                     from .auth import handle_stream_error
+                    # Re-fetch entry before reauth - may have been removed during backoff calc
+                    entry = hass.config_entries.async_get_entry(entry_id)
+                    if entry is None:
+                        _LOGGER.debug(
+                            "Entry %s removed before reauth trigger, stopping poll loop",
+                            entry_id,
+                        )
+                        return
                     try:
                         await handle_stream_error(hass, entry, "unauthorized")
                     except Exception as err:

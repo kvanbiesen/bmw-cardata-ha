@@ -135,7 +135,8 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         from custom_components.cardata.device_flow import request_device_code
         from custom_components.cardata.const import DEFAULT_SCOPE
 
-        assert self._client_id is not None
+        if self._client_id is None:
+            raise RuntimeError("Client ID must be set before requesting device code")
         self._code_verifier = _build_code_verifier()
         async with aiohttp.ClientSession() as session:
             self._device_data = await request_device_code(
@@ -146,9 +147,12 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             )
 
     async def async_step_authorize(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
-        assert self._client_id is not None
-        assert self._device_data is not None
-        assert self._code_verifier is not None
+        if self._client_id is None:
+            raise RuntimeError("Client ID must be set before authorization step")
+        if self._device_data is None:
+            raise RuntimeError("Device data must be set before authorization step")
+        if self._code_verifier is None:
+            raise RuntimeError("Code verifier must be set before authorization step")
 
         verification_url = self._device_data.get("verification_uri_complete")
 
@@ -212,8 +216,10 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
     async def async_step_tokens(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         from custom_components.cardata.const import DOMAIN
 
-        assert self._client_id is not None
-        assert self._token_data is not None
+        if self._client_id is None:
+            raise RuntimeError("Client ID must be set before tokens step")
+        if self._token_data is None:
+            raise RuntimeError("Token data must be set before tokens step")
         token_data = self._token_data
 
         entry_data = {

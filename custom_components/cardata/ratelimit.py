@@ -60,6 +60,11 @@ class RateLimitTracker:
             cooldown_source,
         )
 
+    # Maximum Retry-After value to accept (24 hours)
+    _MAX_RETRY_AFTER_SECONDS = 86400
+    # Maximum length of Retry-After string to parse
+    _MAX_RETRY_AFTER_LENGTH = 64
+
     def _parse_retry_after(self, retry_after: str | int | None) -> int | None:
         """Parse Retry-After header value.
 
@@ -67,19 +72,27 @@ class RateLimitTracker:
             retry_after: Value from Retry-After header (seconds or HTTP-date)
 
         Returns:
-            Cooldown in seconds, or None if parsing fails
+            Cooldown in seconds (capped at 24 hours), or None if parsing fails
         """
         if retry_after is None:
             return None
 
-        # If it's already an int, use it directly
+        # If it's already an int, validate and use it
         if isinstance(retry_after, int):
-            return retry_after if retry_after > 0 else None
+            if retry_after <= 0:
+                return None
+            return min(retry_after, self._MAX_RETRY_AFTER_SECONDS)
+
+        # Validate string length to prevent parsing DoS
+        if not isinstance(retry_after, str) or len(retry_after) > self._MAX_RETRY_AFTER_LENGTH:
+            return None
 
         # Try parsing as integer seconds
         try:
             seconds = int(retry_after)
-            return seconds if seconds > 0 else None
+            if seconds <= 0:
+                return None
+            return min(seconds, self._MAX_RETRY_AFTER_SECONDS)
         except ValueError:
             pass
 
@@ -88,8 +101,10 @@ class RateLimitTracker:
         try:
             retry_date = parsedate_to_datetime(retry_after)
             delta = retry_date.timestamp() - time.time()
-            return int(delta) if delta > 0 else None
-        except (ValueError, TypeError):
+            if delta <= 0:
+                return None
+            return min(int(delta), self._MAX_RETRY_AFTER_SECONDS)
+        except (ValueError, TypeError, OverflowError):
             _LOGGER.debug("Could not parse Retry-After header: %s", retry_after)
             return None
 

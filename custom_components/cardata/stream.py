@@ -102,7 +102,6 @@ class CardataStreamManager:
         self._connect_rc: Optional[int] = None
         # Circuit breaker persistence serialization
         self._persist_lock = asyncio.Lock()
-        self._persist_pending = False
 
     def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run coroutine from MQTT callback thread with exception logging.
@@ -119,6 +118,26 @@ class CardataStreamManager:
 
         future = asyncio.run_coroutine_threadsafe(coro, self.hass.loop)
         future.add_done_callback(_done_callback)
+
+    def _safe_loop_stop(self, client: mqtt.Client, force: bool = False) -> None:
+        """Safely stop the MQTT loop, handling any exceptions.
+
+        This ensures cleanup continues even if loop_stop() fails, preventing
+        resource leaks from zombie MQTT threads.
+        """
+        try:
+            if force:
+                client.loop_stop(force=True)
+            else:
+                client.loop_stop()
+        except Exception as err:
+            _LOGGER.warning("Error stopping MQTT loop: %s", err)
+            # Try force stop as fallback
+            if not force:
+                try:
+                    client.loop_stop(force=True)
+                except Exception:
+                    pass
 
     async def async_start(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
@@ -285,34 +304,20 @@ class CardataStreamManager:
     async def _async_persist_circuit_breaker(self) -> None:
         """Async helper to persist circuit breaker state.
 
-        Uses a lock to serialize persistence and a pending flag to coalesce
-        rapid state changes. If persistence is already in progress, marks
-        as pending so the latest state is persisted after current write completes.
+        Uses a lock to serialize persistence. Concurrent callers wait for
+        lock and then persist the latest state, ensuring no updates are lost.
         """
         from .runtime import async_update_entry_data
 
-        # If already persisting, mark as pending and return
-        # The in-progress persist will handle it
-        if self._persist_lock.locked():
-            self._persist_pending = True
-            return
-
         async with self._persist_lock:
-            while True:
-                self._persist_pending = False
-                # Get the latest state NOW, inside the lock
-                state = self.get_circuit_breaker_state()
+            # Get the latest state while holding the lock
+            state = self.get_circuit_breaker_state()
 
-                entry = self.hass.config_entries.async_get_entry(self._entry_id)
-                if entry:
-                    await async_update_entry_data(
-                        self.hass, entry, {"circuit_breaker_state": state}
-                    )
-
-                # If another persist was requested while we were writing,
-                # loop to persist the latest state
-                if not self._persist_pending:
-                    break
+            entry = self.hass.config_entries.async_get_entry(self._entry_id)
+            if entry:
+                await async_update_entry_data(
+                    self.hass, entry, {"circuit_breaker_state": state}
+                )
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress
@@ -409,11 +414,7 @@ class CardataStreamManager:
                             "Timeout waiting for BMW MQTT disconnect acknowledgement")
                 finally:
                     self._disconnect_future = None
-            try:
-                client.loop_stop()
-            except Exception as err:  # pragma: no cover - defensive logging
-                if debug_enabled():
-                    _LOGGER.debug("Error stopping BMW MQTT loop: %s", err)
+            self._safe_loop_stop(client)
 
         self._connection_state = ConnectionState.DISCONNECTED
         self._last_disconnect = time.monotonic()
@@ -505,7 +506,7 @@ class CardataStreamManager:
                     "BMW MQTT connection timed out after %.0f seconds",
                     self._connect_timeout
                 )
-                client.loop_stop()
+                self._safe_loop_stop(client)
                 self._connect_event = None
                 raise TimeoutError(
                     f"MQTT connection timed out after {self._connect_timeout} seconds"
@@ -525,14 +526,14 @@ class CardataStreamManager:
                 }
                 error_reason = error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
                 _LOGGER.error("BMW MQTT connection failed: %s", error_reason)
-                client.loop_stop()
+                self._safe_loop_stop(client)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
 
         except Exception as err:
             self._connect_event = None
             if not isinstance(err, (TimeoutError, ConnectionError)):
                 _LOGGER.error("Unable to connect to BMW MQTT: %s", err)
-                client.loop_stop()
+                self._safe_loop_stop(client)
             raise
         self._client = client
 
@@ -581,13 +582,13 @@ class CardataStreamManager:
                     _LOGGER.debug(
                         "BMW MQTT connection refused shortly after disconnect; scheduling retry"
                     )
-                client.loop_stop(force=True)
+                self._safe_loop_stop(client, force=True)
                 self._client = None
                 self._schedule_retry(3)
                 return
             _LOGGER.error("BMW MQTT connection failed: rc=%s", rc)
             self._run_coro_safe(self._handle_unauthorized())
-            client.loop_stop()
+            self._safe_loop_stop(client)
             self._client = None
             return
         else:

@@ -290,6 +290,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Create refresh loop with backoff for repeated failures
         async def refresh_loop() -> None:
+            entry_id = entry.entry_id
             consecutive_auth_failures = 0
             max_auth_failures = 3  # Trigger reauth after 3 consecutive auth failures
             base_backoff = DEFAULT_REFRESH_INTERVAL
@@ -315,11 +316,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     await asyncio.sleep(backoff)
 
+                    # Verify entry still exists after sleep
+                    current_entry = hass.config_entries.async_get_entry(entry_id)
+                    if current_entry is None:
+                        _LOGGER.debug(
+                            "Entry %s removed, stopping token refresh loop", entry_id
+                        )
+                        return
+
+                    # Verify runtime still valid
+                    if hass.data.get(DOMAIN, {}).get(entry_id) is None:
+                        _LOGGER.debug(
+                            "Runtime removed for entry %s, stopping token refresh loop",
+                            entry_id,
+                        )
+                        return
+
                     try:
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
                             refresh_tokens_for_entry(
-                                entry, session, manager, container_manager
+                                current_entry, session, manager, container_manager
                             ),
                             timeout=60.0
                         )
@@ -347,7 +364,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 "triggering reauth flow",
                                 consecutive_auth_failures,
                             )
-                            await handle_stream_error(hass, entry, "unauthorized")
+                            # Re-fetch entry in case it changed during token refresh
+                            reauth_entry = hass.config_entries.async_get_entry(entry_id)
+                            if reauth_entry:
+                                await handle_stream_error(hass, reauth_entry, "unauthorized")
                             # Continue loop but with max backoff until reauth succeeds
                             # The reauth flow will update credentials and reset state
 
@@ -414,9 +434,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Bootstrap did not complete within 30 seconds. "
                     "Devices will update names when metadata arrives."
                 )
+                # Cancel the timed-out task to prevent it running in background
+                runtime_data.bootstrap_task.cancel()
+                try:
+                    await runtime_data.bootstrap_task
+                except asyncio.CancelledError:
+                    pass
+                runtime_data.bootstrap_task = None
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
                 bootstrap_error = str(err)
+                runtime_data.bootstrap_task = None
 
         # Check if we have vehicle names after bootstrap attempt
         # If bootstrap was required and explicitly failed, abort setup
@@ -511,53 +539,56 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     domain_data = hass.data.get(DOMAIN)
     if not domain_data or entry.entry_id not in domain_data:
+        # Still clean up the lock even if no runtime data
+        cleanup_entry_lock(entry.entry_id)
         return True
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
 
-    # Stop coordinator
-    await data.coordinator.async_stop_watchdog()
+    try:
+        # Stop coordinator
+        await data.coordinator.async_stop_watchdog()
 
-    # Unload platforms
-    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        # Unload platforms
+        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    # Cancel tasks
-    data.refresh_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await data.refresh_task
-
-    if data.bootstrap_task:
-        data.bootstrap_task.cancel()
+        # Cancel tasks
+        data.refresh_task.cancel()
         with suppress(asyncio.CancelledError):
-            await data.bootstrap_task
+            await data.refresh_task
 
-    if data.telematic_task:
-        data.telematic_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.telematic_task
+        if data.bootstrap_task:
+            data.bootstrap_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await data.bootstrap_task
 
-    # Close resources
-    if data.quota_manager:
-        await data.quota_manager.async_close()
+        if data.telematic_task:
+            data.telematic_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await data.telematic_task
 
-    await data.stream.async_stop()
-    await data.session.close()
+        # Close resources
+        if data.quota_manager:
+            await data.quota_manager.async_close()
 
-    # Clean up services if this is the last entry
-    remaining_entries = [
-        k for k in domain_data.keys() if not k.startswith("_")]
-    if not remaining_entries:
-        async_unregister_services(hass)
-        domain_data.pop("_service_registered", None)
-        domain_data.pop("_registered_services", None)
+        await data.stream.async_stop()
+        await data.session.close()
 
-    if not domain_data or not remaining_entries:
-        hass.data.pop(DOMAIN, None)
+        # Clean up services if this is the last entry
+        remaining_entries = [
+            k for k in domain_data.keys() if not k.startswith("_")]
+        if not remaining_entries:
+            async_unregister_services(hass)
+            domain_data.pop("_service_registered", None)
+            domain_data.pop("_registered_services", None)
 
-    # Clean up the per-entry lock from the registry
-    cleanup_entry_lock(entry.entry_id)
+        if not domain_data or not remaining_entries:
+            hass.data.pop(DOMAIN, None)
 
-    return True
+        return True
+    finally:
+        # Always clean up the per-entry lock, even if unload fails
+        cleanup_entry_lock(entry.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

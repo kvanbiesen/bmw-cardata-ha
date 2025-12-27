@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
@@ -21,6 +22,8 @@ from .stream import CardataStreamManager
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,6 +76,8 @@ class CardataRuntimeData:
 # Per-entry lock registry to ensure consistent locking across setup and runtime
 # Maps entry_id -> asyncio.Lock
 _entry_locks: Dict[str, asyncio.Lock] = {}
+# Maximum entries to prevent unbounded growth from cleanup failures
+_MAX_ENTRY_LOCKS = 100
 
 
 def _get_entry_lock(entry_id: str) -> asyncio.Lock:
@@ -82,6 +87,14 @@ def _get_entry_lock(entry_id: str) -> asyncio.Lock:
     regardless of whether runtime data is available yet.
     """
     if entry_id not in _entry_locks:
+        # Safety cap: if we have too many locks, clear old ones
+        # This prevents unbounded memory growth if cleanup fails
+        if len(_entry_locks) >= _MAX_ENTRY_LOCKS:
+            _LOGGER.warning(
+                "Entry lock registry exceeded %d entries; clearing stale locks",
+                _MAX_ENTRY_LOCKS,
+            )
+            _entry_locks.clear()
         _entry_locks[entry_id] = asyncio.Lock()
     return _entry_locks[entry_id]
 

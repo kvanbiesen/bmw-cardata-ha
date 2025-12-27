@@ -31,6 +31,10 @@ _LOGGER = logging.getLogger(__name__)
 IMAGE_ENDPOINT = "/customers/vehicles/{vin}/image"
 
 
+# Maximum allowed path length to prevent filesystem issues
+_MAX_PATH_LENGTH = 255
+
+
 def get_images_directory(hass: HomeAssistant) -> Path:
     """Get the directory for storing vehicle images.
 
@@ -47,12 +51,30 @@ def get_image_path(hass: HomeAssistant, vin: str) -> Path | None:
 
     Returns: /config/media/cardata/{vin}.png, or None if VIN is invalid.
 
-    Security: Validates VIN format to prevent path traversal attacks.
+    Security: Validates VIN format and path length to prevent attacks.
     """
     if not is_valid_vin(vin):
         _LOGGER.warning("Invalid VIN format rejected: %s", redact_vin(vin))
         return None
-    return get_images_directory(hass) / f"{vin}.png"
+
+    images_dir = get_images_directory(hass)
+    image_path = images_dir / f"{vin}.png"
+
+    # Validate path length to prevent filesystem issues
+    if len(str(image_path)) > _MAX_PATH_LENGTH:
+        _LOGGER.warning("Image path too long, rejected")
+        return None
+
+    # Ensure resolved path stays within images directory (defense in depth)
+    try:
+        resolved = image_path.resolve()
+        if not str(resolved).startswith(str(images_dir.resolve())):
+            _LOGGER.warning("Path traversal attempt detected, rejected")
+            return None
+    except (OSError, ValueError):
+        return None
+
+    return image_path
 
 
 async def async_fetch_and_store_basic_data(
