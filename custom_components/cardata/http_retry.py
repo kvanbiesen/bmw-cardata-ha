@@ -205,7 +205,18 @@ async def async_request_with_retry(
                 request_kwargs["json"] = json_data
 
             async with session.request(method, url, **request_kwargs) as response:
-                text = await response.text()
+                # Read response body with error handling to ensure connection cleanup
+                try:
+                    text = await response.text()
+                except (aiohttp.ClientPayloadError, aiohttp.ClientResponseError, UnicodeDecodeError) as read_err:
+                    # Body read failed - log and treat as empty response
+                    _LOGGER.debug(
+                        "%s: failed to read response body: %s",
+                        context,
+                        read_err,
+                    )
+                    text = ""
+
                 log_excerpt = redact_vin_in_text(text[:200]) if text else text
                 http_response = HttpResponse(
                     status=response.status,
