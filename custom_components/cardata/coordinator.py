@@ -867,6 +867,8 @@ class CardataCoordinator:
     _pending_updates_started: Optional[datetime] = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
+    # Track evicted updates for diagnostics visibility
+    _evicted_updates_count: int = field(default=0, init=False)
 
     @staticmethod
     def _safe_vin_suffix(vin: Optional[str]) -> str:
@@ -917,6 +919,36 @@ class CardataCoordinator:
         for pending_set in self._pending_new_binary.values():
             total += len(pending_set)
         return total
+
+    def _evict_oldest_pending(self) -> int:
+        """Evict oldest pending updates to make room. Returns count evicted."""
+        # Evict half of pending updates from VIN with most pending
+        if not self._pending_updates:
+            return 0
+        # Find VIN with most pending updates
+        max_vin = max(self._pending_updates.keys(),
+                      key=lambda v: len(self._pending_updates.get(v, set())))
+        pending_set = self._pending_updates.get(max_vin)
+        if not pending_set:
+            return 0
+        evict_count = max(1, len(pending_set) // 2)
+        for _ in range(evict_count):
+            if pending_set:
+                pending_set.pop()
+        # Clean up empty sets
+        if not pending_set:
+            self._pending_updates.pop(max_vin, None)
+        return evict_count
+
+    def _evict_oldest_vin_pending(self) -> int:
+        """Evict all pending updates from one VIN. Returns count evicted."""
+        if not self._pending_updates:
+            return 0
+        # Evict VIN with fewest pending (least data loss)
+        min_vin = min(self._pending_updates.keys(),
+                      key=lambda v: len(self._pending_updates.get(v, set())))
+        pending_set = self._pending_updates.pop(min_vin, set())
+        return len(pending_set)
 
     # Track dispatcher exceptions to detect recurring issues
     _dispatcher_exception_count: int = 0
@@ -1362,39 +1394,45 @@ class CardataCoordinator:
                     immediate_updates.append((vin, descriptor))
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
-                    # Enforce hard cap on total pending items across all structures
+                    # Enforce hard cap on total pending items - evict oldest if at limit
                     if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
-                        _LOGGER.warning(
-                            "Total pending limit (%d) reached; dropping update",
-                            self._MAX_PENDING_TOTAL,
-                        )
-                        continue
-                    # Enforce VIN limit to prevent unbounded dict growth
+                        evicted = self._evict_oldest_pending()
+                        if evicted:
+                            self._evicted_updates_count += evicted
+                            _LOGGER.debug(
+                                "Total pending limit reached; evicted %d old updates",
+                                evicted,
+                            )
+                    # Enforce VIN limit - evict oldest VIN's updates if at limit
                     if vin not in self._pending_updates:
                         if len(self._pending_updates) >= self._MAX_PENDING_VINS:
-                            _LOGGER.warning(
-                                "Max pending VINs (%d) reached; dropping update for new VIN %s",
-                                self._MAX_PENDING_VINS,
-                                redact_vin(vin),
-                            )
-                            continue
+                            evicted = self._evict_oldest_vin_pending()
+                            if evicted:
+                                self._evicted_updates_count += evicted
+                                _LOGGER.debug(
+                                    "Max pending VINs reached; evicted %d updates from oldest VIN",
+                                    evicted,
+                                )
                         self._pending_updates[vin] = set()
                     pending_set = self._pending_updates[vin]
-                    # Enforce per-VIN size limit to prevent unbounded memory growth
-                    if len(pending_set) < self._MAX_PENDING_PER_VIN:
-                        pending_set.add(descriptor)
-                        schedule_debounce = True
-                        # Track when pending updates started accumulating
-                        if self._pending_updates_started is None:
-                            self._pending_updates_started = now
-                    elif descriptor not in pending_set:
-                        _LOGGER.warning(
-                            "Pending updates limit reached for VIN %s (%d items); "
-                            "dropping update for %s",
+                    # Enforce per-VIN size limit - evict half if at limit to make room
+                    if len(pending_set) >= self._MAX_PENDING_PER_VIN:
+                        evict_count = len(pending_set) // 2
+                        # Remove arbitrary items (set has no order, but this ensures room)
+                        for _ in range(evict_count):
+                            if pending_set:
+                                pending_set.pop()
+                        self._evicted_updates_count += evict_count
+                        _LOGGER.debug(
+                            "Per-VIN limit reached for %s; evicted %d old updates",
                             redact_vin(vin),
-                            len(pending_set),
-                            descriptor.split('.')[-1],
+                            evict_count,
                         )
+                    pending_set.add(descriptor)
+                    schedule_debounce = True
+                    # Track when pending updates started accumulating
+                    if self._pending_updates_started is None:
+                        self._pending_updates_started = now
                     if debug_enabled():
                         _LOGGER.debug(
                             "Added to pending: %s (total pending: %d)",
