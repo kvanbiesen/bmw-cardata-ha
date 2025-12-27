@@ -298,7 +298,9 @@ class CardataStreamManager:
             return
 
         async with self._persist_lock:
-            while True:
+            # Limit iterations to prevent runaway loop if _persist_pending keeps being set
+            max_iterations = 5
+            for _ in range(max_iterations):
                 self._persist_pending = False
                 # Get the latest state NOW, inside the lock
                 state = self.get_circuit_breaker_state()
@@ -313,6 +315,12 @@ class CardataStreamManager:
                 # loop to persist the latest state
                 if not self._persist_pending:
                     break
+            else:
+                _LOGGER.warning(
+                    "Circuit breaker persist loop hit max iterations (%d); "
+                    "state may be slightly stale",
+                    max_iterations,
+                )
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress

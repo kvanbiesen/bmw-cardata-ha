@@ -288,6 +288,15 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     "Entry %s removed, stopping telematic poll loop", entry_id)
                 return
 
+            # Verify runtime is still valid (entry not unloaded)
+            current_runtime = hass.data.get(DOMAIN, {}).get(entry_id)
+            if current_runtime is not runtime:
+                _LOGGER.debug(
+                    "Runtime changed for entry %s, stopping telematic poll loop",
+                    entry_id,
+                )
+                return
+
             # Check if reauth is in progress or too many auth failures
             # Skip polling until reauth completes to avoid wasting quota
             if runtime.reauth_in_progress or consecutive_auth_failures >= MAX_AUTH_FAILURES:

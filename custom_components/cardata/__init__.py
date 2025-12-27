@@ -290,6 +290,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Create refresh loop with backoff for repeated failures
         async def refresh_loop() -> None:
+            entry_id = entry.entry_id
             consecutive_auth_failures = 0
             max_auth_failures = 3  # Trigger reauth after 3 consecutive auth failures
             base_backoff = DEFAULT_REFRESH_INTERVAL
@@ -315,11 +316,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     await asyncio.sleep(backoff)
 
+                    # Verify entry still exists after sleep
+                    current_entry = hass.config_entries.async_get_entry(entry_id)
+                    if current_entry is None:
+                        _LOGGER.debug(
+                            "Entry %s removed, stopping token refresh loop", entry_id
+                        )
+                        return
+
+                    # Verify runtime still valid
+                    if hass.data.get(DOMAIN, {}).get(entry_id) is None:
+                        _LOGGER.debug(
+                            "Runtime removed for entry %s, stopping token refresh loop",
+                            entry_id,
+                        )
+                        return
+
                     try:
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
                             refresh_tokens_for_entry(
-                                entry, session, manager, container_manager
+                                current_entry, session, manager, container_manager
                             ),
                             timeout=60.0
                         )
@@ -347,7 +364,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 "triggering reauth flow",
                                 consecutive_auth_failures,
                             )
-                            await handle_stream_error(hass, entry, "unauthorized")
+                            # Re-fetch entry in case it changed during token refresh
+                            reauth_entry = hass.config_entries.async_get_entry(entry_id)
+                            if reauth_entry:
+                                await handle_stream_error(hass, reauth_entry, "unauthorized")
                             # Continue loop but with max backoff until reauth succeeds
                             # The reauth flow will update credentials and reset state
 
