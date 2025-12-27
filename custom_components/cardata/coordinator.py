@@ -59,6 +59,34 @@ _BOOLEAN_VALUE_MAP = {
 }
 
 
+# Maximum length for raw timestamp strings to prevent memory issues
+_MAX_TIMESTAMP_STRING_LENGTH = 64
+
+
+def _sanitize_timestamp_string(timestamp: Optional[str]) -> Optional[str]:
+    """Sanitize raw timestamp string for storage.
+
+    - Limits length to prevent memory issues
+    - Validates basic ISO-8601-like format
+    - Returns None for invalid timestamps
+    """
+    if timestamp is None:
+        return None
+    if not isinstance(timestamp, str):
+        return None
+    # Limit length
+    if len(timestamp) > _MAX_TIMESTAMP_STRING_LENGTH:
+        return None
+    # Basic format validation: should look like ISO-8601 (start with digit, contain reasonable chars)
+    if not timestamp or not timestamp[0].isdigit():
+        return None
+    # Only allow characters valid in ISO-8601 timestamps
+    allowed = set("0123456789-:TZ.+ ")
+    if not all(c in allowed for c in timestamp):
+        return None
+    return timestamp
+
+
 @dataclass
 class DescriptorState:
     value: Any
@@ -1297,7 +1325,8 @@ class CardataCoordinator:
                 descriptor, descriptor_payload.get("value")
             )
             unit = normalize_unit(descriptor_payload.get("unit"))
-            timestamp = descriptor_payload.get("timestamp")
+            raw_timestamp = descriptor_payload.get("timestamp")
+            timestamp = _sanitize_timestamp_string(raw_timestamp)
             parsed_ts = None
             if timestamp and descriptor in _TIMESTAMPED_SOC_DESCRIPTORS:
                 parsed_ts = dt_util.parse_datetime(timestamp)
@@ -1851,6 +1880,8 @@ class CardataCoordinator:
 
         Must be called while holding _lock. Use async_restore_descriptor_state for thread-safe access.
         """
+        # Sanitize timestamp string before use
+        timestamp = _sanitize_timestamp_string(timestamp)
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
 
