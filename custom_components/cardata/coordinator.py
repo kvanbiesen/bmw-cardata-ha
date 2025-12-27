@@ -150,9 +150,9 @@ class SocTracking:
         try:
             if value is None:
                 return
-            if value <= 0:
+            if not math.isfinite(value) or value <= 0:
                 _LOGGER.warning(
-                    "Ignoring invalid max_energy value: %.2f kWh (must be positive)",
+                    "Ignoring invalid max_energy value: %s kWh (must be finite positive)",
                     value,
                 )
                 return
@@ -191,10 +191,10 @@ class SocTracking:
                     )
                     return
 
-            # Validate percent is in valid range [0, 100]
-            if percent < 0.0 or percent > 100.0:
+            # Validate percent is finite and in valid range [0, 100]
+            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
                 _LOGGER.warning(
-                    "Ignoring invalid SOC value: %.1f%% (must be 0-100)",
+                    "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
                     percent,
                 )
                 return
@@ -441,6 +441,13 @@ class SocTracking:
         try:
             if power_w is None:
                 return
+            # Validate power is finite and non-negative
+            if not math.isfinite(power_w) or power_w < 0:
+                _LOGGER.warning(
+                    "Ignoring invalid power value: %s W (must be finite non-negative)",
+                    power_w,
+                )
+                return
             # Fallback chain: parsed timestamp -> last known power time -> now
             # This prevents jumps when timestamp parsing fails
             target_time = (
@@ -545,9 +552,9 @@ class SocTracking:
             if percent is None:
                 self.target_soc_percent = None
                 return
-            if percent < 0.0 or percent > 100.0:
+            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
                 _LOGGER.warning(
-                    "Ignoring invalid target SOC: %.1f%% (must be 0-100)",
+                    "Ignoring invalid target SOC: %s%% (must be finite 0-100)",
                     percent,
                 )
                 return
@@ -1013,10 +1020,13 @@ class CardataCoordinator:
             except (TypeError, ValueError):
                 pass
             else:
-                if isinstance(unit, str) and unit.lower() == "w":
-                    aux_w = aux_value
+                if math.isfinite(aux_value):
+                    if isinstance(unit, str) and unit.lower() == "w":
+                        aux_w = aux_value
+                    else:
+                        aux_w = aux_value * 1000.0
                 else:
-                    aux_w = aux_value * 1000.0
+                    _LOGGER.warning("Ignoring invalid aux power: %s (must be finite)", aux_value)
             if aux_w is not None:
                 aux_w = max(aux_w, 0.0)
             if aux_w is None:
@@ -1053,6 +1063,9 @@ class CardataCoordinator:
         """Set direct charging power. Must be called while holding _lock."""
         if power_w is None:
             self._direct_power_w.pop(vin, None)
+        elif not math.isfinite(power_w):
+            _LOGGER.warning("Ignoring invalid direct power: %s W (must be finite)", power_w)
+            return
         else:
             self._direct_power_w[vin] = max(power_w, 0.0)
         self._apply_effective_power(vin, timestamp)
@@ -1070,9 +1083,9 @@ class CardataCoordinator:
         """Set AC voltage. Must be called while holding _lock."""
         if voltage_v is None:
             self._ac_voltage_v.pop(vin, None)
-        elif voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
+        elif not math.isfinite(voltage_v) or voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
             _LOGGER.warning(
-                "Ignoring invalid AC voltage: %.1fV (expected %d-%dV)",
+                "Ignoring invalid AC voltage: %s V (expected finite %d-%dV)",
                 voltage_v, int(self._AC_VOLTAGE_MIN), int(self._AC_VOLTAGE_MAX),
             )
             return
@@ -1086,9 +1099,9 @@ class CardataCoordinator:
         """Set AC current. Must be called while holding _lock."""
         if current_a is None:
             self._ac_current_a.pop(vin, None)
-        elif current_a < 0 or current_a > self._AC_CURRENT_MAX:
+        elif not math.isfinite(current_a) or current_a < 0 or current_a > self._AC_CURRENT_MAX:
             _LOGGER.warning(
-                "Ignoring invalid AC current: %.1fA (expected 0-%dA)",
+                "Ignoring invalid AC current: %s A (expected finite 0-%dA)",
                 current_a, int(self._AC_CURRENT_MAX),
             )
             return
@@ -1841,11 +1854,11 @@ class CardataCoordinator:
         """
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         reference_time = timestamp or datetime.now(timezone.utc)
-        if estimate is not None:
+        if estimate is not None and math.isfinite(estimate):
             tracking.estimated_percent = estimate
             tracking.last_estimate_time = reference_time
             self._soc_estimate[vin] = round(estimate, 2)
-        if rate is not None:
+        if rate is not None and math.isfinite(rate):
             tracking.rate_per_hour = rate if rate != 0 else None
             if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
@@ -1874,7 +1887,7 @@ class CardataCoordinator:
         """
         tracking = self._get_testing_tracking(vin)
         reference_time = timestamp or datetime.now(timezone.utc)
-        if estimate is None:
+        if estimate is None or not math.isfinite(estimate):
             return
         tracking.estimated_percent = estimate
         tracking.last_estimate_time = reference_time
