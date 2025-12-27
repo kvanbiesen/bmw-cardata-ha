@@ -105,6 +105,8 @@ class SocTracking:
     DRIFT_WARNING_THRESHOLD: ClassVar[float] = 5.0  # Warn if estimate drifts >5% from actual
     DRIFT_CORRECTION_THRESHOLD: ClassVar[float] = 10.0  # Force correction if >10% drift
     DRIFT_PATTERN_THRESHOLD: ClassVar[int] = 3  # Consecutive same-direction drifts to warn
+    # Maximum counter values to prevent unbounded memory growth from malicious inputs
+    MAX_COUNTER_VALUE: ClassVar[int] = 1000  # Cap counters at reasonable maximum
     # Charging efficiency: not all power goes into the battery (losses to heat, BMS, etc.)
     # Typical EV charging efficiency is 88-95%, using 92% as conservative default
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
@@ -206,7 +208,7 @@ class SocTracking:
                 self.last_drift_check = ts
 
                 if drift >= self.DRIFT_CORRECTION_THRESHOLD:
-                    self.drift_corrections += 1
+                    self.drift_corrections = min(self.drift_corrections + 1, self.MAX_COUNTER_VALUE)
                     _LOGGER.info(
                         "SOC estimate drift correction #%d: estimated=%.1f%% actual=%.1f%% "
                         "(drift=%.1f%%, prior_cumulative=%.1f%%)",
@@ -393,11 +395,11 @@ class SocTracking:
 
         if signed_drift > noise_threshold:
             # Significant overshoot: estimate was too high
-            self._consecutive_overshoots += 1
+            self._consecutive_overshoots = min(self._consecutive_overshoots + 1, self.MAX_COUNTER_VALUE)
             self._consecutive_undershoots = 0
         elif signed_drift < -noise_threshold:
             # Significant undershoot: estimate was too low
-            self._consecutive_undershoots += 1
+            self._consecutive_undershoots = min(self._consecutive_undershoots + 1, self.MAX_COUNTER_VALUE)
             self._consecutive_overshoots = 0
         else:
             # Small drift (noise) - check if opposite direction breaks current pattern
@@ -716,7 +718,7 @@ class SocTracking:
             # Detect charging pause with hysteresis: require consecutive zero readings
             # to avoid false positives from sensor noise
             if self.last_power_w == 0:
-                self._consecutive_zero_power += 1
+                self._consecutive_zero_power = min(self._consecutive_zero_power + 1, self.MAX_COUNTER_VALUE)
                 if (
                     not self.charging_paused
                     and self._consecutive_zero_power >= self.PAUSE_ZERO_COUNT_THRESHOLD
