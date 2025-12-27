@@ -412,11 +412,16 @@ class SocTracking:
         else:
             # Cap at 1 hour - longer windows just fully adopt new observation (alpha → 1.0)
             clamped_window_seconds = min(max(energy_window_hours * 3600.0, 0.0), 3600.0)
-            alpha = 1.0 - math.exp(-clamped_window_seconds / self.EFFICIENCY_LEARN_TAU_SECONDS)
-            self.learned_efficiency = (
+            # Guard against zero tau (shouldn't happen, but defensive)
+            tau = max(self.EFFICIENCY_LEARN_TAU_SECONDS, 1.0)
+            alpha = 1.0 - math.exp(-clamped_window_seconds / tau)
+            new_efficiency = (
                 alpha * observed_efficiency
                 + (1 - alpha) * self.learned_efficiency
             )
+            # Validate result is finite before applying
+            if math.isfinite(new_efficiency):
+                self.learned_efficiency = new_efficiency
 
         # Clamp learned efficiency to valid bounds (can drift via EMA)
         self.learned_efficiency = max(
@@ -543,10 +548,14 @@ class SocTracking:
             if old_smoothed is None:
                 new_smoothed = power_w
             elif dt_seconds > 0:
-                # Cap at 1 hour - longer gaps just reset to new value (alpha → 1.0)
-                clamped_dt = min(dt_seconds, 3600.0)
-                alpha = 1.0 - math.exp(-clamped_dt / self.POWER_EMA_TAU_SECONDS)
-                new_smoothed = alpha * power_w + (1 - alpha) * old_smoothed
+                # Clamp to [0, 3600] - longer gaps just reset to new value (alpha → 1.0)
+                clamped_dt = min(max(dt_seconds, 0.0), 3600.0)
+                # Guard against zero tau (shouldn't happen, but defensive)
+                tau = max(self.POWER_EMA_TAU_SECONDS, 1.0)
+                alpha = 1.0 - math.exp(-clamped_dt / tau)
+                candidate = alpha * power_w + (1 - alpha) * old_smoothed
+                # Validate result is finite before applying
+                new_smoothed = candidate if math.isfinite(candidate) else power_w
             else:
                 # Zero or negative dt (clock skew): use new value directly
                 new_smoothed = power_w
