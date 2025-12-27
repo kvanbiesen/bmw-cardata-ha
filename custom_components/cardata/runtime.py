@@ -9,8 +9,6 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import aiohttp
 
-_LOGGER = logging.getLogger(__name__)
-
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .quota import QuotaManager
@@ -24,6 +22,8 @@ from .stream import CardataStreamManager
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
