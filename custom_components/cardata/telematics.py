@@ -350,6 +350,15 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # Always update local timestamp to prevent spin, regardless of persistence success
             last_poll_local = now
 
+            # Re-fetch entry after async operation - it may have been removed
+            entry = hass.config_entries.async_get_entry(entry_id)
+            if entry is None:
+                _LOGGER.debug(
+                    "Entry %s removed during telematic fetch, stopping poll loop",
+                    entry_id,
+                )
+                return
+
             if result.status is True:
                 # Data fetched successfully
                 consecutive_failures = 0
@@ -385,6 +394,14 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 # Trigger reauth flow for auth-related failures
                 if is_auth_failure:
                     from .auth import handle_stream_error
+                    # Re-fetch entry before reauth - may have been removed during backoff calc
+                    entry = hass.config_entries.async_get_entry(entry_id)
+                    if entry is None:
+                        _LOGGER.debug(
+                            "Entry %s removed before reauth trigger, stopping poll loop",
+                            entry_id,
+                        )
+                        return
                     try:
                         await handle_stream_error(hass, entry, "unauthorized")
                     except Exception as err:
