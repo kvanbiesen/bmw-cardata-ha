@@ -832,8 +832,9 @@ class CardataCoordinator:
         default_factory=dict, init=False)  # Changed to set to avoid duplicates
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
-    _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
+    _MAX_PENDING_PER_VIN: int = 100  # Max pending items per VIN to prevent unbounded growth
     _MAX_PENDING_VINS: int = 20  # Max number of VINs to track (generous limit for fleets)
+    _MAX_PENDING_TOTAL: int = 2000  # Hard cap on total pending items across all structures
     _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
     _pending_updates_started: Optional[datetime] = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
@@ -877,6 +878,17 @@ class CardataCoordinator:
     @property
     def signal_metadata(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_metadata"
+
+    def _get_total_pending_count(self) -> int:
+        """Count total pending items across all structures."""
+        total = 0
+        for pending_set in self._pending_updates.values():
+            total += len(pending_set)
+        for pending_set in self._pending_new_sensors.values():
+            total += len(pending_set)
+        for pending_set in self._pending_new_binary.values():
+            total += len(pending_set)
+        return total
 
     # Track dispatcher exceptions to detect recurring issues
     _dispatcher_exception_count: int = 0
@@ -1319,6 +1331,13 @@ class CardataCoordinator:
                     immediate_updates.append((vin, descriptor))
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
+                    # Enforce hard cap on total pending items across all structures
+                    if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
+                        _LOGGER.warning(
+                            "Total pending limit (%d) reached; dropping update",
+                            self._MAX_PENDING_TOTAL,
+                        )
+                        continue
                     # Enforce VIN limit to prevent unbounded dict growth
                     if vin not in self._pending_updates:
                         if len(self._pending_updates) >= self._MAX_PENDING_VINS:
@@ -1358,7 +1377,13 @@ class CardataCoordinator:
 
         # Queue new entities for immediate notification
         if new_sensor:
-            if vin not in self._pending_new_sensors:
+            # Enforce hard cap on total pending items
+            if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
+                _LOGGER.warning(
+                    "Total pending limit (%d) reached; dropping new sensors",
+                    self._MAX_PENDING_TOTAL,
+                )
+            elif vin not in self._pending_new_sensors:
                 if len(self._pending_new_sensors) >= self._MAX_PENDING_VINS:
                     _LOGGER.warning(
                         "Max pending VINs reached for new sensors; dropping for VIN %s",
@@ -1369,13 +1394,23 @@ class CardataCoordinator:
             if vin in self._pending_new_sensors:
                 pending_sensors = self._pending_new_sensors[vin]
                 # Add items one by one to respect the limit
-                available = self._MAX_PENDING_PER_VIN - len(pending_sensors)
+                total_pending = self._get_total_pending_count()
+                available = min(
+                    self._MAX_PENDING_PER_VIN - len(pending_sensors),
+                    self._MAX_PENDING_TOTAL - total_pending,
+                )
                 for item in new_sensor[:available]:
                     pending_sensors.add(item)
                 schedule_debounce = True
 
         if new_binary:
-            if vin not in self._pending_new_binary:
+            # Enforce hard cap on total pending items
+            if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
+                _LOGGER.warning(
+                    "Total pending limit (%d) reached; dropping new binary sensors",
+                    self._MAX_PENDING_TOTAL,
+                )
+            elif vin not in self._pending_new_binary:
                 if len(self._pending_new_binary) >= self._MAX_PENDING_VINS:
                     _LOGGER.warning(
                         "Max pending VINs reached for new binary; dropping for VIN %s",
@@ -1386,7 +1421,11 @@ class CardataCoordinator:
             if vin in self._pending_new_binary:
                 pending_binary = self._pending_new_binary[vin]
                 # Add items one by one to respect the limit
-                available = self._MAX_PENDING_PER_VIN - len(pending_binary)
+                total_pending = self._get_total_pending_count()
+                available = min(
+                    self._MAX_PENDING_PER_VIN - len(pending_binary),
+                    self._MAX_PENDING_TOTAL - total_pending,
+                )
                 for item in new_binary[:available]:
                     pending_binary.add(item)
                 schedule_debounce = True
