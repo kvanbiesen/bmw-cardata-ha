@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 import aiohttp
+
+_LOGGER = logging.getLogger(__name__)
 
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
