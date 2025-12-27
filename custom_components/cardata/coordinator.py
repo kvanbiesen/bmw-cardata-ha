@@ -132,21 +132,40 @@ class SocTracking:
     # to avoid false positives from sensor noise or sampling artifacts
     PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
 
+    # Maximum allowed timestamp skew from current time (24 hours)
+    MAX_TIMESTAMP_SKEW_SECONDS: ClassVar[float] = 86400.0
+
     def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
         if timestamp is None or not isinstance(timestamp, datetime):
             return None
         # Fast path: already normalized to UTC, skip conversion
         if timestamp.tzinfo is timezone.utc:
-            return timestamp
-        as_utc = getattr(dt_util, "as_utc", None)
-        if callable(as_utc):
-            try:
-                return as_utc(timestamp)
-            except (TypeError, ValueError):
+            normalized = timestamp
+        else:
+            as_utc = getattr(dt_util, "as_utc", None)
+            if callable(as_utc):
+                try:
+                    normalized = as_utc(timestamp)
+                except (TypeError, ValueError):
+                    return None
+            elif timestamp.tzinfo is None:
+                normalized = timestamp.replace(tzinfo=timezone.utc)
+            else:
+                normalized = timestamp.astimezone(timezone.utc)
+        # Reject timestamps too far from current time to prevent injection attacks
+        try:
+            now = datetime.now(timezone.utc)
+            skew = abs((normalized - now).total_seconds())
+            if skew > self.MAX_TIMESTAMP_SKEW_SECONDS:
+                _LOGGER.debug(
+                    "Rejecting timestamp with excessive skew: %s (%.0f seconds from now)",
+                    normalized.isoformat(),
+                    skew,
+                )
                 return None
-        if timestamp.tzinfo is None:
-            return timestamp.replace(tzinfo=timezone.utc)
-        return timestamp.astimezone(timezone.utc)
+        except (TypeError, OverflowError):
+            return None
+        return normalized
 
     def update_max_energy(self, value: Optional[float]) -> None:
         try:
