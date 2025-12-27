@@ -102,7 +102,6 @@ class CardataStreamManager:
         self._connect_rc: Optional[int] = None
         # Circuit breaker persistence serialization
         self._persist_lock = asyncio.Lock()
-        self._persist_pending = False
 
     def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run coroutine from MQTT callback thread with exception logging.
@@ -285,41 +284,19 @@ class CardataStreamManager:
     async def _async_persist_circuit_breaker(self) -> None:
         """Async helper to persist circuit breaker state.
 
-        Uses a lock to serialize persistence and a pending flag to coalesce
-        rapid state changes. If persistence is already in progress, marks
-        as pending so the latest state is persisted after current write completes.
+        Uses a lock to serialize persistence. Concurrent callers wait for
+        lock and then persist the latest state, ensuring no updates are lost.
         """
         from .runtime import async_update_entry_data
 
-        # If already persisting, mark as pending and return
-        # The in-progress persist will handle it
-        if self._persist_lock.locked():
-            self._persist_pending = True
-            return
-
         async with self._persist_lock:
-            # Limit iterations to prevent runaway loop if _persist_pending keeps being set
-            max_iterations = 5
-            for _ in range(max_iterations):
-                self._persist_pending = False
-                # Get the latest state NOW, inside the lock
-                state = self.get_circuit_breaker_state()
+            # Get the latest state while holding the lock
+            state = self.get_circuit_breaker_state()
 
-                entry = self.hass.config_entries.async_get_entry(self._entry_id)
-                if entry:
-                    await async_update_entry_data(
-                        self.hass, entry, {"circuit_breaker_state": state}
-                    )
-
-                # If another persist was requested while we were writing,
-                # loop to persist the latest state
-                if not self._persist_pending:
-                    break
-            else:
-                _LOGGER.warning(
-                    "Circuit breaker persist loop hit max iterations (%d); "
-                    "state may be slightly stale",
-                    max_iterations,
+            entry = self.hass.config_entries.async_get_entry(self._entry_id)
+            if entry:
+                await async_update_entry_data(
+                    self.hass, entry, {"circuit_breaker_state": state}
                 )
 
     async def _async_start_locked(self) -> None:
