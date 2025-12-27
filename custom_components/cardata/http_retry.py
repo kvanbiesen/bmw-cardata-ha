@@ -27,6 +27,46 @@ def _jittered_backoff(backoff: float) -> float:
     return half + random.uniform(0, half)
 
 
+# Headers we actually use - only these are preserved from responses
+_HEADER_WHITELIST = frozenset({"retry-after", "content-type", "x-request-id"})
+# Maximum length for header values to prevent memory issues
+_MAX_HEADER_VALUE_LENGTH = 256
+
+
+def _sanitize_headers(raw_headers: Any) -> Dict[str, str]:
+    """Sanitize HTTP response headers.
+
+    - Only keeps whitelisted headers we actually use
+    - Limits value length to prevent memory issues
+    - Strips control characters from values
+    """
+    if not raw_headers:
+        return {}
+
+    sanitized: Dict[str, str] = {}
+    try:
+        for key, value in raw_headers.items():
+            # Normalize key to lowercase for comparison
+            key_lower = str(key).lower()
+            if key_lower not in _HEADER_WHITELIST:
+                continue
+
+            # Convert value to string and limit length
+            str_value = str(value)[:_MAX_HEADER_VALUE_LENGTH]
+
+            # Strip control characters (keep printable ASCII and common whitespace)
+            clean_value = "".join(
+                c for c in str_value if c >= " " or c in "\t"
+            )
+
+            sanitized[key_lower] = clean_value
+    except (TypeError, AttributeError):
+        # If headers aren't iterable or don't have items(), return empty
+        return {}
+
+    return sanitized
+
+
 # HTTP status codes that should trigger a retry
 RETRYABLE_STATUS_CODES = {
     408,  # Request Timeout
@@ -170,7 +210,7 @@ async def async_request_with_retry(
                 http_response = HttpResponse(
                     status=response.status,
                     text=text,
-                    headers=dict(response.headers),
+                    headers=_sanitize_headers(response.headers),
                 )
 
                 # Success - return immediately
@@ -189,7 +229,7 @@ async def async_request_with_retry(
                 if http_response.is_rate_limited:
                     if rate_limiter:
                         # Pass Retry-After header to respect server's cooldown
-                        retry_after = http_response.headers.get("Retry-After")
+                        retry_after = http_response.headers.get("retry-after")
                         rate_limiter.record_429(endpoint=context, retry_after=retry_after)
                     _LOGGER.warning(
                         "%s rate limited (429): %s",
