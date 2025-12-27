@@ -1162,7 +1162,9 @@ class CardataCoordinator:
                 parsed = None
             phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
         elif isinstance(phase_value, str):
-            match = re.match(r"(\d+)", phase_value)
+            # Limit input length to prevent regex/int DoS on huge digit strings
+            truncated = phase_value[:10] if len(phase_value) > 10 else phase_value
+            match = re.match(r"(\d{1,2})", truncated)  # Max 2 digits (phase 1-3)
             if match:
                 try:
                     parsed = int(match.group(1))
