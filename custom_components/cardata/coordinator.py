@@ -181,8 +181,8 @@ class SocTracking:
             if self.last_soc_percent is not None and self.energy_kwh is None:
                 self.energy_kwh = value * self.last_soc_percent / 100.0
             self._recalculate_rate()
-        except Exception:
-            _LOGGER.exception("Unexpected error in update_max_energy")
+        except (TypeError, ValueError, ArithmeticError) as err:
+            _LOGGER.warning("Error in update_max_energy: %s", err)
 
     def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
         """Update with actual SOC value, detecting and correcting drift."""
@@ -268,8 +268,8 @@ class SocTracking:
             # Reset estimate to actual value (correction)
             self.estimated_percent = percent
             self.last_estimate_time = ts
-        except Exception:
-            _LOGGER.exception("Unexpected error in update_actual_soc")
+        except (TypeError, ValueError, ArithmeticError, AttributeError) as err:
+            _LOGGER.warning("Error in update_actual_soc: %s", err)
 
     def _learn_efficiency(self, actual_soc: float, ts: datetime) -> None:
         """Learn charging efficiency from actual vs expected SOC change."""
