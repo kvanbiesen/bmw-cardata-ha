@@ -359,11 +359,13 @@ class SocTracking:
 
         # Blend into learned efficiency using time-weighted EMA
         # Longer observation windows get more weight: alpha = 1 - exp(-dt/tau)
+        # Clamp window to reasonable range to prevent exp() edge cases
         if self.learned_efficiency is None:
             self.learned_efficiency = observed_efficiency
         else:
-            window_seconds = energy_window_hours * 3600.0
-            alpha = 1.0 - math.exp(-window_seconds / self.EFFICIENCY_LEARN_TAU_SECONDS)
+            # Cap at 1 hour - longer windows just fully adopt new observation (alpha → 1.0)
+            clamped_window_seconds = min(max(energy_window_hours * 3600.0, 0.0), 3600.0)
+            alpha = 1.0 - math.exp(-clamped_window_seconds / self.EFFICIENCY_LEARN_TAU_SECONDS)
             self.learned_efficiency = (
                 alpha * observed_efficiency
                 + (1 - alpha) * self.learned_efficiency
@@ -490,12 +492,16 @@ class SocTracking:
             # Compute new smoothed power (time-weighted EMA)
             # Alpha varies with sample interval: alpha = 1 - exp(-dt/tau)
             # Short intervals → small alpha, long intervals → large alpha
+            # Clamp dt to reasonable range to prevent exp() edge cases
             if old_smoothed is None:
                 new_smoothed = power_w
             elif dt_seconds > 0:
-                alpha = 1.0 - math.exp(-dt_seconds / self.POWER_EMA_TAU_SECONDS)
+                # Cap at 1 hour - longer gaps just reset to new value (alpha → 1.0)
+                clamped_dt = min(dt_seconds, 3600.0)
+                alpha = 1.0 - math.exp(-clamped_dt / self.POWER_EMA_TAU_SECONDS)
                 new_smoothed = alpha * power_w + (1 - alpha) * old_smoothed
             else:
+                # Zero or negative dt (clock skew): use new value directly
                 new_smoothed = power_w
 
             # Compute energy increment for efficiency learning (trapezoidal integration)
