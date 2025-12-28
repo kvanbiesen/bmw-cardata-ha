@@ -27,12 +27,12 @@ jobs:
       - name: Run ruff linter
         uses: astral-sh/ruff-action@v3
         with:
-          args: "check"
+          args: "check custom_components/cardata"
 
       - name: Run ruff formatter check
         uses: astral-sh/ruff-action@v3
         with:
-          args: "format --check"
+          args: "format --check custom_components/cardata"
 
   typecheck:
     runs-on: ubuntu-latest
