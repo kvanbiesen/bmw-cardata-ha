@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -68,9 +68,7 @@ async def async_perform_telematic_fetch(
     if vin_override:
         # Validate user-supplied VIN early to provide clear error
         if not is_valid_vin(vin_override):
-            _LOGGER.error(
-                "Cardata fetch_telematic_data: invalid VIN format provided"
-            )
+            _LOGGER.error("Cardata fetch_telematic_data: invalid VIN format provided")
             return TelematicFetchResult(None, "invalid_vin")
         vins = [vin_override]
     else:
@@ -97,9 +95,7 @@ async def async_perform_telematic_fetch(
                 vins.append(v)
 
     if not vins:
-        _LOGGER.error(
-            "Cardata fetch_telematic_data: no VIN available; provide vin parameter"
-        )
+        _LOGGER.error("Cardata fetch_telematic_data: no VIN available; provide vin parameter")
         # Fatal: cannot proceed without VIN
         return TelematicFetchResult(None, "no_vin")
 
@@ -130,8 +126,7 @@ async def async_perform_telematic_fetch(
 
     access_token = entry.data.get("access_token")
     if not access_token:
-        _LOGGER.error(
-            "Cardata fetch_telematic_data: access token missing")
+        _LOGGER.error("Cardata fetch_telematic_data: access token missing")
         return TelematicFetchResult(None, "missing_access_token")
 
     headers = {
@@ -228,35 +223,28 @@ async def async_perform_telematic_fetch(
             payload = response.text
         safe_payload = redact_vin_payload(payload)
 
-        _LOGGER.info("Cardata telematic data for %s: %s",
-                     redacted_vin, safe_payload)
+        _LOGGER.info("Cardata telematic data for %s: %s", redacted_vin, safe_payload)
         telematic_payload = extract_telematic_payload(payload)
 
         if isinstance(telematic_payload, dict):
-            await runtime.coordinator.async_handle_message(
-                {"vin": vin, "data": telematic_payload}
-            )
+            await runtime.coordinator.async_handle_message({"vin": vin, "data": telematic_payload})
             any_success = True
 
     # Auth failure is fatal - signal reauth needed
     if auth_failure:
-        _LOGGER.error(
-            "Cardata telematic fetch failed due to auth error - reauth may be required")
+        _LOGGER.error("Cardata telematic fetch failed due to auth error - reauth may be required")
         return TelematicFetchResult(None, "auth_error")
 
     # Update timestamp and signal if we got any data
     if any_success:
-        runtime.coordinator.last_telematic_api_at = datetime.now(timezone.utc)
-        async_dispatcher_send(
-            runtime.coordinator.hass, runtime.coordinator.signal_diagnostics
-        )
+        runtime.coordinator.last_telematic_api_at = datetime.now(UTC)
+        async_dispatcher_send(runtime.coordinator.hass, runtime.coordinator.signal_diagnostics)
         _LOGGER.info("Cardata telematic fetch succeeded for at least one VIN")
         return TelematicFetchResult(True)
 
     # If we tried but got no data, return TelematicFetchResult(False) (temporary failure)
     if any_attempt:
-        _LOGGER.warning(
-            "Cardata telematic fetch attempted but failed for all VINs")
+        _LOGGER.warning("Cardata telematic fetch attempted but failed for all VINs")
         return TelematicFetchResult(False)
 
     # Should not reach here, but be safe
@@ -267,11 +255,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     """Poll telematic data periodically with backoff on failures."""
 
     domain_entries = hass.data.get(DOMAIN, {})
-    runtime: CardataRuntimeData | None = (
-        domain_entries.get(entry_id)
-        if domain_entries
-        else None
-    )
+    runtime: CardataRuntimeData | None = domain_entries.get(entry_id) if domain_entries else None
     if runtime is None:
         return
 
@@ -289,8 +273,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # Get current entry and check if it still exists
             entry = hass.config_entries.async_get_entry(entry_id)
             if entry is None:
-                _LOGGER.debug(
-                    "Entry %s removed, stopping telematic poll loop", entry_id)
+                _LOGGER.debug("Entry %s removed, stopping telematic poll loop", entry_id)
                 return
 
             # Verify runtime is still valid (entry not unloaded)
@@ -331,11 +314,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 last_poll_local = entry.data.get("last_telematic_poll", 0.0)
 
             now = time.time()
-            backoff_interval = (
-                base_interval
-                if consecutive_failures == 0
-                else base_interval * (2 ** consecutive_failures)
-            )
+            backoff_interval = base_interval if consecutive_failures == 0 else base_interval * (2**consecutive_failures)
             interval = min(max_backoff, backoff_interval)
             wait = interval - (now - last_poll_local)
 
@@ -364,7 +343,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     async_perform_telematic_fetch(hass, entry, runtime),
                     timeout=TELEMATIC_FETCH_TIMEOUT,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _LOGGER.warning(
                     "Telematic fetch timed out after %.0f seconds for entry %s",
                     TELEMATIC_FETCH_TIMEOUT,
@@ -389,23 +368,16 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 consecutive_failures = 0
                 consecutive_auth_failures = 0  # Reset auth failures on success
                 await async_update_last_telematic_poll(hass, entry, now)
-                _LOGGER.debug(
-                    "Telematic poll succeeded for entry %s", entry_id)
+                _LOGGER.debug("Telematic poll succeeded for entry %s", entry_id)
                 continue
 
             # False or None: attempted but failed
             consecutive_failures += 1
-            is_auth_failure = result.reason in (
-                "token_refresh_failed", "auth_error", "missing_access_token"
-            )
+            is_auth_failure = result.reason in ("token_refresh_failed", "auth_error", "missing_access_token")
             if is_auth_failure:
                 consecutive_auth_failures += 1
 
-            backoff_interval = (
-                base_interval
-                if consecutive_failures == 0
-                else base_interval * (2 ** consecutive_failures)
-            )
+            backoff_interval = base_interval if consecutive_failures == 0 else base_interval * (2**consecutive_failures)
             next_interval = min(max_backoff, backoff_interval)
             await async_update_last_telematic_poll(hass, entry, now)
 
@@ -419,6 +391,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 # Trigger reauth flow for auth-related failures
                 if is_auth_failure:
                     from .auth import handle_stream_error
+
                     # Re-fetch entry before reauth - may have been removed during backoff calc
                     entry = hass.config_entries.async_get_entry(entry_id)
                     if entry is None:
@@ -430,9 +403,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     try:
                         await handle_stream_error(hass, entry, "unauthorized")
                     except Exception as err:
-                        _LOGGER.debug(
-                            "Failed to trigger reauth from telematic poll: %s", err
-                        )
+                        _LOGGER.debug("Failed to trigger reauth from telematic poll: %s", err)
             else:
                 _LOGGER.debug(
                     "Telematic poll failed (temporary) for entry %s; backing off to %.1f minutes",
@@ -445,9 +416,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
         return
 
 
-async def async_update_last_telematic_poll(
-    hass: HomeAssistant, entry: ConfigEntry, timestamp: float
-) -> None:
+async def async_update_last_telematic_poll(hass: HomeAssistant, entry: ConfigEntry, timestamp: float) -> None:
     """Update the last telematic poll timestamp."""
     existing = entry.data.get("last_telematic_poll")
     if existing and abs(existing - timestamp) < 1:

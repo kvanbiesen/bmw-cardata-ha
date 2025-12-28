@@ -41,9 +41,7 @@ DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row2.passenger.isOpen",
 )
 
-MOTION_DESCRIPTORS = (
-    "vehicle.isMoving",
-)
+MOTION_DESCRIPTORS = ("vehicle.isMoving",)
 
 
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
@@ -51,9 +49,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
 
     _attr_should_poll = False
 
-    def __init__(
-        self, coordinator: CardataCoordinator, vin: str, descriptor: str
-    ) -> None:
+    def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
@@ -102,7 +98,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         new_value = state.value
 
         # SMART FILTERING: Check if sensor's current state differs from new value
-        current_value = getattr(self, '_attr_is_on', None)
+        current_value = getattr(self, "_attr_is_on", None)
 
         # Only update HA if state actually changed or sensor is unknown
         if current_value == new_value:
@@ -164,9 +160,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     '''
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
-) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     """Set up binary sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
@@ -208,11 +202,7 @@ async def async_setup_entry(
     async def async_handle_new_binary_sensor(vin: str, descriptor: str) -> None:
         ensure_entity(vin, descriptor, from_signal=True)
 
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_new_binary, async_handle_new_binary_sensor
-        )
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_binary, async_handle_new_binary_sensor))
 
     # Note: We don't subscribe to signal_update for entity creation here.
     # - signal_new_binary handles new boolean descriptors

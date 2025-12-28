@@ -7,7 +7,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from homeassistant.core import HomeAssistant
@@ -167,7 +167,7 @@ class SocTracking:
         if timestamp is None or not isinstance(timestamp, datetime):
             return None
         # Fast path: already normalized to UTC, skip conversion
-        if timestamp.tzinfo is timezone.utc:
+        if timestamp.tzinfo is UTC:
             normalized = timestamp
         else:
             as_utc = getattr(dt_util, "as_utc", None)
@@ -177,12 +177,12 @@ class SocTracking:
                 except (TypeError, ValueError):
                     return None
             elif timestamp.tzinfo is None:
-                normalized = timestamp.replace(tzinfo=timezone.utc)
+                normalized = timestamp.replace(tzinfo=UTC)
             else:
-                normalized = timestamp.astimezone(timezone.utc)
+                normalized = timestamp.astimezone(UTC)
         # Reject timestamps too far from current time to prevent injection attacks
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             skew = abs((normalized - now).total_seconds())
             if skew > self.MAX_TIMESTAMP_SKEW_SECONDS:
                 _LOGGER.debug(
@@ -218,9 +218,7 @@ class SocTracking:
             # Fallback chain: parsed timestamp -> last known update -> now
             # This prevents jumps when timestamp parsing fails
             ts = (
-                self._normalize_timestamp(timestamp)
-                or self._normalize_timestamp(self.last_update)
-                or datetime.now(timezone.utc)
+                self._normalize_timestamp(timestamp) or self._normalize_timestamp(self.last_update) or datetime.now(UTC)
             )
 
             # Fresh actual data arrived - unconditionally reset stale flag
@@ -232,8 +230,7 @@ class SocTracking:
                 normalized_last = self._normalize_timestamp(self.last_update)
                 if normalized_last is not None and ts < normalized_last:
                     _LOGGER.debug(
-                        "Ignoring out-of-order SOC update: received=%.1f%% ts=%s, "
-                        "but already have ts=%s",
+                        "Ignoring out-of-order SOC update: received=%.1f%% ts=%s, but already have ts=%s",
                         percent,
                         ts.isoformat(),
                         normalized_last.isoformat(),
@@ -324,8 +321,7 @@ class SocTracking:
             self._efficiency_energy_kwh = 0.0  # Start fresh energy accumulation
             self._efficiency_energy_start = None
             _LOGGER.debug(
-                "Efficiency learning: initialized baseline at %.1f%% SOC "
-                "(need 2+ SOC updates to learn)",
+                "Efficiency learning: initialized baseline at %.1f%% SOC (need 2+ SOC updates to learn)",
                 actual_soc,
             )
             return
@@ -334,9 +330,7 @@ class SocTracking:
         # This ensures the time threshold is synced with actual energy accumulation
         if self._efficiency_energy_start is None:
             # No energy accumulated yet - wait for power readings
-            _LOGGER.debug(
-                "Efficiency learning: skipped, no energy accumulated yet"
-            )
+            _LOGGER.debug("Efficiency learning: skipped, no energy accumulated yet")
             return
         try:
             energy_window_hours = (ts - self._efficiency_energy_start).total_seconds() / 3600.0
@@ -415,19 +409,13 @@ class SocTracking:
             # Guard against zero tau (shouldn't happen, but defensive)
             tau = max(self.EFFICIENCY_LEARN_TAU_SECONDS, 1.0)
             alpha = 1.0 - math.exp(-clamped_window_seconds / tau)
-            new_efficiency = (
-                alpha * observed_efficiency
-                + (1 - alpha) * self.learned_efficiency
-            )
+            new_efficiency = alpha * observed_efficiency + (1 - alpha) * self.learned_efficiency
             # Validate result is finite before applying
             if math.isfinite(new_efficiency):
                 self.learned_efficiency = new_efficiency
 
         # Clamp learned efficiency to valid bounds (can drift via EMA)
-        self.learned_efficiency = max(
-            self.EFFICIENCY_MIN,
-            min(self.EFFICIENCY_MAX, self.learned_efficiency)
-        )
+        self.learned_efficiency = max(self.EFFICIENCY_MIN, min(self.EFFICIENCY_MAX, self.learned_efficiency))
 
         _LOGGER.debug(
             "Efficiency learning: observed=%.1f%% (from %.3f kWh input), learned=%.1f%%",
@@ -509,7 +497,7 @@ class SocTracking:
             target_time = (
                 self._normalize_timestamp(timestamp)
                 or self._normalize_timestamp(self.last_power_time)
-                or datetime.now(timezone.utc)
+                or datetime.now(UTC)
             )
 
             # Reject out-of-order messages (stale power data arriving late)
@@ -517,8 +505,7 @@ class SocTracking:
                 normalized_last = self._normalize_timestamp(self.last_power_time)
                 if normalized_last is not None and target_time < normalized_last:
                     _LOGGER.debug(
-                        "Ignoring out-of-order power update: received=%.0fW ts=%s, "
-                        "but already have ts=%s",
+                        "Ignoring out-of-order power update: received=%.0fW ts=%s, but already have ts=%s",
                         power_w,
                         target_time.isoformat(),
                         normalized_last.isoformat(),
@@ -592,12 +579,11 @@ class SocTracking:
         try:
             if status is None:
                 return
-            new_charging_active = status in {
-                "CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
+            new_charging_active = status in {"CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
             # Snap estimate forward when charging stops, so we don't freeze mid-way
             # Must be done BEFORE clearing charging_active, otherwise rate won't apply
             if self.charging_active and not new_charging_active:
-                self.estimate(datetime.now(timezone.utc))
+                self.estimate(datetime.now(UTC))
             # Reset efficiency tracking on charging state transitions to avoid
             # mixing data between sessions
             if self.charging_active != new_charging_active:
@@ -609,9 +595,7 @@ class SocTracking:
         except Exception:
             _LOGGER.exception("Unexpected error in update_status")
 
-    def update_target_soc(
-        self, percent: float | None, timestamp: datetime | None = None
-    ) -> None:
+    def update_target_soc(self, percent: float | None, timestamp: datetime | None = None) -> None:
         try:
             if percent is None:
                 self.target_soc_percent = None
@@ -628,7 +612,7 @@ class SocTracking:
             # (handles both target being lowered and estimate having overshot)
             if self.estimated_percent is not None and self.estimated_percent > percent:
                 self.estimated_percent = percent
-                self.last_estimate_time = normalized_ts or datetime.now(timezone.utc)
+                self.last_estimate_time = normalized_ts or datetime.now(UTC)
         except Exception:
             _LOGGER.exception("Unexpected error in update_target_soc")
 
@@ -638,7 +622,7 @@ class SocTracking:
         Returns None if estimate is stale (no actual update for MAX_ESTIMATE_AGE_SECONDS).
         """
         try:
-            now = self._normalize_timestamp(now) or datetime.now(timezone.utc)
+            now = self._normalize_timestamp(now) or datetime.now(UTC)
             if self.estimated_percent is None:
                 base = self.last_soc_percent
                 if base is None:
@@ -727,7 +711,7 @@ class SocTracking:
             else:
                 # Exponential decay: 1.0 at threshold -> ABSORPTION_TAPER_FACTOR at 100%
                 progress = (current_soc - self.BULK_PHASE_THRESHOLD) / taper_range
-                taper_factor = self.ABSORPTION_TAPER_FACTOR ** progress
+                taper_factor = self.ABSORPTION_TAPER_FACTOR**progress
             effective_rate = rate * taper_factor
             increment = effective_rate * (delta_seconds / 3600.0)
             self.estimated_percent = current_soc + increment
@@ -781,10 +765,7 @@ class SocTracking:
             # to avoid false positives from sensor noise
             if self.last_power_w == 0:
                 self._consecutive_zero_power = min(self._consecutive_zero_power + 1, self.MAX_COUNTER_VALUE)
-                if (
-                    not self.charging_paused
-                    and self._consecutive_zero_power >= self.PAUSE_ZERO_COUNT_THRESHOLD
-                ):
+                if not self.charging_paused and self._consecutive_zero_power >= self.PAUSE_ZERO_COUNT_THRESHOLD:
                     self.charging_paused = True
                     _LOGGER.debug(
                         "Charging paused: power at 0 for %d consecutive readings",
@@ -803,9 +784,7 @@ class SocTracking:
             self._last_efficiency_time = None
             self._efficiency_energy_kwh = 0.0
             self._efficiency_energy_start = None
-            _LOGGER.debug(
-                "Charging resumed: power restored to %.0fW", self.last_power_w
-            )
+            _LOGGER.debug("Charging resumed: power restored to %.0fW", self.last_power_w)
         # Use smoothed power for rate calculation to reduce jitter
         power_for_rate = self.smoothed_power_w if self.smoothed_power_w is not None else self.last_power_w
         # Defensive check: ensure we have valid values before division
@@ -815,8 +794,7 @@ class SocTracking:
             return
         # Use learned efficiency if available, otherwise fall back to default
         efficiency = self.learned_efficiency or self.CHARGING_EFFICIENCY
-        self.rate_per_hour = (power_for_rate / 1000.0) / \
-            self.max_energy_kwh * 100.0 * efficiency
+        self.rate_per_hour = (power_for_rate / 1000.0) / self.max_energy_kwh * 100.0 * efficiency
 
 
 @dataclass
@@ -831,42 +809,34 @@ class CardataCoordinator:
     connection_status: str = "connecting"
     last_disconnect_reason: str | None = None
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
-    watchdog_task: asyncio.Task | None = field(
-        default=None, init=False, repr=False)
+    watchdog_task: asyncio.Task | None = field(default=None, init=False, repr=False)
     # Lock to protect concurrent access to data, names, device_metadata, and SOC tracking dicts
-    _lock: asyncio.Lock = field(
-        default_factory=asyncio.Lock, init=False, repr=False)
-    _soc_tracking: dict[str, SocTracking] = field(
-        default_factory=dict, init=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _soc_tracking: dict[str, SocTracking] = field(default_factory=dict, init=False)
     _soc_rate: dict[str, float] = field(default_factory=dict, init=False)
     _soc_estimate: dict[str, float] = field(default_factory=dict, init=False)
-    _testing_soc_tracking: dict[str, SocTracking] = field(
-        default_factory=dict, init=False
-    )
-    _testing_soc_estimate: dict[str, float] = field(
-        default_factory=dict, init=False)
-    _avg_aux_power_w: dict[str, float] = field(
-        default_factory=dict, init=False)
+    _testing_soc_tracking: dict[str, SocTracking] = field(default_factory=dict, init=False)
+    _testing_soc_estimate: dict[str, float] = field(default_factory=dict, init=False)
+    _avg_aux_power_w: dict[str, float] = field(default_factory=dict, init=False)
     _aux_exceeds_charging_warned: dict[str, bool] = field(
-        default_factory=dict, init=False)  # Track if we warned about aux > charging
-    _charging_power_w: dict[str, float] = field(
-        default_factory=dict, init=False)
+        default_factory=dict, init=False
+    )  # Track if we warned about aux > charging
+    _charging_power_w: dict[str, float] = field(default_factory=dict, init=False)
     _direct_power_w: dict[str, float] = field(default_factory=dict, init=False)
     _ac_voltage_v: dict[str, float] = field(default_factory=dict, init=False)
     _ac_current_a: dict[str, float] = field(default_factory=dict, init=False)
     _ac_phase_count: dict[str, int] = field(default_factory=dict, init=False)
 
     # Debouncing fields (NEW!)
-    _update_debounce_handle: asyncio.TimerHandle | None = field(
-        default=None, init=False)
-    _debounce_lock: asyncio.Lock = field(
-        default_factory=asyncio.Lock, init=False, repr=False)
-    _pending_updates: dict[str, set[str]] = field(
-        default_factory=dict, init=False)  # {vin: {descriptors}}
+    _update_debounce_handle: asyncio.TimerHandle | None = field(default=None, init=False)
+    _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _pending_updates: dict[str, set[str]] = field(default_factory=dict, init=False)  # {vin: {descriptors}}
     _pending_new_sensors: dict[str, set[str]] = field(
-        default_factory=dict, init=False)  # Changed to set to avoid duplicates
+        default_factory=dict, init=False
+    )  # Changed to set to avoid duplicates
     _pending_new_binary: dict[str, set[str]] = field(
-        default_factory=dict, init=False)  # Changed to set to avoid duplicates
+        default_factory=dict, init=False
+    )  # Changed to set to avoid duplicates
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
     _MAX_PENDING_PER_VIN: int = 100  # Max pending items per VIN to prevent unbounded growth
@@ -935,8 +905,7 @@ class CardataCoordinator:
         if not self._pending_updates:
             return 0
         # Find VIN with most pending updates
-        max_vin = max(self._pending_updates.keys(),
-                      key=lambda v: len(self._pending_updates.get(v, set())))
+        max_vin = max(self._pending_updates.keys(), key=lambda v: len(self._pending_updates.get(v, set())))
         pending_set = self._pending_updates.get(max_vin)
         if not pending_set:
             return 0
@@ -954,8 +923,7 @@ class CardataCoordinator:
         if not self._pending_updates:
             return 0
         # Evict VIN with fewest pending (least data loss)
-        min_vin = min(self._pending_updates.keys(),
-                      key=lambda v: len(self._pending_updates.get(v, set())))
+        min_vin = min(self._pending_updates.keys(), key=lambda v: len(self._pending_updates.get(v, set())))
         pending_set = self._pending_updates.pop(min_vin, set())
         return len(pending_set)
 
@@ -980,9 +948,7 @@ class CardataCoordinator:
                 self._dispatcher_exception_count = 0
         except Exception as err:
             self._dispatcher_exception_count += 1
-            _LOGGER.exception(
-                "Exception in dispatcher signal %s handler: %s", signal, err
-            )
+            _LOGGER.exception("Exception in dispatcher signal %s handler: %s", signal, err)
 
             # Warn if exceptions are recurring
             if self._dispatcher_exception_count == self._DISPATCHER_EXCEPTION_THRESHOLD:
@@ -1018,14 +984,18 @@ class CardataCoordinator:
                 _LOGGER.warning(
                     "Aux power exceeds charging power for %s: aux=%.0fW, charging=%.0fW "
                     "(net charging is zero - battery not gaining charge)",
-                    self._safe_vin_suffix(vin), aux_power, power_w,
+                    self._safe_vin_suffix(vin),
+                    aux_power,
+                    power_w,
                 )
                 self._aux_exceeds_charging_warned[vin] = True
         elif self._aux_exceeds_charging_warned.get(vin):
             # Condition resolved
             _LOGGER.debug(
                 "Aux power no longer exceeds charging for %s: aux=%.0fW, charging=%.0fW",
-                self._safe_vin_suffix(vin), aux_power, power_w,
+                self._safe_vin_suffix(vin),
+                aux_power,
+                power_w,
             )
             self._aux_exceeds_charging_warned[vin] = False
 
@@ -1037,9 +1007,7 @@ class CardataCoordinator:
         if raw_power is None:
             return
         testing_tracking = self._get_testing_tracking(vin)
-        testing_tracking.update_power(
-            self._adjust_power_for_testing(vin, raw_power), timestamp
-        )
+        testing_tracking.update_power(self._adjust_power_for_testing(vin, raw_power), timestamp)
 
     def _update_soc_tracking_for_descriptor(
         self,
@@ -1165,9 +1133,7 @@ class CardataCoordinator:
 
         return False
 
-    def _set_direct_power(
-        self, vin: str, power_w: float | None, timestamp: datetime | None
-    ) -> None:
+    def _set_direct_power(self, vin: str, power_w: float | None, timestamp: datetime | None) -> None:
         """Set direct charging power. Must be called while holding _lock."""
         if power_w is None:
             self._direct_power_w.pop(vin, None)
@@ -1185,41 +1151,38 @@ class CardataCoordinator:
     _AC_PHASE_MAX: int = 3  # Maximum valid phases
     _AC_POWER_MAX_W: float = 22000.0  # Maximum AC power (22kW) - highest onboard charger
 
-    def _set_ac_voltage(
-        self, vin: str, voltage_v: float | None, timestamp: datetime | None
-    ) -> None:
+    def _set_ac_voltage(self, vin: str, voltage_v: float | None, timestamp: datetime | None) -> None:
         """Set AC voltage. Must be called while holding _lock."""
         if voltage_v is None:
             self._ac_voltage_v.pop(vin, None)
         elif not math.isfinite(voltage_v) or voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
             _LOGGER.warning(
                 "Ignoring invalid AC voltage: %s V (expected finite %d-%dV)",
-                voltage_v, int(self._AC_VOLTAGE_MIN), int(self._AC_VOLTAGE_MAX),
+                voltage_v,
+                int(self._AC_VOLTAGE_MIN),
+                int(self._AC_VOLTAGE_MAX),
             )
             return
         else:
             self._ac_voltage_v[vin] = voltage_v
         self._apply_effective_power(vin, timestamp)
 
-    def _set_ac_current(
-        self, vin: str, current_a: float | None, timestamp: datetime | None
-    ) -> None:
+    def _set_ac_current(self, vin: str, current_a: float | None, timestamp: datetime | None) -> None:
         """Set AC current. Must be called while holding _lock."""
         if current_a is None:
             self._ac_current_a.pop(vin, None)
         elif not math.isfinite(current_a) or current_a < 0 or current_a > self._AC_CURRENT_MAX:
             _LOGGER.warning(
                 "Ignoring invalid AC current: %s A (expected finite 0-%dA)",
-                current_a, int(self._AC_CURRENT_MAX),
+                current_a,
+                int(self._AC_CURRENT_MAX),
             )
             return
         else:
             self._ac_current_a[vin] = current_a
         self._apply_effective_power(vin, timestamp)
 
-    def _set_ac_phase(
-        self, vin: str, phase_value: Any | None, timestamp: datetime | None
-    ) -> None:
+    def _set_ac_phase(self, vin: str, phase_value: Any | None, timestamp: datetime | None) -> None:
         """Set AC phase count. Must be called while holding _lock."""
         phase_count: int | None = None
         if phase_value is None:
@@ -1245,7 +1208,8 @@ class CardataCoordinator:
             if phase_value is not None:
                 _LOGGER.warning(
                     "Ignoring invalid AC phase count: %s (expected 1-%d)",
-                    phase_value, self._AC_PHASE_MAX,
+                    phase_value,
+                    self._AC_PHASE_MAX,
                 )
                 return
         else:
@@ -1263,7 +1227,11 @@ class CardataCoordinator:
         if derived > self._AC_POWER_MAX_W:
             _LOGGER.warning(
                 "Derived AC power exceeds maximum: %.0fW (V=%.1f, A=%.1f, phases=%d) > %.0fW max",
-                derived, voltage, current, phases, self._AC_POWER_MAX_W,
+                derived,
+                voltage,
+                current,
+                phases,
+                self._AC_POWER_MAX_W,
             )
             return None
         return max(derived, 0.0)
@@ -1275,9 +1243,7 @@ class CardataCoordinator:
             return direct
         return self._derive_ac_power(vin)
 
-    def _apply_effective_power(
-        self, vin: str, timestamp: datetime | None
-    ) -> None:
+    def _apply_effective_power(self, vin: str, timestamp: datetime | None) -> None:
         """Apply effective power to SOC tracking. Must be called while holding _lock."""
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
         testing_tracking = self._get_testing_tracking(vin)
@@ -1287,27 +1253,25 @@ class CardataCoordinator:
             return
         self._charging_power_w[vin] = effective_power
         tracking.update_power(effective_power, timestamp)
-        testing_tracking.update_power(
-            self._adjust_power_for_testing(vin, effective_power), timestamp
-        )
+        testing_tracking.update_power(self._adjust_power_for_testing(vin, effective_power), timestamp)
         # Consistency check: warn if power and charging status don't match
         self._check_power_status_consistency(vin, tracking, effective_power)
 
-    def _check_power_status_consistency(
-        self, vin: str, tracking: SocTracking, power_w: float
-    ) -> None:
+    def _check_power_status_consistency(self, vin: str, tracking: SocTracking, power_w: float) -> None:
         """Log warning if power and charging status are inconsistent."""
         # Define threshold for "meaningful" power (avoid false positives from noise)
         min_charging_power = 100.0  # Watts
         if tracking.charging_active and power_w < min_charging_power:
             _LOGGER.debug(
                 "Power/status inconsistency for %s: charging_active=True but power=%.0fW",
-                self._safe_vin_suffix(vin), power_w,
+                self._safe_vin_suffix(vin),
+                power_w,
             )
         elif not tracking.charging_active and power_w >= min_charging_power:
             _LOGGER.debug(
                 "Power/status inconsistency for %s: charging_active=False but power=%.0fW",
-                self._safe_vin_suffix(vin), power_w,
+                self._safe_vin_suffix(vin),
+                power_w,
             )
 
     def _normalize_boolean_value(self, descriptor: str, value: Any) -> Any:
@@ -1330,9 +1294,7 @@ class CardataCoordinator:
             return
 
         async with self._lock:
-            immediate_updates, schedule_debounce = await self._async_handle_message_locked(
-                payload, vin, data
-            )
+            immediate_updates, schedule_debounce = await self._async_handle_message_locked(payload, vin, data)
 
         for update_vin, descriptor in immediate_updates:
             self._safe_dispatcher_send(self.signal_update, update_vin, descriptor)
@@ -1351,20 +1313,17 @@ class CardataCoordinator:
         immediate_updates: list[tuple[str, str]] = []
         schedule_debounce = False
 
-        self.last_message_at = datetime.now(timezone.utc)
+        self.last_message_at = datetime.now(UTC)
 
         if debug_enabled():
-            _LOGGER.debug("Processing message for VIN %s: %s",
-                          redacted_vin, list(data.keys()))
+            _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for descriptor, descriptor_payload in data.items():
             if not isinstance(descriptor_payload, dict):
                 continue
-            value = self._normalize_boolean_value(
-                descriptor, descriptor_payload.get("value")
-            )
+            value = self._normalize_boolean_value(descriptor, descriptor_payload.get("value"))
             unit = normalize_unit(descriptor_payload.get("unit"))
             raw_timestamp = descriptor_payload.get("timestamp")
             timestamp = _sanitize_timestamp_string(raw_timestamp)
@@ -1372,8 +1331,7 @@ class CardataCoordinator:
             if timestamp and descriptor in _TIMESTAMPED_SOC_DESCRIPTORS:
                 parsed_ts = dt_util.parse_datetime(timestamp)
             if value is None:
-                self._update_soc_tracking_for_descriptor(
-                    vin, descriptor, None, unit, parsed_ts)
+                self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
                 continue
             is_new = descriptor not in vehicle_state
 
@@ -1382,11 +1340,9 @@ class CardataCoordinator:
             if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
                 value_changed = True
             else:
-                value_changed = is_new or self._is_significant_change(
-                    vin, descriptor, value)
+                value_changed = is_new or self._is_significant_change(vin, descriptor, value)
 
-            vehicle_state[descriptor] = DescriptorState(
-                value=value, unit=unit, timestamp=timestamp)
+            vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
 
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
@@ -1445,13 +1401,12 @@ class CardataCoordinator:
                     if debug_enabled():
                         _LOGGER.debug(
                             "Added to pending: %s (total pending: %d)",
-                            descriptor.split('.')[-1],  # Just the last part
-                            len(pending_set)
+                            descriptor.split(".")[-1],  # Just the last part
+                            len(pending_set),
                         )
 
             # Update SOC tracking for relevant descriptors
-            self._update_soc_tracking_for_descriptor(
-                vin, descriptor, value, unit, parsed_ts)
+            self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
 
         # Queue new entities for immediate notification
         if new_sensor:
@@ -1555,9 +1510,7 @@ class CardataCoordinator:
 
             # Schedule new update with 5 second delay
             self._update_debounce_handle = async_call_later(
-                self.hass,
-                self._DEBOUNCE_SECONDS,
-                self._execute_debounced_update
+                self.hass, self._DEBOUNCE_SECONDS, self._execute_debounced_update
             )
 
     async def _execute_debounced_update(self, _now=None) -> None:
@@ -1566,12 +1519,10 @@ class CardataCoordinator:
             self._update_debounce_handle = None
         if debug_enabled():
             pending_count = sum(len(d) for d in self._pending_updates.values())
-            _LOGGER.debug(
-                "Debounce timer fired, pending items: %d", pending_count)
+            _LOGGER.debug("Debounce timer fired, pending items: %d", pending_count)
             if pending_count > 0:
                 for vin, descriptors in self._pending_updates.items():
-                    _LOGGER.debug("   VIN %s: %s", redact_vin(
-                        vin), list(descriptors)[:5])
+                    _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
 
         # Snapshot and clear pending updates atomically
         updates_to_process = dict(self._pending_updates)
@@ -1583,12 +1534,9 @@ class CardataCoordinator:
         self._pending_updates_started = None  # Reset staleness tracking
 
         if debug_enabled():
-            total_updates = sum(len(descriptors)
-                                for descriptors in updates_to_process.values())
-            total_new_sensors = sum(len(descriptors)
-                                    for descriptors in new_sensors_to_process.values())
-            total_new_binary = sum(len(descriptors)
-                                   for descriptors in new_binary_to_process.values())
+            total_updates = sum(len(descriptors) for descriptors in updates_to_process.values())
+            total_new_sensors = sum(len(descriptors) for descriptors in new_sensors_to_process.values())
+            total_new_binary = sum(len(descriptors) for descriptors in new_binary_to_process.values())
             _LOGGER.debug(
                 "Debounced coordinator update executed: %d updates, %d new sensors, %d new binary",
                 total_updates,
@@ -1599,19 +1547,16 @@ class CardataCoordinator:
         # Send batched updates for changed descriptors
         for vin, update_descriptors in updates_to_process.items():
             for descriptor in update_descriptors:
-                self._safe_dispatcher_send(
-                    self.signal_update, vin, descriptor)
+                self._safe_dispatcher_send(self.signal_update, vin, descriptor)
 
         # Send new entity notifications
         for vin, sensor_descriptors in new_sensors_to_process.items():
             for descriptor in sensor_descriptors:
-                self._safe_dispatcher_send(
-                    self.signal_new_sensor, vin, descriptor)
+                self._safe_dispatcher_send(self.signal_new_sensor, vin, descriptor)
 
         for vin, binary_descriptors in new_binary_to_process.items():
             for descriptor in binary_descriptors:
-                self._safe_dispatcher_send(
-                    self.signal_new_binary, vin, descriptor)
+                self._safe_dispatcher_send(self.signal_new_binary, vin, descriptor)
 
         # Send diagnostics update
         self._safe_dispatcher_send(self.signal_diagnostics)
@@ -1639,11 +1584,7 @@ class CardataCoordinator:
 
             # Return a defensive copy. Access all attributes in one expression
             # to minimize window for concurrent state object replacement.
-            return DescriptorState(
-                value=state.value,
-                unit=state.unit,
-                timestamp=state.timestamp
-            )
+            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
         except (KeyError, RuntimeError, AttributeError, TypeError):
             # Handle edge cases where data structure changes during access:
             # - KeyError: dict key removed between check and access
@@ -1690,9 +1631,7 @@ class CardataCoordinator:
                         result.append((vin, descriptor))
             return result
 
-    async def async_handle_connection_event(
-        self, status: str, reason: str | None = None
-    ) -> None:
+    async def async_handle_connection_event(self, status: str, reason: str | None = None) -> None:
         self.connection_status = status
         if reason:
             self.last_disconnect_reason = reason
@@ -1742,7 +1681,7 @@ class CardataCoordinator:
                 self.last_disconnect_reason,
                 self.last_message_at,
             )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         updated_vins: list[str] = []
         async with self._lock:
             for vin in list(self._soc_tracking.keys()):
@@ -1775,8 +1714,7 @@ class CardataCoordinator:
             pending_count = sum(len(d) for d in self._pending_updates.values())
             if pending_count > 0:
                 _LOGGER.warning(
-                    "Clearing %d stale pending updates (age: %.1fs, max: %.1fs) - "
-                    "debounce timer may have failed",
+                    "Clearing %d stale pending updates (age: %.1fs, max: %.1fs) - debounce timer may have failed",
                     pending_count,
                     age_seconds,
                     self._MAX_PENDING_AGE_SECONDS,
@@ -1841,8 +1779,7 @@ class CardataCoordinator:
         if not tracking:
             removed_estimate = self._soc_estimate.pop(vin, None) is not None
             removed_rate = self._soc_rate.pop(vin, None) is not None
-            testing_removed = self._testing_soc_estimate.pop(
-                vin, None) is not None
+            testing_removed = self._testing_soc_estimate.pop(vin, None) is not None
             if vin in self._testing_soc_tracking:
                 self._testing_soc_tracking.pop(vin, None)
             self._avg_aux_power_w.pop(vin, None)
@@ -1934,8 +1871,7 @@ class CardataCoordinator:
 
         # Handle None values
         if value is None:
-            self._update_soc_tracking_for_descriptor(
-                vin, descriptor, None, unit, parsed_ts)
+            self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
             return
 
         # Store descriptor state
@@ -1959,8 +1895,7 @@ class CardataCoordinator:
         )
 
         # Update SOC tracking
-        updated = self._update_soc_tracking_for_descriptor(
-            vin, descriptor, value, unit, parsed_ts)
+        updated = self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
 
         if not updated:
             return
@@ -1980,9 +1915,7 @@ class CardataCoordinator:
                 self._soc_rate.pop(vin, None)
 
         if testing_tracking and testing_tracking.estimated_percent is not None:
-            self._testing_soc_estimate[vin] = round(
-                testing_tracking.estimated_percent, 2
-            )
+            self._testing_soc_estimate[vin] = round(testing_tracking.estimated_percent, 2)
         elif vin in self._testing_soc_estimate:
             self._testing_soc_estimate.pop(vin, None)
 
@@ -1999,7 +1932,7 @@ class CardataCoordinator:
         Must be called while holding _lock. Use async_restore_soc_cache for thread-safe access.
         """
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
-        reference_time = timestamp or datetime.now(timezone.utc)
+        reference_time = timestamp or datetime.now(UTC)
         if estimate is not None and math.isfinite(estimate):
             tracking.estimated_percent = estimate
             tracking.last_estimate_time = reference_time
@@ -2013,9 +1946,7 @@ class CardataCoordinator:
                 # only by actual status updates from the vehicle. The rate is stored but
                 # won't be used for estimation until a status update confirms charging.
                 if tracking.max_energy_kwh is not None and tracking.max_energy_kwh != 0:
-                    tracking.last_power_w = (
-                        tracking.rate_per_hour / 100.0
-                    ) * tracking.max_energy_kwh * 1000.0
+                    tracking.last_power_w = (tracking.rate_per_hour / 100.0) * tracking.max_energy_kwh * 1000.0
                 tracking.last_power_time = reference_time
             else:
                 self._soc_rate.pop(vin, None)
@@ -2032,7 +1963,7 @@ class CardataCoordinator:
         Must be called while holding _lock. Use async_restore_testing_soc_cache for thread-safe access.
         """
         tracking = self._get_testing_tracking(vin)
-        reference_time = timestamp or datetime.now(timezone.utc)
+        reference_time = timestamp or datetime.now(UTC)
         if estimate is None or not math.isfinite(estimate):
             return
         tracking.estimated_percent = estimate
@@ -2049,8 +1980,7 @@ class CardataCoordinator:
     ) -> None:
         """Thread-safe async version of restore_descriptor_state."""
         async with self._lock:
-            self.restore_descriptor_state(
-                vin, descriptor, value, unit, timestamp)
+            self.restore_descriptor_state(vin, descriptor, value, unit, timestamp)
 
     async def async_restore_soc_cache(
         self,
@@ -2062,8 +1992,7 @@ class CardataCoordinator:
     ) -> None:
         """Thread-safe async version of restore_soc_cache."""
         async with self._lock:
-            self.restore_soc_cache(
-                vin, estimate=estimate, rate=rate, timestamp=timestamp)
+            self.restore_soc_cache(vin, estimate=estimate, rate=rate, timestamp=timestamp)
 
     async def async_restore_testing_soc_cache(
         self,
@@ -2074,26 +2003,18 @@ class CardataCoordinator:
     ) -> None:
         """Thread-safe async version of restore_testing_soc_cache."""
         async with self._lock:
-            self.restore_testing_soc_cache(
-                vin, estimate=estimate, timestamp=timestamp)
+            self.restore_testing_soc_cache(vin, estimate=estimate, timestamp=timestamp)
 
     @staticmethod
     def _build_device_metadata(vin: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             return {}
-        model_name = (
-            payload.get("modelName")
-            or payload.get("modelRange")
-            or payload.get("series")
-            or vin
-        )
+        model_name = payload.get("modelName") or payload.get("modelRange") or payload.get("series") or vin
         brand = payload.get("brand") or "BMW"
         raw_payload = dict(payload)
         charging_modes = raw_payload.get("chargingModes") or []
         if isinstance(charging_modes, list):
-            charging_modes_text = ", ".join(
-                str(item) for item in charging_modes if item is not None
-            )
+            charging_modes_text = ", ".join(str(item) for item in charging_modes if item is not None)
         else:
             charging_modes_text = ""
 
@@ -2124,8 +2045,7 @@ class CardataCoordinator:
             "extra_attributes": display_attrs,
             "raw_data": raw_payload,
         }
-        model = raw_payload.get("modelName") or raw_payload.get(
-            "series") or raw_payload.get("modelRange")
+        model = raw_payload.get("modelName") or raw_payload.get("series") or raw_payload.get("modelRange")
         if model:
             metadata["model"] = model
         if raw_payload.get("puStep"):
@@ -2153,9 +2073,7 @@ class CardataCoordinator:
         self._safe_dispatcher_send(self.signal_metadata, vin)
         return metadata
 
-    async def async_apply_basic_data(
-        self, vin: str, payload: dict[str, Any]
-    ) -> dict[str, Any] | None:
+    async def async_apply_basic_data(self, vin: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         """Thread-safe async version of apply_basic_data."""
         async with self._lock:
             return self.apply_basic_data(vin, payload)

@@ -80,7 +80,11 @@ class CardataContainerManager:
 
         self._container_id = container_id
 
-    async def async_ensure_hv_container(self, access_token: str | None, rate_limiter: Any | None = None,) -> str | None:
+    async def async_ensure_hv_container(
+        self,
+        access_token: str | None,
+        rate_limiter: Any | None = None,
+    ) -> str | None:
         """Ensure the HV battery container exists and is active.
 
         Behavior controlled by CONTAINER_REUSE_EXISTING in const.py:
@@ -121,9 +125,7 @@ class CardataContainerManager:
                 can_create, block_reason = rate_limiter.can_create_container()
                 if not can_create:
                     _LOGGER.warning(
-                        "[%s] Cannot create new container due to rate limiting: %s",
-                        self._entry_id,
-                        block_reason
+                        "[%s] Cannot create new container due to rate limiting: %s", self._entry_id, block_reason
                     )
                     return None
 
@@ -154,7 +156,7 @@ class CardataContainerManager:
                         self._entry_id,
                     )
 
-                except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, TypeError, ValueError) as err:
+                except (TimeoutError, aiohttp.ClientError, KeyError, TypeError, ValueError) as err:
                     _LOGGER.warning(
                         "[%s] Failed to list existing containers: %s. Will attempt to create new one.",
                         self._entry_id,
@@ -173,8 +175,7 @@ class CardataContainerManager:
                 rate_limiter.record_creation()
 
             self._container_id = created_id
-            _LOGGER.info("[%s] Created new HV battery container %s",
-                         self._entry_id, created_id)
+            _LOGGER.info("[%s] Created new HV battery container %s", self._entry_id, created_id)
             return self._container_id
 
     async def async_reset_hv_container(self, access_token: str | None, rate_limiter: Any | None = None) -> str | None:
@@ -193,13 +194,9 @@ class CardataContainerManager:
                 can_create, block_reason = rate_limiter.can_create_container()
                 if not can_create:
                     _LOGGER.warning(
-                        "[%s] Cannot reset container due to rate limiting: %s",
-                        self._entry_id,
-                        block_reason
+                        "[%s] Cannot reset container due to rate limiting: %s", self._entry_id, block_reason
                     )
-                    raise CardataContainerError(
-                        f"Container creatin rate limited: {block_reason}"
-                    )
+                    raise CardataContainerError(f"Container creatin rate limited: {block_reason}")
 
             containers = await self._list_containers(access_token)
             deleted_ids: list[str] = []
@@ -248,15 +245,10 @@ class CardataContainerManager:
             "purpose": HV_BATTERY_CONTAINER_PURPOSE,
             "technicalDescriptors": list(self._desired_descriptors),
         }
-        response = await self._request(
-            "POST", "/customers/containers", access_token, json_body=payload
-        )
-        container_id = response.get("containerId") if isinstance(
-            response, dict) else None
+        response = await self._request("POST", "/customers/containers", access_token, json_body=payload)
+        container_id = response.get("containerId") if isinstance(response, dict) else None
         if not container_id:
-            raise CardataContainerError(
-                "Container creation response missing containerId"
-            )
+            raise CardataContainerError("Container creation response missing containerId")
         return container_id
 
     async def _list_containers(self, access_token: str) -> list[dict[str, Any]]:
@@ -280,14 +272,14 @@ class CardataContainerManager:
         signature = None
 
         if isinstance(descriptors, list):
-            signature = self.compute_signature(
-                [item for item in descriptors if isinstance(item, str)]
-            )
+            signature = self.compute_signature([item for item in descriptors if isinstance(item, str)])
 
         # ALL conditions must be true (not any)!
         return (
-            isinstance(purpose, str) and purpose == HV_BATTERY_CONTAINER_PURPOSE
-            and isinstance(name, str) and name == HV_BATTERY_CONTAINER_NAME
+            isinstance(purpose, str)
+            and purpose == HV_BATTERY_CONTAINER_PURPOSE
+            and isinstance(name, str)
+            and name == HV_BATTERY_CONTAINER_NAME
             and signature == self._descriptor_signature
         )
 
@@ -372,11 +364,7 @@ class CardataContainerManager:
                     f"HTTP {response.status}: {safe_text}",
                     status=response.status,
                 )
-        except asyncio.TimeoutError as err:
-            raise CardataContainerError(
-                f"Request timed out after {CONTAINER_REQUEST_TIMEOUT} seconds"
-            ) from err
+        except TimeoutError as err:
+            raise CardataContainerError(f"Request timed out after {CONTAINER_REQUEST_TIMEOUT} seconds") from err
         except aiohttp.ClientError as err:
-            raise CardataContainerError(
-                f"Network error: {redact_sensitive_data(str(err))}"
-            ) from err
+            raise CardataContainerError(f"Network error: {redact_sensitive_data(str(err))}") from err

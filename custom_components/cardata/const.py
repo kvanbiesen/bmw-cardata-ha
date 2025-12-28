@@ -47,7 +47,7 @@ REQUEST_LIMIT = 400
 REQUEST_WINDOW_SECONDS = 24 * 60 * 60
 
 # Quota thresholds for warnings (percentages of REQUEST_LIMIT)
-QUOTA_WARNING_THRESHOLD = 280   # Warn at 70% of REQUEST_LIMIT
+QUOTA_WARNING_THRESHOLD = 280  # Warn at 70% of REQUEST_LIMIT
 QUOTA_CRITICAL_THRESHOLD = 360  # Critical at 90% of REQUEST_LIMIT
 # How often to call the Telematic API in seconds
 TELEMATIC_POLL_INTERVAL = 40 * 60
@@ -96,6 +96,5 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.drivetrain.batteryManagement.batterySizeMax",
     "vehicle.drivetrain.batteryManagement.maxEnergy",
     "vehicle.powertrain.electric.battery.charging.power",
-    "vehicle.drivetrain.electricEngine.charging.status"
-
+    "vehicle.drivetrain.electricEngine.charging.status",
 ]

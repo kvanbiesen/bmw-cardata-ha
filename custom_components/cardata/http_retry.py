@@ -55,9 +55,7 @@ def _sanitize_headers(raw_headers: Any) -> dict[str, str]:
             str_value = str(value)[:_MAX_HEADER_VALUE_LENGTH]
 
             # Strip control characters (keep printable ASCII and common whitespace)
-            clean_value = "".join(
-                c for c in str_value if c >= " " or c in "\t"
-            )
+            clean_value = "".join(c for c in str_value if c >= " " or c in "\t")
 
             sanitized[key_lower] = clean_value
     except (TypeError, AttributeError):
@@ -173,17 +171,9 @@ async def async_request_with_retry(
     if rate_limiter:
         can_request, block_reason = rate_limiter.can_make_request()
         if not can_request:
-            _LOGGER.warning(
-                "%s blocked by rate limiter: %s",
-                context,
-                block_reason
-            )
+            _LOGGER.warning("%s blocked by rate limiter: %s", context, block_reason)
             # Return a fake 429 response to indicate rate limit
-            fake_response = HttpResponse(
-                status=429,
-                text=f"Blocked by rate limiter: {block_reason}",
-                headers={}
-            )
+            fake_response = HttpResponse(status=429, text=f"Blocked by rate limiter: {block_reason}", headers={})
             return fake_response, None
 
     request_timeout = aiohttp.ClientTimeout(total=timeout or HTTP_TIMEOUT)
@@ -283,14 +273,13 @@ async def async_request_with_retry(
                             max_retries + 1,
                         )
                         await asyncio.sleep(jittered)
-                        backoff = min(
-                            backoff * backoff_multiplier, max_backoff)
+                        backoff = min(backoff * backoff_multiplier, max_backoff)
                         continue
 
                 # Unknown status - return as-is
                 return http_response, None
 
-        except asyncio.TimeoutError as err:
+        except TimeoutError as err:
             last_error = err
             if attempt < max_retries:
                 jittered = _jittered_backoff(backoff)

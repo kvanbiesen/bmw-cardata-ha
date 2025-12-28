@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from contextlib import suppress
@@ -57,11 +56,7 @@ def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFF
 
     # Token is expired or will expire within buffer
     if seconds_until_expiry <= buffer_seconds:
-        _LOGGER.debug(
-            "Token expires in %d seconds (buffer: %d), refresh needed",
-            seconds_until_expiry,
-            buffer_seconds
-        )
+        _LOGGER.debug("Token expires in %d seconds (buffer: %d), refresh needed", seconds_until_expiry, buffer_seconds)
         return True, seconds_until_expiry
 
     return False, seconds_until_expiry
@@ -142,8 +137,7 @@ async def refresh_tokens_for_entry(
 
     new_id_token = token_data.get("id_token")
     if not new_id_token:
-        raise CardataAuthError(
-            "Token refresh response did not include id_token")
+        raise CardataAuthError("Token refresh response did not include id_token")
 
     token_updates = {
         "access_token": token_data.get("access_token"),
@@ -160,8 +154,7 @@ async def refresh_tokens_for_entry(
         hv_container_id = data.get("hv_container_id")
         if hv_container_id:
             container_manager.sync_from_entry(hv_container_id)
-            _LOGGER.debug(
-                "Synced existing container %s to manager", hv_container_id)
+            _LOGGER.debug("Synced existing container %s to manager", hv_container_id)
 
     await async_update_entry_data(hass, entry, token_updates)
     await manager.async_update_credentials(
@@ -215,7 +208,7 @@ async def handle_stream_error(
                 runtime.last_reauth_attempt = 0.0
                 runtime.reauth_pending = False
                 return
-            except (CardataAuthError, aiohttp.ClientError, asyncio.TimeoutError) as err:
+            except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
                 _LOGGER.warning(
                     "Token refresh after unauthorized failed for entry %s: %s",
                     entry.entry_id,
@@ -263,9 +256,7 @@ async def handle_stream_error(
     elif reason == "recovered":
         if runtime.reauth_in_progress:
             runtime.reauth_in_progress = False
-            _LOGGER.info(
-                "BMW stream connection restored; dismissing reauth notification"
-            )
+            _LOGGER.info("BMW stream connection restored; dismissing reauth notification")
             persistent_notification.async_dismiss(hass, notification_id)
             if runtime.reauth_flow_id:
                 with suppress(Exception):
@@ -277,8 +268,7 @@ async def handle_stream_error(
 
 async def async_manual_refresh_tokens(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Manually refresh tokens (called by config_flow options)."""
-    runtime: CardataRuntimeData | None = hass.data.get(
-        DOMAIN, {}).get(entry.entry_id)
+    runtime: CardataRuntimeData | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if runtime is None:
         raise CardataAuthError("Integration runtime not ready")
 
@@ -312,8 +302,7 @@ async def async_ensure_container_for_entry(
     from .container import CardataContainerError
 
     if container_manager is None:
-        _LOGGER.warning(
-            "Cannot ensure container - no container manager available")
+        _LOGGER.warning("Cannot ensure container - no container manager available")
         return False
 
     data = dict(entry.data)
@@ -326,14 +315,12 @@ async def async_ensure_container_for_entry(
         return False
 
     # Calculate desired signature
-    desired_signature = CardataContainerManager.compute_signature(
-        HV_BATTERY_DESCRIPTORS)
+    desired_signature = CardataContainerManager.compute_signature(HV_BATTERY_DESCRIPTORS)
 
     # If container exists and signature matches, we're done!
     if hv_container_id and stored_signature == desired_signature and not force:
         container_manager.sync_from_entry(hv_container_id)
-        _LOGGER.debug(
-            "Using existing container %s (signature matches)", hv_container_id)
+        _LOGGER.debug("Using existing container %s (signature matches)", hv_container_id)
         return True
 
     # If container exists but signature doesn't match, log warning
@@ -343,7 +330,7 @@ async def async_ensure_container_for_entry(
             "Keeping existing container to avoid API quota. "
             "Use 'Reset Container' option if you need to recreate.",
             stored_signature,
-            desired_signature
+            desired_signature,
         )
         # Keep using existing container even with mismatch
         # User can manually reset if needed
@@ -354,10 +341,7 @@ async def async_ensure_container_for_entry(
 
     # Only create if forced or no container exists
     _LOGGER.info(
-        "Creating HV container for entry %s (force=%s, exists=%s)",
-        entry.entry_id,
-        force,
-        hv_container_id is not None
+        "Creating HV container for entry %s (force=%s, exists=%s)", entry.entry_id, force, hv_container_id is not None
     )
 
     container_manager.sync_from_entry(None)
@@ -386,11 +370,14 @@ async def async_ensure_container_for_entry(
     if runtime and runtime.container_manager:
         runtime.container_manager.sync_from_entry(container_id)
 
-    await async_update_entry_data(hass, entry, {
-        "hv_container_id": container_id,
-        "hv_descriptor_signature": desired_signature,
-    })
-    _LOGGER.info("Created HV container %s for entry %s",
-                 container_id, entry.entry_id)
+    await async_update_entry_data(
+        hass,
+        entry,
+        {
+            "hv_container_id": container_id,
+            "hv_descriptor_signature": desired_signature,
+        },
+    )
+    _LOGGER.info("Created HV container %s for entry %s", container_id, entry.entry_id)
 
     return True

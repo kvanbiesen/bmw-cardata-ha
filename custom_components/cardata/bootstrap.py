@@ -75,8 +75,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         if not container_ready:
             _LOGGER.warning(
-                "Bootstrap: Container not ready for entry %s. Continuing without container.",
-                entry.entry_id
+                "Bootstrap: Container not ready for entry %s. Continuing without container.", entry.entry_id
             )
 
         vins, fetch_error = await async_fetch_primary_vins(
@@ -114,14 +113,10 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         # IMPORTANT: Fetch metadata FIRST
         # This populates coordinator.device_metadata so entities have complete device_info
-        await async_fetch_and_store_basic_data(
-            hass, entry, headers, vins, quota, runtime.session
-        )
+        await async_fetch_and_store_basic_data(hass, entry, headers, vins, quota, runtime.session)
 
         _LOGGER.debug("Fetching vehicle images for entry %s", entry.entry_id)
-        await async_fetch_and_store_vehicle_images(
-            hass, entry, headers, vins, quota, runtime.session
-        )
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, quota, runtime.session)
 
         # CRITICAL: Apply metadata to populate coordinator.names!
         # async_fetch_and_store_basic_data() populates device_metadata but NOT coordinator.names
@@ -132,8 +127,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             if metadata and "raw_data" in metadata:
                 # Call async_apply_basic_data to populate coordinator.names (thread-safe)
                 await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
-                _LOGGER.debug("Bootstrap populated name for VIN %s: %s",
-                              redact_vin(vin), coordinator.names.get(vin))
+                _LOGGER.debug("Bootstrap populated name for VIN %s: %s", redact_vin(vin), coordinator.names.get(vin))
 
         # NOW seed telematic data (entities will be created with complete metadata)
         created_entities = False
@@ -265,11 +259,9 @@ async def async_fetch_primary_vins(
     vins = extract_primary_vins(payload)
 
     if not vins:
-        _LOGGER.info(
-            "Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
+        _LOGGER.info("Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
     else:
-        _LOGGER.debug(
-            "Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
+        _LOGGER.debug("Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
 
     return vins, None
 

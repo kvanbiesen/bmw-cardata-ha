@@ -70,14 +70,8 @@ def redact_vin_payload(payload: Any) -> Any:
 
 
 # Pattern to match Bearer tokens and other sensitive auth strings
-_AUTH_TOKEN_PATTERN = re.compile(
-    r"(Bearer\s+)[A-Za-z0-9\-_\.]+",
-    re.IGNORECASE
-)
-_AUTHORIZATION_HEADER_PATTERN = re.compile(
-    r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]+",
-    re.IGNORECASE
-)
+_AUTH_TOKEN_PATTERN = re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]+", re.IGNORECASE)
+_AUTHORIZATION_HEADER_PATTERN = re.compile(r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]+", re.IGNORECASE)
 # Maximum text length for regex redaction to prevent ReDoS on huge inputs
 _MAX_REDACT_INPUT_LENGTH = 10000
 
@@ -184,7 +178,7 @@ async def async_wait_for_bootstrap(
     try:
         await asyncio.wait_for(bootstrap_event.wait(), timeout=timeout)
         return True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _LOGGER.debug(
             "%s continuing without vehicle names after %.1fs wait",
             context,

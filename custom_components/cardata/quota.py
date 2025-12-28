@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -45,8 +45,7 @@ class QuotaManager:
     @classmethod
     async def async_create(cls, hass: HomeAssistant, entry_id: str) -> QuotaManager:
         """Create and initialize a QuotaManager."""
-        store = Store(hass, REQUEST_LOG_VERSION,
-                      f"{DOMAIN}_{entry_id}_{REQUEST_LOG}")
+        store = Store(hass, REQUEST_LOG_VERSION, f"{DOMAIN}_{entry_id}_{REQUEST_LOG}")
         data = await store.async_load()
         if not isinstance(data, dict):
             data = {}
@@ -64,9 +63,7 @@ class QuotaManager:
                     value = float(item)
                 except (TypeError, ValueError):
                     try:
-                        value = datetime.fromisoformat(
-                            item.replace("Z", "+00:00")
-                        ).timestamp()
+                        value = datetime.fromisoformat(item.replace("Z", "+00:00")).timestamp()
                     except (TypeError, ValueError):
                         value = None
             if value is None:
@@ -110,14 +107,14 @@ class QuotaManager:
                     "BMW API quota at 70%% (%d/%d calls used). "
                     "Consider reducing polling frequency or restarting less often.",
                     current_usage,
-                    REQUEST_LIMIT
+                    REQUEST_LIMIT,
                 )
             elif current_usage == QUOTA_CRITICAL_THRESHOLD:
                 _LOGGER.error(
                     "BMW API quota at 90%% (%d/%d calls used)! "
                     "Approaching daily limit. Integration may stop working soon.",
                     current_usage,
-                    REQUEST_LIMIT
+                    REQUEST_LIMIT,
                 )
 
             self._timestamps.append(now)
@@ -148,7 +145,7 @@ class QuotaManager:
         ts = self.next_reset_epoch
         if ts is None:
             return None
-        return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+        return datetime.fromtimestamp(ts, UTC).isoformat()
 
     async def async_close(self) -> None:
         """Close and save final state."""

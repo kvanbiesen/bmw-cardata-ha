@@ -24,6 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class ConnectionState(Enum):
     """MQTT connection states."""
+
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
@@ -105,6 +106,7 @@ class CardataStreamManager:
 
         This ensures exceptions in async callbacks are logged instead of silently lost.
         """
+
         def _done_callback(future: ConcurrentFuture[Any]) -> None:
             try:
                 future.result()
@@ -140,10 +142,8 @@ class CardataStreamManager:
         # Acquire lock with timeout to prevent indefinite blocking
         try:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Connect lock acquisition timed out after 60s; scheduling retry in 30s"
-            )
+        except TimeoutError:
+            _LOGGER.warning("Connect lock acquisition timed out after 60s; scheduling retry in 30s")
             # Schedule a reconnect attempt instead of just failing
             await asyncio.sleep(30.0)
             self._run_coro_safe(self._async_reconnect())
@@ -177,9 +177,7 @@ class CardataStreamManager:
                 return True
 
         # Reset failure window if expired
-        if self._failure_window_start and (
-            now - self._failure_window_start
-        ) > self._failure_window_seconds:
+        if self._failure_window_start and (now - self._failure_window_start) > self._failure_window_seconds:
             self._failure_count = 0
             self._failure_window_start = None
 
@@ -312,14 +310,12 @@ class CardataStreamManager:
 
             entry = self.hass.config_entries.async_get_entry(self._entry_id)
             if entry:
-                await async_update_entry_data(
-                    self.hass, entry, {"circuit_breaker_state": state}
-                )
+                await async_update_entry_data(self.hass, entry, {"circuit_breaker_state": state})
 
     async def _async_start_locked(self) -> None:
         # CRITICAL: Don't start MQTT if bootstrap is still in progress
         # Blocks reconnects, retries, and credential updates until bootstrap finishes
-        if getattr(self, '_bootstrap_in_progress', False):
+        if getattr(self, "_bootstrap_in_progress", False):
             _LOGGER.debug(
                 "Skipping MQTT start - bootstrap still fetching vehicle metadata. "
                 "MQTT will start automatically when bootstrap completes."
@@ -367,11 +363,8 @@ class CardataStreamManager:
         # Acquire lock with timeout to prevent indefinite blocking
         try:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Connect lock acquisition timed out after 60s during stop; "
-                "proceeding with forced stop"
-            )
+        except TimeoutError:
+            _LOGGER.warning("Connect lock acquisition timed out after 60s during stop; proceeding with forced stop")
             # Still attempt to stop even without lock - resource cleanup is critical
             await self._async_stop_locked()
             return
@@ -400,15 +393,13 @@ class CardataStreamManager:
                 client.disconnect()
             except Exception as err:  # pragma: no cover - defensive logging
                 if debug_enabled():
-                    _LOGGER.debug(
-                        "Error disconnecting BMW MQTT client: %s", err)
+                    _LOGGER.debug("Error disconnecting BMW MQTT client: %s", err)
             if disconnect_future is not None:
                 try:
                     await asyncio.wait_for(disconnect_future, timeout=5)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if debug_enabled():
-                        _LOGGER.debug(
-                            "Timeout waiting for BMW MQTT disconnect acknowledgement")
+                        _LOGGER.debug("Timeout waiting for BMW MQTT disconnect acknowledgement")
                 finally:
                     self._disconnect_future = None
             self._safe_loop_stop(client)
@@ -424,9 +415,7 @@ class CardataStreamManager:
     def set_message_callback(self, callback: Callable[[dict], Awaitable[None]]) -> None:
         self._message_callback = callback
 
-    def set_status_callback(
-        self, callback: Callable[[str, str | None], Awaitable[None]]
-    ) -> None:
+    def set_status_callback(self, callback: Callable[[str, str | None], Awaitable[None]]) -> None:
         self._status_callback = callback
 
     @property
@@ -499,15 +488,10 @@ class CardataStreamManager:
 
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
-                _LOGGER.error(
-                    "BMW MQTT connection timed out after %.0f seconds",
-                    self._connect_timeout
-                )
+                _LOGGER.error("BMW MQTT connection timed out after %.0f seconds", self._connect_timeout)
                 self._safe_loop_stop(client)
                 self._connect_event = None
-                raise TimeoutError(
-                    f"MQTT connection timed out after {self._connect_timeout} seconds"
-                )
+                raise TimeoutError(f"MQTT connection timed out after {self._connect_timeout} seconds")
 
             # Check connection result from on_connect callback
             rc = self._connect_rc
@@ -521,7 +505,9 @@ class CardataStreamManager:
                     4: "Bad username or password",
                     5: "Not authorized",
                 }
-                error_reason = error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
+                error_reason = (
+                    error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
+                )
                 _LOGGER.error("BMW MQTT connection failed: %s", error_reason)
                 self._safe_loop_stop(client)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
@@ -546,6 +532,7 @@ class CardataStreamManager:
 
             if self._entry_id:
                 from .const import DOMAIN
+
                 runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                 if runtime and runtime.unauthorized_protection:
                     runtime.unauthorized_protection.record_success()
@@ -554,8 +541,7 @@ class CardataStreamManager:
             if topic:
                 result = client.subscribe(topic)
                 if debug_enabled():
-                    _LOGGER.debug("Subscribed to %s result=%s",
-                                  redact_vin_in_text(topic), result)
+                    _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
             if self._reauth_notified:
                 # Schedule async reset of flags with proper locking
                 self._run_coro_safe(self._async_clear_reauth_state())
@@ -563,22 +549,14 @@ class CardataStreamManager:
             self._last_disconnect = None
             self._retry_backoff = 3
             if self._status_callback:
-                self._run_coro_safe(
-                    cast(Coroutine[Any, Any, None], self._status_callback('connected', None))
-                )
+                self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("connected", None)))
         elif rc in (4, 5):  # bad credentials / not authorized
             self._connection_state = ConnectionState.FAILED
             self._record_failure()
             now = time.monotonic()
-            if (
-                rc == 5
-                and self._last_disconnect is not None
-                and now - self._last_disconnect < 10
-            ):
+            if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
                 if debug_enabled():
-                    _LOGGER.debug(
-                        "BMW MQTT connection refused shortly after disconnect; scheduling retry"
-                    )
+                    _LOGGER.debug("BMW MQTT connection refused shortly after disconnect; scheduling retry")
                 self._safe_loop_stop(client, force=True)
                 self._client = None
                 self._schedule_retry(3)
@@ -593,13 +571,12 @@ class CardataStreamManager:
             self._record_failure()
             if self._status_callback:
                 self._run_coro_safe(
-                    cast(Coroutine[Any, Any, None], self._status_callback('connection_failed', str(rc)))
+                    cast(Coroutine[Any, Any, None], self._status_callback("connection_failed", str(rc)))
                 )
 
     def _handle_subscribe(self, client: mqtt.Client, userdata, mid, granted_qos) -> None:
         if debug_enabled():
-            _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s",
-                          mid, granted_qos)
+            _LOGGER.debug("BMW MQTT subscribed mid=%s qos=%s", mid, granted_qos)
 
     def _handle_message(self, client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
         """Handle incoming MQTT message with full exception protection.
@@ -623,9 +600,7 @@ class CardataStreamManager:
             except json.JSONDecodeError:
                 _LOGGER.debug("Failed to parse MQTT message as JSON: %s", payload[:100])
                 return
-            self._run_coro_safe(
-                cast(Coroutine[Any, Any, None], self._message_callback(data))
-            )
+            self._run_coro_safe(cast(Coroutine[Any, Any, None], self._message_callback(data)))
         except Exception as err:
             # Catch-all to prevent crashing the MQTT callback thread
             _LOGGER.exception("Unexpected error in MQTT message handler: %s", err)
@@ -655,6 +630,7 @@ class CardataStreamManager:
 
         disconnect_future = self._disconnect_future
         if disconnect_future and not disconnect_future.done():
+
             def _set_disconnect() -> None:
                 if not disconnect_future.done():
                     disconnect_future.set_result(None)
@@ -672,41 +648,27 @@ class CardataStreamManager:
 
         if rc in (4, 5):
             now = time.monotonic()
-            if (
-                rc == 5
-                and self._last_disconnect is not None
-                and now - self._last_disconnect < 10
-            ):
+            if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
                 if debug_enabled():
-                    _LOGGER.debug(
-                        "Ignoring transient MQTT rc=5; scheduling retry instead"
-                    )
+                    _LOGGER.debug("Ignoring transient MQTT rc=5; scheduling retry instead")
                 self._schedule_retry(3)
                 return
             self._run_coro_safe(self._handle_unauthorized())
-            self._reconnect_backoff = min(
-                self._reconnect_backoff * 2, self._max_backoff)
+            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
             if self._status_callback:
-                self._run_coro_safe(
-                    cast(Coroutine[Any, Any, None], self._status_callback('unauthorized', reason))
-                )
+                self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("unauthorized", reason)))
         else:
             if should_reconnect and not self._check_circuit_breaker():
                 self._run_coro_safe(self._async_reconnect())
             if self._status_callback:
-                self._run_coro_safe(
-                    cast(Coroutine[Any, Any, None], self._status_callback('disconnected', reason))
-                )
+                self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("disconnected", reason)))
 
     async def _async_reconnect(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
         try:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Connect lock acquisition timed out after 60s during reconnect; "
-                "scheduling retry in 30s"
-            )
+        except TimeoutError:
+            _LOGGER.warning("Connect lock acquisition timed out after 60s during reconnect; scheduling retry in 30s")
             # Schedule another attempt after a delay instead of giving up
             await asyncio.sleep(30.0)
             self._run_coro_safe(self._async_reconnect())
@@ -715,8 +677,7 @@ class CardataStreamManager:
         try:
             if self._check_circuit_breaker():
                 if debug_enabled():
-                    _LOGGER.debug(
-                        "Skipping MQTT reconnect due to open circuit breaker")
+                    _LOGGER.debug("Skipping MQTT reconnect due to open circuit breaker")
                 return
 
             await self._async_stop_locked()
@@ -742,8 +703,7 @@ class CardataStreamManager:
                     self._consecutive_reconnect_failures,
                     err,
                 )
-                self._reconnect_backoff = min(
-                    self._reconnect_backoff * 2, self._max_backoff)
+                self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
                 # Schedule another reconnect attempt (will use extended backoff if threshold reached)
                 self._run_coro_safe(self._async_reconnect())
             else:
@@ -768,6 +728,7 @@ class CardataStreamManager:
                 unauthorized_protection = None
                 if self._entry_id:
                     from .const import DOMAIN
+
                     runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                     if runtime:
                         unauthorized_protection = runtime.unauthorized_protection
@@ -775,10 +736,7 @@ class CardataStreamManager:
                 if unauthorized_protection:
                     can_retry, block_reason = unauthorized_protection.can_retry()
                     if not can_retry:
-                        _LOGGER.error(
-                            "BMW MQTT unauthorized retry blocked: %s",
-                            block_reason
-                        )
+                        _LOGGER.error("BMW MQTT unauthorized retry blocked: %s", block_reason)
                         await self.async_stop()
                         if self._status_callback:
                             await self._status_callback("unauthorized_blocked", block_reason)
@@ -832,18 +790,15 @@ class CardataStreamManager:
         # Acquire lock with timeout to prevent indefinite blocking
         try:
             await asyncio.wait_for(self._credential_lock.acquire(), timeout=60.0)
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Credential lock acquisition timed out after 60s; skipping credential update"
-            )
+        except TimeoutError:
+            _LOGGER.warning("Credential lock acquisition timed out after 60s; skipping credential update")
             return
 
         try:
             reconnect_required = False
 
             if gcid and gcid != self._gcid:
-                _LOGGER.debug("Updating MQTT GCID from %s to %s",
-                              self._gcid, gcid)
+                _LOGGER.debug("Updating MQTT GCID from %s to %s", self._gcid, gcid)
                 self._gcid = gcid
                 reconnect_required = True
 
@@ -887,8 +842,7 @@ class CardataStreamManager:
             try:
                 await self.async_start()
             except Exception as err:
-                _LOGGER.error(
-                    "BMW MQTT reconnect failed after credential update: %s", err)
+                _LOGGER.error("BMW MQTT reconnect failed after credential update: %s", err)
         finally:
             self._credential_lock.release()
 
@@ -927,17 +881,12 @@ class CardataStreamManager:
             try:
                 await asyncio.sleep(delay)
                 if self._client is None:
-                    if (
-                        self._disconnect_future is not None
-                        and not self._disconnect_future.done()
-                    ):
+                    if self._disconnect_future is not None and not self._disconnect_future.done():
                         try:
                             await asyncio.wait_for(self._disconnect_future, timeout=10)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             if debug_enabled():
-                                _LOGGER.debug(
-                                    "Timed out waiting for prior BMW MQTT disconnect"
-                                )
+                                _LOGGER.debug("Timed out waiting for prior BMW MQTT disconnect")
                         finally:
                             self._disconnect_future = None
                     async with self._connect_lock:
