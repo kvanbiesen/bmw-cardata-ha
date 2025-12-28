@@ -45,21 +45,15 @@
 
 # BMW CarData for Home Assistant
 
-## This is experimental (Kinda production ready almost ). 
 Turn your BMW CarData stream into native Home Assistant entities. This integration subscribes directly to the BMW CarData MQTT stream, keeps the token fresh automatically, and creates sensors/binary sensors for every descriptor that emits data.
-
-**IMPORTANT: I released this to public after verifying that it works on my automations, so the testing time has been quite low so far. If you're running any critical automations, please don't use this plugin yet.**
 
 > **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
 
 > **Tested Environment:** since I adopted the project, I used the latest ha 2025.12 (2025.3+ is required)
 
-> **Heads-up:** I've tested this on 2020 330e. everythig show up entities, he sends them instantly after locking/closing the car remotely using Mybmw. BSo far after reinstalling the plugin, I haven't seen anything for an hour, but received data multiple times earlier. So be patient, maybe go and drive around or something to trigger the data transfer :) 
-
 Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha) -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
 
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
-
 
 Not required but appreciated :)
 
