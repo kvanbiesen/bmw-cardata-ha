@@ -26,6 +26,7 @@ from .const import (
     HV_BATTERY_CONTAINER_NAME,
     HV_BATTERY_CONTAINER_PURPOSE,
 )
+from .api_parsing import get_first_key
 from .runtime import CardataRuntimeData
 from .utils import (
     is_valid_vin,
@@ -459,7 +460,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                 if isinstance(payload, list):
                     return payload
                 if isinstance(payload, dict):
-                    return payload.get("containers") or payload.get("items") or []
+                    return get_first_key(payload, "containers", "items") or []
                 return []
         except aiohttp.ClientError as err:
             _LOGGER.error(

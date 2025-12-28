@@ -16,6 +16,23 @@ def try_parse_json(text: str | None) -> tuple[bool, Any]:
         return False, None
 
 
+def get_first_key(payload: dict[str, Any], *keys: str) -> Any:
+    """Get the first existing key's value from a dict.
+
+    Args:
+        payload: Dictionary to search
+        *keys: Keys to try in order
+
+    Returns:
+        Value of first key that exists and is not None, or None if none found
+    """
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _extract_dicts_from_payload(payload: Any, *keys: str) -> list[dict[str, Any]]:
     """Extract list of dicts from payload, trying multiple possible keys.
 
@@ -58,7 +75,7 @@ def extract_telematic_payload(payload: Any) -> dict[str, Any] | None:
     """Extract telematic payload dict from an API response payload."""
     if not isinstance(payload, dict):
         return None
-    telematic_payload = payload.get("telematicData") or payload.get("data")
+    telematic_payload = get_first_key(payload, "telematicData", "data")
     if isinstance(telematic_payload, dict):
         return telematic_payload
     return None
