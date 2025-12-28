@@ -373,26 +373,63 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Unload platforms
     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    # Cancel tasks
+    # Cancel tasks with timeout protection
     data.refresh_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await data.refresh_task
+    try:
+        await asyncio.wait_for(data.refresh_task, timeout=5.0)
+    except asyncio.CancelledError:
+        pass  # Expected
+    except asyncio.TimeoutError:
+        _LOGGER.warning(
+            "Refresh task did not cancel within timeout (5s). "
+            "Proceeding with unload anyway."
+        )
+    except Exception as err:
+        _LOGGER.error("Error stopping refresh task: %s", err)
 
     if data.bootstrap_task:
         data.bootstrap_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.bootstrap_task
+        try:
+            await asyncio.wait_for(data.bootstrap_task, timeout=5.0)
+        except asyncio.CancelledError:
+            pass  # Expected
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Bootstrap task did not cancel within timeout (5s). "
+                "Proceeding with unload anyway."
+            )
+        except Exception as err:
+            _LOGGER.error("Error stopping bootstrap task: %s", err)
 
     if data.telematic_task:
         data.telematic_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.telematic_task
+        try:
+            await asyncio.wait_for(data.telematic_task, timeout=5.0)
+        except asyncio.CancelledError:
+            pass  # Expected
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Telematic task did not cancel within timeout (5s). "
+                "Proceeding with unload anyway."
+            )
+        except Exception as err:
+            _LOGGER.error("Error stopping telematic task: %s", err)
 
     # Close resources
     if data.quota_manager:
         await data.quota_manager.async_close()
 
-    await data.stream.async_stop()
+    # Stop MQTT stream with timeout protection
+    try:
+        await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
+    except asyncio.TimeoutError:
+        _LOGGER.warning(
+            "MQTT stream stop timed out after 10 seconds. "
+            "Proceeding with unload anyway."
+        )
+    except Exception as err:
+        _LOGGER.error("Error stopping MQTT stream: %s", err)
+
     await data.session.close()
 
     # Clean up services if this is the last entry

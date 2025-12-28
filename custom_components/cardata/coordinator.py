@@ -762,13 +762,12 @@ class CardataCoordinator:
 
     def _add_to_pending_updates(self, vin: str, descriptor: str) -> None:
         """Add descriptor to pending updates with overflow protection.
-        
         Must be called while holding _lock.
         """
         # Initialize VIN's pending set if needed
         if vin not in self._pending_updates:
             self._pending_updates[vin] = set()
-        
+
         # Check per-VIN limit
         if len(self._pending_updates[vin]) >= self._MAX_PENDING_DESCRIPTORS_PER_VIN:
             _LOGGER.warning(
@@ -780,7 +779,7 @@ class CardataCoordinator:
             # Force immediate flush for this VIN
             self.hass.loop.create_task(self._async_force_flush())
             return  # Don't add more until flush completes
-        
+
         # Check global limit across all VINs
         total_pending = sum(len(descriptors) for descriptors in self._pending_updates.values())
         if total_pending >= self._MAX_TOTAL_PENDING:
@@ -791,10 +790,10 @@ class CardataCoordinator:
             )
             self.hass.loop.create_task(self._async_force_flush())
             return
-        
+
         # Safe to add
         self._pending_updates[vin].add(descriptor)
-        
+
         if debug_enabled():
             _LOGGER.debug(
                 "Added to pending: %s (VIN: %d pending, Global: %d pending)",
@@ -812,10 +811,10 @@ class CardataCoordinator:
             if self._update_debounce_handle:
                 self._update_debounce_handle.cancel()
                 self._update_debounce_handle = None
-            
+
             # Execute flush immediately
             await self._execute_debounced_update(None)
-            
+
             _LOGGER.debug("Force-flushed pending updates due to queue overflow protection")
 
     def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
