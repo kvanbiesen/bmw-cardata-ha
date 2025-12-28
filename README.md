@@ -40,7 +40,7 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/kvanbiesen/bmw-cardata-ha/refs/heads/main/images/icon.png" alt="BMW Cardata logo" width="240" />
+  <img src="https://raw.githubusercontent.com/kvanbiesen/bmw-cardata-ha/refs/heads/main/images/cardatalogo.png" alt="BMW Cardata logo" width="240" />
 </p>
 
 # BMW CarData for Home Assistant
