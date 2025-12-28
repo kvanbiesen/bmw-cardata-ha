@@ -6,16 +6,14 @@ import logging
 from typing import Any
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .api_parsing import extract_primary_vins, extract_telematic_payload, try_parse_json
 from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
-from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
-from .runtime import CardataRuntimeData
-from .api_parsing import extract_primary_vins, extract_telematic_payload, try_parse_json
+from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,8 +75,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         if not container_ready:
             _LOGGER.warning(
-                "Bootstrap: Container not ready for entry %s. Continuing without container.",
-                entry.entry_id
+                "Bootstrap: Container not ready for entry %s. Continuing without container.", entry.entry_id
             )
 
         vins, fetch_error = await async_fetch_primary_vins(
@@ -103,7 +100,10 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             await async_mark_bootstrap_complete(hass, entry)
             return
 
-        from .metadata import async_fetch_and_store_basic_data, async_fetch_and_store_vehicle_images
+        from .metadata import (
+            async_fetch_and_store_basic_data,
+            async_fetch_and_store_vehicle_images,
+        )
 
         coordinator = runtime.coordinator
 
@@ -113,14 +113,10 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         # IMPORTANT: Fetch metadata FIRST
         # This populates coordinator.device_metadata so entities have complete device_info
-        await async_fetch_and_store_basic_data(
-            hass, entry, headers, vins, quota, runtime.session
-        )
+        await async_fetch_and_store_basic_data(hass, entry, headers, vins, quota, runtime.session)
 
         _LOGGER.debug("Fetching vehicle images for entry %s", entry.entry_id)
-        await async_fetch_and_store_vehicle_images(
-            hass, entry, headers, vins, quota, runtime.session
-        )
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, quota, runtime.session)
 
         # CRITICAL: Apply metadata to populate coordinator.names!
         # async_fetch_and_store_basic_data() populates device_metadata but NOT coordinator.names
@@ -131,8 +127,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             if metadata and "raw_data" in metadata:
                 # Call async_apply_basic_data to populate coordinator.names (thread-safe)
                 await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
-                _LOGGER.debug("Bootstrap populated name for VIN %s: %s",
-                              redact_vin(vin), coordinator.names.get(vin))
+                _LOGGER.debug("Bootstrap populated name for VIN %s: %s", redact_vin(vin), coordinator.names.get(vin))
 
         # NOW seed telematic data (entities will be created with complete metadata)
         created_entities = False
@@ -148,8 +143,9 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
 
         if created_entities:
-            from .telematics import async_update_last_telematic_poll
             import time
+
+            from .telematics import async_update_last_telematic_poll
 
             await async_update_last_telematic_poll(hass, entry, time.time())
         else:
@@ -263,11 +259,9 @@ async def async_fetch_primary_vins(
     vins = extract_primary_vins(payload)
 
     if not vins:
-        _LOGGER.info(
-            "Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
+        _LOGGER.info("Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
     else:
-        _LOGGER.debug(
-            "Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
+        _LOGGER.debug("Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
 
     return vins, None
 

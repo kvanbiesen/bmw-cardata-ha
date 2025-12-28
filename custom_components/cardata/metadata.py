@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
+from .api_parsing import try_parse_json
 from .const import (
     API_BASE_URL,
     BASIC_DATA_ENDPOINT,
@@ -20,10 +20,9 @@ from .const import (
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
-from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
+from .runtime import async_update_entry_data
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text
-from .api_parsing import try_parse_json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,8 +130,7 @@ async def async_fetch_and_store_basic_data(
             continue
 
         if response is None or not response.is_success:
-            error_excerpt = redact_vin_in_text(
-                response.text[:200]) if response else ""
+            error_excerpt = redact_vin_in_text(response.text[:200]) if response else ""
             _LOGGER.debug(
                 "Basic data request failed for %s (status=%s): %s",
                 redacted_vin,
@@ -207,9 +205,7 @@ async def async_fetch_and_store_vehicle_images(
         if image_path.exists():
             file_size = image_path.stat().st_size
             _LOGGER.debug(
-                "Vehicle image file already exists for %s (%d bytes) - skipping API call",
-                redacted_vin,
-                file_size
+                "Vehicle image file already exists for %s (%d bytes) - skipping API call", redacted_vin, file_size
             )
 
             # Load existing file into coordinator for immediate use
@@ -218,21 +214,12 @@ async def async_fetch_and_store_vehicle_images(
                 if vin not in coordinator.device_metadata:
                     coordinator.device_metadata[vin] = {}
                 coordinator.device_metadata[vin]["vehicle_image"] = image_bytes
-                coordinator.device_metadata[vin]["vehicle_image_path"] = str(
-                    image_path)
+                coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
                 async_dispatcher_send(hass, coordinator.signal_new_image, vin)
-                _LOGGER.debug(
-                    "Loaded vehicle image from file for %s (%d bytes)",
-                    redacted_vin,
-                    len(image_bytes)
-                )
+                _LOGGER.debug("Loaded vehicle image from file for %s (%d bytes)", redacted_vin, len(image_bytes))
             except Exception as err:
                 safe_err = redact_vin_in_text(str(err))
-                _LOGGER.warning(
-                    "Failed to load vehicle image file for %s: %s",
-                    redacted_vin,
-                    safe_err
-                )
+                _LOGGER.warning("Failed to load vehicle image file for %s: %s", redacted_vin, safe_err)
 
             continue  # Skip API call - file already exists!
 
@@ -254,17 +241,14 @@ async def async_fetch_and_store_vehicle_images(
         try:
             async with session.get(url, headers=headers, timeout=timeout) as response:
                 if response.status == 404:
-                    _LOGGER.debug(
-                        "No vehicle image available for %s (404)", redacted_vin)
+                    _LOGGER.debug("No vehicle image available for %s (404)", redacted_vin)
                     # Create empty marker file to prevent repeated 404 attempts
                     try:
                         image_path.touch()
-                        _LOGGER.debug(
-                            "Created empty marker file for %s (no image available)", redacted_vin)
+                        _LOGGER.debug("Created empty marker file for %s (no image available)", redacted_vin)
                     except Exception as err:
                         safe_err = redact_vin_in_text(str(err))
-                        _LOGGER.debug(
-                            "Failed to create marker file for %s: %s", redacted_vin, safe_err)
+                        _LOGGER.debug("Failed to create marker file for %s: %s", redacted_vin, safe_err)
                     continue
 
                 if response.status != 200:
@@ -286,7 +270,7 @@ async def async_fetch_and_store_vehicle_images(
                     _LOGGER.debug(
                         "Vehicle image data too small for %s (%d bytes), likely invalid",
                         redacted_vin,
-                        len(image_data) if image_data else 0
+                        len(image_data) if image_data else 0,
                     )
                     continue
 
@@ -296,24 +280,18 @@ async def async_fetch_and_store_vehicle_images(
                     await hass.async_add_executor_job(image_path.write_bytes, image_data)
                     safe_image_path = redact_vin_in_text(str(image_path))
                     _LOGGER.info(
-                        "Saved vehicle image for %s to %s (%d bytes)",
-                        redacted_vin, safe_image_path, len(image_data)
+                        "Saved vehicle image for %s to %s (%d bytes)", redacted_vin, safe_image_path, len(image_data)
                     )
                 except Exception as err:
                     safe_err = redact_vin_in_text(str(err))
-                    _LOGGER.error(
-                        "Failed to save vehicle image file for %s: %s",
-                        redacted_vin,
-                        safe_err
-                    )
+                    _LOGGER.error("Failed to save vehicle image file for %s: %s", redacted_vin, safe_err)
                     continue
 
                 # Load into coordinator for immediate use
                 if vin not in coordinator.device_metadata:
                     coordinator.device_metadata[vin] = {}
                 coordinator.device_metadata[vin]["vehicle_image"] = image_data
-                coordinator.device_metadata[vin]["vehicle_image_path"] = str(
-                    image_path)
+                coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
                 async_dispatcher_send(hass, coordinator.signal_new_image, vin)
 
         except aiohttp.ClientError as err:
@@ -326,12 +304,7 @@ async def async_fetch_and_store_vehicle_images(
             continue
         except Exception as err:
             safe_err = redact_vin_in_text(str(err))
-            _LOGGER.warning(
-                "Unexpected error fetching vehicle image for %s: %s",
-                redacted_vin,
-                safe_err,
-                exc_info=True
-            )
+            _LOGGER.warning("Unexpected error fetching vehicle image for %s: %s", redacted_vin, safe_err, exc_info=True)
             continue
 
 
@@ -361,8 +334,7 @@ async def async_restore_vehicle_images(
 
         # Skip empty marker files (0 bytes = 404)
         if image_file.stat().st_size == 0:
-            _LOGGER.debug(
-                "Skipping empty marker file for %s (no image available)", redacted_vin)
+            _LOGGER.debug("Skipping empty marker file for %s (no image available)", redacted_vin)
             continue
 
         try:
@@ -372,33 +344,23 @@ async def async_restore_vehicle_images(
                 coordinator.device_metadata[vin] = {}
 
             coordinator.device_metadata[vin]["vehicle_image"] = image_bytes
-            coordinator.device_metadata[vin]["vehicle_image_path"] = str(
-                image_file)
+            coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_file)
 
             async_dispatcher_send(hass, coordinator.signal_new_image, vin)
 
             restored_count += 1
 
             _LOGGER.debug(
-                "Restored vehicle image for %s from %s (%d bytes)",
-                redacted_vin,
-                safe_image_file,
-                len(image_bytes)
+                "Restored vehicle image for %s from %s (%d bytes)", redacted_vin, safe_image_file, len(image_bytes)
             )
         except Exception as err:
             safe_err = redact_vin_in_text(str(err))
             _LOGGER.warning(
-                "Failed to restore vehicle image for %s from %s: %s",
-                redacted_vin,
-                safe_image_file,
-                safe_err
+                "Failed to restore vehicle image for %s from %s: %s", redacted_vin, safe_image_file, safe_err
             )
 
     if restored_count > 0:
-        _LOGGER.info(
-            "Restored %d vehicle images from disk (no API calls needed)",
-            restored_count
-        )
+        _LOGGER.info("Restored %d vehicle images from disk (no API calls needed)", restored_count)
 
 
 async def async_restore_vehicle_metadata(
@@ -423,8 +385,7 @@ async def async_restore_vehicle_metadata(
         try:
             metadata = await coordinator.async_apply_basic_data(vin, payload)
         except Exception:
-            _LOGGER.debug("Failed to restore metadata for %s",
-                          redacted_vin, exc_info=True)
+            _LOGGER.debug("Failed to restore metadata for %s", redacted_vin, exc_info=True)
             continue
 
         if metadata:

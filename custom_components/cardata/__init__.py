@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -19,17 +16,18 @@ from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
 from .const import (
     BOOTSTRAP_COMPLETE,
+    DEBUG_LOG,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
-    DEBUG_LOG,
     MQTT_KEEPALIVE,
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
     OPTION_MQTT_KEEPALIVE,
 )
+from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .debug import set_debug_enabled
 from .device_flow import CardataAuthError
@@ -39,8 +37,7 @@ from .runtime import CardataRuntimeData, cleanup_entry_lock
 from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
-from .container import CardataContainerManager
-from .utils import redact_vin, redact_vins
+from .utils import async_cancel_task, redact_vin, redact_vins, validate_and_clamp_option
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,23 +55,13 @@ async def _async_cleanup_on_failure(
     refresh_task: asyncio.Task | None,
 ) -> None:
     """Clean up all tasks and resources on setup failure."""
-    if refresh_task:
-        refresh_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await refresh_task
+    await async_cancel_task(refresh_task)
 
     # Clean up runtime data tasks if they were created
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if runtime:
-        if runtime.bootstrap_task:
-            runtime.bootstrap_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await runtime.bootstrap_task
-
-        if runtime.telematic_task:
-            runtime.telematic_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await runtime.telematic_task
+        await async_cancel_task(runtime.bootstrap_task)
+        await async_cancel_task(runtime.telematic_task)
 
         # Stop coordinator watchdog if started (wrapped to prevent masking original error)
         try:
@@ -111,41 +98,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         options = dict(entry.options) if entry.options else {}
 
         # Validate and clamp mqtt_keepalive (10-300 seconds)
-        mqtt_keepalive_raw = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
-        try:
-            mqtt_keepalive = max(10, min(int(mqtt_keepalive_raw), 300))
-            if mqtt_keepalive != mqtt_keepalive_raw:
-                _LOGGER.warning(
-                    "mqtt_keepalive value %s out of range, clamped to %d",
-                    mqtt_keepalive_raw,
-                    mqtt_keepalive,
-                )
-        except (TypeError, ValueError):
-            _LOGGER.warning(
-                "Invalid mqtt_keepalive value %s, using default %d",
-                mqtt_keepalive_raw,
-                MQTT_KEEPALIVE,
-            )
-            mqtt_keepalive = MQTT_KEEPALIVE
+        mqtt_keepalive = validate_and_clamp_option(
+            options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE),
+            min_val=10,
+            max_val=300,
+            default=MQTT_KEEPALIVE,
+            option_name="mqtt_keepalive",
+        )
 
         # Validate and clamp diagnostic_interval (10-3600 seconds)
-        diagnostic_interval_raw = options.get(
-            OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL)
-        try:
-            diagnostic_interval = max(10, min(int(diagnostic_interval_raw), 3600))
-            if diagnostic_interval != diagnostic_interval_raw:
-                _LOGGER.warning(
-                    "diagnostic_interval value %s out of range, clamped to %d",
-                    diagnostic_interval_raw,
-                    diagnostic_interval,
-                )
-        except (TypeError, ValueError):
-            _LOGGER.warning(
-                "Invalid diagnostic_interval value %s, using default %d",
-                diagnostic_interval_raw,
-                DIAGNOSTIC_LOG_INTERVAL,
-            )
-            diagnostic_interval = DIAGNOSTIC_LOG_INTERVAL
+        diagnostic_interval = validate_and_clamp_option(
+            options.get(OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL),
+            min_val=10,
+            max_val=3600,
+            default=DIAGNOSTIC_LOG_INTERVAL,
+            option_name="diagnostic_interval",
+        )
 
         debug_option = options.get(OPTION_DEBUG_LOG)
         debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
@@ -166,9 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Restore stored vehicle metadata
         last_poll_ts = data.get("last_telematic_poll")
         if isinstance(last_poll_ts, (int, float)) and last_poll_ts > 0:
-            coordinator.last_telematic_api_at = datetime.fromtimestamp(
-                last_poll_ts, timezone.utc
-            )
+            coordinator.last_telematic_api_at = datetime.fromtimestamp(last_poll_ts, UTC)
 
         await async_restore_vehicle_metadata(hass, entry, coordinator)
 
@@ -189,8 +155,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
-        redacted_names = redact_vins(
-            coordinator.names.keys()) if has_metadata else "empty"
+        redacted_names = redact_vins(coordinator.names.keys()) if has_metadata else "empty"
         _LOGGER.debug(
             "Metadata restored for entry %s: %s (names: %s)",
             entry.entry_id,
@@ -202,7 +167,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
 
         # Set up container manager
-        container_manager: Optional[CardataContainerManager] = CardataContainerManager(
+        container_manager: CardataContainerManager | None = CardataContainerManager(
             session=session,
             entry_id=entry.entry_id,
             initial_container_id=data.get("hv_container_id"),
@@ -247,17 +212,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 err,
             )
         except Exception as err:
-            raise ConfigEntryNotReady(
-                f"Initial token refresh failed: {err}") from err
+            raise ConfigEntryNotReady(f"Initial token refresh failed: {err}") from err
 
         # Ensure HV container if token refresh didn't succeed
         if not refreshed_token and container_manager:
             try:
-                container_manager.sync_from_entry(
-                    entry.data.get("hv_container_id"))
-                await container_manager.async_ensure_hv_container(
-                    entry.data.get("access_token")
-                )
+                container_manager.sync_from_entry(entry.data.get("hv_container_id"))
+                await container_manager.async_ensure_hv_container(entry.data.get("access_token"))
             except aiohttp.ClientError as err:
                 # Network errors - treat same as MQTT network errors
                 _LOGGER.warning(
@@ -266,9 +227,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     err,
                 )
                 if not container_manager.container_id:
-                    raise ConfigEntryNotReady(
-                        f"Unable to ensure HV container (network error): {err}"
-                    ) from err
+                    raise ConfigEntryNotReady(f"Unable to ensure HV container (network error): {err}") from err
             except Exception as err:
                 # Other errors - log and check if we have a fallback
                 _LOGGER.warning(
@@ -301,10 +260,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     # Calculate backoff: normal interval, or exponential if failing
                     if consecutive_auth_failures > 0:
                         # Exponential backoff: 45min -> 90min -> 180min (capped at 4h)
-                        backoff = min(
-                            base_backoff * (2 ** consecutive_auth_failures),
-                            max_backoff
-                        )
+                        backoff = min(base_backoff * (2**consecutive_auth_failures), max_backoff)
                         _LOGGER.debug(
                             "Token refresh backoff: %d seconds (failure %d/%d)",
                             backoff,
@@ -319,9 +275,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     # Verify entry still exists after sleep
                     current_entry = hass.config_entries.async_get_entry(entry_id)
                     if current_entry is None:
-                        _LOGGER.debug(
-                            "Entry %s removed, stopping token refresh loop", entry_id
-                        )
+                        _LOGGER.debug("Entry %s removed, stopping token refresh loop", entry_id)
                         return
 
                     # Verify runtime still valid
@@ -335,10 +289,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     try:
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
-                            refresh_tokens_for_entry(
-                                current_entry, session, manager, container_manager
-                            ),
-                            timeout=60.0
+                            refresh_tokens_for_entry(current_entry, session, manager, container_manager), timeout=60.0
                         )
                         # Success - reset failure counter
                         if consecutive_auth_failures > 0:
@@ -360,8 +311,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         # After max failures, trigger reauth flow and stop retrying
                         if consecutive_auth_failures >= max_auth_failures:
                             _LOGGER.error(
-                                "Token refresh failed %d consecutive times; "
-                                "triggering reauth flow",
+                                "Token refresh failed %d consecutive times; triggering reauth flow",
                                 consecutive_auth_failures,
                             )
                             # Re-fetch entry in case it changed during token refresh
@@ -371,7 +321,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             # Continue loop but with max backoff until reauth succeeds
                             # The reauth flow will update credentials and reset state
 
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         _LOGGER.warning("Token refresh timed out after 60 seconds")
                         # Timeout is transient - don't count as auth failure
 
@@ -380,8 +330,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         # Network errors are transient - don't count as auth failure
 
                     except Exception as err:
-                        _LOGGER.exception(
-                            "Token refresh crashed with unexpected error: %s", err)
+                        _LOGGER.exception("Token refresh crashed with unexpected error: %s", err)
                         # Unknown errors - don't count as auth failure but log
 
             except asyncio.CancelledError:
@@ -412,15 +361,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
-        bootstrap_error: Optional[str] = None
+        bootstrap_error: str | None = None
         bootstrap_completed = False
         if should_bootstrap:
-            _LOGGER.debug(
-                "Starting bootstrap to fetch vehicle metadata before creating entities")
+            _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
 
-            runtime_data.bootstrap_task = hass.loop.create_task(
-                async_run_bootstrap(hass, entry)
-            )
+            runtime_data.bootstrap_task = hass.loop.create_task(async_run_bootstrap(hass, entry))
 
             # Wait for bootstrap task to FULLY complete (including async_seed_telematic_data)
             # This ensures coordinator.names is populated AND telematic data is seeded
@@ -429,17 +375,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await asyncio.wait_for(runtime_data.bootstrap_task, timeout=30.0)
                 bootstrap_completed = True
                 _LOGGER.debug("Bootstrap completed successfully")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _LOGGER.warning(
-                    "Bootstrap did not complete within 30 seconds. "
-                    "Devices will update names when metadata arrives."
+                    "Bootstrap did not complete within 30 seconds. Devices will update names when metadata arrives."
                 )
                 # Cancel the timed-out task to prevent it running in background
-                runtime_data.bootstrap_task.cancel()
-                try:
-                    await runtime_data.bootstrap_task
-                except asyncio.CancelledError:
-                    pass
+                await async_cancel_task(runtime_data.bootstrap_task)
                 runtime_data.bootstrap_task = None
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
@@ -457,17 +398,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 {
                     "title": "BMW CarData Setup Failed",
                     "message": f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                    "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
-                }
+                    "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+                },
             )
-            raise ConfigEntryNotReady(
-                f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
-            )
+            raise ConfigEntryNotReady(f"Bootstrap failed to retrieve vehicle metadata: {error_message}. ")
         # If bootstrap completed but produced no names, continue with VIN placeholders
         if should_bootstrap and bootstrap_completed and not coordinator.names:
-            _LOGGER.warning(
-                "Bootstrap completed without vehicle names; continuing setup with VIN placeholders."
-            )
+            _LOGGER.warning("Bootstrap completed without vehicle names; continuing setup with VIN placeholders.")
         # NOW clear the bootstrap flag and signal completion event
         # This ensures MQTT doesn't create entities before we have vehicle names
         # IMPORTANT: Set event FIRST, then clear flag - ensures waiters unblock
@@ -481,11 +418,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await manager.async_start()
             except Exception as err:
                 if refreshed_token:
-                    raise ConfigEntryNotReady(
-                        f"Unable to connect to BMW MQTT after token refresh: {err}"
-                    ) from err
-                raise ConfigEntryNotReady(
-                    f"Unable to connect to BMW MQTT: {err}") from err
+                    raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT after token refresh: {err}") from err
+                raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
 
         # Start coordinator watchdog
         await coordinator.async_handle_connection_event("connecting")
@@ -505,9 +439,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
         # Start telematic polling loop
-        runtime_data.telematic_task = hass.loop.create_task(
-            async_telematic_poll_loop(hass, entry.entry_id)
-        )
+        runtime_data.telematic_task = hass.loop.create_task(async_telematic_poll_loop(hass, entry.entry_id))
 
         setup_succeeded = True
         return True
@@ -517,7 +449,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _async_cleanup_on_failure(hass, entry, refresh_task)
         raise
 
-    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+    except (TimeoutError, aiohttp.ClientError) as err:
         # Network/timeout errors - expected during connectivity issues
         _LOGGER.warning("Setup failed due to network error: %s", err)
         await _async_cleanup_on_failure(hass, entry, refresh_task)
@@ -553,19 +485,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
         # Cancel tasks
-        data.refresh_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.refresh_task
-
-        if data.bootstrap_task:
-            data.bootstrap_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await data.bootstrap_task
-
-        if data.telematic_task:
-            data.telematic_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await data.telematic_task
+        await async_cancel_task(data.refresh_task)
+        await async_cancel_task(data.bootstrap_task)
+        await async_cancel_task(data.telematic_task)
 
         # Close resources
         if data.quota_manager:
@@ -575,8 +497,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await data.session.close()
 
         # Clean up services if this is the last entry
-        remaining_entries = [
-            k for k in domain_data.keys() if not k.startswith("_")]
+        remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
         if not remaining_entries:
             async_unregister_services(hass)
             domain_data.pop("_service_registered", None)

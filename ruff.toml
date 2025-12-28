@@ -1,0 +1,23 @@
+# Ruff linter configuration
+# https://docs.astral.sh/ruff/
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "W",      # pycodestyle warnings
+    "I",      # isort (import sorting)
+    "UP",     # pyupgrade (modern Python syntax)
+    "B",      # flake8-bugbear
+]
+
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[lint.isort]
+force-single-line = false
+combine-as-imports = true

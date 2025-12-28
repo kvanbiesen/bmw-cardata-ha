@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from contextlib import suppress
+from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 # Valid VIN pattern: 17 alphanumeric chars (excludes I, O, Q to avoid confusion)
 _VALID_VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$", re.IGNORECASE)
@@ -64,14 +70,8 @@ def redact_vin_payload(payload: Any) -> Any:
 
 
 # Pattern to match Bearer tokens and other sensitive auth strings
-_AUTH_TOKEN_PATTERN = re.compile(
-    r"(Bearer\s+)[A-Za-z0-9\-_\.]+",
-    re.IGNORECASE
-)
-_AUTHORIZATION_HEADER_PATTERN = re.compile(
-    r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]+",
-    re.IGNORECASE
-)
+_AUTH_TOKEN_PATTERN = re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]+", re.IGNORECASE)
+_AUTHORIZATION_HEADER_PATTERN = re.compile(r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]+", re.IGNORECASE)
 # Maximum text length for regex redaction to prevent ReDoS on huge inputs
 _MAX_REDACT_INPUT_LENGTH = 10000
 
@@ -99,3 +99,89 @@ def redact_sensitive_data(text: str | None) -> str:
     result = redact_vin_in_text(result) or result
 
     return result
+
+
+def validate_and_clamp_option(
+    value: Any,
+    min_val: int,
+    max_val: int,
+    default: int,
+    option_name: str,
+) -> int:
+    """Validate and clamp a numeric option value to a range.
+
+    Args:
+        value: The raw option value to validate
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+        default: Default value if invalid
+        option_name: Name for logging
+
+    Returns:
+        Clamped integer value within range, or default if invalid
+    """
+    try:
+        clamped = max(min_val, min(int(value), max_val))
+        if clamped != value:
+            _LOGGER.warning(
+                "%s value %s out of range, clamped to %d",
+                option_name,
+                value,
+                clamped,
+            )
+        return clamped
+    except (TypeError, ValueError):
+        _LOGGER.warning(
+            "Invalid %s value %s, using default %d",
+            option_name,
+            value,
+            default,
+        )
+        return default
+
+
+async def async_cancel_task(task: asyncio.Task | None) -> None:
+    """Cancel an asyncio task and wait for it to finish.
+
+    Safely cancels the task and suppresses CancelledError.
+    Does nothing if task is None.
+
+    Args:
+        task: The asyncio task to cancel, or None
+    """
+    if task is None:
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
+async def async_wait_for_bootstrap(
+    stream_manager: Any,
+    timeout: float = 15.0,
+    context: str = "Platform setup",
+) -> bool:
+    """Wait for bootstrap complete event with timeout.
+
+    Args:
+        stream_manager: Stream manager with _bootstrap_complete_event attribute
+        timeout: Timeout in seconds (default 15.0)
+        context: Context string for logging (e.g., "Binary sensor setup")
+
+    Returns:
+        True if bootstrap completed, False if timed out or event not available
+    """
+    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
+    if not bootstrap_event or bootstrap_event.is_set():
+        return True
+
+    try:
+        await asyncio.wait_for(bootstrap_event.wait(), timeout=timeout)
+        return True
+    except TimeoutError:
+        _LOGGER.debug(
+            "%s continuing without vehicle names after %.1fs wait",
+            context,
+            timeout,
+        )
+        return False

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,6 +98,7 @@ class RateLimitTracker:
 
         # Try parsing as HTTP-date (e.g., "Wed, 21 Oct 2024 07:28:00 GMT")
         from email.utils import parsedate_to_datetime
+
         try:
             retry_date = parsedate_to_datetime(retry_after)
             delta = retry_date.timestamp() - time.time()
@@ -126,10 +127,7 @@ class RateLimitTracker:
             return (False, reason)
 
         # Cooldown expired - reset
-        _LOGGER.info(
-            "Rate limit cooldown expired after %d attempts. Resuming API calls.",
-            self._429_count
-        )
+        _LOGGER.info("Rate limit cooldown expired after %d attempts. Resuming API calls.", self._429_count)
         self.reset()
         return (True, None)
 
@@ -141,8 +139,7 @@ class RateLimitTracker:
         if self._successful_calls >= 10:
             if self._429_count > 0:
                 _LOGGER.info(
-                    "API calls stable after %d successful requests. Resetting 429 counter.",
-                    self._successful_calls
+                    "API calls stable after %d successful requests. Resetting 429 counter.", self._successful_calls
                 )
                 self._429_count = 0
                 self._last_429_time = None
@@ -154,7 +151,7 @@ class RateLimitTracker:
         self._last_429_time = None
         self._successful_calls = 0
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current rate limit status.
 
         Returns:
@@ -211,10 +208,7 @@ class UnauthorizedLoopProtection:
                 return (False, reason)
 
             # Unblock after cooldown
-            _LOGGER.info(
-                "Unauthorized cooldown expired after %d attempts. Allowing retries.",
-                self._attempts
-            )
+            _LOGGER.info("Unauthorized cooldown expired after %d attempts. Allowing retries.", self._attempts)
             self.reset()
 
         # Check attempt limit
@@ -229,7 +223,7 @@ class UnauthorizedLoopProtection:
                 "Please fix credentials via the reauth flow in Settings > Integrations.",
                 self._attempts,
                 self._cooldown_hours,
-                unblock_time.strftime("%Y-%m-%d %H:%M:%S")
+                unblock_time.strftime("%Y-%m-%d %H:%M:%S"),
             )
 
             reason = (
@@ -250,19 +244,12 @@ class UnauthorizedLoopProtection:
 
         self._attempts += 1
 
-        _LOGGER.warning(
-            "Unauthorized attempt #%d/%d recorded.",
-            self._attempts,
-            self._max_attempts
-        )
+        _LOGGER.warning("Unauthorized attempt #%d/%d recorded.", self._attempts, self._max_attempts)
 
     def record_success(self) -> None:
         """Record successful authorization (reset counter)."""
         if self._attempts > 0:
-            _LOGGER.info(
-                "Authorization successful after %d attempts. Resetting counter.",
-                self._attempts
-            )
+            _LOGGER.info("Authorization successful after %d attempts. Resetting counter.", self._attempts)
             self.reset()
 
     def reset(self) -> None:
@@ -271,7 +258,7 @@ class UnauthorizedLoopProtection:
         self._blocked_until = None
         self._first_attempt_time = None
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current protection status.
 
         Returns:
@@ -320,24 +307,16 @@ class ContainerRateLimiter:
         hour_ago = now - 3600
         day_ago = now - 86400
 
-        self._operations_hour = [
-            t for t in self._operations_hour if t > hour_ago
-        ]
-        self._operations_day = [
-            t for t in self._operations_day if t > day_ago
-        ]
+        self._operations_hour = [t for t in self._operations_hour if t > hour_ago]
+        self._operations_day = [t for t in self._operations_day if t > day_ago]
 
         # Safety limit: if lists are still too large (shouldn't happen), truncate
         if len(self._operations_hour) > self._MAX_LIST_SIZE:
-            _LOGGER.warning(
-                "Container rate limiter hourly list exceeded safety limit; truncating"
-            )
-            self._operations_hour = self._operations_hour[-self._MAX_LIST_SIZE:]
+            _LOGGER.warning("Container rate limiter hourly list exceeded safety limit; truncating")
+            self._operations_hour = self._operations_hour[-self._MAX_LIST_SIZE :]
         if len(self._operations_day) > self._MAX_LIST_SIZE:
-            _LOGGER.warning(
-                "Container rate limiter daily list exceeded safety limit; truncating"
-            )
-            self._operations_day = self._operations_day[-self._MAX_LIST_SIZE:]
+            _LOGGER.warning("Container rate limiter daily list exceeded safety limit; truncating")
+            self._operations_day = self._operations_day[-self._MAX_LIST_SIZE :]
 
     def can_create_container(self) -> tuple[bool, str | None]:
         """Check if we can create a container.
@@ -366,8 +345,7 @@ class ContainerRateLimiter:
             wait_seconds = int(oldest + 86400 - now)
             wait_hours = wait_seconds // 3600
             reason = (
-                f"Container creation limit reached ({self._max_per_day}/day). "
-                f"Wait {wait_hours} hours before retrying."
+                f"Container creation limit reached ({self._max_per_day}/day). Wait {wait_hours} hours before retrying."
             )
             _LOGGER.warning(reason)
             return (False, reason)
@@ -384,10 +362,10 @@ class ContainerRateLimiter:
         _LOGGER.info(
             "Container creation recorded. Recent: %d/hour, %d/day",
             len(self._operations_hour),
-            len(self._operations_day)
+            len(self._operations_day),
         )
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current limiter status.
 
         Returns:

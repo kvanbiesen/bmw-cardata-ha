@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
@@ -13,9 +13,9 @@ from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .quota import QuotaManager
 from .ratelimit import (
+    ContainerRateLimiter,
     RateLimitTracker,
     UnauthorizedLoopProtection,
-    ContainerRateLimiter,
 )
 from .stream import CardataStreamManager
 
@@ -34,12 +34,12 @@ class CardataRuntimeData:
     refresh_task: asyncio.Task
     session: aiohttp.ClientSession
     coordinator: CardataCoordinator
-    container_manager: Optional[CardataContainerManager]
-    bootstrap_task: Optional[asyncio.Task] = None
-    quota_manager: Optional[QuotaManager] = None
-    telematic_task: Optional[asyncio.Task] = None
+    container_manager: CardataContainerManager | None
+    bootstrap_task: asyncio.Task | None = None
+    quota_manager: QuotaManager | None = None
+    telematic_task: asyncio.Task | None = None
     reauth_in_progress: bool = False
-    reauth_flow_id: Optional[str] = None
+    reauth_flow_id: str | None = None
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
@@ -57,15 +57,9 @@ class CardataRuntimeData:
         if self.rate_limit_tracker is None:
             self.rate_limit_tracker = RateLimitTracker()
         if self.unauthorized_protection is None:
-            self.unauthorized_protection = UnauthorizedLoopProtection(
-                max_attempts=3,
-                cooldown_hours=1
-            )
+            self.unauthorized_protection = UnauthorizedLoopProtection(max_attempts=3, cooldown_hours=1)
         if self.container_rate_limiter is None:
-            self.container_rate_limiter = ContainerRateLimiter(
-                max_per_hour=3,
-                max_per_day=10
-            )
+            self.container_rate_limiter = ContainerRateLimiter(max_per_hour=3, max_per_day=10)
 
     @property
     def token_refresh_lock(self) -> asyncio.Lock | None:
@@ -75,7 +69,7 @@ class CardataRuntimeData:
 
 # Per-entry lock registry to ensure consistent locking across setup and runtime
 # Maps entry_id -> asyncio.Lock
-_entry_locks: Dict[str, asyncio.Lock] = {}
+_entry_locks: dict[str, asyncio.Lock] = {}
 # Maximum entries to prevent unbounded growth from cleanup failures
 _MAX_ENTRY_LOCKS = 100
 
@@ -108,9 +102,9 @@ def cleanup_entry_lock(entry_id: str) -> None:
 
 
 async def async_update_entry_data(
-    hass: "HomeAssistant",
-    entry: "ConfigEntry",
-    updates: Dict[str, Any],
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    updates: dict[str, Any],
 ) -> None:
     """Safely update config entry data with lock to prevent race conditions.
 
