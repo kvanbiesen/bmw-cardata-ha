@@ -159,3 +159,34 @@ async def async_cancel_task(task: asyncio.Task | None) -> None:
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
+
+
+async def async_wait_for_bootstrap(
+    stream_manager: Any,
+    timeout: float = 15.0,
+    context: str = "Platform setup",
+) -> bool:
+    """Wait for bootstrap complete event with timeout.
+
+    Args:
+        stream_manager: Stream manager with _bootstrap_complete_event attribute
+        timeout: Timeout in seconds (default 15.0)
+        context: Context string for logging (e.g., "Binary sensor setup")
+
+    Returns:
+        True if bootstrap completed, False if timed out or event not available
+    """
+    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
+    if not bootstrap_event or bootstrap_event.is_set():
+        return True
+
+    try:
+        await asyncio.wait_for(bootstrap_event.wait(), timeout=timeout)
+        return True
+    except asyncio.TimeoutError:
+        _LOGGER.debug(
+            "%s continuing without vehicle names after %.1fs wait",
+            context,
+            timeout,
+        )
+        return False

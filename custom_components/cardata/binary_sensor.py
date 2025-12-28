@@ -18,6 +18,7 @@ from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
+from .utils import async_wait_for_bootstrap
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,14 +171,7 @@ async def async_setup_entry(
     stream_manager = runtime.stream
 
     # Wait for bootstrap to finish so VIN → name mapping exists.
-    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
-    if bootstrap_event and not bootstrap_event.is_set():
-        try:
-            await asyncio.wait_for(bootstrap_event.wait(), timeout=15.0)
-        except asyncio.TimeoutError:
-            _LOGGER.debug(
-                "Binary sensor setup continuing without vehicle names after 15s wait"
-            )
+    await async_wait_for_bootstrap(stream_manager, context="Binary sensor setup")
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
 
