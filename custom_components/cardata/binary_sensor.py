@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorEntity,
     BinarySensorDeviceClass,
+    BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_config_entry,
+    async_get,
+)
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
+from .utils import async_wait_for_bootstrap
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,20 +41,22 @@ DOOR_DESCRIPTORS = (
     "vehicle.cabin.door.row2.passenger.isOpen",
 )
 
+MOTION_DESCRIPTORS = ("vehicle.isMoving",)
+
 
 class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 
     _attr_should_poll = False
 
-    def __init__(
-        self, coordinator: CardataCoordinator, vin: str, descriptor: str
-    ) -> None:
+    def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
         if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR
+        elif descriptor in MOTION_DESCRIPTORS:
+            self._attr_device_class = BinarySensorDeviceClass.MOVING
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -93,7 +98,7 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         new_value = state.value
 
         # SMART FILTERING: Check if sensor's current state differs from new value
-        current_value = getattr(self, '_attr_is_on', None)
+        current_value = getattr(self, "_attr_is_on", None)
 
         # Only update HA if state actually changed or sensor is unknown
         if current_value == new_value:
@@ -123,6 +128,14 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
             else:
                 return "mdi:circle"
 
+        # Motion sensors - dynamic icon based on state
+        if self.descriptor and self.descriptor in MOTION_DESCRIPTORS:
+            is_moving = getattr(self, "_attr_is_on", False)
+            if is_moving:
+                return "mdi:car-arrow-right"
+            else:
+                return "mdi:car-brake-parking"
+
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)
 
@@ -147,28 +160,28 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
     '''
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
-) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     """Set up binary sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
     stream_manager = runtime.stream
 
     # Wait for bootstrap to finish so VIN → name mapping exists.
-    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
-    if bootstrap_event and not bootstrap_event.is_set():
-        try:
-            await asyncio.wait_for(bootstrap_event.wait(), timeout=15.0)
-        except asyncio.TimeoutError:
-            _LOGGER.debug(
-                "Binary sensor setup continuing without vehicle names after 15s wait"
-            )
+    await async_wait_for_bootstrap(stream_manager, context="Binary sensor setup")
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
 
-    def ensure_entity(vin: str, descriptor: str, *, assume_binary: bool = False) -> None:
-        """Ensure binary sensor entity exists for VIN + descriptor."""
+    def ensure_entity(vin: str, descriptor: str, *, assume_binary: bool = False, from_signal: bool = False) -> None:
+        """Ensure binary sensor entity exists for VIN + descriptor.
+
+        Args:
+            vin: Vehicle identification number.
+            descriptor: The telematic descriptor (e.g., "vehicle.cabin.door.row1.driver.isOpen").
+            assume_binary: If True, create entity even without coordinator state.
+                Used when restoring entities from entity registry.
+            from_signal: If True, trust the signal and create entity even without
+                coordinator state. Used when called from dispatcher signals.
+        """
         if (vin, descriptor) in entities:
             return
 
@@ -176,7 +189,7 @@ async def async_setup_entry(
         if state:
             if not isinstance(state.value, bool):
                 return
-        elif not assume_binary:
+        elif not assume_binary and not from_signal:
             return
 
         entity = CardataBinarySensor(coordinator, vin, descriptor)
@@ -187,13 +200,9 @@ async def async_setup_entry(
     # This prevents race conditions where descriptors arrive between iter_descriptors
     # and signal subscription
     async def async_handle_new_binary_sensor(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
+        ensure_entity(vin, descriptor, from_signal=True)
 
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_new_binary, async_handle_new_binary_sensor
-        )
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_binary, async_handle_new_binary_sensor))
 
     # Note: We don't subscribe to signal_update for entity creation here.
     # - signal_new_binary handles new boolean descriptors

@@ -6,13 +6,17 @@ DESCRIPTOR_TITLES where available when falling back to a descriptor-derived
 name. That prevents overly-short targets like "pressuretarget" and makes the
 migration align with the names your sensors actually use.
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
-from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_config_entry,
+    async_get,
+)
 from homeassistant.util import slugify
 
 from .descriptor_titles import DESCRIPTOR_TITLES
@@ -28,7 +32,7 @@ def _strip_leading_model_from_obj(obj: str, model_slug: str) -> str:
     if not obj or not model_slug:
         return obj
     # Remove repeated leading model_slug_ occurrences, e.g. ^(?:330e_)+
-    pattern = rf'^(?:{re.escape(model_slug)}_)+'  # e.g. ^(?:330e_)+
+    pattern = rf"^(?:{re.escape(model_slug)}_)+"  # e.g. ^(?:330e_)+
     return re.sub(pattern, "", obj)
 
 
@@ -46,8 +50,7 @@ def _descriptor_fallback_slug(descriptor: str) -> str:
         return slugify(title, separator="_")
     # Otherwise derive from descriptor tokens (more conservative than last token)
     # Join meaningful parts (take up to last 3 tokens to retain descriptiveness)
-    parts = [p for p in descriptor.replace("_", " ").replace(
-        ".", " ").split() if p and p.lower() != "vehicle"]
+    parts = [p for p in descriptor.replace("_", " ").replace(".", " ").split() if p and p.lower() != "vehicle"]
     if not parts:
         return "state"
     # If tokens look like camelCase (e.g. fractionDriveEcoProPlus) keep them as-is so slugify handles them
@@ -63,7 +66,7 @@ async def async_migrate_entity_ids(
     *,
     force: bool = False,
     dry_run: bool = False,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Migrate entity_registry entity_id to include the vehicle/model prefix.
 
@@ -74,10 +77,9 @@ async def async_migrate_entity_ids(
     - dry_run: when True do not perform writes; return planned changes.
     """
     entity_registry = async_get(hass)
-    entries = list(async_entries_for_config_entry(
-        entity_registry, entry.entry_id))
+    entries = list(async_entries_for_config_entry(entity_registry, entry.entry_id))
 
-    planned: List[Dict[str, Any]] = []
+    planned: list[dict[str, Any]] = []
 
     for ent in entries:
         redacted_entity_id = redact_vin_in_text(ent.entity_id)
@@ -86,27 +88,21 @@ async def async_migrate_entity_ids(
 
         unique = ent.unique_id or ""
         if "_" not in unique:
-            _LOGGER.debug(
-                "Skipping %s: unique_id missing expected '_'", redacted_entity_id)
-            planned.append(
-                {"entity": ent.entity_id, "action": "skip", "reason": "no_unique_pattern"})
+            _LOGGER.debug("Skipping %s: unique_id missing expected '_'", redacted_entity_id)
+            planned.append({"entity": ent.entity_id, "action": "skip", "reason": "no_unique_pattern"})
             continue
         vin_part, descriptor = unique.split("_", 1)
 
         resolved_vin = (
-            coordinator._resolve_vin_alias(vin_part)
-            if hasattr(coordinator, "_resolve_vin_alias")
-            else vin_part
+            coordinator._resolve_vin_alias(vin_part) if hasattr(coordinator, "_resolve_vin_alias") else vin_part
         )
 
-        model = coordinator.names.get(resolved_vin) or (
-            coordinator.device_metadata.get(resolved_vin) or {}
-        ).get("name")
+        model = coordinator.names.get(resolved_vin) or (coordinator.device_metadata.get(resolved_vin) or {}).get("name")
         if not model:
-            _LOGGER.debug("Skipping %s: no model/name available for VIN %s",
-                          redacted_entity_id, redact_vin(resolved_vin))
-            planned.append(
-                {"entity": ent.entity_id, "action": "skip", "reason": "no_model"})
+            _LOGGER.debug(
+                "Skipping %s: no model/name available for VIN %s", redacted_entity_id, redact_vin(resolved_vin)
+            )
+            planned.append({"entity": ent.entity_id, "action": "skip", "reason": "no_model"})
             continue
 
         model_slug = slugify(model, separator="_")
@@ -134,10 +130,8 @@ async def async_migrate_entity_ids(
         # If already equals desired target, nothing to do
         if ent.entity_id == new_entity_id:
             safe_new_entity_id = redact_vin_in_text(new_entity_id)
-            _LOGGER.debug("Skipping %s: already equals target %s",
-                          redacted_entity_id, safe_new_entity_id)
-            planned.append(
-                {"entity": ent.entity_id, "action": "skip", "reason": "already_target"})
+            _LOGGER.debug("Skipping %s: already equals target %s", redacted_entity_id, safe_new_entity_id)
+            planned.append({"entity": ent.entity_id, "action": "skip", "reason": "already_target"})
             continue
 
         # Heuristic: safe to migrate if:
@@ -161,32 +155,32 @@ async def async_migrate_entity_ids(
                 current_obj,
                 stripped_obj,
             )
-            planned.append(
-                {"entity": ent.entity_id, "action": "skip", "reason": "heuristic_no_match"})
+            planned.append({"entity": ent.entity_id, "action": "skip", "reason": "heuristic_no_match"})
             continue
 
         # If target exists and is not this entry, skip (collision)
         existing = entity_registry.async_get(new_entity_id)
         if existing is not None and existing.entity_id != ent.entity_id:
             safe_new_entity_id = redact_vin_in_text(new_entity_id)
-            _LOGGER.warning("Cannot migrate %s -> %s because target already exists",
-                            redacted_entity_id, safe_new_entity_id)
-            planned.append(
-                {"entity": ent.entity_id, "action": "collision", "target": new_entity_id})
+            _LOGGER.warning(
+                "Cannot migrate %s -> %s because target already exists", redacted_entity_id, safe_new_entity_id
+            )
+            planned.append({"entity": ent.entity_id, "action": "collision", "target": new_entity_id})
             continue
 
         safe_new_entity_id = redact_vin_in_text(new_entity_id)
-        planned.append({"entity": ent.entity_id, "action": "rename",
-                       "target": new_entity_id, "force": force})
+        planned.append({"entity": ent.entity_id, "action": "rename", "target": new_entity_id, "force": force})
         if not dry_run:
             try:
-                entity_registry.async_update_entity(
-                    ent.entity_id, new_entity_id=new_entity_id)
-                _LOGGER.info("Migrated entity_id %s -> %s",
-                             redacted_entity_id, safe_new_entity_id)
+                entity_registry.async_update_entity(ent.entity_id, new_entity_id=new_entity_id)
+                _LOGGER.info("Migrated entity_id %s -> %s", redacted_entity_id, safe_new_entity_id)
             except Exception as err:
-                _LOGGER.exception("Failed migrating %s -> %s: %s", redacted_entity_id,
-                                  safe_new_entity_id, redact_vin_in_text(str(err)))
+                _LOGGER.exception(
+                    "Failed migrating %s -> %s: %s",
+                    redacted_entity_id,
+                    safe_new_entity_id,
+                    redact_vin_in_text(str(err)),
+                )
                 planned[-1]["error"] = str(err)
 
     return planned

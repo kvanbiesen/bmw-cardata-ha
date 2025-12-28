@@ -7,8 +7,8 @@ import logging
 from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
@@ -27,9 +27,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up BMW CarData image from config entry."""
-    runtime_data: CardataRuntimeData = hass.data.get(DOMAIN, {}).get(
-        config_entry.entry_id
-    )
+    runtime_data: CardataRuntimeData = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
     if not runtime_data:
         return
 
@@ -52,18 +50,14 @@ async def async_setup_entry(
         async_add_entities([entity])
         _LOGGER.debug("Created image entity for VIN: %s", redact_vin(vin))
 
-    initial_vins = set(coordinator.data.keys()) | set(
-        coordinator.device_metadata.keys())
+    initial_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
     for vin in initial_vins:
         ensure_entity(vin)
 
     async def async_handle_new_image(vin: str) -> None:
         ensure_entity(vin)
 
-    config_entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_new_image, async_handle_new_image)
-    )
+    config_entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_image, async_handle_new_image))
 
 
 class CardataImage(CardataEntity, ImageEntity):
@@ -73,9 +67,13 @@ class CardataImage(CardataEntity, ImageEntity):
     _attr_translation_key = "vehicle_image"
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        """Initialize the image entity."""
+        """Initialize the image entity.
+
+        Note: Explicit parent __init__ calls are required here because
+        CardataEntity and ImageEntity have incompatible __init__ signatures.
+        Using super() would not correctly initialize both parents.
+        """
         CardataEntity.__init__(self, coordinator, vin, "image")
-        # Then initialize ImageEntity with hass
         ImageEntity.__init__(self, coordinator.hass)
 
         self._base_name = "Vehicle Image"
@@ -106,11 +104,7 @@ class CardataImage(CardataEntity, ImageEntity):
         self._image_data = metadata.get("vehicle_image")
 
         if self._image_data:
-            _LOGGER.debug(
-                "Vehicle image loaded for %s (%d bytes)",
-                redact_vin(self._vin),
-                len(self._image_data)
-            )
+            _LOGGER.debug("Vehicle image loaded for %s (%d bytes)", redact_vin(self._vin), len(self._image_data))
 
     @property
     def state(self) -> str:

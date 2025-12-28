@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-
 _LOGGER_NAMESPACE = "custom_components.cardata"
 _DEBUG_ENABLED = False
 

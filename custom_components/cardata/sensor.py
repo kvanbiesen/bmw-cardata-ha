@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
-import logging
-
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -28,23 +27,27 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_config_entry,
+    async_get,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    DOMAIN,
-    WINDOW_DESCRIPTORS,
     BATTERY_DESCRIPTORS,
+    DOMAIN,
+    LOCATION_ALTITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    LOCATION_HEADING_DESCRIPTOR,
-    LOCATION_ALTITUDE_DESCRIPTOR,
+    WINDOW_DESCRIPTORS,
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
-from .runtime import CardataRuntimeData
 from .quota import QuotaManager
+from .runtime import CardataRuntimeData
+from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,7 +95,8 @@ def map_unit_to_ha(unit: str | None) -> str | None:
         "l": UnitOfVolume.LITERS,
         "celsius": UnitOfTemperature.CELSIUS,
         "weeks": UnitOfTime.DAYS,
-        "w": UnitOfTime.DAYS,
+        # Note: "w" is NOT mapped here - it's ambiguous (could be watts or weeks)
+        # BMW uses "weeks" explicitly for time, and "W" or "kW" for power
         "months": UnitOfTime.DAYS,
         "kPa": UnitOfPressure.KPA,
         "kpa": UnitOfPressure.KPA,
@@ -102,9 +106,7 @@ def map_unit_to_ha(unit: str | None) -> str | None:
     return unit_mapping.get(unit, unit)
 
 
-def get_device_class_for_unit(
-    unit: str | None, descriptor: str | None = None
-) -> SensorDeviceClass | None:
+def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -> SensorDeviceClass | None:
     """Get device class, with special handling for ambiguous units like 'm'."""
     if descriptor:
         descriptor_lower = descriptor.lower()
@@ -157,8 +159,8 @@ def convert_value_for_unit(
     except (TypeError, ValueError):
         return value
 
-    # Convert weeks to days
-    if original_unit in ("weeks", "w") and normalized_unit == UnitOfTime.DAYS:
+    # Convert weeks to days (only explicit "weeks", not "w" which could be watts)
+    if original_unit == "weeks" and normalized_unit == UnitOfTime.DAYS:
         return numeric_value * 7
 
     # Convert months to days (approximate)
@@ -173,9 +175,7 @@ class CardataSensor(CardataEntity, SensorEntity):
 
     _attr_should_poll = False
 
-    def __init__(
-        self, coordinator: CardataCoordinator, vin: str, descriptor: str
-    ) -> None:
+    def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe = None
 
@@ -205,16 +205,11 @@ class CardataSensor(CardataEntity, SensorEntity):
                 if unit is not None:
                     original_unit = unit
                     unit = map_unit_to_ha(unit)
-                    self._attr_native_value = convert_value_for_unit(
-                        self._attr_native_value, original_unit, unit
-                    )
+                    self._attr_native_value = convert_value_for_unit(self._attr_native_value, original_unit, unit)
 
-                    existing_device_class = getattr(
-                        self, "_attr_device_class", None)
+                    existing_device_class = getattr(self, "_attr_device_class", None)
                     if existing_device_class is None:
-                        self._attr_device_class = get_device_class_for_unit(
-                            unit, self._descriptor
-                        )
+                        self._attr_device_class = get_device_class_for_unit(unit, self._descriptor)
 
                     self._attr_native_unit_of_measurement = unit
 
@@ -272,11 +267,10 @@ class CardataSensor(CardataEntity, SensorEntity):
 
         original_unit = state.unit
         normalized_unit = map_unit_to_ha(state.unit)
-        converted_value = convert_value_for_unit(
-            state.value, original_unit, normalized_unit)
+        converted_value = convert_value_for_unit(state.value, original_unit, normalized_unit)
         # SMART FILTERING: Check if sensor's current state differs from new value
-        current_value = getattr(self, '_attr_native_value', None)
-        current_unit = getattr(self, '_attr_native_unit_of_measurement', None)
+        current_value = getattr(self, "_attr_native_value", None)
+        current_unit = getattr(self, "_attr_native_unit_of_measurement", None)
 
         # Determine if update is needed
         value_changed = current_value != converted_value
@@ -293,9 +287,7 @@ class CardataSensor(CardataEntity, SensorEntity):
 
         existing_device_class = getattr(self, "_attr_device_class", None)
         if existing_device_class is None:
-            self._attr_device_class = get_device_class_for_unit(
-                normalized_unit, self._descriptor
-            )
+            self._attr_device_class = get_device_class_for_unit(normalized_unit, self._descriptor)
 
         # Set state class if not already set (for new entities)
         if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:
@@ -315,11 +307,18 @@ class CardataSensor(CardataEntity, SensorEntity):
         unit = getattr(self, "_attr_native_unit_of_measurement", None)
 
         if unit in (
-            UnitOfPower.WATT, UnitOfPower.KILO_WATT,
-            UnitOfTemperature.CELSIUS, UnitOfTemperature.FAHRENHEIT,
-            UnitOfPressure.KPA, UnitOfPressure.BAR, UnitOfPressure.PSI,
-            UnitOfElectricCurrent.AMPERE, UnitOfElectricCurrent.MILLIAMPERE,
+            UnitOfPower.WATT,
+            UnitOfPower.KILO_WATT,
+            UnitOfTemperature.CELSIUS,
+            UnitOfTemperature.FAHRENHEIT,
+            UnitOfPressure.KPA,
+            UnitOfPressure.BAR,
+            UnitOfPressure.PSI,
+            UnitOfElectricCurrent.AMPERE,
+            UnitOfElectricCurrent.MILLIAMPERE,
             UnitOfElectricPotential.VOLT,
+            UnitOfVolume.LITERS,
+            UnitOfVolume.GALLONS,
             "%",  # Battery percentage
         ):
             return SensorStateClass.MEASUREMENT
@@ -330,8 +329,7 @@ class CardataSensor(CardataEntity, SensorEntity):
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
         if self.descriptor and self.descriptor == "vehicle.cabin.door.status":
-            value = str(self._attr_native_value).lower(
-            ) if self._attr_native_value else ""
+            value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "unlocked" in value:
                 return "mdi:lock-open-variant-outline"
             else:
@@ -339,8 +337,7 @@ class CardataSensor(CardataEntity, SensorEntity):
 
         # Window sensors - dynamic icon based on state
         if self.descriptor and self.descriptor in WINDOW_DESCRIPTORS:
-            value = str(self._attr_native_value).lower(
-            ) if self._attr_native_value else ""
+            value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "open" in value:
                 return "mdi:window-open-variant"
             elif "closed" in value:
@@ -433,6 +430,9 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
                 attrs["api_quota_remaining"] = self._quota.remaining
                 if next_reset := self._quota.next_reset_iso:
                     attrs["api_quota_next_reset"] = next_reset
+            # Expose evicted updates count for diagnostics visibility
+            if hasattr(self._coordinator, "_evicted_updates_count"):
+                attrs["evicted_updates_count"] = self._coordinator._evicted_updates_count
             return attrs
 
         if self._sensor_type == "last_telematic_api":
@@ -454,8 +454,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
                 if self._sensor_type in ("last_message", "last_telematic_api"):
-                    self._attr_native_value = dt_util.parse_datetime(
-                        last_state.state)
+                    self._attr_native_value = dt_util.parse_datetime(last_state.state)
                 else:
                     self._attr_native_value = last_state.state
 
@@ -489,7 +488,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self):
+    def native_value(self) -> datetime | str | None:
         """Return native value."""
         return self._attr_native_value
 
@@ -559,7 +558,7 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self) -> str:
+    def native_value(self) -> str | None:
         """Return metadata status."""
         return self._attr_native_value
 
@@ -587,9 +586,7 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_value: float | None = None
 
-    def __init__(
-        self, coordinator: CardataCoordinator, vin: str, descriptor: str, base_name: str
-    ) -> None:
+    def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str, base_name: str) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._base_name = base_name
         self._update_name(write_state=False)
@@ -655,6 +652,8 @@ class _SocTrackerBase(CardataEntity, SensorEntity):
 class CardataSocEstimateSensor(_SocTrackerBase):
     """Sensor for predicted state of charge (SOC)."""
 
+    _attr_translation_key = "battery"
+
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(
             coordinator,
@@ -666,8 +665,7 @@ class CardataSocEstimateSensor(_SocTrackerBase):
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore SOC estimate cache."""
         restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(
-            restored_ts) if restored_ts else None
+        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
         if reference is None:
             reference = last_state.last_changed
         if reference is not None:
@@ -702,8 +700,7 @@ class CardataTestingSocEstimateSensor(_SocTrackerBase):
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore testing SOC cache."""
         restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(
-            restored_ts) if restored_ts else None
+        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
         if reference is None:
             reference = last_state.last_changed
         if reference is not None:
@@ -740,8 +737,7 @@ class CardataSocRateSensor(_SocTrackerBase):
     async def _async_restore_from_state(self, last_state) -> None:
         """Restore SOC rate cache."""
         restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(
-            restored_ts) if restored_ts else None
+        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
         if reference is None:
             reference = last_state.last_changed
         if reference is not None:
@@ -760,9 +756,7 @@ class CardataSocRateSensor(_SocTrackerBase):
             self._attr_native_value = existing
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
-) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     """Set up sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
@@ -775,8 +769,12 @@ async def async_setup_entry(
     # Cache stores (drive_train_value, is_electric_result) to detect metadata changes
     _electric_vehicle_cache: dict[str, tuple[str, bool]] = {}
 
-    def is_electric_vehicle(vin: str) -> bool:
-        """Check if vehicle is electric/hybrid based on metadata (cached with invalidation)."""
+    def is_electric_vehicle(vin: str) -> bool | None:
+        """Check if vehicle is electric/hybrid based on metadata (cached with invalidation).
+
+        Returns:
+            True if electric/hybrid, False if not, None if metadata not yet available.
+        """
         metadata = coordinator.device_metadata.get(vin, {})
         extra = metadata.get("extra_attributes", {})
         drive_train = extra.get("drive_train", "").lower()
@@ -789,17 +787,20 @@ async def async_setup_entry(
             # drive_train changed, re-evaluate below
 
         if not drive_train:
-            _LOGGER.debug("VIN %s: No metadata yet, defaulting to electric (will check later)", vin)
-            return True  # Don't cache this - let it check again when metadata loads
+            _LOGGER.debug("VIN %s: No metadata yet, will check again later", redact_vin(vin))
+            return None  # Don't cache - let caller decide to wait for metadata
 
-        is_electric = any(x in drive_train for x in [
-                          "electric", "phev", "bev", "plugin", "hybrid", "mhev"])
+        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid", "mhev"])
 
         # Cache result with the drive_train value used for the decision
         _electric_vehicle_cache[vin] = (drive_train, is_electric)
 
-        _LOGGER.debug("VIN %s is %s (drive_train: %s)",
-                      vin, "electric/hybrid" if is_electric else "NOT electric", drive_train)
+        _LOGGER.debug(
+            "VIN %s is %s (drive_train: %s)",
+            redact_vin(vin),
+            "electric/hybrid" if is_electric else "NOT electric",
+            drive_train,
+        )
 
         return is_electric
 
@@ -814,20 +815,23 @@ async def async_setup_entry(
     def ensure_soc_tracking_entities(vin: str) -> None:
         ensure_metadata_sensor(vin)
 
+        electric_status = is_electric_vehicle(vin)
+        if electric_status is None:
+            # wait for meta, so skip
+            return
+
         # Skip SOC sensors for non-electric vehicles
-        if not is_electric_vehicle(vin):
+        if not electric_status:
             return
 
         new_entities = []
 
         if vin not in soc_estimate_entities:
-            soc_estimate_entities[vin] = CardataSocEstimateSensor(
-                coordinator, vin)
+            soc_estimate_entities[vin] = CardataSocEstimateSensor(coordinator, vin)
             new_entities.append(soc_estimate_entities[vin])
 
         if vin not in soc_testing_entities:
-            soc_testing_entities[vin] = CardataTestingSocEstimateSensor(
-                coordinator, vin)
+            soc_testing_entities[vin] = CardataTestingSocEstimateSensor(coordinator, vin)
             new_entities.append(soc_testing_entities[vin])
 
         if vin not in soc_rate_entities:
@@ -837,37 +841,31 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities, True)
 
-    def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False) -> None:
-        """Ensure sensor entity exists for VIN + descriptor."""
+    def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False, from_signal: bool = False) -> None:
+        """Ensure sensor entity exists for VIN + descriptor.
+
+        Args:
+            vin: Vehicle identification number.
+            descriptor: The telematic descriptor (e.g., "vehicle.speed").
+            assume_sensor: If True, create entity even without coordinator state.
+                Used when restoring entities from entity registry.
+            from_signal: If True, trust the signal and create entity even without
+                coordinator state. Used when called from dispatcher signals.
+        """
         ensure_soc_tracking_entities(vin)
 
         if (vin, descriptor) in entities:
             return
-
-        # Skip location descriptors (used by device_tracker)
-        # not needed since device tracker is working
-        # if descriptor in (LOCATION_LATITUDE_DESCRIPTOR,
-        #    LOCATION_LONGITUDE_DESCRIPTOR,
-        #    LOCATION_ALTITUDE_DESCRIPTOR,
-        #    LOCATION_HEADING_DESCRIPTOR
-        # ):
-        #    return
-
-        if not is_electric_vehicle(vin):
-            descriptor_lower = descriptor.lower()
-            if any(keyword in descriptor_lower for keyword in [
-                "charging", "electricengine", "battery", "soc", "hvbattery"
-            ]):
-                _LOGGER.debug(
-                    "Skipping electric sensor for non-electric %s", descriptor)
-                return
 
         # Skip boolean values (they're binary sensors)
         state = coordinator.get_state(vin, descriptor)
         if state and isinstance(state.value, bool):
             return
 
-        if not state and not assume_sensor:
+        if not state and not assume_sensor and not from_signal:
+            _LOGGER.debug(
+                "Skipping sensor creation for %s - no coordinator state (vin=%s)", descriptor, redact_vin(vin)
+            )
             return
 
         entity = CardataSensor(coordinator, vin, descriptor)
@@ -883,11 +881,9 @@ async def async_setup_entry(
     }
 
     for old_id, new_id in legacy_mappings.items():
-        entity_id = entity_registry.async_get_entity_id(
-            "sensor", DOMAIN, old_id)
+        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, old_id)
         if entity_id:
-            entity_registry.async_update_entity(
-                entity_id, new_unique_id=new_id)
+            entity_registry.async_update_entity(entity_id, new_unique_id=new_id)
 
     # Remove legacy SOC rate sensor
     legacy_soc_rate_id = f"{entry.entry_id}_diagnostics_soc_rate"
@@ -898,36 +894,33 @@ async def async_setup_entry(
     # This prevents race conditions where descriptors arrive between iter_descriptors
     # and signal subscription
     async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor)
+        ensure_entity(vin, descriptor, from_signal=True)
 
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_new_sensor, async_handle_new_sensor)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor))
 
-    # Note: We don't subscribe to signal_update for entity creation here.
-    # - signal_new_sensor handles new descriptors
-    # - iter_descriptors() loop below handles existing data
-    # - Individual entities subscribe to signal_update for their own state updates
-    # This avoids duplicate processing on every update.
+    # also subscribe to updates
+
+    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
+        ensure_entity(vin, descriptor, from_signal=True)  # ← Trust the signal!
+
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation))
+    # Note: signal_update subscription above handles entity creation for updates.
+    # - signal_new_sensor handles truly new descriptors
+    # - signal_update handles updates that may require entity creation
+    # - iter_descriptors() loop below handles existing data at startup
+    # - Individual entities also subscribe to signal_update for their own state updates
 
     async def async_handle_soc_update(vin: str) -> None:
         ensure_soc_tracking_entities(vin)
 
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_soc_estimate, async_handle_soc_update)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update))
 
     async def async_handle_metadata_update(vin: str) -> None:
         # When metadata updates, re-check if vehicle is now detected as EV
         # The is_electric_vehicle() cache will invalidate if drive_train changed
         ensure_soc_tracking_entities(vin)
 
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, coordinator.signal_metadata, async_handle_metadata_update)
-    )
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update))
 
     # Restore enabled sensors from entity registry
     for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
@@ -970,8 +963,7 @@ async def async_setup_entry(
             unique_id = f"{entry.entry_id}_diagnostics_connection_status"
 
         # Skip only if entity is explicitly disabled by user
-        entity_id = entity_registry.async_get_entity_id(
-            "sensor", DOMAIN, unique_id)
+        entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
         if entity_id:
             entity_entry = entity_registry.async_get(entity_id)
             if entity_entry and entity_entry.disabled_by is not None:

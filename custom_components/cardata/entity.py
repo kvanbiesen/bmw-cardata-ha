@@ -6,11 +6,11 @@ import asyncio
 import logging
 import re
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
@@ -43,12 +43,11 @@ class CardataEntity(RestoreEntity):
         self._attr_name = self._compute_full_name()
 
         self._attr_available = True
-        self._name_unsub: Optional[Callable[[], None]] = None
+        self._name_unsub: Callable[[], None] | None = None
 
     def _resolve_vin(self) -> str:
         """Resolve VIN alias if coordinator provides resolver."""
-        resolver = getattr(self._coordinator,
-                           "_resolve_vin_alias", lambda v: v)
+        resolver = getattr(self._coordinator, "_resolve_vin_alias", lambda v: v)
         return resolver(self._vin)
 
     def _format_name(self) -> str:
@@ -68,9 +67,7 @@ class CardataEntity(RestoreEntity):
 
         # 2) Fallback: derive from descriptor tokens
         parts = [
-            p
-            for p in self._descriptor.replace("_", " ").replace(".", " ").split()
-            if p and p.lower() != "vehicle"
+            p for p in self._descriptor.replace("_", " ").replace(".", " ").split() if p and p.lower() != "vehicle"
         ]
         if not parts:
             return ""
@@ -80,8 +77,7 @@ class CardataEntity(RestoreEntity):
     def device_info(self) -> DeviceInfo:
         resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin, {})
-        name = metadata.get("name") or self._coordinator.names.get(
-            resolved_vin, resolved_vin)
+        name = metadata.get("name") or self._coordinator.names.get(resolved_vin, resolved_vin)
         manufacturer = metadata.get("manufacturer", "bmw")
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, resolved_vin)},
@@ -121,7 +117,7 @@ class CardataEntity(RestoreEntity):
     def vin(self) -> str:
         return self._vin
 
-    def _get_vehicle_name(self) -> Optional[str]:
+    def _get_vehicle_name(self) -> str | None:
         resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin)
         if metadata and metadata.get("name"):
@@ -142,7 +138,7 @@ class CardataEntity(RestoreEntity):
         if not norm_vehicle:
             return base
         if norm_base.lower().startswith(norm_vehicle.lower()):
-            stripped = norm_base[len(norm_vehicle):].strip()
+            stripped = norm_base[len(norm_vehicle) :].strip()
             # Remove any leftover leading punctuation/underscores/spaces
             stripped = re.sub(r"^[\s_\-:]+", "", stripped)
             # If stripping leaves an empty string, return original base to avoid blank names
@@ -202,8 +198,7 @@ class CardataEntity(RestoreEntity):
             self._update_name(write_state=True)
         except Exception:
             entity_id = getattr(self, "entity_id", "<unknown>")
-            _LOGGER.exception(
-                "Failed to update name for entity %s", redact_vin_in_text(entity_id))
+            _LOGGER.exception("Failed to update name for entity %s", redact_vin_in_text(entity_id))
 
     async def async_will_remove_from_hass(self) -> None:
         if self._name_unsub:

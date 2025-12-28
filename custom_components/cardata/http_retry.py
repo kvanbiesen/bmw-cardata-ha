@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import aiohttp
 
@@ -13,6 +14,56 @@ from .const import HTTP_TIMEOUT
 from .utils import redact_sensitive_data, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _jittered_backoff(backoff: float) -> float:
+    """Apply jitter to backoff delay to prevent thundering herd.
+
+    Uses "equal jitter" strategy: half the backoff is guaranteed,
+    plus a random portion up to the other half. This balances
+    spread with reasonable minimum delay.
+    """
+    half = backoff / 2
+    return half + random.uniform(0, half)
+
+
+# Headers we actually use - only these are preserved from responses
+_HEADER_WHITELIST = frozenset({"retry-after", "content-type", "x-request-id"})
+# Maximum length for header values to prevent memory issues
+_MAX_HEADER_VALUE_LENGTH = 256
+
+
+def _sanitize_headers(raw_headers: Any) -> dict[str, str]:
+    """Sanitize HTTP response headers.
+
+    - Only keeps whitelisted headers we actually use
+    - Limits value length to prevent memory issues
+    - Strips control characters from values
+    """
+    if not raw_headers:
+        return {}
+
+    sanitized: dict[str, str] = {}
+    try:
+        for key, value in raw_headers.items():
+            # Normalize key to lowercase for comparison
+            key_lower = str(key).lower()
+            if key_lower not in _HEADER_WHITELIST:
+                continue
+
+            # Convert value to string and limit length
+            str_value = str(value)[:_MAX_HEADER_VALUE_LENGTH]
+
+            # Strip control characters (keep printable ASCII and common whitespace)
+            clean_value = "".join(c for c in str_value if c >= " " or c in "\t")
+
+            sanitized[key_lower] = clean_value
+    except (TypeError, AttributeError):
+        # If headers aren't iterable or don't have items(), return empty
+        return {}
+
+    return sanitized
+
 
 # HTTP status codes that should trigger a retry
 RETRYABLE_STATUS_CODES = {
@@ -44,7 +95,7 @@ class HttpResponse:
 
     status: int
     text: str
-    headers: Dict[str, str]
+    headers: dict[str, str]
 
     @property
     def is_success(self) -> bool:
@@ -72,18 +123,18 @@ async def async_request_with_retry(
     method: str,
     url: str,
     *,
-    headers: Optional[Dict[str, str]] = None,
-    params: Optional[Dict[str, Any]] = None,
-    data: Optional[Dict[str, Any]] = None,
-    json_data: Optional[Dict[str, Any]] = None,
-    timeout: Optional[float] = None,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+    data: dict[str, Any] | None = None,
+    json_data: dict[str, Any] | None = None,
+    timeout: float | None = None,
     max_retries: int = 3,
     initial_backoff: float = 1.0,
     max_backoff: float = 30.0,
     backoff_multiplier: float = 2.0,
     context: str = "HTTP request",
-    rate_limiter: Optional[Any] = None,
-) -> Tuple[Optional[HttpResponse], Optional[Exception]]:
+    rate_limiter: Any | None = None,
+) -> tuple[HttpResponse | None, Exception | None]:
     """Make an HTTP request with retry logic for transient failures.
 
     Args:
@@ -95,10 +146,10 @@ async def async_request_with_retry(
         data: Optional form data
         json_data: Optional JSON body
         timeout: Request timeout in seconds (default: HTTP_TIMEOUT)
-        max_retries: Maximum number of retry attempts (default: 3)
-        initial_backoff: Initial backoff delay in seconds (default: 1.0)
-        max_backoff: Maximum backoff delay in seconds (default: 30.0)
-        backoff_multiplier: Backoff multiplier for exponential backoff (default: 2.0)
+        max_retries: Maximum number of retry attempts (default: 3, clamped 0-10)
+        initial_backoff: Initial backoff delay in seconds (default: 1.0, min 0.1)
+        max_backoff: Maximum backoff delay in seconds (default: 30.0, min initial_backoff)
+        backoff_multiplier: Backoff multiplier for exponential backoff (default: 2.0, min 1.0)
         context: Description for logging (default: "HTTP request")
         rate_limiter: Optional RateLimitTracker to check/record rate limits
 
@@ -111,30 +162,28 @@ async def async_request_with_retry(
         - Auth errors (401, 403) are returned immediately without retry
         - Server errors (5xx) and network errors trigger retries
     """
+    # Validate and clamp retry parameters to prevent infinite loops or negative sleeps
+    max_retries = max(0, min(int(max_retries), 10))  # Clamp to 0-10
+    initial_backoff = max(0.1, float(initial_backoff))  # Min 100ms
+    max_backoff = max(initial_backoff, float(max_backoff))  # Must be >= initial
+    backoff_multiplier = max(1.0, float(backoff_multiplier))  # Must be >= 1.0
+
     if rate_limiter:
         can_request, block_reason = rate_limiter.can_make_request()
         if not can_request:
-            _LOGGER.warning(
-                "%s blocked by rate limiter: %s",
-                context,
-                block_reason
-            )
+            _LOGGER.warning("%s blocked by rate limiter: %s", context, block_reason)
             # Return a fake 429 response to indicate rate limit
-            fake_response = HttpResponse(
-                status=429,
-                text=f"Blocked by rate limiter: {block_reason}",
-                headers={}
-            )
+            fake_response = HttpResponse(status=429, text=f"Blocked by rate limiter: {block_reason}", headers={})
             return fake_response, None
 
     request_timeout = aiohttp.ClientTimeout(total=timeout or HTTP_TIMEOUT)
     backoff = initial_backoff
-    last_error: Optional[Exception] = None
-    last_response: Optional[HttpResponse] = None
+    last_error: Exception | None = None
+    last_response: HttpResponse | None = None
 
     for attempt in range(max_retries + 1):
         try:
-            request_kwargs: Dict[str, Any] = {
+            request_kwargs: dict[str, Any] = {
                 "headers": headers,
                 "timeout": request_timeout,
             }
@@ -146,12 +195,23 @@ async def async_request_with_retry(
                 request_kwargs["json"] = json_data
 
             async with session.request(method, url, **request_kwargs) as response:
-                text = await response.text()
+                # Read response body with error handling to ensure connection cleanup
+                try:
+                    text = await response.text()
+                except (aiohttp.ClientPayloadError, aiohttp.ClientResponseError, UnicodeDecodeError) as read_err:
+                    # Body read failed - log and treat as empty response
+                    _LOGGER.debug(
+                        "%s: failed to read response body: %s",
+                        context,
+                        read_err,
+                    )
+                    text = ""
+
                 log_excerpt = redact_vin_in_text(text[:200]) if text else text
                 http_response = HttpResponse(
                     status=response.status,
                     text=text,
-                    headers=dict(response.headers),
+                    headers=_sanitize_headers(response.headers),
                 )
 
                 # Success - return immediately
@@ -169,7 +229,9 @@ async def async_request_with_retry(
                 # Rate limit - return immediately, caller handles quota
                 if http_response.is_rate_limited:
                     if rate_limiter:
-                        rate_limiter.record_429()
+                        # Pass Retry-After header to respect server's cooldown
+                        retry_after = http_response.headers.get("retry-after")
+                        rate_limiter.record_429(endpoint=context, retry_after=retry_after)
                     _LOGGER.warning(
                         "%s rate limited (429): %s",
                         context,
@@ -201,49 +263,51 @@ async def async_request_with_retry(
                 if response.status in RETRYABLE_STATUS_CODES:
                     last_response = http_response
                     if attempt < max_retries:
+                        jittered = _jittered_backoff(backoff)
                         _LOGGER.debug(
                             "%s failed with status %d, retrying in %.1fs (attempt %d/%d)",
                             context,
                             response.status,
-                            backoff,
+                            jittered,
                             attempt + 1,
                             max_retries + 1,
                         )
-                        await asyncio.sleep(backoff)
-                        backoff = min(
-                            backoff * backoff_multiplier, max_backoff)
+                        await asyncio.sleep(jittered)
+                        backoff = min(backoff * backoff_multiplier, max_backoff)
                         continue
 
                 # Unknown status - return as-is
                 return http_response, None
 
-        except asyncio.TimeoutError as err:
+        except TimeoutError as err:
             last_error = err
             if attempt < max_retries:
+                jittered = _jittered_backoff(backoff)
                 _LOGGER.debug(
                     "%s timed out, retrying in %.1fs (attempt %d/%d)",
                     context,
-                    backoff,
+                    jittered,
                     attempt + 1,
                     max_retries + 1,
                 )
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(jittered)
                 backoff = min(backoff * backoff_multiplier, max_backoff)
                 continue
 
         except aiohttp.ClientError as err:
             last_error = err
             if attempt < max_retries:
+                jittered = _jittered_backoff(backoff)
                 _LOGGER.debug(
                     "%s failed with %s: %s, retrying in %.1fs (attempt %d/%d)",
                     context,
                     type(err).__name__,
                     redact_sensitive_data(str(err)),
-                    backoff,
+                    jittered,
                     attempt + 1,
                     max_retries + 1,
                 )
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(jittered)
                 backoff = min(backoff * backoff_multiplier, max_backoff)
                 continue
 
