@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -19,28 +16,28 @@ from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
 from .const import (
     BOOTSTRAP_COMPLETE,
+    DEBUG_LOG,
     DEFAULT_REFRESH_INTERVAL,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
-    DEBUG_LOG,
     MQTT_KEEPALIVE,
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
     OPTION_MQTT_KEEPALIVE,
 )
+from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .debug import set_debug_enabled
 from .device_flow import CardataAuthError
 from .metadata import async_restore_vehicle_metadata
 from .quota import QuotaManager
-from .runtime import CardataRuntimeData
+from .runtime import CardataRuntimeData, cleanup_entry_lock
 from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
-from .container import CardataContainerManager
-from .utils import redact_vin, redact_vins
+from .utils import async_cancel_task, redact_vin, redact_vins, validate_and_clamp_option
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +49,39 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+async def _async_cleanup_on_failure(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    refresh_task: asyncio.Task | None,
+) -> None:
+    """Clean up all tasks and resources on setup failure."""
+    await async_cancel_task(refresh_task)
+
+    # Clean up runtime data tasks if they were created
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime:
+        await async_cancel_task(runtime.bootstrap_task)
+        await async_cancel_task(runtime.telematic_task)
+
+        # Stop coordinator watchdog if started (wrapped to prevent masking original error)
+        try:
+            await runtime.coordinator.async_stop_watchdog()
+        except Exception as cleanup_err:
+            _LOGGER.debug("Error stopping watchdog during cleanup: %s", cleanup_err)
+
+        # Stop stream manager if started (wrapped to prevent masking original error)
+        try:
+            await runtime.stream.async_stop()
+        except Exception as cleanup_err:
+            _LOGGER.debug("Error stopping stream during cleanup: %s", cleanup_err)
+
+        # Signal bootstrap complete event to unblock any waiters
+        if hasattr(runtime.stream, "_bootstrap_complete_event"):
+            runtime.stream._bootstrap_complete_event.set()
+
+    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CarData from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -60,14 +90,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     session = aiohttp.ClientSession()
     refresh_task: asyncio.Task | None = None
+    setup_succeeded = False
 
     try:
         # Prepare configuration
         data = entry.data
         options = dict(entry.options) if entry.options else {}
-        mqtt_keepalive = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
-        diagnostic_interval = options.get(
-            OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL)
+
+        # Validate and clamp mqtt_keepalive (10-300 seconds)
+        mqtt_keepalive = validate_and_clamp_option(
+            options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE),
+            min_val=10,
+            max_val=300,
+            default=MQTT_KEEPALIVE,
+            option_name="mqtt_keepalive",
+        )
+
+        # Validate and clamp diagnostic_interval (10-3600 seconds)
+        diagnostic_interval = validate_and_clamp_option(
+            options.get(OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL),
+            min_val=10,
+            max_val=3600,
+            default=DIAGNOSTIC_LOG_INTERVAL,
+            option_name="diagnostic_interval",
+        )
+
         debug_option = options.get(OPTION_DEBUG_LOG)
         debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
 
@@ -78,7 +125,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gcid = data.get("gcid")
         id_token = data.get("id_token")
         if not gcid or not id_token:
-            await session.close()
             raise ConfigEntryNotReady("Missing GCID or ID token")
 
         # Set up coordinator
@@ -88,9 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Restore stored vehicle metadata
         last_poll_ts = data.get("last_telematic_poll")
         if isinstance(last_poll_ts, (int, float)) and last_poll_ts > 0:
-            coordinator.last_telematic_api_at = datetime.fromtimestamp(
-                last_poll_ts, timezone.utc
-            )
+            coordinator.last_telematic_api_at = datetime.fromtimestamp(last_poll_ts, UTC)
 
         await async_restore_vehicle_metadata(hass, entry, coordinator)
 
@@ -111,8 +155,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
-        redacted_names = redact_vins(
-            coordinator.names.keys()) if has_metadata else "empty"
+        redacted_names = redact_vins(coordinator.names.keys()) if has_metadata else "empty"
         _LOGGER.debug(
             "Metadata restored for entry %s: %s (names: %s)",
             entry.entry_id,
@@ -124,7 +167,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
 
         # Set up container manager
-        container_manager: Optional[CardataContainerManager] = CardataContainerManager(
+        container_manager: CardataContainerManager | None = CardataContainerManager(
             session=session,
             entry_id=entry.entry_id,
             initial_container_id=data.get("hv_container_id"),
@@ -148,6 +191,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)
 
+        # Restore circuit breaker state from previous session
+        circuit_breaker_state = data.get("circuit_breaker_state")
+        if circuit_breaker_state:
+            manager.restore_circuit_breaker_state(circuit_breaker_state)
+
         # CRITICAL: Prevent MQTT from auto-starting during token refresh
         # Set a flag that we'll clear after bootstrap completes
         manager._bootstrap_in_progress = True
@@ -164,50 +212,127 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 err,
             )
         except Exception as err:
-            await session.close()
-            raise ConfigEntryNotReady(
-                f"Initial token refresh failed: {err}") from err
+            raise ConfigEntryNotReady(f"Initial token refresh failed: {err}") from err
 
         # Ensure HV container if token refresh didn't succeed
         if not refreshed_token and container_manager:
             try:
-                container_manager.sync_from_entry(
-                    entry.data.get("hv_container_id"))
-                await container_manager.async_ensure_hv_container(
-                    entry.data.get("access_token")
+                container_manager.sync_from_entry(entry.data.get("hv_container_id"))
+                await container_manager.async_ensure_hv_container(entry.data.get("access_token"))
+            except aiohttp.ClientError as err:
+                # Network errors - treat same as MQTT network errors
+                _LOGGER.warning(
+                    "Network error ensuring HV container for entry %s: %s",
+                    entry.entry_id,
+                    err,
                 )
+                if not container_manager.container_id:
+                    raise ConfigEntryNotReady(f"Unable to ensure HV container (network error): {err}") from err
             except Exception as err:
+                # Other errors - log and check if we have a fallback
                 _LOGGER.warning(
                     "Unable to ensure HV container for entry %s: %s",
                     entry.entry_id,
                     err,
                 )
+                if not container_manager.container_id:
+                    # No container at all - telematic polling won't work
+                    _LOGGER.error(
+                        "No HV container available for entry %s; "
+                        "telematic data polling will be unavailable until container is created",
+                        entry.entry_id,
+                    )
+                    # Continue anyway - MQTT streaming will still work
 
         # MQTT auto-start is now prevented by _bootstrap_in_progress flag
         # We'll explicitly start it after bootstrap completes
 
-        # Create refresh loop
+        # Create refresh loop with backoff for repeated failures
         async def refresh_loop() -> None:
+            entry_id = entry.entry_id
+            consecutive_auth_failures = 0
+            max_auth_failures = 3  # Trigger reauth after 3 consecutive auth failures
+            base_backoff = DEFAULT_REFRESH_INTERVAL
+            max_backoff = 4 * 60 * 60  # Cap at 4 hours
+
             try:
                 while True:
-                    await asyncio.sleep(DEFAULT_REFRESH_INTERVAL)
+                    # Calculate backoff: normal interval, or exponential if failing
+                    if consecutive_auth_failures > 0:
+                        # Exponential backoff: 45min -> 90min -> 180min (capped at 4h)
+                        backoff = min(base_backoff * (2**consecutive_auth_failures), max_backoff)
+                        _LOGGER.debug(
+                            "Token refresh backoff: %d seconds (failure %d/%d)",
+                            backoff,
+                            consecutive_auth_failures,
+                            max_auth_failures,
+                        )
+                    else:
+                        backoff = base_backoff
+
+                    await asyncio.sleep(backoff)
+
+                    # Verify entry still exists after sleep
+                    current_entry = hass.config_entries.async_get_entry(entry_id)
+                    if current_entry is None:
+                        _LOGGER.debug("Entry %s removed, stopping token refresh loop", entry_id)
+                        return
+
+                    # Verify runtime still valid
+                    if hass.data.get(DOMAIN, {}).get(entry_id) is None:
+                        _LOGGER.debug(
+                            "Runtime removed for entry %s, stopping token refresh loop",
+                            entry_id,
+                        )
+                        return
+
                     try:
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
-                            refresh_tokens_for_entry(
-                                entry, session, manager, container_manager
-                            ),
-                            timeout=60.0
+                            refresh_tokens_for_entry(current_entry, session, manager, container_manager), timeout=60.0
                         )
+                        # Success - reset failure counter
+                        if consecutive_auth_failures > 0:
+                            _LOGGER.info(
+                                "Token refresh succeeded after %d consecutive failures",
+                                consecutive_auth_failures,
+                            )
+                        consecutive_auth_failures = 0
+
                     except CardataAuthError as err:
-                        _LOGGER.error("Token refresh failed: %s", err)
-                    except asyncio.TimeoutError:
+                        consecutive_auth_failures += 1
+                        _LOGGER.error(
+                            "Token refresh failed (%d/%d): %s",
+                            consecutive_auth_failures,
+                            max_auth_failures,
+                            err,
+                        )
+
+                        # After max failures, trigger reauth flow and stop retrying
+                        if consecutive_auth_failures >= max_auth_failures:
+                            _LOGGER.error(
+                                "Token refresh failed %d consecutive times; triggering reauth flow",
+                                consecutive_auth_failures,
+                            )
+                            # Re-fetch entry in case it changed during token refresh
+                            reauth_entry = hass.config_entries.async_get_entry(entry_id)
+                            if reauth_entry:
+                                await handle_stream_error(hass, reauth_entry, "unauthorized")
+                            # Continue loop but with max backoff until reauth succeeds
+                            # The reauth flow will update credentials and reset state
+
+                    except TimeoutError:
                         _LOGGER.warning("Token refresh timed out after 60 seconds")
+                        # Timeout is transient - don't count as auth failure
+
                     except aiohttp.ClientError as err:
                         _LOGGER.warning("Token refresh network error: %s", err)
+                        # Network errors are transient - don't count as auth failure
+
                     except Exception as err:
-                        _LOGGER.exception(
-                            "Token refresh crashed with unexpected error: %s", err)
+                        _LOGGER.exception("Token refresh crashed with unexpected error: %s", err)
+                        # Unknown errors - don't count as auth failure but log
+
             except asyncio.CancelledError:
                 return
 
@@ -236,15 +361,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
         should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
-        bootstrap_error: Optional[str] = None
+        bootstrap_error: str | None = None
         bootstrap_completed = False
         if should_bootstrap:
-            _LOGGER.debug(
-                "Starting bootstrap to fetch vehicle metadata before creating entities")
+            _LOGGER.debug("Starting bootstrap to fetch vehicle metadata before creating entities")
 
-            runtime_data.bootstrap_task = hass.loop.create_task(
-                async_run_bootstrap(hass, entry)
-            )
+            runtime_data.bootstrap_task = hass.loop.create_task(async_run_bootstrap(hass, entry))
 
             # Wait for bootstrap task to FULLY complete (including async_seed_telematic_data)
             # This ensures coordinator.names is populated AND telematic data is seeded
@@ -253,14 +375,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await asyncio.wait_for(runtime_data.bootstrap_task, timeout=30.0)
                 bootstrap_completed = True
                 _LOGGER.debug("Bootstrap completed successfully")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _LOGGER.warning(
-                    "Bootstrap did not complete within 30 seconds. "
-                    "Devices will update names when metadata arrives."
+                    "Bootstrap did not complete within 30 seconds. Devices will update names when metadata arrives."
                 )
+                # Cancel the timed-out task to prevent it running in background
+                await async_cancel_task(runtime_data.bootstrap_task)
+                runtime_data.bootstrap_task = None
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
                 bootstrap_error = str(err)
+                runtime_data.bootstrap_task = None
 
         # Check if we have vehicle names after bootstrap attempt
         # If bootstrap was required and explicitly failed, abort setup
@@ -273,35 +398,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 {
                     "title": "BMW CarData Setup Failed",
                     "message": f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                    "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
-                }
+                    "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+                },
             )
-            await session.close()
-            raise ConfigEntryNotReady(
-                f"Bootstrap failed to retrieve vehicle metadata: {error_message}. "
-            )
+            raise ConfigEntryNotReady(f"Bootstrap failed to retrieve vehicle metadata: {error_message}. ")
         # If bootstrap completed but produced no names, continue with VIN placeholders
         if should_bootstrap and bootstrap_completed and not coordinator.names:
-            _LOGGER.warning(
-                "Bootstrap completed without vehicle names; continuing setup with VIN placeholders."
-            )
+            _LOGGER.warning("Bootstrap completed without vehicle names; continuing setup with VIN placeholders.")
         # NOW clear the bootstrap flag and signal completion event
         # This ensures MQTT doesn't create entities before we have vehicle names
-        manager._bootstrap_in_progress = False
+        # IMPORTANT: Set event FIRST, then clear flag - ensures waiters unblock
+        # before other code sees the flag cleared (avoids inconsistent state)
         manager._bootstrap_complete_event.set()
+        manager._bootstrap_in_progress = False
 
         if manager.client is None:
             try:
                 _LOGGER.debug("Starting MQTT connection after bootstrap")
                 await manager.async_start()
             except Exception as err:
-                await session.close()
                 if refreshed_token:
-                    raise ConfigEntryNotReady(
-                        f"Unable to connect to BMW MQTT after token refresh: {err}"
-                    ) from err
-                raise ConfigEntryNotReady(
-                    f"Unable to connect to BMW MQTT: {err}") from err
+                    raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT after token refresh: {err}") from err
+                raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
 
         # Start coordinator watchdog
         await coordinator.async_handle_connection_event("connecting")
@@ -321,41 +439,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
         # Start telematic polling loop
-        runtime_data.telematic_task = hass.loop.create_task(
-            async_telematic_poll_loop(hass, entry.entry_id)
-        )
+        runtime_data.telematic_task = hass.loop.create_task(async_telematic_poll_loop(hass, entry.entry_id))
 
+        setup_succeeded = True
         return True
 
-    except Exception:
-        # Clean up all tasks and resources on setup failure
-        if refresh_task:
-            refresh_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await refresh_task
-
-        # Clean up runtime data tasks if they were created
-        runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-        if runtime:
-            if runtime.bootstrap_task:
-                runtime.bootstrap_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await runtime.bootstrap_task
-
-            if runtime.telematic_task:
-                runtime.telematic_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await runtime.telematic_task
-
-            # Stop coordinator watchdog if started
-            await runtime.coordinator.async_stop_watchdog()
-
-        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        await session.close()
+    except ConfigEntryNotReady:
+        # Expected exception for setup retries - clean up and re-raise without extra logging
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
         raise
+
+    except (TimeoutError, aiohttp.ClientError) as err:
+        # Network/timeout errors - expected during connectivity issues
+        _LOGGER.warning("Setup failed due to network error: %s", err)
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
+        raise ConfigEntryNotReady(f"Network error during setup: {err}") from err
+
+    except Exception as err:
+        # Unexpected errors - log with full traceback for debugging
+        _LOGGER.exception("Setup failed with unexpected error: %s", err)
+        await _async_cleanup_on_failure(hass, entry, refresh_task)
+        raise
+
     finally:
-        # If setup failed before storing runtime data, ensure session is closed
-        if hass.data.get(DOMAIN, {}).get(entry.entry_id) is None:
+        # Guarantee session cleanup on any failure path
+        if not setup_succeeded and not session.closed:
             await session.close()
 
 
@@ -363,50 +471,45 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     domain_data = hass.data.get(DOMAIN)
     if not domain_data or entry.entry_id not in domain_data:
+        # Still clean up the lock even if no runtime data
+        cleanup_entry_lock(entry.entry_id)
         return True
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
 
-    # Stop coordinator
-    await data.coordinator.async_stop_watchdog()
+    try:
+        # Stop coordinator
+        await data.coordinator.async_stop_watchdog()
 
-    # Unload platforms
-    await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        # Unload platforms
+        await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    # Cancel tasks
-    data.refresh_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await data.refresh_task
+        # Cancel tasks
+        await async_cancel_task(data.refresh_task)
+        await async_cancel_task(data.bootstrap_task)
+        await async_cancel_task(data.telematic_task)
 
-    if data.bootstrap_task:
-        data.bootstrap_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.bootstrap_task
+        # Close resources
+        if data.quota_manager:
+            await data.quota_manager.async_close()
 
-    if data.telematic_task:
-        data.telematic_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.telematic_task
+        await data.stream.async_stop()
+        await data.session.close()
 
-    # Close resources
-    if data.quota_manager:
-        await data.quota_manager.async_close()
+        # Clean up services if this is the last entry
+        remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
+        if not remaining_entries:
+            async_unregister_services(hass)
+            domain_data.pop("_service_registered", None)
+            domain_data.pop("_registered_services", None)
 
-    await data.stream.async_stop()
-    await data.session.close()
+        if not domain_data or not remaining_entries:
+            hass.data.pop(DOMAIN, None)
 
-    # Clean up services if this is the last entry
-    remaining_entries = [
-        k for k in domain_data.keys() if not k.startswith("_")]
-    if not remaining_entries:
-        async_unregister_services(hass)
-        domain_data.pop("_service_registered", None)
-        domain_data.pop("_registered_services", None)
-
-    if not domain_data or not remaining_entries:
-        hass.data.pop(DOMAIN, None)
-
-    return True
+        return True
+    finally:
+        # Always clean up the per-entry lock, even if unload fails
+        cleanup_entry_lock(entry.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

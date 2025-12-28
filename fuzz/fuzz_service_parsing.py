@@ -1,0 +1,126 @@
+import json
+import os
+import sys
+
+import atheris
+
+# Default fuzz duration in seconds (4 hours) - exits cleanly when reached
+DEFAULT_MAX_TIME = 4 * 60 * 60
+
+CARDATA_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "custom_components", "cardata")
+)
+sys.path.insert(0, CARDATA_PATH)
+
+with atheris.instrument_imports():
+    import api_parsing
+    import utils
+
+
+def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
+    return fdp.ConsumeUnicodeNoSurrogates(max_len)
+
+
+def _consume_json_value(fdp: atheris.FuzzedDataProvider, depth: int = 0):
+    if depth >= 2:
+        return _consume_text(fdp, 60)
+
+    choice = fdp.ConsumeIntInRange(0, 6)
+    if choice == 0:
+        return _consume_text(fdp, 120)
+    if choice == 1:
+        value = fdp.ConsumeIntInRange(-1_000_000, 1_000_000)
+        if fdp.ConsumeBool():
+            return value / 100.0
+        return value
+    if choice == 2:
+        return fdp.ConsumeBool()
+    if choice == 3:
+        return None
+    if choice == 4:
+        return [
+            _consume_json_value(fdp, depth + 1)
+            for _ in range(fdp.ConsumeIntInRange(0, 5))
+        ]
+    payload = {}
+    for _ in range(fdp.ConsumeIntInRange(0, 5)):
+        key = _consume_text(fdp, 16)
+        payload[key] = _consume_json_value(fdp, depth + 1)
+    return payload
+
+
+def _build_text_payload(fdp: atheris.FuzzedDataProvider) -> str:
+    choice = fdp.ConsumeIntInRange(0, 3)
+    if choice == 0:
+        return _consume_text(fdp, 200)
+    if choice == 1:
+        payload = _consume_json_value(fdp)
+        try:
+            return json.dumps(payload, ensure_ascii=True)
+        except (TypeError, ValueError):
+            return _consume_text(fdp, 120)
+    if choice == 2:
+        return _consume_text(fdp, 60) + "{" + _consume_text(fdp, 60)
+    return ""
+
+
+def _safe_parse_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _existing_max_total_time(args):
+    existing = None
+    for idx, arg in enumerate(args):
+        if arg.startswith("-max_total_time="):
+            parsed = _safe_parse_int(arg.split("=", 1)[1])
+            if parsed is not None:
+                existing = parsed
+        elif arg == "-max_total_time" and idx + 1 < len(args):
+            parsed = _safe_parse_int(args[idx + 1])
+            if parsed is not None:
+                existing = parsed
+    if existing is not None and existing <= 0:
+        return None
+    return existing
+
+
+def TestOneInput(data: bytes) -> None:
+    fdp = atheris.FuzzedDataProvider(data)
+    iterations = fdp.ConsumeIntInRange(1, 6)
+    for _ in range(iterations):
+        text = _build_text_payload(fdp)
+        ok, payload = api_parsing.try_parse_json(text)
+        if not ok:
+            payload = text
+
+        # Mapping/basic data services log redacted payloads.
+        utils.redact_vin_payload(payload)
+
+        # Container list service expects JSON; invalid JSON -> empty list.
+        ok, container_payload = api_parsing.try_parse_json(text)
+        if ok:
+            api_parsing.extract_container_items(container_payload)
+
+
+def main() -> None:
+    # Ensure max time is capped so fuzzers exit before CI timeout.
+    args = sys.argv[:]
+    max_time_env = os.environ.get("FUZZ_MAX_TIME", DEFAULT_MAX_TIME)
+    max_time = _safe_parse_int(max_time_env) or DEFAULT_MAX_TIME
+    if max_time <= 0:
+        max_time = DEFAULT_MAX_TIME
+    existing_max = _existing_max_total_time(args)
+    effective_max = min(existing_max, max_time) if existing_max else max_time
+    args.append(f"-max_total_time={effective_max}")
+    print(f"Fuzzing for {effective_max} seconds ({effective_max / 3600:.1f} hours)")
+
+    atheris.Setup(args, TestOneInput)
+    atheris.Fuzz()
+    print("Fuzzing completed successfully - no issues found!")
+
+
+if __name__ == "__main__":
+    main()

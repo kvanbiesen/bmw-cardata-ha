@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional
-
 # Mapping of raw unit strings returned by BMW to canonical symbols.
 # Extend this as new variants appear in either streaming or API payloads.
-UNIT_OVERRIDES: Dict[str, str] = {
+UNIT_OVERRIDES: dict[str, str] = {
     "percent": "%",
 }
 
 
-def normalize_unit(unit: Optional[str]) -> Optional[str]:
+def normalize_unit(unit: str | None) -> str | None:
     """Return a canonical representation for the supplied unit string."""
 
     if not isinstance(unit, str):

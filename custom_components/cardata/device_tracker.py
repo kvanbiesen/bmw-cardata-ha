@@ -16,15 +16,15 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DOMAIN,
+    LOCATION_ALTITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    LOCATION_HEADING_DESCRIPTOR,
-    LOCATION_ALTITUDE_DESCRIPTOR,
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
-from .utils import redact_vin
+from .utils import async_wait_for_bootstrap, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,9 +37,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up BMW CarData device tracker from config entry."""
-    runtime_data: CardataRuntimeData = hass.data.get(DOMAIN, {}).get(
-        config_entry.entry_id
-    )
+    runtime_data: CardataRuntimeData = hass.data.get(DOMAIN, {}).get(config_entry.entry_id)
     if not runtime_data:
         return
 
@@ -47,14 +45,7 @@ async def async_setup_entry(
     stream_manager = runtime_data.stream
 
     # Wait for bootstrap to finish so VIN → name mapping exists
-    bootstrap_event = getattr(stream_manager, "_bootstrap_complete_event", None)
-    if bootstrap_event and not bootstrap_event.is_set():
-        try:
-            await asyncio.wait_for(bootstrap_event.wait(), timeout=15.0)
-        except asyncio.TimeoutError:
-            _LOGGER.debug(
-                "Device tracker setup continuing without vehicle names after 15s wait"
-            )
+    await async_wait_for_bootstrap(stream_manager, context="Device tracker setup")
 
     trackers: dict[str, CardataDeviceTracker] = {}
 
@@ -95,6 +86,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
     _attr_force_update = False
     _attr_translation_key = "car"
+    _NAME_WAIT = 2.0  # seconds to wait for coordinator name before continuing
 
     # Timing thresholds for coordinate pairing logic
     _PAIR_WINDOW = 2.0  # seconds - lat/lon come in separate messages
@@ -126,6 +118,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self._current_lon: float | None = None
         self._heading: float | None = None
         self._altitude: float | None = None
+        self._altitude_unit: str | None = None
 
         # Track timing of individual coordinate updates
         self._last_lat: float | None = None
@@ -139,7 +132,15 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         # CRITICAL: Ensure VIN names are available before restoring state
         # Entity restore can happen before names exist, causing missing prefix
-        while not self._coordinator.names.get(self._vin):
+        deadline = time.monotonic() + self._NAME_WAIT
+        while not self._get_vehicle_name():
+            if time.monotonic() >= deadline:
+                _LOGGER.debug(
+                    "Device tracker setup continuing without vehicle name for %s after %.1fs",
+                    self._redacted_vin,
+                    self._NAME_WAIT,
+                )
+                break
             await asyncio.sleep(0.1)
 
         # Restore last known location
@@ -280,10 +281,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # Discard if both coordinates are very stale
         if lat_age > self._MAX_STALE_TIME and lon_age > self._MAX_STALE_TIME:
             _LOGGER.debug(
-                "Discarding stale coordinates for %s (lat age: %.1fs, lon age: %.1fs)",
-                redacted_vin,
-                lat_age,
-                lon_age
+                "Discarding stale coordinates for %s (lat age: %.1fs, lon age: %.1fs)", redacted_vin, lat_age, lon_age
             )
             return
 
@@ -293,7 +291,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 "Coordinates too far apart for %s (Δt=%.1fs > %.1fs window) - waiting for pair",
                 redacted_vin,
                 time_diff,
-                self._PAIR_WINDOW
+                self._PAIR_WINDOW,
             )
             return
 
@@ -309,24 +307,20 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon_changed = abs(lon - self._current_lon) > self._COORD_PRECISION
 
             if not lat_changed and not lon_changed:
-                _LOGGER.debug(
-                    "Ignoring update for %s - no movement detected", redacted_vin)
+                _LOGGER.debug("Ignoring update for %s - no movement detected", redacted_vin)
                 return
 
         # Apply movement threshold check
         update_reason = None
         if self._current_lat is not None and self._current_lon is not None:
-            distance = self._calculate_distance(
-                self._current_lat, self._current_lon,
-                final_lat, final_lon
-            )
+            distance = self._calculate_distance(self._current_lat, self._current_lon, final_lat, final_lon)
 
             if distance < self._MIN_MOVEMENT_DISTANCE:
                 _LOGGER.debug(
                     "Ignoring update for %s - movement too small (%.1fm < %dm threshold)",
                     redacted_vin,
                     distance,
-                    self._MIN_MOVEMENT_DISTANCE
+                    self._MIN_MOVEMENT_DISTANCE,
                 )
                 return
 
@@ -340,7 +334,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two GPS coordinates in meters using Haversine formula."""
-        from math import radians, sin, cos, sqrt, atan2
+        from math import atan2, cos, radians, sin, sqrt
 
         # Earth radius in meters
         R = 6371000
@@ -352,8 +346,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         delta_lon = radians(lon2 - lon1)
 
         # Haversine formula
-        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * \
-            cos(lat2_rad) * sin(delta_lon / 2) ** 2
+        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
         c = 2 * atan2(sqrt(a), sqrt(1 - a))
         distance = R * c
 
@@ -382,27 +375,18 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 # Validate coordinate ranges
                 if "latitude" in descriptor.lower():
                     if not (-90 <= value <= 90):
-                        _LOGGER.warning(
-                            "Invalid latitude for %s: %.6f (must be -90 to 90)",
-                            self._redacted_vin,
-                            value
-                        )
+                        _LOGGER.warning("Invalid latitude for %s: %.6f (must be -90 to 90)", self._redacted_vin, value)
                         return None
                 elif "longitude" in descriptor.lower():
                     if not (-180 <= value <= 180):
                         _LOGGER.warning(
-                            "Invalid longitude for %s: %.6f (must be -180 to 180)",
-                            self._redacted_vin,
-                            value
+                            "Invalid longitude for %s: %.6f (must be -180 to 180)", self._redacted_vin, value
                         )
                         return None
 
                 # Reject obvious invalid GPS (null island)
                 if value == 0.0:
-                    _LOGGER.debug(
-                        "Rejecting zero coordinate for %s (likely invalid GPS)",
-                        self._redacted_vin
-                    )
+                    _LOGGER.debug("Rejecting zero coordinate for %s (likely invalid GPS)", self._redacted_vin)
                     return None
 
                 return value
@@ -436,8 +420,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         attrs: dict[str, Any] = {}
 
         if self._heading is not None:
-            attrs["gps_heading_deg"] = round(
-                self._heading, 1)  # Degrees, 1 decimal
+            attrs["gps_heading_deg"] = round(self._heading, 1)  # Degrees, 1 decimal
 
         if self._altitude is not None:
             attrs["gps_altitude"] = round(self._altitude, 1)
