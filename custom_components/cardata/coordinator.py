@@ -242,7 +242,7 @@ class SocTracking:
 
             # Validate percent is finite and in valid range [0, 100]
             if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
-                if percent != 0:  #ne no need to report 0
+                if percent != 0:  # no need to report 0
                     _LOGGER.warning(
                         "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
                         percent,
