@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -40,7 +39,7 @@ from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .container import CardataContainerManager
-from .utils import redact_vin, redact_vins, validate_and_clamp_option
+from .utils import async_cancel_task, redact_vin, redact_vins, validate_and_clamp_option
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,23 +57,13 @@ async def _async_cleanup_on_failure(
     refresh_task: asyncio.Task | None,
 ) -> None:
     """Clean up all tasks and resources on setup failure."""
-    if refresh_task:
-        refresh_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await refresh_task
+    await async_cancel_task(refresh_task)
 
     # Clean up runtime data tasks if they were created
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if runtime:
-        if runtime.bootstrap_task:
-            runtime.bootstrap_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await runtime.bootstrap_task
-
-        if runtime.telematic_task:
-            runtime.telematic_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await runtime.telematic_task
+        await async_cancel_task(runtime.bootstrap_task)
+        await async_cancel_task(runtime.telematic_task)
 
         # Stop coordinator watchdog if started (wrapped to prevent masking original error)
         try:
@@ -416,11 +405,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Devices will update names when metadata arrives."
                 )
                 # Cancel the timed-out task to prevent it running in background
-                runtime_data.bootstrap_task.cancel()
-                try:
-                    await runtime_data.bootstrap_task
-                except asyncio.CancelledError:
-                    pass
+                await async_cancel_task(runtime_data.bootstrap_task)
                 runtime_data.bootstrap_task = None
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
@@ -534,19 +519,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
         # Cancel tasks
-        data.refresh_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await data.refresh_task
-
-        if data.bootstrap_task:
-            data.bootstrap_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await data.bootstrap_task
-
-        if data.telematic_task:
-            data.telematic_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await data.telematic_task
+        await async_cancel_task(data.refresh_task)
+        await async_cancel_task(data.bootstrap_task)
+        await async_cancel_task(data.telematic_task)
 
         # Close resources
         if data.quota_manager:

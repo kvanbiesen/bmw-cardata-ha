@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from contextlib import suppress
 from typing import Any, Iterable
 
 _LOGGER = logging.getLogger(__name__)
@@ -141,3 +143,19 @@ def validate_and_clamp_option(
             default,
         )
         return default
+
+
+async def async_cancel_task(task: asyncio.Task | None) -> None:
+    """Cancel an asyncio task and wait for it to finish.
+
+    Safely cancels the task and suppresses CancelledError.
+    Does nothing if task is None.
+
+    Args:
+        task: The asyncio task to cancel, or None
+    """
+    if task is None:
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
