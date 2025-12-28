@@ -209,6 +209,9 @@ class CardataCoordinator:
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
 
+    _MAX_PENDING_DESCRIPTORS_PER_VIN: int = 500  # Limit per VIN
+    _MAX_TOTAL_PENDING: int = 2000  # Global limit across all VINs
+
     @property
     def signal_new_sensor(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_new_sensor"
@@ -553,15 +556,7 @@ class CardataCoordinator:
                         self.signal_update, vin, descriptor)
                 else:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
-                    if vin not in self._pending_updates:
-                        self._pending_updates[vin] = set()
-                    self._pending_updates[vin].add(descriptor)
-                    if debug_enabled():
-                        _LOGGER.debug(
-                            "Added to pending: %s (total pending: %d)",
-                            descriptor.split('.')[-1],  # Just the last part
-                            len(self._pending_updates.get(vin, set()))
-                        )
+                    self._add_to_pending_updates(vin, descriptor)
 
             # Update SOC tracking for relevant descriptors
             self._update_soc_tracking_for_descriptor(
@@ -751,6 +746,64 @@ class CardataCoordinator:
         for vin in updated_vins:
             self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         self._safe_dispatcher_send(self.signal_diagnostics)
+
+    def _add_to_pending_updates(self, vin: str, descriptor: str) -> None:
+        """Add descriptor to pending updates with overflow protection.
+        
+        Must be called while holding _lock.
+        """
+        # Initialize VIN's pending set if needed
+        if vin not in self._pending_updates:
+            self._pending_updates[vin] = set()
+        
+        # Check per-VIN limit
+        if len(self._pending_updates[vin]) >= self._MAX_PENDING_DESCRIPTORS_PER_VIN:
+            _LOGGER.warning(
+                "Pending updates for VIN %s at limit (%d). "
+                "Triggering immediate flush to prevent memory growth.",
+                redact_vin(vin),
+                self._MAX_PENDING_DESCRIPTORS_PER_VIN
+            )
+            # Force immediate flush for this VIN
+            self.hass.loop.create_task(self._async_force_flush())
+            return  # Don't add more until flush completes
+        
+        # Check global limit across all VINs
+        total_pending = sum(len(descriptors) for descriptors in self._pending_updates.values())
+        if total_pending >= self._MAX_TOTAL_PENDING:
+            _LOGGER.warning(
+                "Total pending updates at global limit (%d). "
+                "Triggering immediate flush across all VINs.",
+                self._MAX_TOTAL_PENDING
+            )
+            self.hass.loop.create_task(self._async_force_flush())
+            return
+        
+        # Safe to add
+        self._pending_updates[vin].add(descriptor)
+        
+        if debug_enabled():
+            _LOGGER.debug(
+                "Added to pending: %s (VIN: %d pending, Global: %d pending)",
+                descriptor.split('.')[-1],
+                len(self._pending_updates[vin]),
+                total_pending + 1
+            )
+
+    async def _async_force_flush(self) -> None:
+        """Force immediate flush of pending updates when queue limits reached.
+        This prevents memory growth during high-frequency MQTT message bursts.
+        """
+        async with self._debounce_lock:
+            # Cancel existing debounce timer if any
+            if self._update_debounce_handle:
+                self._update_debounce_handle.cancel()
+                self._update_debounce_handle = None
+            
+            # Execute flush immediately
+            await self._execute_debounced_update(None)
+            
+            _LOGGER.debug("Force-flushed pending updates due to queue overflow protection")
 
     def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
         """Apply SOC estimate calculation. Must be called while holding _lock."""
