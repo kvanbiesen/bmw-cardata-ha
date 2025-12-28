@@ -698,10 +698,11 @@ class SocTracking:
                 return self.estimated_percent
             if delta_seconds <= 0:
                 # Clock went backwards (NTP correction, DST, etc.) - reset baseline to now
-                _LOGGER.warning(
-                    "Clock went backwards by %.1f seconds, resetting estimate baseline",
-                    -delta_seconds,
-                )
+                if delta_seconds != 0:
+                    _LOGGER.warning(
+                        "Clock went backwards by %.1f seconds, resetting estimate baseline",
+                        -delta_seconds,
+                    )
                 self.last_estimate_time = now
                 return self.estimated_percent
 
@@ -1192,10 +1193,11 @@ class CardataCoordinator:
         if voltage_v is None:
             self._ac_voltage_v.pop(vin, None)
         elif not math.isfinite(voltage_v) or voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
-            _LOGGER.warning(
-                "Ignoring invalid AC voltage: %s V (expected finite %d-%dV)",
-                voltage_v, int(self._AC_VOLTAGE_MIN), int(self._AC_VOLTAGE_MAX),
-            )
+            if voltage_v != 0:
+                _LOGGER.debug(
+                    "Ignoring invalid AC voltage: %s V (expected finite %d-%dV)",
+                    voltage_v, int(self._AC_VOLTAGE_MIN), int(self._AC_VOLTAGE_MAX),
+                )
             return
         else:
             self._ac_voltage_v[vin] = voltage_v
@@ -1208,10 +1210,11 @@ class CardataCoordinator:
         if current_a is None:
             self._ac_current_a.pop(vin, None)
         elif not math.isfinite(current_a) or current_a < 0 or current_a > self._AC_CURRENT_MAX:
-            _LOGGER.warning(
-                "Ignoring invalid AC current: %s A (expected finite 0-%dA)",
-                current_a, int(self._AC_CURRENT_MAX),
-            )
+            if current_a != 0:
+                _LOGGER.debug(
+                    "Ignoring invalid AC current: %s A (expected finite 0-%dA)",
+                    current_a, int(self._AC_CURRENT_MAX),
+                )
             return
         else:
             self._ac_current_a[vin] = current_a
@@ -1243,7 +1246,7 @@ class CardataCoordinator:
         if phase_count is None:
             self._ac_phase_count.pop(vin, None)
             if phase_value is not None:
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Ignoring invalid AC phase count: %s (expected 1-%d)",
                     phase_value, self._AC_PHASE_MAX,
                 )
