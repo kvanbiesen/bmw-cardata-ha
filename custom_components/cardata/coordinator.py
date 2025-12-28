@@ -715,10 +715,23 @@ class CardataCoordinator:
             return
         self.watchdog_task.cancel()
         try:
-            await self.watchdog_task
+            # Wait up to 5 seconds for graceful cancellation
+            await asyncio.wait_for(self.watchdog_task, timeout=5.0)
         except asyncio.CancelledError:
+            # Expected - task was cancelled successfully
             pass
-        self.watchdog_task = None
+        except asyncio.TimeoutError:
+            # Task didn't respond to cancellation within timeout
+            _LOGGER.warning(
+                "Watchdog task did not cancel within timeout (5s). "
+                "Proceeding with unload anyway."
+            )
+            # Task reference will be lost, eventual cleanup by event loop
+        except Exception as err:
+            # Unexpected error during cancellation
+            _LOGGER.error("Error stopping watchdog task: %s", err)
+        finally:
+            self.watchdog_task = None
 
     async def _watchdog_loop(self) -> None:
         try:
