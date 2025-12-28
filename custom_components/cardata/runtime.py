@@ -69,8 +69,8 @@ class CardataRuntimeData:
         if self._entry_update_lock is None:
             self._entry_update_lock = asyncio.Lock()
 
-        if self.token_refresh_lock is None;
-            self.token_refresh_lock = asyncio.lock()
+        if self._token_refresh_lock is None:
+            self._token_refresh_lock = asyncio.Lock()
 
     @property
     def entry_update_lock(self) -> asyncio.Lock | None:
