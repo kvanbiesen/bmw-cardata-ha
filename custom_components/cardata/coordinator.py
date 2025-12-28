@@ -682,10 +682,11 @@ class SocTracking:
                 return self.estimated_percent
             if delta_seconds <= 0:
                 # Clock went backwards (NTP correction, DST, etc.) - reset baseline to now
-                _LOGGER.warning(
-                    "Clock went backwards by %.1f seconds, resetting estimate baseline",
-                    -delta_seconds,
-                )
+                if delta_seconds != 0:
+                    _LOGGER.warning(
+                        "Clock went backwards by %.1f seconds, resetting estimate baseline",
+                        -delta_seconds,
+                    )
                 self.last_estimate_time = now
                 return self.estimated_percent
 
@@ -1206,7 +1207,7 @@ class CardataCoordinator:
         if phase_count is None:
             self._ac_phase_count.pop(vin, None)
             if phase_value is not None:
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Ignoring invalid AC phase count: %s (expected 1-%d)",
                     phase_value,
                     self._AC_PHASE_MAX,
