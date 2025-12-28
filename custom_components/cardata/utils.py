@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Iterable
+
+_LOGGER = logging.getLogger(__name__)
 
 # Valid VIN pattern: 17 alphanumeric chars (excludes I, O, Q to avoid confusion)
 _VALID_VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$", re.IGNORECASE)
@@ -99,3 +102,42 @@ def redact_sensitive_data(text: str | None) -> str:
     result = redact_vin_in_text(result) or result
 
     return result
+
+
+def validate_and_clamp_option(
+    value: Any,
+    min_val: int,
+    max_val: int,
+    default: int,
+    option_name: str,
+) -> int:
+    """Validate and clamp a numeric option value to a range.
+
+    Args:
+        value: The raw option value to validate
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+        default: Default value if invalid
+        option_name: Name for logging
+
+    Returns:
+        Clamped integer value within range, or default if invalid
+    """
+    try:
+        clamped = max(min_val, min(int(value), max_val))
+        if clamped != value:
+            _LOGGER.warning(
+                "%s value %s out of range, clamped to %d",
+                option_name,
+                value,
+                clamped,
+            )
+        return clamped
+    except (TypeError, ValueError):
+        _LOGGER.warning(
+            "Invalid %s value %s, using default %d",
+            option_name,
+            value,
+            default,
+        )
+        return default

@@ -40,7 +40,7 @@ from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .container import CardataContainerManager
-from .utils import redact_vin, redact_vins
+from .utils import redact_vin, redact_vins, validate_and_clamp_option
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,41 +111,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         options = dict(entry.options) if entry.options else {}
 
         # Validate and clamp mqtt_keepalive (10-300 seconds)
-        mqtt_keepalive_raw = options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE)
-        try:
-            mqtt_keepalive = max(10, min(int(mqtt_keepalive_raw), 300))
-            if mqtt_keepalive != mqtt_keepalive_raw:
-                _LOGGER.warning(
-                    "mqtt_keepalive value %s out of range, clamped to %d",
-                    mqtt_keepalive_raw,
-                    mqtt_keepalive,
-                )
-        except (TypeError, ValueError):
-            _LOGGER.warning(
-                "Invalid mqtt_keepalive value %s, using default %d",
-                mqtt_keepalive_raw,
-                MQTT_KEEPALIVE,
-            )
-            mqtt_keepalive = MQTT_KEEPALIVE
+        mqtt_keepalive = validate_and_clamp_option(
+            options.get(OPTION_MQTT_KEEPALIVE, MQTT_KEEPALIVE),
+            min_val=10,
+            max_val=300,
+            default=MQTT_KEEPALIVE,
+            option_name="mqtt_keepalive",
+        )
 
         # Validate and clamp diagnostic_interval (10-3600 seconds)
-        diagnostic_interval_raw = options.get(
-            OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL)
-        try:
-            diagnostic_interval = max(10, min(int(diagnostic_interval_raw), 3600))
-            if diagnostic_interval != diagnostic_interval_raw:
-                _LOGGER.warning(
-                    "diagnostic_interval value %s out of range, clamped to %d",
-                    diagnostic_interval_raw,
-                    diagnostic_interval,
-                )
-        except (TypeError, ValueError):
-            _LOGGER.warning(
-                "Invalid diagnostic_interval value %s, using default %d",
-                diagnostic_interval_raw,
-                DIAGNOSTIC_LOG_INTERVAL,
-            )
-            diagnostic_interval = DIAGNOSTIC_LOG_INTERVAL
+        diagnostic_interval = validate_and_clamp_option(
+            options.get(OPTION_DIAGNOSTIC_INTERVAL, DIAGNOSTIC_LOG_INTERVAL),
+            min_val=10,
+            max_val=3600,
+            default=DIAGNOSTIC_LOG_INTERVAL,
+            option_name="diagnostic_interval",
+        )
 
         debug_option = options.get(OPTION_DEBUG_LOG)
         debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
