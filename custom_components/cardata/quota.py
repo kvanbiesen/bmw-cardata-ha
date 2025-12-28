@@ -7,7 +7,6 @@ import logging
 import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Deque, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -35,12 +34,12 @@ class QuotaManager:
         hass: HomeAssistant,
         entry_id: str,
         store: Store,
-        timestamps: Deque[float],
+        timestamps: deque[float],
     ) -> None:
         self._hass = hass
         self._entry_id = entry_id
         self._store = store
-        self._timestamps: Deque[float] = timestamps
+        self._timestamps: deque[float] = timestamps
         self._lock = asyncio.Lock()
 
     @classmethod
@@ -57,7 +56,7 @@ class QuotaManager:
         values: list[float] = []
 
         for item in raw_timestamps:
-            value: Optional[float] = None
+            value: float | None = None
             if isinstance(item, (int, float)):
                 value = float(item)
             elif isinstance(item, str):
@@ -74,7 +73,7 @@ class QuotaManager:
                 continue
             values.append(value)
 
-        normalized: Deque[float] = deque(sorted(values))
+        normalized: deque[float] = deque(sorted(values))
         manager = cls(hass, entry_id, store, normalized)
 
         async with manager._lock:
@@ -103,7 +102,7 @@ class QuotaManager:
                 )
 
             # Import thresholds
-            from .const import QUOTA_WARNING_THRESHOLD, QUOTA_CRITICAL_THRESHOLD
+            from .const import QUOTA_CRITICAL_THRESHOLD, QUOTA_WARNING_THRESHOLD
 
             # Warn when approaching limits
             if current_usage == QUOTA_WARNING_THRESHOLD:
@@ -136,7 +135,7 @@ class QuotaManager:
         return max(0, REQUEST_LIMIT - self.used)
 
     @property
-    def next_reset_epoch(self) -> Optional[float]:
+    def next_reset_epoch(self) -> float | None:
         """Return Unix timestamp of next quota reset, or None if not at limit."""
         self._prune(time.time())
         if len(self._timestamps) < REQUEST_LIMIT:
@@ -144,7 +143,7 @@ class QuotaManager:
         return self._timestamps[0] + REQUEST_WINDOW_SECONDS
 
     @property
-    def next_reset_iso(self) -> Optional[str]:
+    def next_reset_iso(self) -> str | None:
         """Return ISO timestamp of next quota reset, or None if not at limit."""
         ts = self.next_reset_epoch
         if ts is None:

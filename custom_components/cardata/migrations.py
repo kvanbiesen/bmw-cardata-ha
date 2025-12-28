@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
-from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_config_entry,
+    async_get,
+)
 from homeassistant.util import slugify
 
 from .descriptor_titles import DESCRIPTOR_TITLES
@@ -63,7 +66,7 @@ async def async_migrate_entity_ids(
     *,
     force: bool = False,
     dry_run: bool = False,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Migrate entity_registry entity_id to include the vehicle/model prefix.
 
@@ -77,7 +80,7 @@ async def async_migrate_entity_ids(
     entries = list(async_entries_for_config_entry(
         entity_registry, entry.entry_id))
 
-    planned: List[Dict[str, Any]] = []
+    planned: list[dict[str, Any]] = []
 
     for ent in entries:
         redacted_entity_id = redact_vin_in_text(ent.entity_id)

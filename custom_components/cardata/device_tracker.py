@@ -16,10 +16,10 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DOMAIN,
+    LOCATION_ALTITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    LOCATION_HEADING_DESCRIPTOR,
-    LOCATION_ALTITUDE_DESCRIPTOR,
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
@@ -343,7 +343,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two GPS coordinates in meters using Haversine formula."""
-        from math import radians, sin, cos, sqrt, atan2
+        from math import atan2, cos, radians, sin, sqrt
 
         # Earth radius in meters
         R = 6371000

@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorEntity,
     BinarySensorDeviceClass,
+    BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_config_entry,
+    async_get,
+)
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator

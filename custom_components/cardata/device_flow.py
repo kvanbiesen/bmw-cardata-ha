@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import aiohttp
 
@@ -27,7 +27,7 @@ async def request_device_code(
     scope: str,
     code_challenge: str,
     code_challenge_method: str = "S256",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Request a device & user code pair from BMW."""
 
     data = {
@@ -56,7 +56,7 @@ async def poll_for_tokens(
     interval: int,
     timeout: int = 900,
     token_url: str = TOKEN_URL,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Poll the token endpoint until tokens are issued or timeout elapsed."""
 
     start = time.monotonic()
@@ -145,10 +145,10 @@ async def refresh_tokens(
     *,
     client_id: str,
     refresh_token: str,
-    scope: Optional[str] = None,
+    scope: str | None = None,
     token_url: str = TOKEN_URL,
     max_retries: int = 3,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Refresh access/ID tokens using the stored refresh token.
 
     Includes retry logic for transient network failures.
@@ -163,7 +163,7 @@ async def refresh_tokens(
 
     timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
     backoff = 1.0
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
 
     for attempt in range(max_retries + 1):
         try:

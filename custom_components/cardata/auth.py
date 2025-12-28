@@ -6,19 +6,17 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
-from typing import Optional, Tuple
 
 import aiohttp
-
-from homeassistant.config_entries import ConfigEntry, SOURCE_REAUTH
 from homeassistant.components import persistent_notification
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
-from .device_flow import CardataAuthError, refresh_tokens
 from .container import CardataContainerManager
-from .stream import CardataStreamManager
+from .device_flow import CardataAuthError, refresh_tokens
 from .runtime import CardataRuntimeData, async_update_entry_data
+from .stream import CardataStreamManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 TOKEN_EXPIRY_BUFFER_SECONDS = 300  # 5 minutes
 
 
-def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS) -> Tuple[bool, Optional[int]]:
+def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS) -> tuple[bool, int | None]:
     """Check if the access token is expired or about to expire.
 
     Args:
@@ -72,8 +70,8 @@ def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFF
 async def async_ensure_valid_token(
     entry: ConfigEntry,
     session: aiohttp.ClientSession,
-    manager: "CardataStreamManager",
-    container_manager: Optional["CardataContainerManager"] = None,
+    manager: CardataStreamManager,
+    container_manager: CardataContainerManager | None = None,
     buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS,
 ) -> bool:
     """Ensure the access token is valid, refreshing if necessary.
@@ -115,7 +113,7 @@ async def refresh_tokens_for_entry(
     entry: ConfigEntry,
     session: aiohttp.ClientSession,
     manager: CardataStreamManager,
-    container_manager: Optional[CardataContainerManager] = None,
+    container_manager: CardataContainerManager | None = None,
 ) -> None:
     """Refresh tokens and update entry data.
 

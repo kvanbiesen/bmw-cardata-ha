@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
-import logging
-
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -28,24 +27,27 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_config_entry,
+    async_get,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
-from .utils import redact_vin
 
 from .const import (
-    DOMAIN,
-    WINDOW_DESCRIPTORS,
     BATTERY_DESCRIPTORS,
+    DOMAIN,
+    LOCATION_ALTITUDE_DESCRIPTOR,
+    LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    LOCATION_HEADING_DESCRIPTOR,
-    LOCATION_ALTITUDE_DESCRIPTOR,
+    WINDOW_DESCRIPTORS,
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
-from .runtime import CardataRuntimeData
 from .quota import QuotaManager
+from .runtime import CardataRuntimeData
+from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 

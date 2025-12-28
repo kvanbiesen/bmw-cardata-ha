@@ -14,11 +14,10 @@ from typing import Any
 
 import aiohttp
 import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
-
+from .api_parsing import get_first_key
 from .const import (
     API_BASE_URL,
     API_VERSION,
@@ -26,7 +25,6 @@ from .const import (
     HV_BATTERY_CONTAINER_NAME,
     HV_BATTERY_CONTAINER_PURPOSE,
 )
-from .api_parsing import get_first_key
 from .runtime import CardataRuntimeData
 from .utils import (
     is_valid_vin,
@@ -35,7 +33,6 @@ from .utils import (
     redact_vin_in_text,
     redact_vin_payload,
 )
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -120,7 +117,10 @@ async def async_handle_fetch_telematic(call: ServiceCall) -> None:
 
     target_entry_id, target_entry, runtime = resolved
 
-    from .telematics import async_perform_telematic_fetch, async_update_last_telematic_poll
+    from .telematics import (
+        async_perform_telematic_fetch,
+        async_update_last_telematic_poll,
+    )
 
     result = await async_perform_telematic_fetch(
         hass,
@@ -228,8 +228,9 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
 
 async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
     """Handle fetch_basic_data service call."""
-    from .const import BASIC_DATA_ENDPOINT
     from homeassistant.helpers import device_registry as dr
+
+    from .const import BASIC_DATA_ENDPOINT
 
     hass = call.hass
     resolved = _resolve_target(hass, call.data)

@@ -7,20 +7,23 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
-
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import API_BASE_URL, API_VERSION, DOMAIN, TELEMATIC_POLL_INTERVAL, VEHICLE_METADATA
-from .http_retry import async_request_with_retry
-from .runtime import async_update_entry_data
-from .quota import CardataQuotaError
-from .runtime import CardataRuntimeData
 from .api_parsing import extract_telematic_payload, try_parse_json
-from .utils import is_valid_vin, redact_vin, redact_vin_payload, redact_vin_in_text
+from .const import (
+    API_BASE_URL,
+    API_VERSION,
+    DOMAIN,
+    TELEMATIC_POLL_INTERVAL,
+    VEHICLE_METADATA,
+)
+from .http_retry import async_request_with_retry
+from .quota import CardataQuotaError
+from .runtime import CardataRuntimeData, async_update_entry_data
+from .utils import is_valid_vin, redact_vin, redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,8 +39,8 @@ TELEMATIC_FETCH_TIMEOUT = 300.0  # 5 minutes
 class TelematicFetchResult:
     """Result of a telematic fetch operation."""
 
-    status: Optional[bool]
-    reason: Optional[str] = None
+    status: bool | None
+    reason: str | None = None
 
 
 async def async_perform_telematic_fetch(
@@ -45,7 +48,7 @@ async def async_perform_telematic_fetch(
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
     *,
-    vin_override: Optional[str] = None,
+    vin_override: str | None = None,
 ) -> TelematicFetchResult:
     """Fetch telematic data for one or more VINs.
 

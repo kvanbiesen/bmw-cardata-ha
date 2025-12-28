@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Iterable
 from contextlib import suppress
-from typing import Any, Iterable
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -16,14 +16,14 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    DOMAIN,
     DIAGNOSTIC_LOG_INTERVAL,
+    DOMAIN,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
 )
 from .debug import debug_enabled
-from .utils import redact_vin
 from .units import normalize_unit
+from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ _BOOLEAN_VALUE_MAP = {
 _MAX_TIMESTAMP_STRING_LENGTH = 64
 
 
-def _sanitize_timestamp_string(timestamp: Optional[str]) -> Optional[str]:
+def _sanitize_timestamp_string(timestamp: str | None) -> str | None:
     """Sanitize raw timestamp string for storage.
 
     - Limits length to prevent memory issues
@@ -90,30 +90,30 @@ def _sanitize_timestamp_string(timestamp: Optional[str]) -> Optional[str]:
 @dataclass
 class DescriptorState:
     value: Any
-    unit: Optional[str]
-    timestamp: Optional[str]
+    unit: str | None
+    timestamp: str | None
 
 
 @dataclass
 class SocTracking:
     """Track state of charge for a vehicle's battery with estimation and drift correction."""
 
-    energy_kwh: Optional[float] = None
-    max_energy_kwh: Optional[float] = None
-    last_update: Optional[datetime] = None
-    last_power_w: Optional[float] = None
-    last_power_time: Optional[datetime] = None
-    smoothed_power_w: Optional[float] = None  # EMA-smoothed power for stable rate
+    energy_kwh: float | None = None
+    max_energy_kwh: float | None = None
+    last_update: datetime | None = None
+    last_power_w: float | None = None
+    last_power_time: datetime | None = None
+    smoothed_power_w: float | None = None  # EMA-smoothed power for stable rate
     charging_active: bool = False
     charging_paused: bool = False  # Power=0 while charging_active=true
     _consecutive_zero_power: int = 0  # Counter for pause hysteresis
-    last_soc_percent: Optional[float] = None
-    rate_per_hour: Optional[float] = None
-    estimated_percent: Optional[float] = None
-    last_estimate_time: Optional[datetime] = None
-    target_soc_percent: Optional[float] = None
+    last_soc_percent: float | None = None
+    rate_per_hour: float | None = None
+    estimated_percent: float | None = None
+    last_estimate_time: datetime | None = None
+    target_soc_percent: float | None = None
     # Drift correction tracking
-    last_drift_check: Optional[datetime] = None
+    last_drift_check: datetime | None = None
     cumulative_drift: float = 0.0
     drift_corrections: int = 0
     _stale_logged: bool = False
@@ -122,11 +122,11 @@ class SocTracking:
     _consecutive_undershoots: int = 0  # Estimate < actual consecutively
     _drift_pattern_warned: bool = False  # Avoid spamming pattern warnings
     # Adaptive efficiency learning
-    learned_efficiency: Optional[float] = None  # Learned from drift patterns
-    _last_efficiency_soc: Optional[float] = None  # SOC at last efficiency sample
-    _last_efficiency_time: Optional[datetime] = None  # Time at last efficiency sample
+    learned_efficiency: float | None = None  # Learned from drift patterns
+    _last_efficiency_soc: float | None = None  # SOC at last efficiency sample
+    _last_efficiency_time: datetime | None = None  # Time at last efficiency sample
     _efficiency_energy_kwh: float = 0.0  # Integrated energy since last efficiency sample
-    _efficiency_energy_start: Optional[datetime] = None  # When energy started accumulating
+    _efficiency_energy_start: datetime | None = None  # When energy started accumulating
 
     # Class-level constants for drift correction
     MAX_ESTIMATE_AGE_SECONDS: ClassVar[float] = 3600.0  # 1 hour max without actual update
@@ -163,7 +163,7 @@ class SocTracking:
     # Maximum allowed timestamp skew from current time (24 hours)
     MAX_TIMESTAMP_SKEW_SECONDS: ClassVar[float] = 86400.0
 
-    def _normalize_timestamp(self, timestamp: Optional[datetime]) -> Optional[datetime]:
+    def _normalize_timestamp(self, timestamp: datetime | None) -> datetime | None:
         if timestamp is None or not isinstance(timestamp, datetime):
             return None
         # Fast path: already normalized to UTC, skip conversion
@@ -195,7 +195,7 @@ class SocTracking:
             return None
         return normalized
 
-    def update_max_energy(self, value: Optional[float]) -> None:
+    def update_max_energy(self, value: float | None) -> None:
         try:
             if value is None:
                 return
@@ -212,7 +212,7 @@ class SocTracking:
         except (TypeError, ValueError, ArithmeticError) as err:
             _LOGGER.warning("Error in update_max_energy: %s", err)
 
-    def update_actual_soc(self, percent: float, timestamp: Optional[datetime]) -> None:
+    def update_actual_soc(self, percent: float, timestamp: datetime | None) -> None:
         """Update with actual SOC value, detecting and correcting drift."""
         try:
             # Fallback chain: parsed timestamp -> last known update -> now
@@ -493,7 +493,7 @@ class SocTracking:
             # Pattern broken by significant opposite drift, reset warning flag
             self._drift_pattern_warned = False
 
-    def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
+    def update_power(self, power_w: float | None, timestamp: datetime | None) -> None:
         try:
             if power_w is None:
                 return
@@ -588,7 +588,7 @@ class SocTracking:
         except Exception:
             _LOGGER.exception("Unexpected error in update_power")
 
-    def update_status(self, status: Optional[str]) -> None:
+    def update_status(self, status: str | None) -> None:
         try:
             if status is None:
                 return
@@ -610,7 +610,7 @@ class SocTracking:
             _LOGGER.exception("Unexpected error in update_status")
 
     def update_target_soc(
-        self, percent: Optional[float], timestamp: Optional[datetime] = None
+        self, percent: float | None, timestamp: datetime | None = None
     ) -> None:
         try:
             if percent is None:
@@ -632,7 +632,7 @@ class SocTracking:
         except Exception:
             _LOGGER.exception("Unexpected error in update_target_soc")
 
-    def estimate(self, now: datetime) -> Optional[float]:
+    def estimate(self, now: datetime) -> float | None:
         """Estimate current SOC based on charging rate and elapsed time.
 
         Returns None if estimate is stale (no actual update for MAX_ESTIMATE_AGE_SECONDS).
@@ -750,7 +750,7 @@ class SocTracking:
             _LOGGER.exception("Unexpected error in estimate")
             return self.estimated_percent
 
-    def current_rate_per_hour(self) -> Optional[float]:
+    def current_rate_per_hour(self) -> float | None:
         if not self.charging_active:
             return None
         return self.rate_per_hour
@@ -823,49 +823,49 @@ class SocTracking:
 class CardataCoordinator:
     hass: HomeAssistant
     entry_id: str
-    data: Dict[str, Dict[str, DescriptorState]] = field(default_factory=dict)
-    names: Dict[str, str] = field(default_factory=dict)
-    device_metadata: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    last_message_at: Optional[datetime] = None
-    last_telematic_api_at: Optional[datetime] = None
+    data: dict[str, dict[str, DescriptorState]] = field(default_factory=dict)
+    names: dict[str, str] = field(default_factory=dict)
+    device_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_message_at: datetime | None = None
+    last_telematic_api_at: datetime | None = None
     connection_status: str = "connecting"
-    last_disconnect_reason: Optional[str] = None
+    last_disconnect_reason: str | None = None
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
-    watchdog_task: Optional[asyncio.Task] = field(
+    watchdog_task: asyncio.Task | None = field(
         default=None, init=False, repr=False)
     # Lock to protect concurrent access to data, names, device_metadata, and SOC tracking dicts
     _lock: asyncio.Lock = field(
         default_factory=asyncio.Lock, init=False, repr=False)
-    _soc_tracking: Dict[str, SocTracking] = field(
+    _soc_tracking: dict[str, SocTracking] = field(
         default_factory=dict, init=False)
-    _soc_rate: Dict[str, float] = field(default_factory=dict, init=False)
-    _soc_estimate: Dict[str, float] = field(default_factory=dict, init=False)
-    _testing_soc_tracking: Dict[str, SocTracking] = field(
+    _soc_rate: dict[str, float] = field(default_factory=dict, init=False)
+    _soc_estimate: dict[str, float] = field(default_factory=dict, init=False)
+    _testing_soc_tracking: dict[str, SocTracking] = field(
         default_factory=dict, init=False
     )
-    _testing_soc_estimate: Dict[str, float] = field(
+    _testing_soc_estimate: dict[str, float] = field(
         default_factory=dict, init=False)
-    _avg_aux_power_w: Dict[str, float] = field(
+    _avg_aux_power_w: dict[str, float] = field(
         default_factory=dict, init=False)
-    _aux_exceeds_charging_warned: Dict[str, bool] = field(
+    _aux_exceeds_charging_warned: dict[str, bool] = field(
         default_factory=dict, init=False)  # Track if we warned about aux > charging
-    _charging_power_w: Dict[str, float] = field(
+    _charging_power_w: dict[str, float] = field(
         default_factory=dict, init=False)
-    _direct_power_w: Dict[str, float] = field(default_factory=dict, init=False)
-    _ac_voltage_v: Dict[str, float] = field(default_factory=dict, init=False)
-    _ac_current_a: Dict[str, float] = field(default_factory=dict, init=False)
-    _ac_phase_count: Dict[str, int] = field(default_factory=dict, init=False)
+    _direct_power_w: dict[str, float] = field(default_factory=dict, init=False)
+    _ac_voltage_v: dict[str, float] = field(default_factory=dict, init=False)
+    _ac_current_a: dict[str, float] = field(default_factory=dict, init=False)
+    _ac_phase_count: dict[str, int] = field(default_factory=dict, init=False)
 
     # Debouncing fields (NEW!)
-    _update_debounce_handle: Optional[asyncio.TimerHandle] = field(
+    _update_debounce_handle: asyncio.TimerHandle | None = field(
         default=None, init=False)
     _debounce_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock, init=False, repr=False)
-    _pending_updates: Dict[str, set[str]] = field(
+    _pending_updates: dict[str, set[str]] = field(
         default_factory=dict, init=False)  # {vin: {descriptors}}
-    _pending_new_sensors: Dict[str, set[str]] = field(
+    _pending_new_sensors: dict[str, set[str]] = field(
         default_factory=dict, init=False)  # Changed to set to avoid duplicates
-    _pending_new_binary: Dict[str, set[str]] = field(
+    _pending_new_binary: dict[str, set[str]] = field(
         default_factory=dict, init=False)  # Changed to set to avoid duplicates
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
@@ -873,14 +873,14 @@ class CardataCoordinator:
     _MAX_PENDING_VINS: int = 20  # Max number of VINs to track (generous limit for fleets)
     _MAX_PENDING_TOTAL: int = 2000  # Hard cap on total pending items across all structures
     _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
-    _pending_updates_started: Optional[datetime] = field(default=None, init=False)
+    _pending_updates_started: datetime | None = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
     # Track evicted updates for diagnostics visibility
     _evicted_updates_count: int = field(default=0, init=False)
 
     @staticmethod
-    def _safe_vin_suffix(vin: Optional[str]) -> str:
+    def _safe_vin_suffix(vin: str | None) -> str:
         """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
         if not vin:
             return "<unknown>"
@@ -1031,7 +1031,7 @@ class CardataCoordinator:
 
         return max(adjusted, 0.0)
 
-    def _update_testing_power(self, vin: str, timestamp: Optional[datetime]) -> None:
+    def _update_testing_power(self, vin: str, timestamp: datetime | None) -> None:
         """Update testing power tracking. Must be called while holding _lock."""
         raw_power = self._charging_power_w.get(vin)
         if raw_power is None:
@@ -1046,8 +1046,8 @@ class CardataCoordinator:
         vin: str,
         descriptor: str,
         value: Any,
-        unit: Optional[str],
-        parsed_ts: Optional[datetime],
+        unit: str | None,
+        parsed_ts: datetime | None,
     ) -> bool:
         """Update SOC tracking for a descriptor. Returns True if tracking was updated.
 
@@ -1122,7 +1122,7 @@ class CardataCoordinator:
                 testing_tracking.update_target_soc(target, parsed_ts)
             return True
         elif descriptor == "vehicle.vehicle.avgAuxPower":
-            aux_w: Optional[float] = None
+            aux_w: float | None = None
             try:
                 aux_value = float(value)
             except (TypeError, ValueError):
@@ -1166,7 +1166,7 @@ class CardataCoordinator:
         return False
 
     def _set_direct_power(
-        self, vin: str, power_w: Optional[float], timestamp: Optional[datetime]
+        self, vin: str, power_w: float | None, timestamp: datetime | None
     ) -> None:
         """Set direct charging power. Must be called while holding _lock."""
         if power_w is None:
@@ -1186,7 +1186,7 @@ class CardataCoordinator:
     _AC_POWER_MAX_W: float = 22000.0  # Maximum AC power (22kW) - highest onboard charger
 
     def _set_ac_voltage(
-        self, vin: str, voltage_v: Optional[float], timestamp: Optional[datetime]
+        self, vin: str, voltage_v: float | None, timestamp: datetime | None
     ) -> None:
         """Set AC voltage. Must be called while holding _lock."""
         if voltage_v is None:
@@ -1202,7 +1202,7 @@ class CardataCoordinator:
         self._apply_effective_power(vin, timestamp)
 
     def _set_ac_current(
-        self, vin: str, current_a: Optional[float], timestamp: Optional[datetime]
+        self, vin: str, current_a: float | None, timestamp: datetime | None
     ) -> None:
         """Set AC current. Must be called while holding _lock."""
         if current_a is None:
@@ -1218,10 +1218,10 @@ class CardataCoordinator:
         self._apply_effective_power(vin, timestamp)
 
     def _set_ac_phase(
-        self, vin: str, phase_value: Optional[Any], timestamp: Optional[datetime]
+        self, vin: str, phase_value: Any | None, timestamp: datetime | None
     ) -> None:
         """Set AC phase count. Must be called while holding _lock."""
-        phase_count: Optional[int] = None
+        phase_count: int | None = None
         if phase_value is None:
             phase_count = None
         elif isinstance(phase_value, (int, float)):
@@ -1252,7 +1252,7 @@ class CardataCoordinator:
             self._ac_phase_count[vin] = phase_count
         self._apply_effective_power(vin, timestamp)
 
-    def _derive_ac_power(self, vin: str) -> Optional[float]:
+    def _derive_ac_power(self, vin: str) -> float | None:
         """Derive AC charging power from voltage, current, and phases. Must be called while holding _lock."""
         voltage = self._ac_voltage_v.get(vin)
         current = self._ac_current_a.get(vin)
@@ -1268,7 +1268,7 @@ class CardataCoordinator:
             return None
         return max(derived, 0.0)
 
-    def _compute_effective_power(self, vin: str) -> Optional[float]:
+    def _compute_effective_power(self, vin: str) -> float | None:
         """Compute effective charging power (direct or derived from AC). Must be called while holding _lock."""
         direct = self._direct_power_w.get(vin)
         if direct is not None:
@@ -1276,7 +1276,7 @@ class CardataCoordinator:
         return self._derive_ac_power(vin)
 
     def _apply_effective_power(
-        self, vin: str, timestamp: Optional[datetime]
+        self, vin: str, timestamp: datetime | None
     ) -> None:
         """Apply effective power to SOC tracking. Must be called while holding _lock."""
         tracking = self._soc_tracking.setdefault(vin, SocTracking())
@@ -1323,7 +1323,7 @@ class CardataCoordinator:
                 return _BOOLEAN_VALUE_MAP[normalized]
         return value
 
-    async def async_handle_message(self, payload: Dict[str, Any]) -> None:
+    async def async_handle_message(self, payload: dict[str, Any]) -> None:
         vin = payload.get("vin")
         data = payload.get("data") or {}
         if not vin or not isinstance(data, dict):
@@ -1341,7 +1341,7 @@ class CardataCoordinator:
             await self._async_schedule_debounced_update()
 
     async def _async_handle_message_locked(
-        self, payload: Dict[str, Any], vin: str, data: Dict[str, Any]
+        self, payload: dict[str, Any], vin: str, data: dict[str, Any]
     ) -> tuple[list[tuple[str, str]], bool]:
         """Handle message while holding the lock."""
         redacted_vin = redact_vin(vin)
@@ -1616,7 +1616,7 @@ class CardataCoordinator:
         # Send diagnostics update
         self._safe_dispatcher_send(self.signal_diagnostics)
 
-    def get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
+    def get_state(self, vin: str, descriptor: str) -> DescriptorState | None:
         """Get state for a descriptor (sync version for entity property access).
 
         This method provides best-effort consistency for synchronous access.
@@ -1652,7 +1652,7 @@ class CardataCoordinator:
             # - TypeError: unexpected None or wrong type in chain
             return None
 
-    async def async_get_state(self, vin: str, descriptor: str) -> Optional[DescriptorState]:
+    async def async_get_state(self, vin: str, descriptor: str) -> DescriptorState | None:
         """Get state for a descriptor with proper lock acquisition."""
         async with self._lock:
             vehicle_data = self.data.get(vin)
@@ -1804,7 +1804,7 @@ class CardataCoordinator:
                 return
 
             # Collect all VINs from tracking dicts
-            tracking_dicts: list[Dict[str, Any]] = [
+            tracking_dicts: list[dict[str, Any]] = [
                 self._soc_tracking,
                 self._soc_rate,
                 self._soc_estimate,
@@ -1903,15 +1903,15 @@ class CardataCoordinator:
             self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         return final_updated
 
-    def get_soc_rate(self, vin: str) -> Optional[float]:
+    def get_soc_rate(self, vin: str) -> float | None:
         """Get current SOC rate for VIN. Thread-safe for read-only access."""
         return self._soc_rate.get(vin)
 
-    def get_soc_estimate(self, vin: str) -> Optional[float]:
+    def get_soc_estimate(self, vin: str) -> float | None:
         """Get current SOC estimate for VIN. Thread-safe for read-only access."""
         return self._soc_estimate.get(vin)
 
-    def get_testing_soc_estimate(self, vin: str) -> Optional[float]:
+    def get_testing_soc_estimate(self, vin: str) -> float | None:
         """Get testing SOC estimate for VIN. Thread-safe for read-only access."""
         return self._testing_soc_estimate.get(vin)
 
@@ -1920,8 +1920,8 @@ class CardataCoordinator:
         vin: str,
         descriptor: str,
         value: Any,
-        unit: Optional[str],
-        timestamp: Optional[str],
+        unit: str | None,
+        timestamp: str | None,
     ) -> None:
         """Restore descriptor state from saved data.
 
@@ -1990,9 +1990,9 @@ class CardataCoordinator:
         self,
         vin: str,
         *,
-        estimate: Optional[float] = None,
-        rate: Optional[float] = None,
-        timestamp: Optional[datetime] = None,
+        estimate: float | None = None,
+        rate: float | None = None,
+        timestamp: datetime | None = None,
     ) -> None:
         """Restore SOC cache from saved state.
 
@@ -2024,8 +2024,8 @@ class CardataCoordinator:
         self,
         vin: str,
         *,
-        estimate: Optional[float] = None,
-        timestamp: Optional[datetime] = None,
+        estimate: float | None = None,
+        timestamp: datetime | None = None,
     ) -> None:
         """Restore testing SOC cache from saved state.
 
@@ -2044,8 +2044,8 @@ class CardataCoordinator:
         vin: str,
         descriptor: str,
         value: Any,
-        unit: Optional[str],
-        timestamp: Optional[str],
+        unit: str | None,
+        timestamp: str | None,
     ) -> None:
         """Thread-safe async version of restore_descriptor_state."""
         async with self._lock:
@@ -2056,9 +2056,9 @@ class CardataCoordinator:
         self,
         vin: str,
         *,
-        estimate: Optional[float] = None,
-        rate: Optional[float] = None,
-        timestamp: Optional[datetime] = None,
+        estimate: float | None = None,
+        rate: float | None = None,
+        timestamp: datetime | None = None,
     ) -> None:
         """Thread-safe async version of restore_soc_cache."""
         async with self._lock:
@@ -2069,8 +2069,8 @@ class CardataCoordinator:
         self,
         vin: str,
         *,
-        estimate: Optional[float] = None,
-        timestamp: Optional[datetime] = None,
+        estimate: float | None = None,
+        timestamp: datetime | None = None,
     ) -> None:
         """Thread-safe async version of restore_testing_soc_cache."""
         async with self._lock:
@@ -2078,7 +2078,7 @@ class CardataCoordinator:
                 vin, estimate=estimate, timestamp=timestamp)
 
     @staticmethod
-    def _build_device_metadata(vin: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_device_metadata(vin: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
             return {}
         model_name = (
@@ -2097,7 +2097,7 @@ class CardataCoordinator:
         else:
             charging_modes_text = ""
 
-        display_attrs: Dict[str, Any] = {
+        display_attrs: dict[str, Any] = {
             "vin": raw_payload.get("vin") or vin,
             "model_name": model_name,
             "model_key": raw_payload.get("modelKey"),
@@ -2117,7 +2117,7 @@ class CardataCoordinator:
             "construction_date": raw_payload.get("constructionDate"),
             "special_equipment_codes": raw_payload.get("fullSAList"),
         }
-        metadata: Dict[str, Any] = {
+        metadata: dict[str, Any] = {
             "name": model_name,
             "manufacturer": brand,
             "serial_number": raw_payload.get("vin") or vin,
@@ -2134,7 +2134,7 @@ class CardataCoordinator:
             metadata["hw_version"] = raw_payload["series_development"]
         return metadata
 
-    def apply_basic_data(self, vin: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def apply_basic_data(self, vin: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         """Apply basic data to coordinator. Must be called while holding _lock or from locked context."""
         metadata = self._build_device_metadata(vin, payload)
         if not metadata:
@@ -2154,8 +2154,8 @@ class CardataCoordinator:
         return metadata
 
     async def async_apply_basic_data(
-        self, vin: str, payload: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, vin: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Thread-safe async version of apply_basic_data."""
         async with self._lock:
             return self.apply_basic_data(vin, payload)

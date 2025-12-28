@@ -6,11 +6,11 @@ import asyncio
 import logging
 import re
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
@@ -43,7 +43,7 @@ class CardataEntity(RestoreEntity):
         self._attr_name = self._compute_full_name()
 
         self._attr_available = True
-        self._name_unsub: Optional[Callable[[], None]] = None
+        self._name_unsub: Callable[[], None] | None = None
 
     def _resolve_vin(self) -> str:
         """Resolve VIN alias if coordinator provides resolver."""
@@ -121,7 +121,7 @@ class CardataEntity(RestoreEntity):
     def vin(self) -> str:
         return self._vin
 
-    def _get_vehicle_name(self) -> Optional[str]:
+    def _get_vehicle_name(self) -> str | None:
         resolved_vin = self._resolve_vin()
         metadata = self._coordinator.device_metadata.get(resolved_vin)
         if metadata and metadata.get("name"):

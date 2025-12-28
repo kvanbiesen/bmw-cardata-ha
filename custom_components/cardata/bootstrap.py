@@ -6,16 +6,14 @@ import logging
 from typing import Any
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .api_parsing import extract_primary_vins, extract_telematic_payload, try_parse_json
 from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
-from .runtime import async_update_entry_data
 from .quota import CardataQuotaError, QuotaManager
-from .runtime import CardataRuntimeData
-from .api_parsing import extract_primary_vins, extract_telematic_payload, try_parse_json
+from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
@@ -103,7 +101,10 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             await async_mark_bootstrap_complete(hass, entry)
             return
 
-        from .metadata import async_fetch_and_store_basic_data, async_fetch_and_store_vehicle_images
+        from .metadata import (
+            async_fetch_and_store_basic_data,
+            async_fetch_and_store_vehicle_images,
+        )
 
         coordinator = runtime.coordinator
 
@@ -148,8 +149,9 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
 
         if created_entities:
-            from .telematics import async_update_last_telematic_poll
             import time
+
+            from .telematics import async_update_last_telematic_poll
 
             await async_update_last_telematic_poll(hass, entry, time.time())
         else:
