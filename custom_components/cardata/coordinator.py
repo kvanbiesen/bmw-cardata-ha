@@ -242,10 +242,11 @@ class SocTracking:
 
             # Validate percent is finite and in valid range [0, 100]
             if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
-                _LOGGER.warning(
-                    "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
-                    percent,
-                )
+                if percent != 0:  #ne no need to report 0
+                    _LOGGER.warning(
+                        "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
+                        percent,
+                    )
                 return
 
             # Check for drift between estimate and actual
@@ -495,7 +496,7 @@ class SocTracking:
 
     def update_power(self, power_w: Optional[float], timestamp: Optional[datetime]) -> None:
         try:
-            if power_w is None:
+            if power_w is None or power_w == 0:
                 return
             # Validate power is finite and non-negative
             if not math.isfinite(power_w) or power_w < 0:
@@ -613,7 +614,7 @@ class SocTracking:
         self, percent: Optional[float], timestamp: Optional[datetime] = None
     ) -> None:
         try:
-            if percent is None:
+            if (percent is None) or (percent == 0):
                 self.target_soc_percent = None
                 return
             if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
