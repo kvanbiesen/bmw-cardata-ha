@@ -1155,7 +1155,7 @@ class CardataCoordinator:
 
     def _set_ac_voltage(self, vin: str, voltage_v: float | None, timestamp: datetime | None) -> None:
         """Set AC voltage. Must be called while holding _lock."""
-        if voltage_v is None:
+        if voltage_v is None or voltage_v == 0.0:
             self._ac_voltage_v.pop(vin, None)
         elif not math.isfinite(voltage_v) or voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
             _LOGGER.warning(
@@ -1164,14 +1164,14 @@ class CardataCoordinator:
                 int(self._AC_VOLTAGE_MIN),
                 int(self._AC_VOLTAGE_MAX),
             )
-            return
+            self._ac_voltage_v.pop(vin, None)
         else:
             self._ac_voltage_v[vin] = voltage_v
         self._apply_effective_power(vin, timestamp)
 
     def _set_ac_current(self, vin: str, current_a: float | None, timestamp: datetime | None) -> None:
         """Set AC current. Must be called while holding _lock."""
-        if current_a is None:
+        if current_a is None or current_a == 0.0:
             self._ac_current_a.pop(vin, None)
         elif not math.isfinite(current_a) or current_a < 0 or current_a > self._AC_CURRENT_MAX:
             _LOGGER.warning(
@@ -1179,7 +1179,7 @@ class CardataCoordinator:
                 current_a,
                 int(self._AC_CURRENT_MAX),
             )
-            return
+            self._ac_current_a.pop(vin, None)
         else:
             self._ac_current_a[vin] = current_a
         self._apply_effective_power(vin, timestamp)
@@ -1207,7 +1207,7 @@ class CardataCoordinator:
                 phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
         if phase_count is None:
             self._ac_phase_count.pop(vin, None)
-            if phase_value is not None:
+            if phase_value is not None and phase_value != 0:
                 _LOGGER.debug(
                     "Ignoring invalid AC phase count: %s (expected 1-%d)",
                     phase_value,
