@@ -120,9 +120,14 @@ class QuotaManager:
             self._timestamps.append(now)
             await self._async_save_locked()
 
+    # Note: Properties below are sync and don't hold the async lock.
+    # This is safe because deque operations (popleft, len) are atomic in CPython,
+    # and _prune only removes expired entries. Counts may be slightly stale but
+    # async_claim() uses the lock for authoritative quota enforcement.
+
     @property
     def used(self) -> int:
-        """Return number of requests used in current window."""
+        """Return number of requests used in current window (may be slightly stale)."""
         self._prune(time.time())
         return len(self._timestamps)
 

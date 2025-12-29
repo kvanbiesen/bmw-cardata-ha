@@ -196,7 +196,7 @@ class CardataContainerManager:
                     _LOGGER.warning(
                         "[%s] Cannot reset container due to rate limiting: %s", self._entry_id, block_reason
                     )
-                    raise CardataContainerError(f"Container creatin rate limited: {block_reason}")
+                    raise CardataContainerError(f"Container creation rate limited: {block_reason}")
 
             containers = await self._list_containers(access_token)
             deleted_ids: list[str] = []

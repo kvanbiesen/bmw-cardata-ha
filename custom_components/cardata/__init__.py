@@ -291,13 +291,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         await asyncio.wait_for(
                             refresh_tokens_for_entry(current_entry, session, manager, container_manager), timeout=60.0
                         )
-                        # Success - reset failure counter
+                        # Success - reset failure counters
                         if consecutive_auth_failures > 0:
                             _LOGGER.info(
                                 "Token refresh succeeded after %d consecutive failures",
                                 consecutive_auth_failures,
                             )
                         consecutive_auth_failures = 0
+                        # Record session success for health tracking
+                        runtime = hass.data.get(DOMAIN, {}).get(entry_id)
+                        if runtime:
+                            runtime.record_session_success()
 
                     except CardataAuthError as err:
                         consecutive_auth_failures += 1
@@ -324,10 +328,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     except TimeoutError:
                         _LOGGER.warning("Token refresh timed out after 60 seconds")
                         # Timeout is transient - don't count as auth failure
+                        # But track for session health
+                        runtime = hass.data.get(DOMAIN, {}).get(entry_id)
+                        if runtime and runtime.record_session_failure():
+                            await runtime.async_recreate_session()
 
                     except aiohttp.ClientError as err:
                         _LOGGER.warning("Token refresh network error: %s", err)
-                        # Network errors are transient - don't count as auth failure
+                        # Network errors may indicate unhealthy session
+                        runtime = hass.data.get(DOMAIN, {}).get(entry_id)
+                        if runtime and runtime.record_session_failure():
+                            await runtime.async_recreate_session()
 
                     except Exception as err:
                         _LOGGER.exception("Token refresh crashed with unexpected error: %s", err)
@@ -480,11 +491,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await asyncio.wait_for(data.refresh_task, timeout=5.0)
     except asyncio.CancelledError:
         pass  # Expected
-    except asyncio.TimeoutError:
-        _LOGGER.warning(
-            "Refresh task did not cancel within timeout (5s). "
-            "Proceeding with unload anyway."
-        )
+    except TimeoutError:
+        _LOGGER.warning("Refresh task did not cancel within timeout (5s). Proceeding with unload anyway.")
     except Exception as err:
         _LOGGER.error("Error stopping refresh task: %s", err)
 
@@ -494,11 +502,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await asyncio.wait_for(data.bootstrap_task, timeout=5.0)
         except asyncio.CancelledError:
             pass  # Expected
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Bootstrap task did not cancel within timeout (5s). "
-                "Proceeding with unload anyway."
-            )
+        except TimeoutError:
+            _LOGGER.warning("Bootstrap task did not cancel within timeout (5s). Proceeding with unload anyway.")
         except Exception as err:
             _LOGGER.error("Error stopping bootstrap task: %s", err)
 
@@ -508,11 +513,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await asyncio.wait_for(data.telematic_task, timeout=5.0)
         except asyncio.CancelledError:
             pass  # Expected
-        except asyncio.TimeoutError:
-            _LOGGER.warning(
-                "Telematic task did not cancel within timeout (5s). "
-                "Proceeding with unload anyway."
-            )
+        except TimeoutError:
+            _LOGGER.warning("Telematic task did not cancel within timeout (5s). Proceeding with unload anyway.")
         except Exception as err:
             _LOGGER.error("Error stopping telematic task: %s", err)
 
@@ -523,19 +525,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Stop MQTT stream with timeout protection
     try:
         await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
-    except asyncio.TimeoutError:
-        _LOGGER.warning(
-            "MQTT stream stop timed out after 10 seconds. "
-            "Proceeding with unload anyway."
-        )
+    except TimeoutError:
+        _LOGGER.warning("MQTT stream stop timed out after 10 seconds. Proceeding with unload anyway.")
     except Exception as err:
         _LOGGER.error("Error stopping MQTT stream: %s", err)
 
     await data.session.close()
 
     # Clean up services if this is the last entry
-    remaining_entries = [
-        k for k in domain_data.keys() if not k.startswith("_")]
+    remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
     if not remaining_entries:
         async_unregister_services(hass)
         domain_data.pop("_service_registered", None)

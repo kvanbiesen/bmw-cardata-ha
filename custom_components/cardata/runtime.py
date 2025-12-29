@@ -52,6 +52,10 @@ class CardataRuntimeData:
     # Lock to protect concurrent token refresh operations
     _token_refresh_lock: asyncio.Lock | None = None
 
+    # Session health tracking
+    _consecutive_session_failures: int = 0
+    _SESSION_FAILURE_THRESHOLD: int = 5  # Recreate after this many consecutive failures
+
     def __post_init__(self):
         """Initialize rate limiters if not provided."""
         if self.rate_limit_tracker is None:
@@ -65,6 +69,62 @@ class CardataRuntimeData:
     def token_refresh_lock(self) -> asyncio.Lock | None:
         """Get the token refresh lock."""
         return self._token_refresh_lock
+
+    @property
+    def session_healthy(self) -> bool:
+        """Check if the aiohttp session appears healthy."""
+        if self.session is None:
+            return False
+        if self.session.closed:
+            return False
+        # Check connector health if available
+        connector = self.session.connector
+        if connector is not None and connector.closed:
+            return False
+        return True
+
+    def record_session_success(self) -> None:
+        """Record a successful session operation, resetting failure counter."""
+        self._consecutive_session_failures = 0
+
+    def record_session_failure(self) -> bool:
+        """Record a session failure and return True if recreation is recommended."""
+        self._consecutive_session_failures += 1
+        return self._consecutive_session_failures >= self._SESSION_FAILURE_THRESHOLD
+
+    async def async_recreate_session(self) -> bool:
+        """Recreate the aiohttp session if unhealthy.
+
+        Returns True if session was recreated, False otherwise.
+        """
+        if self.session_healthy and self._consecutive_session_failures < self._SESSION_FAILURE_THRESHOLD:
+            return False
+
+        _LOGGER.warning(
+            "Recreating aiohttp session after %d consecutive failures",
+            self._consecutive_session_failures,
+        )
+
+        # Close old session
+        old_session = self.session
+        if old_session and not old_session.closed:
+            try:
+                await old_session.close()
+            except Exception as err:
+                _LOGGER.debug("Error closing old session: %s", err)
+
+        # Create new session
+        self.session = aiohttp.ClientSession()
+
+        # Update container manager's session reference
+        if self.container_manager is not None:
+            self.container_manager._session = self.session
+
+        # Reset failure counter
+        self._consecutive_session_failures = 0
+
+        _LOGGER.info("Successfully recreated aiohttp session")
+        return True
 
 
 # Per-entry lock registry to ensure consistent locking across setup and runtime

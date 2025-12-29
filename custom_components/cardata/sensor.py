@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from typing import Any
 
@@ -148,8 +149,8 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
 
 
 def convert_value_for_unit(
-    value: float | str | int, original_unit: str | None, normalized_unit: str | None
-) -> float | str | int:
+    value: float | str | int | None, original_unit: str | None, normalized_unit: str | None
+) -> float | str | int | None:
     """Convert value when unit normalization requires it."""
     if original_unit == normalized_unit or value is None:
         return value
@@ -170,10 +171,39 @@ def convert_value_for_unit(
     return value
 
 
+def _validate_restored_state(state_value: str | None, unit: str | None) -> str | None:
+    """Validate a restored state value is usable.
+
+    Returns the validated value or None if invalid.
+    """
+    if state_value is None:
+        return None
+
+    # Reject empty or whitespace-only values
+    if not isinstance(state_value, str) or not state_value.strip():
+        return None
+
+    # For numeric units, validate the value is a valid number
+    if unit is not None:
+        try:
+            numeric = float(state_value)
+            # Reject NaN and infinity
+            if not math.isfinite(numeric):
+                _LOGGER.debug("Rejecting non-finite restored value: %s", state_value)
+                return None
+        except (TypeError, ValueError):
+            # Non-numeric string with a unit - could be enum value like "OPEN"
+            # Allow these through
+            pass
+
+    return state_value
+
+
 class CardataSensor(CardataEntity, SensorEntity):
     """Sensor for generic telematic data."""
 
     _attr_should_poll = False
+    _attr_native_value: float | int | str | None = None
 
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
@@ -199,10 +229,15 @@ class CardataSensor(CardataEntity, SensorEntity):
         if getattr(self, "_attr_native_value", None) is None:
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
-                self._attr_native_value = last_state.state
                 unit = last_state.attributes.get("unit_of_measurement")
+                validated_state = _validate_restored_state(last_state.state, unit)
+                if validated_state is None:
+                    # Invalid restored state - skip restoration
+                    last_state = None
+                else:
+                    self._attr_native_value = validated_state
 
-                if unit is not None:
+                if last_state is not None and unit is not None:
                     original_unit = unit
                     unit = map_unit_to_ha(unit)
                     self._attr_native_value = convert_value_for_unit(self._attr_native_value, original_unit, unit)
@@ -213,23 +248,24 @@ class CardataSensor(CardataEntity, SensorEntity):
 
                     self._attr_native_unit_of_measurement = unit
 
-                timestamp = last_state.attributes.get("timestamp")
-                if not timestamp and last_state.last_changed:
-                    timestamp = last_state.last_changed.isoformat()
+                if last_state is not None:
+                    timestamp = last_state.attributes.get("timestamp")
+                    if not timestamp and last_state.last_changed:
+                        timestamp = last_state.last_changed.isoformat()
 
-                await self._coordinator.async_restore_descriptor_state(
-                    self.vin,
-                    self.descriptor,
-                    self._attr_native_value,
-                    unit,
-                    timestamp,
-                )
+                    await self._coordinator.async_restore_descriptor_state(
+                        self.vin,
+                        self.descriptor,
+                        self._attr_native_value,
+                        unit,
+                        timestamp,
+                    )
 
-                # Set state class AFTER unit is restored
-                if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:
-                    state_class = self._determine_state_class()
-                    if state_class:
-                        self._attr_state_class = state_class
+                    # Set state class AFTER unit is restored
+                    if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:
+                        state_class = self._determine_state_class()
+                        if state_class:
+                            self._attr_state_class = state_class
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
@@ -787,6 +823,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             # drive_train changed, re-evaluate below
 
         if not drive_train:
+            # Clear stale cache entry when metadata is removed/unavailable
+            _electric_vehicle_cache.pop(vin, None)
             _LOGGER.debug("VIN %s: No metadata yet, will check again later", redact_vin(vin))
             return None  # Don't cache - let caller decide to wait for metadata
 
