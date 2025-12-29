@@ -554,4 +554,3 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle removal of config entry."""
     # Home Assistant handles entity cleanup automatically
     _LOGGER.debug("Config entry %s removed", entry.entry_id)
-    
