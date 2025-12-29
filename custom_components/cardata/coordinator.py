@@ -1578,12 +1578,19 @@ class CardataCoordinator:
     def get_state(self, vin: str, descriptor: str) -> DescriptorState | None:
         """Get state for a descriptor (sync version for entity property access).
 
-        This method provides best-effort consistency for synchronous access.
-        Since this is a sync method, it cannot use the async lock. We minimize
-        the race window by accessing the nested dict directly without intermediate
-        copies. For guaranteed thread-safety, use async_get_state() instead.
+        This method provides best-effort consistency for synchronous access from
+        entity properties (which must be sync). Since this is sync, it cannot use
+        the async lock, but defensive coding mitigates race conditions:
 
-        Returns a defensive copy of the state to prevent external mutations.
+        Thread-safety measures:
+        - Direct dict access without intermediate copies minimizes race window
+        - Defensive copy of returned state prevents external mutations
+        - Exception handling catches concurrent modification edge cases
+
+        Use async_get_state() for async contexts that need guaranteed consistency.
+
+        Returns:
+            A defensive copy of the state, or None if not found/race condition.
         """
         try:
             # Access nested dict directly - no intermediate copy needed since
