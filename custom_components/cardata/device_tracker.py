@@ -149,7 +149,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon = state.attributes.get("longitude")
             state.attributes.get("gps_altitude")
             state.attributes.get("gps_heading_deg")
-            # havent decided yet to Restore altitude and heading
 
             if lat is not None and lon is not None:
                 try:
@@ -273,6 +272,12 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if lat is None or lon is None:
             return
 
+        # Reject null island (0,0) - indicates invalid GPS data
+        # Note: lat=0 (equator) or lon=0 (prime meridian) alone are valid
+        if lat == 0.0 and lon == 0.0:
+            _LOGGER.debug("Rejecting null island coordinates (0,0) for %s", redacted_vin)
+            return
+
         # Calculate time difference and ages
         time_diff = abs(lat_time - lon_time)
         lat_age = now - lat_time
@@ -383,11 +388,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                             "Invalid longitude for %s: %.6f (must be -180 to 180)", self._redacted_vin, value
                         )
                         return None
-
-                # Reject obvious invalid GPS (null island)
-                if value == 0.0:
-                    _LOGGER.debug("Rejecting zero coordinate for %s (likely invalid GPS)", self._redacted_vin)
-                    return None
 
                 return value
 

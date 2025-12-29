@@ -185,12 +185,12 @@ class CardataEntity(RestoreEntity):
         # Wait briefly for the coordinator to supply vehicle name for our VIN so original_name
         # (written below) will include the correct vehicle prefix. This is a small, non-blocking
         # wait to avoid racing with bootstrap/telemetry.
+        # Use 200ms intervals (10 iterations max) to balance responsiveness with efficiency.
         deadline = time.monotonic() + _ENTITY_NAME_WAIT
         while time.monotonic() < deadline:
             if self._get_vehicle_name():
                 break
-            # Slight sleep so we yield control (non-blocking)
-            await asyncio.sleep(0.08)
+            await asyncio.sleep(0.2)
 
         # Now write the prefixed name into Home Assistant so the registry/original_name is set.
         # This ensures HA will generate the desired entity_id immediately.

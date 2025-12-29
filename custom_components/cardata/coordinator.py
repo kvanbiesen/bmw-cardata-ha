@@ -906,8 +906,8 @@ class CardataCoordinator:
             total += len(pending_set)
         return total
 
-    def _evict_oldest_pending(self) -> int:
-        """Evict oldest pending updates to make room. Returns count evicted."""
+    def _evict_pending_updates(self) -> int:
+        """Evict pending updates to make room. Returns count evicted."""
         # Evict half of pending updates from VIN with most pending
         if not self._pending_updates:
             return 0
@@ -925,7 +925,7 @@ class CardataCoordinator:
             self._pending_updates.pop(max_vin, None)
         return evict_count
 
-    def _evict_oldest_vin_pending(self) -> int:
+    def _evict_vin_pending(self) -> int:
         """Evict all pending updates from one VIN. Returns count evicted."""
         if not self._pending_updates:
             return 0
@@ -1375,21 +1375,21 @@ class CardataCoordinator:
                     # Non-GPS: queue for batched update (includes new sensors for initial state)
                     # Enforce hard cap on total pending items - evict oldest if at limit
                     if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
-                        evicted = self._evict_oldest_pending()
+                        evicted = self._evict_pending_updates()
                         if evicted:
                             self._evicted_updates_count += evicted
                             _LOGGER.debug(
-                                "Total pending limit reached; evicted %d old updates",
+                                "Total pending limit reached; evicted %d updates",
                                 evicted,
                             )
-                    # Enforce VIN limit - evict oldest VIN's updates if at limit
+                    # Enforce VIN limit - evict one VIN's updates if at limit
                     if vin not in self._pending_updates:
                         if len(self._pending_updates) >= self._MAX_PENDING_VINS:
-                            evicted = self._evict_oldest_vin_pending()
+                            evicted = self._evict_vin_pending()
                             if evicted:
                                 self._evicted_updates_count += evicted
                                 _LOGGER.debug(
-                                    "Max pending VINs reached; evicted %d updates from oldest VIN",
+                                    "Max pending VINs reached; evicted %d updates from one VIN",
                                     evicted,
                                 )
                         self._pending_updates[vin] = set()
