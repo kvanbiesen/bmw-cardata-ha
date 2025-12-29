@@ -102,7 +102,7 @@ def cleanup_entry_lock(entry_id: str) -> None:
         _LOGGER.debug("Cleaned up lock for entry %s", entry_id)
 
 
-def cleanup_orphaned_locks(hass: "HomeAssistant") -> int:
+def cleanup_orphaned_locks(hass: HomeAssistant) -> int:
     """Remove locks for entries that no longer exist.
 
     Returns the number of orphaned locks removed.
