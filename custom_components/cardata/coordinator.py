@@ -1129,3 +1129,4 @@ class CardataCoordinator:
         """Thread-safe async version of apply_basic_data."""
         async with self._lock:
             return self.apply_basic_data(vin, payload)
+        

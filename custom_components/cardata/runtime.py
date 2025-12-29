@@ -69,8 +69,8 @@ class CardataRuntimeData:
         if self._entry_update_lock is None:
             self._entry_update_lock = asyncio.Lock()
 
-        if self.token_refresh_lock is None;
-            self.token_refresh_lock = asyncio.lock()
+        if self._token_refresh_lock is None:
+            self._token_refresh_lock = asyncio.Lock()
 
     @property
     def entry_update_lock(self) -> asyncio.Lock | None:
@@ -115,3 +115,4 @@ async def async_update_entry_data(
         merged = dict(entry.data)
         merged.update(updates)
         hass.config_entries.async_update_entry(entry, data=merged)
+        
