@@ -787,6 +787,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             # drive_train changed, re-evaluate below
 
         if not drive_train:
+            # Clear stale cache entry when metadata is removed/unavailable
+            _electric_vehicle_cache.pop(vin, None)
             _LOGGER.debug("VIN %s: No metadata yet, will check again later", redact_vin(vin))
             return None  # Don't cache - let caller decide to wait for metadata
 
