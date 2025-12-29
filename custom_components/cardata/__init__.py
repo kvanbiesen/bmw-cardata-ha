@@ -518,9 +518,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as err:
             _LOGGER.error("Error stopping telematic task: %s", err)
 
-    # Close resources
+    # Close resources with error protection to ensure all cleanup happens
     if data.quota_manager:
-        await data.quota_manager.async_close()
+        try:
+            await data.quota_manager.async_close()
+        except Exception as err:
+            _LOGGER.error("Error closing quota manager: %s", err)
 
     # Stop MQTT stream with timeout protection
     try:
@@ -530,7 +533,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         _LOGGER.error("Error stopping MQTT stream: %s", err)
 
-    await data.session.close()
+    try:
+        await data.session.close()
+    except Exception as err:
+        _LOGGER.error("Error closing aiohttp session: %s", err)
 
     # Clean up services if this is the last entry
     remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
