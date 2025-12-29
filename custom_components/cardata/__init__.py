@@ -425,9 +425,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_handle_connection_event("connecting")
         await coordinator.async_start_watchdog()
 
-
-        # NOW set up platforms - coordinator.names should be populated
-        # Forward setup to platforms
+        # NOW set up platforms - coordinator.names should be populated        # Forward setup to platforms
         # If metadata was restored or fetched by bootstrap, coordinator.names will have car names
         # If not (timeout), entities will be created with VINs temporarily and updated later
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -556,3 +554,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle removal of config entry."""
     # Home Assistant handles entity cleanup automatically
     _LOGGER.debug("Config entry %s removed", entry.entry_id)
+    
