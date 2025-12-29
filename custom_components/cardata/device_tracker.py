@@ -149,7 +149,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon = state.attributes.get("longitude")
             state.attributes.get("gps_altitude")
             state.attributes.get("gps_heading_deg")
-            # havent decided yet to Restore altitude and heading
 
             if lat is not None and lon is not None:
                 try:
