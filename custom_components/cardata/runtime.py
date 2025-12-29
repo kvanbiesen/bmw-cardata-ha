@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
@@ -12,15 +13,17 @@ from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .quota import QuotaManager
 from .ratelimit import (
+    ContainerRateLimiter,
     RateLimitTracker,
     UnauthorizedLoopProtection,
-    ContainerRateLimiter,
 )
 from .stream import CardataStreamManager
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -31,12 +34,12 @@ class CardataRuntimeData:
     refresh_task: asyncio.Task
     session: aiohttp.ClientSession
     coordinator: CardataCoordinator
-    container_manager: Optional[CardataContainerManager]
-    bootstrap_task: Optional[asyncio.Task] = None
-    quota_manager: Optional[QuotaManager] = None
-    telematic_task: Optional[asyncio.Task] = None
+    container_manager: CardataContainerManager | None
+    bootstrap_task: asyncio.Task | None = None
+    quota_manager: QuotaManager | None = None
+    telematic_task: asyncio.Task | None = None
     reauth_in_progress: bool = False
-    reauth_flow_id: Optional[str] = None
+    reauth_flow_id: str | None = None
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
@@ -46,9 +49,6 @@ class CardataRuntimeData:
     unauthorized_protection: UnauthorizedLoopProtection | None = None
     container_rate_limiter: ContainerRateLimiter | None = None
 
-    # Lock to protect concurrent config entry updates
-    _entry_update_lock: asyncio.Lock | None = None
-
     # Lock to protect concurrent token refresh operations
     _token_refresh_lock: asyncio.Lock | None = None
 
@@ -57,25 +57,9 @@ class CardataRuntimeData:
         if self.rate_limit_tracker is None:
             self.rate_limit_tracker = RateLimitTracker()
         if self.unauthorized_protection is None:
-            self.unauthorized_protection = UnauthorizedLoopProtection(
-                max_attempts=3,
-                cooldown_hours=1
-            )
+            self.unauthorized_protection = UnauthorizedLoopProtection(max_attempts=3, cooldown_hours=1)
         if self.container_rate_limiter is None:
-            self.container_rate_limiter = ContainerRateLimiter(
-                max_per_hour=3,
-                max_per_day=10
-            )
-        if self._entry_update_lock is None:
-            self._entry_update_lock = asyncio.Lock()
-
-        if self._token_refresh_lock is None:
-            self._token_refresh_lock = asyncio.Lock()
-
-    @property
-    def entry_update_lock(self) -> asyncio.Lock | None:
-        """Get the entry update lock."""
-        return self._entry_update_lock
+            self.container_rate_limiter = ContainerRateLimiter(max_per_hour=3, max_per_day=10)
 
     @property
     def token_refresh_lock(self) -> asyncio.Lock | None:
@@ -83,36 +67,82 @@ class CardataRuntimeData:
         return self._token_refresh_lock
 
 
-# Module-level lock used during setup before runtime is available
-_setup_update_lock = asyncio.Lock()
+# Per-entry lock registry to ensure consistent locking across setup and runtime
+# Maps entry_id -> asyncio.Lock
+_entry_locks: dict[str, asyncio.Lock] = {}
+# Maximum entries to prevent unbounded growth from cleanup failures
+_MAX_ENTRY_LOCKS = 100
+
+
+def _get_entry_lock(entry_id: str) -> asyncio.Lock:
+    """Get or create a lock for a specific config entry.
+
+    This ensures the same lock is always used for the same entry,
+    regardless of whether runtime data is available yet.
+    """
+    if entry_id not in _entry_locks:
+        # Safety cap: if we have too many locks, clear old ones
+        # This prevents unbounded memory growth if cleanup fails
+        if len(_entry_locks) >= _MAX_ENTRY_LOCKS:
+            _LOGGER.warning(
+                "Entry lock registry exceeded %d entries; clearing stale locks",
+                _MAX_ENTRY_LOCKS,
+            )
+            _entry_locks.clear()
+        _entry_locks[entry_id] = asyncio.Lock()
+    return _entry_locks[entry_id]
+
+
+def cleanup_entry_lock(entry_id: str) -> None:
+    """Remove the lock for an entry when it's unloaded.
+
+    Call this during entry unload to prevent memory leaks.
+    """
+    if _entry_locks.pop(entry_id, None):
+        _LOGGER.debug("Cleaned up lock for entry %s", entry_id)
+
+
+def cleanup_orphaned_locks(hass: "HomeAssistant") -> int:
+    """Remove locks for entries that no longer exist.
+
+    Returns the number of orphaned locks removed.
+    """
+    from .const import DOMAIN
+
+    active_entry_ids = {entry.entry_id for entry in hass.config_entries.async_entries(DOMAIN)}
+    orphaned = [entry_id for entry_id in _entry_locks if entry_id not in active_entry_ids]
+
+    for entry_id in orphaned:
+        _entry_locks.pop(entry_id, None)
+
+    if orphaned:
+        _LOGGER.info("Cleaned up %d orphaned entry locks", len(orphaned))
+
+    return len(orphaned)
 
 
 async def async_update_entry_data(
-    hass: "HomeAssistant",
-    entry: "ConfigEntry",
-    updates: Dict[str, Any],
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    updates: dict[str, Any],
 ) -> None:
     """Safely update config entry data with lock to prevent race conditions.
 
-    This function acquires a lock before reading and updating entry data,
+    This function acquires a per-entry lock before reading and updating entry data,
     preventing concurrent updates from overwriting each other's changes.
+
+    The lock is always the same for a given entry_id, ensuring consistency
+    whether called during setup (before runtime exists) or during normal operation.
 
     Args:
         hass: Home Assistant instance
         entry: Config entry to update
         updates: Dictionary of key-value pairs to merge into entry.data
     """
-    from .const import DOMAIN
-
-    runtime: CardataRuntimeData | None = hass.data.get(
-        DOMAIN, {}).get(entry.entry_id)
-
-    # Choose appropriate lock: runtime lock if available, module-level lock during setup
-    lock = (runtime.entry_update_lock if runtime and runtime.entry_update_lock else _setup_update_lock)
+    lock = _get_entry_lock(entry.entry_id)
 
     async with lock:
         # Re-read entry.data inside lock to get latest state
         merged = dict(entry.data)
         merged.update(updates)
         hass.config_entries.async_update_entry(entry, data=merged)
-        

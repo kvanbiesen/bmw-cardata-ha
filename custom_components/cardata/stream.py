@@ -481,6 +481,7 @@ class CardataStreamManager:
 
         # Start the network loop first (required for connect_async)
         client.loop_start()
+        loop_started = True
 
         try:
             # Initiate async connection - actual connection happens in loop thread
@@ -489,7 +490,6 @@ class CardataStreamManager:
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
                 _LOGGER.error("BMW MQTT connection timed out after %.0f seconds", self._connect_timeout)
-                self._safe_loop_stop(client)
                 self._connect_event = None
                 raise TimeoutError(f"MQTT connection timed out after {self._connect_timeout} seconds")
 
@@ -509,16 +509,21 @@ class CardataStreamManager:
                     error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
                 )
                 _LOGGER.error("BMW MQTT connection failed: %s", error_reason)
-                self._safe_loop_stop(client)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
+
+            # Success - transfer ownership to self._client
+            self._client = client
+            loop_started = False  # Loop now managed by self._client
 
         except Exception as err:
             self._connect_event = None
             if not isinstance(err, (TimeoutError, ConnectionError)):
                 _LOGGER.error("Unable to connect to BMW MQTT: %s", err)
-                self._safe_loop_stop(client)
             raise
-        self._client = client
+        finally:
+            # Ensure loop is stopped if connection failed
+            if loop_started:
+                self._safe_loop_stop(client)
 
     def _handle_connect(self, client: mqtt.Client, userdata, flags, rc) -> None:
         # Signal the connect event for synchronous waiters (used during initial connection)

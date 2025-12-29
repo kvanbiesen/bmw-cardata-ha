@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from datetime import datetime
 from typing import Any
 
@@ -295,28 +296,25 @@ class ContainerRateLimiter:
         """
         self._max_per_hour = max_per_hour
         self._max_per_day = max_per_day
-        self._operations_hour: list[float] = []
-        self._operations_day: list[float] = []
+        # Use deque with maxlen for automatic size bounds and efficient operations
+        self._operations_hour: deque[float] = deque(maxlen=self._MAX_LIST_SIZE)
+        self._operations_day: deque[float] = deque(maxlen=self._MAX_LIST_SIZE)
 
     def _cleanup_expired(self) -> None:
-        """Remove expired entries from operation lists.
+        """Remove expired entries from operation deques.
 
-        Called automatically by other methods to ensure lists don't grow unbounded.
+        Called automatically by other methods to ensure deques stay current.
+        Deques have maxlen for automatic size bounds.
         """
         now = time.time()
         hour_ago = now - 3600
         day_ago = now - 86400
 
-        self._operations_hour = [t for t in self._operations_hour if t > hour_ago]
-        self._operations_day = [t for t in self._operations_day if t > day_ago]
-
-        # Safety limit: if lists are still too large (shouldn't happen), truncate
-        if len(self._operations_hour) > self._MAX_LIST_SIZE:
-            _LOGGER.warning("Container rate limiter hourly list exceeded safety limit; truncating")
-            self._operations_hour = self._operations_hour[-self._MAX_LIST_SIZE :]
-        if len(self._operations_day) > self._MAX_LIST_SIZE:
-            _LOGGER.warning("Container rate limiter daily list exceeded safety limit; truncating")
-            self._operations_day = self._operations_day[-self._MAX_LIST_SIZE :]
+        # Remove old entries from left (oldest first)
+        while self._operations_hour and self._operations_hour[0] <= hour_ago:
+            self._operations_hour.popleft()
+        while self._operations_day and self._operations_day[0] <= day_ago:
+            self._operations_day.popleft()
 
     def can_create_container(self) -> tuple[bool, str | None]:
         """Check if we can create a container.
