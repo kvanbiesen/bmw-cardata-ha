@@ -852,6 +852,9 @@ class CardataCoordinator:
     # Memory protection: limit total descriptors per VIN
     _MAX_DESCRIPTORS_PER_VIN: int = 1000  # Max unique descriptors stored per VIN
     _descriptors_evicted_count: int = field(default=0, init=False)
+    # Track dispatcher exceptions to detect recurring issues (per-instance)
+    _dispatcher_exception_count: int = field(default=0, init=False)
+    _DISPATCHER_EXCEPTION_THRESHOLD: int = 10  # Class constant for threshold
 
     @staticmethod
     def _safe_vin_suffix(vin: str | None) -> str:
@@ -930,10 +933,6 @@ class CardataCoordinator:
         min_vin = min(self._pending_updates.keys(), key=lambda v: len(self._pending_updates.get(v, set())))
         pending_set = self._pending_updates.pop(min_vin, set())
         return len(pending_set)
-
-    # Track dispatcher exceptions to detect recurring issues
-    _dispatcher_exception_count: int = 0
-    _DISPATCHER_EXCEPTION_THRESHOLD: int = 10
 
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
