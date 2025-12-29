@@ -149,8 +149,8 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
 
 
 def convert_value_for_unit(
-    value: float | str | int, original_unit: str | None, normalized_unit: str | None
-) -> float | str | int:
+    value: float | str | int | None, original_unit: str | None, normalized_unit: str | None
+) -> float | str | int | None:
     """Convert value when unit normalization requires it."""
     if original_unit == normalized_unit or value is None:
         return value
@@ -203,6 +203,7 @@ class CardataSensor(CardataEntity, SensorEntity):
     """Sensor for generic telematic data."""
 
     _attr_should_poll = False
+    _attr_native_value: float | int | str | None = None
 
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
