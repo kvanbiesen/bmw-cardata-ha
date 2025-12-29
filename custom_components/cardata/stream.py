@@ -955,8 +955,7 @@ class CardataStreamManager:
                 elapsed = time.monotonic() - self._last_message_time
                 if elapsed > self._healthcheck_stale_threshold:
                     _LOGGER.warning(
-                        "BMW MQTT connection appears stale (no messages for %.0fs); "
-                        "triggering reconnect",
+                        "BMW MQTT connection appears stale (no messages for %.0fs); triggering reconnect",
                         elapsed,
                     )
                     # Trigger reconnect
