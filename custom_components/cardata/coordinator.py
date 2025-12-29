@@ -856,6 +856,13 @@ class CardataCoordinator:
     _dispatcher_exception_count: int = field(default=0, init=False)
     _DISPATCHER_EXCEPTION_THRESHOLD: int = 10  # Class constant for threshold
 
+    # Derived motion detection from GPS position changes
+    # When vehicle.isMoving is not available, derive it from location staleness
+    _last_location: dict[str, tuple[float, float]] = field(default_factory=dict, init=False)
+    _last_location_change: dict[str, datetime] = field(default_factory=dict, init=False)
+    MOTION_LOCATION_STALE_MINUTES: ClassVar[float] = 10.0  # Minutes without movement = parked
+    MOTION_DISTANCE_THRESHOLD_M: ClassVar[float] = 50.0  # Meters to count as movement
+
     @staticmethod
     def _safe_vin_suffix(vin: str | None) -> str:
         """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
@@ -894,6 +901,56 @@ class CardataCoordinator:
     @property
     def signal_metadata(self) -> str:
         return f"{DOMAIN}_{self.entry_id}_metadata"
+
+    # --- Derived motion detection from GPS ---
+
+    @staticmethod
+    def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Calculate distance between two GPS coordinates in meters using Haversine formula."""
+        from math import atan2, cos, radians, sin, sqrt
+
+        R = 6371000  # Earth radius in meters
+        lat1_rad = radians(lat1)
+        lat2_rad = radians(lat2)
+        delta_lat = radians(lat2 - lat1)
+        delta_lon = radians(lon2 - lon1)
+
+        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return R * c
+
+    def _update_location_tracking(self, vin: str, lat: float, lon: float) -> bool:
+        """Update location tracking and return True if position changed significantly (>50m)."""
+        now = datetime.now(UTC)
+        last = self._last_location.get(vin)
+
+        if last is None:
+            self._last_location[vin] = (lat, lon)
+            self._last_location_change[vin] = now
+            return True
+
+        distance = self._calculate_distance(last[0], last[1], lat, lon)
+        if distance > self.MOTION_DISTANCE_THRESHOLD_M:
+            self._last_location[vin] = (lat, lon)
+            self._last_location_change[vin] = now
+            return True
+
+        return False
+
+    def get_derived_is_moving(self, vin: str) -> bool | None:
+        """Get derived motion state from GPS position tracking.
+
+        Returns:
+            True if moved within last 10 minutes (vehicle is moving)
+            False if stationary for 10+ minutes (vehicle is parked)
+            None if no location data available
+        """
+        last_change = self._last_location_change.get(vin)
+        if last_change is None:
+            return None
+
+        elapsed_minutes = (datetime.now(UTC) - last_change).total_seconds() / 60.0
+        return elapsed_minutes < self.MOTION_LOCATION_STALE_MINUTES
 
     def _get_total_pending_count(self) -> int:
         """Count total pending items across all structures."""
@@ -1358,6 +1415,16 @@ class CardataCoordinator:
 
             vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
 
+            # Update location tracking for derived motion detection
+            if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
+                lat_state = vehicle_state.get(LOCATION_LATITUDE_DESCRIPTOR)
+                lon_state = vehicle_state.get(LOCATION_LONGITUDE_DESCRIPTOR)
+                if lat_state and lon_state and lat_state.value is not None and lon_state.value is not None:
+                    try:
+                        self._update_location_tracking(vin, float(lat_state.value), float(lon_state.value))
+                    except (ValueError, TypeError):
+                        pass  # Invalid coordinate values, skip tracking
+
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
 
@@ -1601,6 +1668,11 @@ class CardataCoordinator:
 
             state = vehicle_data.get(descriptor)
             if state is None:
+                # Fall back to derived motion state for vehicle.isMoving
+                if descriptor == "vehicle.isMoving":
+                    derived = self.get_derived_is_moving(vin)
+                    if derived is not None:
+                        return DescriptorState(value=derived, unit=None, timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -1622,6 +1694,11 @@ class CardataCoordinator:
                 return None
             state = vehicle_data.get(descriptor)
             if state is None:
+                # Fall back to derived motion state for vehicle.isMoving
+                if descriptor == "vehicle.isMoving":
+                    derived = self.get_derived_is_moving(vin)
+                    if derived is not None:
+                        return DescriptorState(value=derived, unit=None, timestamp=None)
                 return None
             return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
@@ -1778,6 +1855,8 @@ class CardataCoordinator:
                 self._pending_updates,
                 self._pending_new_sensors,
                 self._pending_new_binary,
+                self._last_location,
+                self._last_location_change,
             ]
 
             stale_vins: set[str] = set()
