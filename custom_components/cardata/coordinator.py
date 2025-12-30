@@ -107,6 +107,7 @@ class SocTracking:
     charging_active: bool = False
     charging_paused: bool = False  # Power=0 while charging_active=true
     _consecutive_zero_power: int = 0  # Counter for pause hysteresis
+    _charging_ended_at: datetime | None = None  # When charging stopped (for stale data rejection)
     last_soc_percent: float | None = None
     rate_per_hour: float | None = None
     estimated_percent: float | None = None
@@ -153,6 +154,9 @@ class SocTracking:
     # Hysteresis for charging pause detection: require N consecutive zero readings
     # to avoid false positives from sensor noise or sampling artifacts
     PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
+    # Cooldown after charging ends: reject SOC values that would decrease estimate
+    # BMW may send stale data with current timestamps after charging stops
+    POST_CHARGING_COOLDOWN_SECONDS: ClassVar[float] = 300.0  # 5 minutes
 
     # Maximum allowed timestamp skew from current time (24 hours)
     MAX_TIMESTAMP_SKEW_SECONDS: ClassVar[float] = 86400.0
@@ -231,12 +235,25 @@ class SocTracking:
                     )
                     return
 
-            # Prevent estimate from going backwards during active charging.
+            # Prevent estimate from going backwards during active charging or shortly after.
             # When charging, the car is plugged in and cannot move, so SOC can only
             # increase. Any lower value is stale/erroneous data and must be rejected.
-            if self.charging_active and self.estimated_percent is not None and percent < self.estimated_percent:
+            # Also apply during cooldown after charging ends, as BMW may send stale data.
+            in_cooldown = False
+            if self._charging_ended_at is not None:
+                try:
+                    cooldown_elapsed = (ts - self._charging_ended_at).total_seconds()
+                    in_cooldown = cooldown_elapsed < self.POST_CHARGING_COOLDOWN_SECONDS
+                except (TypeError, OverflowError):
+                    pass
+            if (
+                (self.charging_active or in_cooldown)
+                and self.estimated_percent is not None
+                and percent < self.estimated_percent
+            ):
                 _LOGGER.debug(
-                    "Ignoring SOC that would decrease estimate during charging: received=%.1f%%, estimate=%.1f%%",
+                    "Ignoring SOC that would decrease estimate %s: received=%.1f%%, estimate=%.1f%%",
+                    "during charging" if self.charging_active else "during post-charging cooldown",
                     percent,
                     self.estimated_percent,
                 )
@@ -589,6 +606,10 @@ class SocTracking:
             # Must be done BEFORE clearing charging_active, otherwise rate won't apply
             if self.charging_active and not new_charging_active:
                 self.estimate(datetime.now(UTC))
+                self._charging_ended_at = datetime.now(UTC)  # Start cooldown for stale data rejection
+            # Clear cooldown when charging starts
+            if not self.charging_active and new_charging_active:
+                self._charging_ended_at = None
             # Reset efficiency tracking on charging state transitions to avoid
             # mixing data between sessions
             if self.charging_active != new_charging_active:
