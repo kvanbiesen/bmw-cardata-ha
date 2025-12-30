@@ -145,12 +145,6 @@ class SocTracking:
     # Longer observations get more weight: alpha = 1 - exp(-dt/tau)
     # 10 minutes balances responsiveness with stability for typical SOC update intervals.
     EFFICIENCY_LEARN_TAU_SECONDS: ClassVar[float] = 600.0
-    # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
-    # significantly in absorption phase (80-100%) due to CC-CV charging profile.
-    # Uses smooth linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC.
-    # Real EV charging typically tapers to 10-20% of peak power near full charge.
-    BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
-    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.2  # Rate multiplier at 100% SOC (20% of peak)
     # Time-weighted EMA smoothing for power readings to reduce rate jitter.
     # Uses time constant (tau) instead of fixed alpha to handle variable sample intervals.
     # Alpha = 1 - exp(-dt/tau), so longer intervals get more weight on new sample.
@@ -619,9 +613,9 @@ class SocTracking:
                 return
             normalized_ts = self._normalize_timestamp(timestamp)
             self.target_soc_percent = percent
-            # Clamp estimate if it exceeds the new target
-            # (handles both target being lowered and estimate having overshot)
-            if self.estimated_percent is not None and self.estimated_percent > percent:
+            # Clamp estimate if it exceeds the new target, but NOT during active charging
+            # (during charging, estimate can only go up - it will stop at target naturally)
+            if self.estimated_percent is not None and self.estimated_percent > percent and not self.charging_active:
                 self.estimated_percent = percent
                 self.last_estimate_time = normalized_ts or datetime.now(UTC)
         except Exception:
@@ -707,25 +701,10 @@ class SocTracking:
                 return self.estimated_percent
 
             previous_estimate = self.estimated_percent
-            # Apply non-linear charging curve: exponential taper in CV phase (above 80%)
-            # Real Li-ion batteries use constant-voltage charging above ~80% SOC, which
-            # causes current (and thus power) to decay exponentially as the battery fills.
-            # Uses exponential interpolation: TAPER_FACTOR^progress
-            # At 80% SOC (progress=0): taper = 0.2^0 = 1.0 (full rate)
-            # At 100% SOC (progress=1): taper = 0.2^1 = 0.2 (minimum rate)
+            # Use rate directly - BMW reports actual charging power which already
+            # reflects any CV phase slowdown at high SOC
             current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
-            taper_range = 100.0 - self.BULK_PHASE_THRESHOLD
-            if current_soc <= self.BULK_PHASE_THRESHOLD:
-                taper_factor = 1.0
-            elif current_soc >= 100.0 or taper_range <= 0.0:
-                # At or above 100% SOC, or threshold misconfigured - use minimum taper
-                taper_factor = self.ABSORPTION_TAPER_FACTOR
-            else:
-                # Exponential decay: 1.0 at threshold -> ABSORPTION_TAPER_FACTOR at 100%
-                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / taper_range
-                taper_factor = self.ABSORPTION_TAPER_FACTOR**progress
-            effective_rate = rate * taper_factor
-            increment = effective_rate * (delta_seconds / 3600.0)
+            increment = rate * (delta_seconds / 3600.0)
             self.estimated_percent = current_soc + increment
             # Clamp at target SOC: either when crossing it, or if already above it
             if self.target_soc_percent is not None:
