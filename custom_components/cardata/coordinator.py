@@ -219,6 +219,15 @@ class SocTracking:
                 self._normalize_timestamp(timestamp) or self._normalize_timestamp(self.last_update) or datetime.now(UTC)
             )
 
+            # Validate percent is finite and in valid range [0, 100] - do this early
+            # so invalid values get proper error messages instead of misleading ones
+            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
+                _LOGGER.warning(
+                    "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
+                    percent,
+                )
+                return
+
             # Fresh actual data arrived - unconditionally reset stale flag
             # (no check needed, avoids race condition with estimate())
             self._stale_logged = False
@@ -256,14 +265,6 @@ class SocTracking:
                     "during charging" if self.charging_active else "during post-charging cooldown",
                     percent,
                     self.estimated_percent,
-                )
-                return
-
-            # Validate percent is finite and in valid range [0, 100]
-            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
-                _LOGGER.warning(
-                    "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
-                    percent,
                 )
                 return
 
