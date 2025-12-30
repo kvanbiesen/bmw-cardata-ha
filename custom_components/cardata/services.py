@@ -480,7 +480,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             return
         # Log a compact listing
         for c in containers:
-            cid = c.get("containerId") or c.get("containerId")
+            cid = c.get("containerId") or c.get("id")
             name = c.get("name")
             purpose = c.get("purpose")
             _LOGGER.info("clean_hv_containers: container id=%s name=%s purpose=%s", cid, name, purpose)
