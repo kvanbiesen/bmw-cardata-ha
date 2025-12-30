@@ -394,7 +394,9 @@ class SocTracking:
         expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
 
         # Require minimum expected change to avoid extreme efficiency ratios from
-        # near-zero denominators (e.g., 1% actual / 0.001% expected = 1000x efficiency)
+        # near-zero denominators (e.g., 1% actual / 0.001% expected = 1000x efficiency).
+        # This also helps with integer SOC values (58% -> 59%): small windows have high
+        # variance, but the EMA smoothing and bounds check (70%-98%) average out over time.
         min_expected_change = 0.1  # At least 0.1% SOC worth of energy
         if expected_change < min_expected_change:
             _LOGGER.debug(
