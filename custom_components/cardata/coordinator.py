@@ -1313,7 +1313,14 @@ class CardataCoordinator:
         self._apply_effective_power(vin, timestamp)
 
     def _derive_ac_power(self, vin: str) -> float | None:
-        """Derive AC charging power from voltage, current, and phases. Must be called while holding _lock."""
+        """Derive AC charging power from voltage, current, and phases.
+
+        Uses P = V * I * phases, which assumes BMW reports phase voltage (L-N, e.g. 230V)
+        and per-phase current. If BMW reports line voltage (L-L, e.g. 400V), this would
+        overestimate by ~73% (factor of 3/sqrt(3)), but the 22kW cap catches such cases.
+
+        Must be called while holding _lock.
+        """
         voltage = self._ac_voltage_v.get(vin)
         current = self._ac_current_a.get(vin)
         phases = self._ac_phase_count.get(vin)
