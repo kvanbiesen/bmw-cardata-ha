@@ -107,6 +107,7 @@ class SocTracking:
     charging_active: bool = False
     charging_paused: bool = False  # Power=0 while charging_active=true
     _consecutive_zero_power: int = 0  # Counter for pause hysteresis
+    _charging_ended_at: datetime | None = None  # When charging stopped (for stale data rejection)
     last_soc_percent: float | None = None
     rate_per_hour: float | None = None
     estimated_percent: float | None = None
@@ -140,17 +141,13 @@ class SocTracking:
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
     # Adaptive efficiency learning bounds and time constant
     EFFICIENCY_MIN: ClassVar[float] = 0.70  # Minimum plausible efficiency (70%)
-    EFFICIENCY_MAX: ClassVar[float] = 0.98  # Maximum plausible efficiency (98%)
+    EFFICIENCY_MAX: ClassVar[float] = (
+        1.0  # Maximum efficiency (100%) - allows full compensation if BMW reports DC power
+    )
     # Time constant for efficiency learning EMA (similar to power EMA).
     # Longer observations get more weight: alpha = 1 - exp(-dt/tau)
     # 10 minutes balances responsiveness with stability for typical SOC update intervals.
     EFFICIENCY_LEARN_TAU_SECONDS: ClassVar[float] = 600.0
-    # Non-linear charging curve: batteries charge fast in bulk phase (0-80%) but taper
-    # significantly in absorption phase (80-100%) due to CC-CV charging profile.
-    # Uses smooth linear interpolation from 100% rate at threshold to TAPER_FACTOR at 100% SOC.
-    # Real EV charging typically tapers to 10-20% of peak power near full charge.
-    BULK_PHASE_THRESHOLD: ClassVar[float] = 80.0  # SOC% where taper begins
-    ABSORPTION_TAPER_FACTOR: ClassVar[float] = 0.2  # Rate multiplier at 100% SOC (20% of peak)
     # Time-weighted EMA smoothing for power readings to reduce rate jitter.
     # Uses time constant (tau) instead of fixed alpha to handle variable sample intervals.
     # Alpha = 1 - exp(-dt/tau), so longer intervals get more weight on new sample.
@@ -159,6 +156,12 @@ class SocTracking:
     # Hysteresis for charging pause detection: require N consecutive zero readings
     # to avoid false positives from sensor noise or sampling artifacts
     PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
+    # Cooldown after charging ends: reject SOC values that would decrease estimate
+    # BMW may send stale data with current timestamps after charging stops
+    POST_CHARGING_COOLDOWN_SECONDS: ClassVar[float] = 300.0  # 5 minutes
+    # Maximum charging rate to prevent sensor errors from causing huge estimate jumps
+    # 300%/hour = 100% in 20 minutes, faster than any production EV can charge
+    MAX_RATE_PER_HOUR: ClassVar[float] = 300.0
 
     # Maximum allowed timestamp skew from current time (24 hours)
     MAX_TIMESTAMP_SKEW_SECONDS: ClassVar[float] = 86400.0
@@ -221,6 +224,15 @@ class SocTracking:
                 self._normalize_timestamp(timestamp) or self._normalize_timestamp(self.last_update) or datetime.now(UTC)
             )
 
+            # Validate percent is finite and in valid range [0, 100] - do this early
+            # so invalid values get proper error messages instead of misleading ones
+            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
+                _LOGGER.warning(
+                    "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
+                    percent,
+                )
+                return
+
             # Fresh actual data arrived - unconditionally reset stale flag
             # (no check needed, avoids race condition with estimate())
             self._stale_logged = False
@@ -237,22 +249,27 @@ class SocTracking:
                     )
                     return
 
-            # Prevent estimate from going backwards during active charging.
+            # Prevent estimate from going backwards during active charging or shortly after.
             # When charging, the car is plugged in and cannot move, so SOC can only
             # increase. Any lower value is stale/erroneous data and must be rejected.
-            if self.charging_active and self.estimated_percent is not None and percent < self.estimated_percent:
+            # Also apply during cooldown after charging ends, as BMW may send stale data.
+            in_cooldown = False
+            if self._charging_ended_at is not None:
+                try:
+                    cooldown_elapsed = (ts - self._charging_ended_at).total_seconds()
+                    in_cooldown = cooldown_elapsed < self.POST_CHARGING_COOLDOWN_SECONDS
+                except (TypeError, OverflowError):
+                    pass
+            if (
+                (self.charging_active or in_cooldown)
+                and self.estimated_percent is not None
+                and percent < self.estimated_percent
+            ):
                 _LOGGER.debug(
-                    "Ignoring SOC that would decrease estimate during charging: received=%.1f%%, estimate=%.1f%%",
+                    "Ignoring SOC that would decrease estimate %s: received=%.1f%%, estimate=%.1f%%",
+                    "during charging" if self.charging_active else "during post-charging cooldown",
                     percent,
                     self.estimated_percent,
-                )
-                return
-
-            # Validate percent is finite and in valid range [0, 100]
-            if not math.isfinite(percent) or percent < 0.0 or percent > 100.0:
-                _LOGGER.warning(
-                    "Ignoring invalid SOC value: %s%% (must be finite 0-100)",
-                    percent,
                 )
                 return
 
@@ -379,7 +396,9 @@ class SocTracking:
         expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
 
         # Require minimum expected change to avoid extreme efficiency ratios from
-        # near-zero denominators (e.g., 1% actual / 0.001% expected = 1000x efficiency)
+        # near-zero denominators (e.g., 1% actual / 0.001% expected = 1000x efficiency).
+        # This also helps with integer SOC values (58% -> 59%): small windows have high
+        # variance, but the EMA smoothing and bounds check (70%-98%) average out over time.
         min_expected_change = 0.1  # At least 0.1% SOC worth of energy
         if expected_change < min_expected_change:
             _LOGGER.debug(
@@ -595,6 +614,10 @@ class SocTracking:
             # Must be done BEFORE clearing charging_active, otherwise rate won't apply
             if self.charging_active and not new_charging_active:
                 self.estimate(datetime.now(UTC))
+                self._charging_ended_at = datetime.now(UTC)  # Start cooldown for stale data rejection
+            # Clear cooldown when charging starts
+            if not self.charging_active and new_charging_active:
+                self._charging_ended_at = None
             # Reset efficiency tracking on charging state transitions to avoid
             # mixing data between sessions
             if self.charging_active != new_charging_active:
@@ -619,9 +642,9 @@ class SocTracking:
                 return
             normalized_ts = self._normalize_timestamp(timestamp)
             self.target_soc_percent = percent
-            # Clamp estimate if it exceeds the new target
-            # (handles both target being lowered and estimate having overshot)
-            if self.estimated_percent is not None and self.estimated_percent > percent:
+            # Clamp estimate if it exceeds the new target, but NOT during active charging
+            # (during charging, estimate can only go up - it will stop at target naturally)
+            if self.estimated_percent is not None and self.estimated_percent > percent and not self.charging_active:
                 self.estimated_percent = percent
                 self.last_estimate_time = normalized_ts or datetime.now(UTC)
         except Exception:
@@ -707,25 +730,10 @@ class SocTracking:
                 return self.estimated_percent
 
             previous_estimate = self.estimated_percent
-            # Apply non-linear charging curve: exponential taper in CV phase (above 80%)
-            # Real Li-ion batteries use constant-voltage charging above ~80% SOC, which
-            # causes current (and thus power) to decay exponentially as the battery fills.
-            # Uses exponential interpolation: TAPER_FACTOR^progress
-            # At 80% SOC (progress=0): taper = 0.2^0 = 1.0 (full rate)
-            # At 100% SOC (progress=1): taper = 0.2^1 = 0.2 (minimum rate)
+            # Use rate directly - BMW reports actual charging power which already
+            # reflects any CV phase slowdown at high SOC
             current_soc = self.estimated_percent if self.estimated_percent is not None else 0.0
-            taper_range = 100.0 - self.BULK_PHASE_THRESHOLD
-            if current_soc <= self.BULK_PHASE_THRESHOLD:
-                taper_factor = 1.0
-            elif current_soc >= 100.0 or taper_range <= 0.0:
-                # At or above 100% SOC, or threshold misconfigured - use minimum taper
-                taper_factor = self.ABSORPTION_TAPER_FACTOR
-            else:
-                # Exponential decay: 1.0 at threshold -> ABSORPTION_TAPER_FACTOR at 100%
-                progress = (current_soc - self.BULK_PHASE_THRESHOLD) / taper_range
-                taper_factor = self.ABSORPTION_TAPER_FACTOR**progress
-            effective_rate = rate * taper_factor
-            increment = effective_rate * (delta_seconds / 3600.0)
+            increment = rate * (delta_seconds / 3600.0)
             self.estimated_percent = current_soc + increment
             # Clamp at target SOC: either when crossing it, or if already above it
             if self.target_soc_percent is not None:
@@ -760,10 +768,11 @@ class SocTracking:
             self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
             self._efficiency_energy_start = None
             self._consecutive_zero_power = 0  # Reset hysteresis counter
-            # Reset drift pattern tracking for next charge session
+            # Reset drift tracking for next charge session
             self._consecutive_overshoots = 0
             self._consecutive_undershoots = 0
             self._drift_pattern_warned = False
+            self.cumulative_drift = 0.0  # Reset cumulative drift counter
             if self.charging_paused:
                 self.charging_paused = False
             return
@@ -806,7 +815,18 @@ class SocTracking:
             return
         # Use learned efficiency if available, otherwise fall back to default
         efficiency = self.learned_efficiency or self.CHARGING_EFFICIENCY
-        self.rate_per_hour = (power_for_rate / 1000.0) / self.max_energy_kwh * 100.0 * efficiency
+        calculated_rate = (power_for_rate / 1000.0) / self.max_energy_kwh * 100.0 * efficiency
+        # Clamp to maximum rate to prevent sensor errors from causing huge jumps
+        if calculated_rate > self.MAX_RATE_PER_HOUR:
+            _LOGGER.warning(
+                "Clamping excessive charging rate: %.1f%%/hr (max %.1f%%/hr) from power=%.0fW, battery=%.1fkWh",
+                calculated_rate,
+                self.MAX_RATE_PER_HOUR,
+                power_for_rate,
+                self.max_energy_kwh,
+            )
+            calculated_rate = self.MAX_RATE_PER_HOUR
+        self.rate_per_hour = calculated_rate
 
 
 @dataclass
@@ -1211,6 +1231,13 @@ class CardataCoordinator:
         elif not math.isfinite(power_w):
             _LOGGER.warning("Ignoring invalid direct power: %s W (must be finite), clearing stored value", power_w)
             self._direct_power_w.pop(vin, None)
+        elif power_w > self._DC_POWER_MAX_W:
+            _LOGGER.warning(
+                "Ignoring excessive direct power: %.0fW > %.0fW max, clearing stored value",
+                power_w,
+                self._DC_POWER_MAX_W,
+            )
+            self._direct_power_w.pop(vin, None)
         else:
             self._direct_power_w[vin] = max(power_w, 0.0)
         self._apply_effective_power(vin, timestamp)
@@ -1221,6 +1248,8 @@ class CardataCoordinator:
     _AC_CURRENT_MAX: float = 100.0  # Maximum valid current (A) - industrial chargers
     _AC_PHASE_MAX: int = 3  # Maximum valid phases
     _AC_POWER_MAX_W: float = 22000.0  # Maximum AC power (22kW) - highest onboard charger
+    # Maximum direct/DC power - 350kW covers fastest production DC chargers (Ionity, etc.)
+    _DC_POWER_MAX_W: float = 350000.0
 
     def _set_ac_voltage(self, vin: str, voltage_v: float | None, timestamp: datetime | None) -> None:
         """Set AC voltage. Must be called while holding _lock."""
@@ -1288,7 +1317,14 @@ class CardataCoordinator:
         self._apply_effective_power(vin, timestamp)
 
     def _derive_ac_power(self, vin: str) -> float | None:
-        """Derive AC charging power from voltage, current, and phases. Must be called while holding _lock."""
+        """Derive AC charging power from voltage, current, and phases.
+
+        Uses P = V * I * phases, which assumes BMW reports phase voltage (L-N, e.g. 230V)
+        and per-phase current. If BMW reports line voltage (L-L, e.g. 400V), this would
+        overestimate by ~73% (factor of 3/sqrt(3)), but the 22kW cap catches such cases.
+
+        Must be called while holding _lock.
+        """
         voltage = self._ac_voltage_v.get(vin)
         current = self._ac_current_a.get(vin)
         phases = self._ac_phase_count.get(vin)
