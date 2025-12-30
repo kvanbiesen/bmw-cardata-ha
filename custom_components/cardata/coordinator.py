@@ -761,10 +761,11 @@ class SocTracking:
             self._efficiency_energy_kwh = 0.0  # Reset energy accumulator
             self._efficiency_energy_start = None
             self._consecutive_zero_power = 0  # Reset hysteresis counter
-            # Reset drift pattern tracking for next charge session
+            # Reset drift tracking for next charge session
             self._consecutive_overshoots = 0
             self._consecutive_undershoots = 0
             self._drift_pattern_warned = False
+            self.cumulative_drift = 0.0  # Reset cumulative drift counter
             if self.charging_paused:
                 self.charging_paused = False
             return
