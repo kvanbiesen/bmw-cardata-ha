@@ -141,7 +141,9 @@ class SocTracking:
     CHARGING_EFFICIENCY: ClassVar[float] = 0.92
     # Adaptive efficiency learning bounds and time constant
     EFFICIENCY_MIN: ClassVar[float] = 0.70  # Minimum plausible efficiency (70%)
-    EFFICIENCY_MAX: ClassVar[float] = 0.98  # Maximum plausible efficiency (98%)
+    EFFICIENCY_MAX: ClassVar[float] = (
+        1.0  # Maximum efficiency (100%) - allows full compensation if BMW reports DC power
+    )
     # Time constant for efficiency learning EMA (similar to power EMA).
     # Longer observations get more weight: alpha = 1 - exp(-dt/tau)
     # 10 minutes balances responsiveness with stability for typical SOC update intervals.
