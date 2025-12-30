@@ -237,20 +237,12 @@ class SocTracking:
                     )
                     return
 
-            # Reject stale SOC values during charging: if the incoming value equals
-            # the last known value but the estimate has progressed significantly,
-            # BMW likely just re-sent stale data (e.g., after settings change).
-            # Allow small tolerance (0.5%) for floating point comparison.
-            if (
-                self.charging_active
-                and self.last_soc_percent is not None
-                and self.estimated_percent is not None
-                and abs(percent - self.last_soc_percent) < 0.5
-                and self.estimated_percent > self.last_soc_percent + 1.0
-            ):
+            # Prevent estimate from going backwards during active charging.
+            # When charging, the car is plugged in and cannot move, so SOC can only
+            # increase. Any lower value is stale/erroneous data and must be rejected.
+            if self.charging_active and self.estimated_percent is not None and percent < self.estimated_percent:
                 _LOGGER.debug(
-                    "Ignoring stale SOC during charging: received=%.1f%% (same as last), "
-                    "but estimate has progressed to %.1f%%",
+                    "Ignoring SOC that would decrease estimate during charging: received=%.1f%%, estimate=%.1f%%",
                     percent,
                     self.estimated_percent,
                 )
