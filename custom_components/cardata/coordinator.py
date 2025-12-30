@@ -1227,6 +1227,13 @@ class CardataCoordinator:
         elif not math.isfinite(power_w):
             _LOGGER.warning("Ignoring invalid direct power: %s W (must be finite), clearing stored value", power_w)
             self._direct_power_w.pop(vin, None)
+        elif power_w > self._DC_POWER_MAX_W:
+            _LOGGER.warning(
+                "Ignoring excessive direct power: %.0fW > %.0fW max, clearing stored value",
+                power_w,
+                self._DC_POWER_MAX_W,
+            )
+            self._direct_power_w.pop(vin, None)
         else:
             self._direct_power_w[vin] = max(power_w, 0.0)
         self._apply_effective_power(vin, timestamp)
@@ -1237,6 +1244,8 @@ class CardataCoordinator:
     _AC_CURRENT_MAX: float = 100.0  # Maximum valid current (A) - industrial chargers
     _AC_PHASE_MAX: int = 3  # Maximum valid phases
     _AC_POWER_MAX_W: float = 22000.0  # Maximum AC power (22kW) - highest onboard charger
+    # Maximum direct/DC power - 350kW covers fastest production DC chargers (Ionity, etc.)
+    _DC_POWER_MAX_W: float = 350000.0
 
     def _set_ac_voltage(self, vin: str, voltage_v: float | None, timestamp: datetime | None) -> None:
         """Set AC voltage. Must be called while holding _lock."""
