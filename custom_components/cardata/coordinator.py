@@ -157,6 +157,9 @@ class SocTracking:
     # Cooldown after charging ends: reject SOC values that would decrease estimate
     # BMW may send stale data with current timestamps after charging stops
     POST_CHARGING_COOLDOWN_SECONDS: ClassVar[float] = 300.0  # 5 minutes
+    # Maximum charging rate to prevent sensor errors from causing huge estimate jumps
+    # 300%/hour = 100% in 20 minutes, faster than any production EV can charge
+    MAX_RATE_PER_HOUR: ClassVar[float] = 300.0
 
     # Maximum allowed timestamp skew from current time (24 hours)
     MAX_TIMESTAMP_SKEW_SECONDS: ClassVar[float] = 86400.0
@@ -808,7 +811,18 @@ class SocTracking:
             return
         # Use learned efficiency if available, otherwise fall back to default
         efficiency = self.learned_efficiency or self.CHARGING_EFFICIENCY
-        self.rate_per_hour = (power_for_rate / 1000.0) / self.max_energy_kwh * 100.0 * efficiency
+        calculated_rate = (power_for_rate / 1000.0) / self.max_energy_kwh * 100.0 * efficiency
+        # Clamp to maximum rate to prevent sensor errors from causing huge jumps
+        if calculated_rate > self.MAX_RATE_PER_HOUR:
+            _LOGGER.warning(
+                "Clamping excessive charging rate: %.1f%%/hr (max %.1f%%/hr) from power=%.0fW, battery=%.1fkWh",
+                calculated_rate,
+                self.MAX_RATE_PER_HOUR,
+                power_for_rate,
+                self.max_energy_kwh,
+            )
+            calculated_rate = self.MAX_RATE_PER_HOUR
+        self.rate_per_hour = calculated_rate
 
 
 @dataclass
