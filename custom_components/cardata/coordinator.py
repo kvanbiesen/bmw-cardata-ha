@@ -891,6 +891,7 @@ class CardataCoordinator:
     # When vehicle.isMoving is not available, derive it from location staleness
     _last_location: dict[str, tuple[float, float]] = field(default_factory=dict, init=False)
     _last_location_change: dict[str, datetime] = field(default_factory=dict, init=False)
+    _is_moving_entity_signaled: set[str] = field(default_factory=set, init=False)  # VINs with isMoving entity
     MOTION_LOCATION_STALE_MINUTES: ClassVar[float] = 10.0  # Minutes without movement = parked
     MOTION_DISTANCE_THRESHOLD_M: ClassVar[float] = 50.0  # Meters to count as movement
 
@@ -1468,7 +1469,17 @@ class CardataCoordinator:
                 lon_state = vehicle_state.get(LOCATION_LONGITUDE_DESCRIPTOR)
                 if lat_state and lon_state and lat_state.value is not None and lon_state.value is not None:
                     try:
-                        self._update_location_tracking(vin, float(lat_state.value), float(lon_state.value))
+                        location_changed = self._update_location_tracking(
+                            vin, float(lat_state.value), float(lon_state.value)
+                        )
+                        # Signal creation of vehicle.isMoving entity if not already done
+                        # This allows the derived motion state to be exposed as a sensor
+                        if vin not in self._is_moving_entity_signaled:
+                            self._is_moving_entity_signaled.add(vin)
+                            new_binary.append("vehicle.isMoving")
+                        elif location_changed:
+                            # Update existing entity when location changes
+                            immediate_updates.append((vin, "vehicle.isMoving"))
                     except (ValueError, TypeError):
                         pass  # Invalid coordinate values, skip tracking
 
