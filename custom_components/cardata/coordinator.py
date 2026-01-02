@@ -1214,7 +1214,7 @@ class CardataCoordinator:
         total_evicted = 0
 
         async with self._lock:
-            for vin, vehicle_state in list(self.data.items()):
+            for _vin, vehicle_state in list(self.data.items()):
                 old_descriptors = [
                     desc
                     for desc, state in vehicle_state.items()
