@@ -549,6 +549,11 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             updated.pop("hv_descriptor_signature", None)
         self.hass.config_entries.async_update_entry(entry, data=updated)
 
+        # Dismiss container mismatch notification if it exists
+        from homeassistant.components import persistent_notification
+        notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
+        persistent_notification.async_dismiss(self.hass, notification_id)
+        
         return self.async_create_entry(title="", data={})
 
     async def async_step_action_cleanup_entities(self, user_input: dict[str, Any] | None = None) -> FlowResult:
