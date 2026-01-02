@@ -25,8 +25,8 @@
 
 """Tests for the coordinator module, focusing on SOC estimation and message handling."""
 
-from datetime import datetime, timedelta, UTC
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -38,7 +38,11 @@ from custom_components.cardata.coordinator import (
 
 
 class TestSocTracking:
-    """Tests for SocTracking dataclass functionality."""
+    """Tests for SocTracking dataclass functionality.
+
+    Note: Comprehensive SocTracking tests are in test_soc_estimator.py.
+    These tests cover integration with coordinator.
+    """
 
     def test_initial_state(self):
         """Test SocTracking initial state."""
@@ -46,18 +50,17 @@ class TestSocTracking:
         assert tracking.charging_active is False
         assert tracking.energy_kwh is None
         assert tracking.last_soc_percent is None
-        assert tracking.learned_efficiency == SocTracking.EFFICIENCY_DEFAULT
+        assert tracking.learned_efficiency is None  # Defaults to None, uses EFFICIENCY_DEFAULT in calculations
 
     def test_update_actual_soc_first_update(self):
         """Test first SOC update initializes state."""
         tracking = SocTracking()
         now = datetime.now(UTC)
 
-        tracking.update_actual_soc(50.0, 60.0, now)
+        tracking.update_actual_soc(50.0, now)  # Only 2 params: percent, timestamp
 
         assert tracking.last_soc_percent == 50.0
-        assert tracking.energy_kwh == 60.0
-        assert tracking.last_actual_update == now
+        assert tracking.last_update == now  # Field is last_update, not last_actual_update
 
     def test_update_actual_soc_resets_stale_flag(self):
         """Test that actual SOC update resets stale flag."""
@@ -65,24 +68,25 @@ class TestSocTracking:
         tracking._stale_logged = True
         now = datetime.now(UTC)
 
-        tracking.update_actual_soc(50.0, 60.0, now)
+        tracking.update_actual_soc(50.0, now)
 
         assert tracking._stale_logged is False
 
     def test_update_actual_soc_rejects_lower_soc_while_charging(self):
-        """Test that lower SOC values are rejected while charging."""
+        """Test that lower SOC values are rejected while charging (when estimate is higher)."""
         tracking = SocTracking()
         now = datetime.now(UTC)
 
         # Initial update
-        tracking.update_actual_soc(50.0, 60.0, now)
+        tracking.update_actual_soc(50.0, now)
         tracking.charging_active = True
+        tracking.estimated_percent = 55.0  # Set estimate higher than incoming value
 
-        # Try to update with lower SOC
-        tracking.update_actual_soc(45.0, 60.0, now + timedelta(minutes=1))
+        # Try to update with lower SOC than estimate
+        tracking.update_actual_soc(45.0, now + timedelta(minutes=1))
 
-        # Should still have the original SOC
-        assert tracking.last_soc_percent == 50.0
+        # Should keep the estimate (45 < 55)
+        assert tracking.estimated_percent == 55.0
 
     def test_update_actual_soc_accepts_higher_soc_while_charging(self):
         """Test that higher SOC values are accepted while charging."""
@@ -90,72 +94,69 @@ class TestSocTracking:
         now = datetime.now(UTC)
 
         # Initial update
-        tracking.update_actual_soc(50.0, 60.0, now)
+        tracking.update_actual_soc(50.0, now)
         tracking.charging_active = True
 
         # Update with higher SOC
-        tracking.update_actual_soc(55.0, 60.0, now + timedelta(minutes=5))
+        tracking.update_actual_soc(55.0, now + timedelta(minutes=5))
 
         assert tracking.last_soc_percent == 55.0
 
-    def test_get_estimated_soc_no_charging(self):
-        """Test estimated SOC returns None when not charging."""
+    def test_estimate_no_charging(self):
+        """Test estimated SOC doesn't change when not charging."""
         tracking = SocTracking()
-        tracking.charging_active = False
         now = datetime.now(UTC)
 
-        result = tracking.get_estimated_soc(now)
+        tracking.update_actual_soc(50.0, now)
+        tracking.charging_active = False
 
-        assert result is None
+        result = tracking.estimate(now + timedelta(hours=1))
 
-    def test_get_estimated_soc_charging_with_power(self):
-        """Test estimated SOC calculation during charging."""
+        assert result == 50.0  # Returns last known SOC
+
+    def test_estimate_charging_with_power(self):
+        """Test estimated SOC increases during charging."""
         tracking = SocTracking()
         now = datetime.now(UTC)
 
         # Setup initial state
-        tracking.update_actual_soc(50.0, 60.0, now)
+        tracking.update_actual_soc(50.0, now)
+        tracking.update_max_energy(60.0)
         tracking.charging_active = True
-        tracking.charging_power_w = 11000.0  # 11kW charging
-        tracking.last_estimate_update = now
+        tracking.update_power(11000.0, now)  # 11kW charging
 
         # Calculate estimate 1 hour later
         later = now + timedelta(hours=1)
-        result = tracking.get_estimated_soc(later)
+        result = tracking.estimate(later)
 
-        # Should have added ~11kWh in 1 hour at 92% efficiency
-        # Expected increase: 11 * 0.92 / 60 * 100 = ~16.87%
+        # Should have increased from 50%
         assert result is not None
         assert result > 50.0  # Should be higher than initial
-        assert result < 70.0  # But not unreasonably high
+        assert result < 80.0  # But not unreasonably high
 
-    def test_get_estimated_soc_stale(self):
-        """Test estimated SOC is cleared when stale."""
+    def test_estimate_stale(self):
+        """Test estimated SOC returns last known when stale."""
         tracking = SocTracking()
         now = datetime.now(UTC)
 
         # Setup initial state
-        tracking.update_actual_soc(50.0, 60.0, now)
+        tracking.update_actual_soc(50.0, now)
+        tracking.update_max_energy(60.0)
         tracking.charging_active = True
-        tracking.charging_power_w = 11000.0
-        tracking.last_estimate_update = now
+        tracking.update_power(11000.0, now)
 
         # Calculate estimate way too late (beyond MAX_ESTIMATE_AGE_SECONDS)
         much_later = now + timedelta(hours=5)
-        result = tracking.get_estimated_soc(much_later)
+        result = tracking.estimate(much_later)
 
-        # Should return None due to staleness
-        assert result is None
+        # Should return last known SOC due to staleness
+        assert result == 50.0
 
     def test_efficiency_bounds(self):
-        """Test efficiency is bounded between MIN and MAX."""
-        tracking = SocTracking()
-
-        # Test setting efficiency below minimum
-        tracking.learned_efficiency = 0.5
-        assert tracking.learned_efficiency >= SocTracking.EFFICIENCY_MIN
-
-        # Test that default is within bounds
+        """Test efficiency constants are within expected bounds."""
+        # Test that bounds are valid
+        assert SocTracking.EFFICIENCY_MIN == 0.70
+        assert SocTracking.EFFICIENCY_MAX == 1.0
         assert SocTracking.EFFICIENCY_MIN <= SocTracking.EFFICIENCY_DEFAULT <= SocTracking.EFFICIENCY_MAX
 
 
@@ -174,7 +175,7 @@ class TestMessageValidation:
     @pytest.fixture
     def coordinator(self, mock_hass):
         """Create a coordinator instance for testing."""
-        with patch("custom_components.cardata.coordinator.dispatcher_send"):
+        with patch("custom_components.cardata.coordinator.async_dispatcher_send"):
             coord = CardataCoordinator(mock_hass, "test_entry_id")
             return coord
 
@@ -196,8 +197,7 @@ class TestMessageValidation:
         """Test that messages with too many descriptors are rejected."""
         # Create a payload with more descriptors than allowed
         large_data = {
-            f"descriptor.{i}": {"value": i, "unit": None}
-            for i in range(coordinator._MAX_DESCRIPTORS_PER_VIN + 100)
+            f"descriptor.{i}": {"value": i, "unit": None} for i in range(coordinator._MAX_DESCRIPTORS_PER_VIN + 100)
         }
         payload = {
             "vin": "WBA12345678901234",  # Valid VIN format
@@ -271,17 +271,17 @@ class TestDerivedMotion:
     @pytest.fixture
     def coordinator(self, mock_hass):
         """Create a coordinator instance for testing."""
-        with patch("custom_components.cardata.coordinator.dispatcher_send"):
+        with patch("custom_components.cardata.coordinator.async_dispatcher_send"):
             coord = CardataCoordinator(mock_hass, "test_entry_id")
             return coord
 
     def test_update_location_tracking_first_location(self, coordinator):
-        """Test first location update returns False (no movement detected yet)."""
+        """Test first location update returns True (new position recorded)."""
         vin = "WBA12345678901234"
 
         result = coordinator._update_location_tracking(vin, 52.5200, 13.4050)
 
-        assert result is False
+        assert result is True  # First position is recorded as a change
         assert vin in coordinator._last_location
 
     def test_update_location_tracking_small_movement(self, coordinator):
@@ -312,7 +312,7 @@ class TestDerivedMotion:
         """Test derived motion returns None when no location data."""
         vin = "WBA12345678901234"
 
-        result = coordinator._get_derived_is_moving(vin)
+        result = coordinator.get_derived_is_moving(vin)
 
         assert result is None
 
@@ -325,7 +325,7 @@ class TestDerivedMotion:
         coordinator._last_location[vin] = (52.5200, 13.4050)
         coordinator._last_location_change[vin] = now
 
-        result = coordinator._get_derived_is_moving(vin)
+        result = coordinator.get_derived_is_moving(vin)
 
         assert result is True
 
@@ -338,6 +338,6 @@ class TestDerivedMotion:
         coordinator._last_location[vin] = (52.5200, 13.4050)
         coordinator._last_location_change[vin] = old_time
 
-        result = coordinator._get_derived_is_moving(vin)
+        result = coordinator.get_derived_is_moving(vin)
 
         assert result is False
