@@ -24,6 +24,7 @@ from .const import (
 from .debug import debug_enabled
 from .descriptor_state import DescriptorState
 from .motion_detection import MotionDetector
+from .pending_manager import PendingManager
 from .soc_tracking import SocTracking
 from .units import normalize_unit
 from .utils import redact_vin
@@ -151,6 +152,11 @@ class CardataCoordinator:
     # Derived motion detection from GPS position changes
     # When vehicle.isMoving is not available, derive it from location staleness
     _motion_detector: MotionDetector = field(default_factory=MotionDetector, init=False)
+
+    # Pending operation tracking to prevent duplicate work
+    _basic_data_pending: PendingManager[str] = field(
+        default_factory=lambda: PendingManager("basic_data"), init=False
+    )
 
     @staticmethod
     def _safe_vin_suffix(vin: str | None) -> str:
@@ -1461,6 +1467,16 @@ class CardataCoordinator:
         return metadata
 
     async def async_apply_basic_data(self, vin: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        """Thread-safe async version of apply_basic_data."""
-        async with self._lock:
-            return self.apply_basic_data(vin, payload)
+        """Thread-safe async version of apply_basic_data with deduplication.
+
+        Returns None if another task is already processing this VIN's basic data.
+        """
+        # Try to acquire - returns False if already pending
+        if not await self._basic_data_pending.acquire(vin):
+            return None
+
+        try:
+            async with self._lock:
+                return self.apply_basic_data(vin, payload)
+        finally:
+            await self._basic_data_pending.release(vin)
