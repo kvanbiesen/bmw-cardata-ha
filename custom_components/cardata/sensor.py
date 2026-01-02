@@ -435,7 +435,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_native_value: datetime | str | None = None
+    _attr_native_value: datetime | str | int | None = None
 
     def __init__(
         self,
@@ -464,6 +464,12 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         elif sensor_type == "connection_status":
             self._attr_name = "Stream Connection Status"
             suffix = "connection_status"
+        elif sensor_type == "data_age":
+            self._attr_name = "Data Age"
+            self._attr_device_class = SensorDeviceClass.DURATION
+            self._attr_native_unit_of_measurement = "s"
+            self._attr_icon = "mdi:clock-alert-outline"
+            suffix = "data_age"
         else:
             self._attr_name = sensor_type
             suffix = sensor_type
@@ -534,13 +540,21 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     def _handle_update(self) -> None:
         """Handle updates from coordinator."""
-        value: datetime | str | None
+        value: datetime | str | int | None
         if self._sensor_type == "last_message":
             value = self._coordinator.last_message_at
         elif self._sensor_type == "last_telematic_api":
             value = self._coordinator.last_telematic_api_at
         elif self._sensor_type == "connection_status":
             value = self._coordinator.connection_status
+        elif self._sensor_type == "data_age":
+            last_msg = self._coordinator.last_message_at
+            if last_msg:
+                now = dt_util.utcnow()
+                age_seconds = int((now - last_msg).total_seconds())
+                value = max(0, age_seconds)  # Never negative
+            else:
+                value = None
         else:
             value = None
 
@@ -549,7 +563,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self) -> datetime | str | None:
+    def native_value(self) -> datetime | str | int | None:
         """Return native value."""
         return self._attr_native_value
 
@@ -1017,11 +1031,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
     stream_manager = runtime.stream
 
-    for sensor_type in ("connection_status", "last_message", "last_telematic_api"):
+    for sensor_type in ("connection_status", "last_message", "last_telematic_api", "data_age"):
         if sensor_type == "last_message":
             unique_id = f"{entry.entry_id}_diagnostics_last_message"
         elif sensor_type == "last_telematic_api":
             unique_id = f"{entry.entry_id}_diagnostics_last_telematic_api"
+        elif sensor_type == "data_age":
+            unique_id = f"{entry.entry_id}_diagnostics_data_age"
         else:
             unique_id = f"{entry.entry_id}_diagnostics_connection_status"
 
