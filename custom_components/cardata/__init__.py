@@ -578,6 +578,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Dismiss any container mismatch notifications
     from homeassistant.components import persistent_notification
+
     notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
     persistent_notification.async_dismiss(hass, notification_id)
 

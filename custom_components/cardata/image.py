@@ -122,12 +122,9 @@ class CardataImage(CardataEntity, ImageEntity):
 
         except Exception as err:
             from .utils import redact_vin, redact_vin_in_text
+
             safe_err = redact_vin_in_text(str(err))
-            _LOGGER.debug(
-                "Failed to load vehicle image for %s: %s",
-                redact_vin(self._vin),
-                safe_err
-            )
+            _LOGGER.debug("Failed to load vehicle image for %s: %s", redact_vin(self._vin), safe_err)
             return None
 
     @property
@@ -138,6 +135,7 @@ class CardataImage(CardataEntity, ImageEntity):
 
         if image_path_str:
             from pathlib import Path
+
             try:
                 image_path = Path(image_path_str)
                 if image_path.exists() and image_path.stat().st_size > 0:

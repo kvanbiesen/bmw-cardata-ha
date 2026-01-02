@@ -154,20 +154,14 @@ async def refresh_tokens_for_entry(
         try:
             await asyncio.wait_for(lock.acquire(), timeout=30.0)
         except TimeoutError:
-            _LOGGER.warning(
-                "Token Refresh lock timeout for entry %s; another refresh in progress",
-                entry.entry_id
-            )
+            _LOGGER.warning("Token Refresh lock timeout for entry %s; another refresh in progress", entry.entry_id)
             raise CardataAuthError("Token refresh already in progress") from None
 
         try:
             # double check if token still needs refesh
             expired, seconds_left = is_token_expired(entry, TOKEN_EXPIRY_BUFFER_SECONDS)
             if not expired:
-                _LOGGER.debug(
-                    "Token was refreshed by another caller; skipping (valid for %s seconds)",
-                    seconds_left
-                )
+                _LOGGER.debug("Token was refreshed by another caller; skipping (valid for %s seconds)", seconds_left)
                 return
             await _do_token_refresh(entry, session, manager, container_manager, hass)
 

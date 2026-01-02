@@ -114,9 +114,7 @@ class CardataCoordinator:
     _motion_detector: MotionDetector = field(default_factory=MotionDetector, init=False)
 
     # Pending operation tracking to prevent duplicate work
-    _basic_data_pending: PendingManager[str] = field(
-        default_factory=lambda: PendingManager("basic_data"), init=False
-    )
+    _basic_data_pending: PendingManager[str] = field(default_factory=lambda: PendingManager("basic_data"), init=False)
 
     @staticmethod
     def _safe_vin_suffix(vin: str | None) -> str:
@@ -965,10 +963,7 @@ class CardataCoordinator:
                 stale_vins.update(k for k in d.keys() if k not in valid_vins)
 
             # Also check motion detector for stale VINs
-            stale_vins.update(
-                vin for vin in self._motion_detector.get_tracked_vins()
-                if vin not in valid_vins
-            )
+            stale_vins.update(vin for vin in self._motion_detector.get_tracked_vins() if vin not in valid_vins)
 
             if stale_vins:
                 for vin in stale_vins:

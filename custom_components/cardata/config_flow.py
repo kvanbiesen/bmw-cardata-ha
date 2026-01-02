@@ -576,6 +576,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
         # Dismiss container mismatch notification if it exists
         from homeassistant.components import persistent_notification
+
         notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
         persistent_notification.async_dismiss(self.hass, notification_id)
 

@@ -312,7 +312,10 @@ async def async_fetch_and_store_vehicle_images(
                         await hass.async_add_executor_job(image_path.write_bytes, image_data)
                         safe_image_path = redact_vin_in_text(str(image_path))
                         _LOGGER.info(
-                            "Saved vehicle image for %s to %s (%d bytes)", redacted_vin, safe_image_path, len(image_data)
+                            "Saved vehicle image for %s to %s (%d bytes)",
+                            redacted_vin,
+                            safe_image_path,
+                            len(image_data),
                         )
                     except Exception as err:
                         safe_err = redact_vin_in_text(str(err))
@@ -335,7 +338,9 @@ async def async_fetch_and_store_vehicle_images(
                 continue
             except Exception as err:
                 safe_err = redact_vin_in_text(str(err))
-                _LOGGER.warning("Unexpected error fetching vehicle image for %s: %s", redacted_vin, safe_err, exc_info=True)
+                _LOGGER.warning(
+                    "Unexpected error fetching vehicle image for %s: %s", redacted_vin, safe_err, exc_info=True
+                )
                 continue
         finally:
             # Always release pending lock
@@ -380,9 +385,7 @@ async def async_restore_vehicle_images(
 
             restored_count += 1
 
-            _LOGGER.debug(
-                "Restored vehicle image for %s from %s", redacted_vin, safe_image_file
-            )
+            _LOGGER.debug("Restored vehicle image for %s from %s", redacted_vin, safe_image_file)
         except Exception as err:
             safe_err = redact_vin_in_text(str(err))
             _LOGGER.warning(
