@@ -49,71 +49,18 @@ from .const import (
 )
 from .debug import debug_enabled
 from .descriptor_state import DescriptorState
+from .message_utils import (
+    TIMESTAMPED_SOC_DESCRIPTORS,
+    normalize_boolean_value,
+    sanitize_timestamp_string,
+)
 from .motion_detection import MotionDetector
+from .pending_manager import PendingManager
 from .soc_tracking import SocTracking
 from .units import normalize_unit
 from .utils import is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
-
-# Descriptors that require parsed timestamps for SOC/charging tracking
-_TIMESTAMPED_SOC_DESCRIPTORS = {
-    "vehicle.drivetrain.batteryManagement.header",
-    "vehicle.drivetrain.batteryManagement.maxEnergy",
-    "vehicle.powertrain.electric.battery.charging.power",
-    "vehicle.drivetrain.electricEngine.charging.status",
-    "vehicle.powertrain.electric.battery.stateOfCharge.target",
-    "vehicle.vehicle.avgAuxPower",
-    "vehicle.drivetrain.electricEngine.charging.acVoltage",
-    "vehicle.drivetrain.electricEngine.charging.acAmpere",
-    "vehicle.drivetrain.electricEngine.charging.phaseNumber",
-}
-
-_BOOLEAN_DESCRIPTORS = {
-    "vehicle.isMoving",
-}
-
-_BOOLEAN_VALUE_MAP = {
-    "asn_istrue": True,
-    "asn_isfalse": False,
-    "asn_isunknown": None,
-    "true": True,
-    "false": False,
-    "1": True,
-    "0": False,
-    "yes": True,
-    "no": False,
-    "on": True,
-    "off": False,
-}
-
-
-# Maximum length for raw timestamp strings to prevent memory issues
-_MAX_TIMESTAMP_STRING_LENGTH = 64
-
-
-def _sanitize_timestamp_string(timestamp: str | None) -> str | None:
-    """Sanitize raw timestamp string for storage.
-
-    - Limits length to prevent memory issues
-    - Validates basic ISO-8601-like format
-    - Returns None for invalid timestamps
-    """
-    if timestamp is None:
-        return None
-    if not isinstance(timestamp, str):
-        return None
-    # Limit length
-    if len(timestamp) > _MAX_TIMESTAMP_STRING_LENGTH:
-        return None
-    # Basic format validation: should look like ISO-8601 (start with digit, contain reasonable chars)
-    if not timestamp or not timestamp[0].isdigit():
-        return None
-    # Only allow characters valid in ISO-8601 timestamps
-    allowed = set("0123456789-:TZ.+ ")
-    if not all(c in allowed for c in timestamp):
-        return None
-    return timestamp
 
 
 @dataclass
@@ -146,27 +93,14 @@ class CardataCoordinator:
     _ac_current_a: dict[str, float] = field(default_factory=dict, init=False)
     _ac_phase_count: dict[str, int] = field(default_factory=dict, init=False)
 
-    # Debouncing fields (NEW!)
+    # Debouncing and pending update management
     _update_debounce_handle: asyncio.TimerHandle | None = field(default=None, init=False)
     _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    _pending_updates: dict[str, set[str]] = field(default_factory=dict, init=False)  # {vin: {descriptors}}
-    _pending_new_sensors: dict[str, set[str]] = field(
-        default_factory=dict, init=False
-    )  # Changed to set to avoid duplicates
-    _pending_new_binary: dict[str, set[str]] = field(
-        default_factory=dict, init=False
-    )  # Changed to set to avoid duplicates
+    _pending_manager: PendingManager = field(default_factory=PendingManager, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
-    _MAX_PENDING_PER_VIN: int = 500  # Max pending items per VIN to prevent unbounded growth
-    _MAX_PENDING_VINS: int = 20  # Max number of VINs to track (generous limit for fleets)
-    _MAX_PENDING_TOTAL: int = 2000  # Hard cap on total pending items across all structures
-    _MAX_PENDING_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
-    _pending_updates_started: datetime | None = field(default=None, init=False)
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
-    # Track evicted updates for diagnostics visibility
-    _evicted_updates_count: int = field(default=0, init=False)
     # Memory protection: limit total descriptors per VIN
     _MAX_DESCRIPTORS_PER_VIN: int = 1000  # Max unique descriptors stored per VIN
     _MAX_DESCRIPTOR_AGE_SECONDS: int = 604800  # 7 days - evict descriptors not updated in this time
@@ -233,45 +167,6 @@ class CardataCoordinator:
             None if no location data available
         """
         return self._motion_detector.is_moving(vin)
-
-    def _get_total_pending_count(self) -> int:
-        """Count total pending items across all structures."""
-        total = 0
-        for pending_set in self._pending_updates.values():
-            total += len(pending_set)
-        for pending_set in self._pending_new_sensors.values():
-            total += len(pending_set)
-        for pending_set in self._pending_new_binary.values():
-            total += len(pending_set)
-        return total
-
-    def _evict_pending_updates(self) -> int:
-        """Evict pending updates to make room. Returns count evicted."""
-        # Evict half of pending updates from VIN with most pending
-        if not self._pending_updates:
-            return 0
-        # Find VIN with most pending updates
-        max_vin = max(self._pending_updates.keys(), key=lambda v: len(self._pending_updates.get(v, set())))
-        pending_set = self._pending_updates.get(max_vin)
-        if not pending_set:
-            return 0
-        evict_count = max(1, len(pending_set) // 2)
-        for _ in range(evict_count):
-            if pending_set:
-                pending_set.pop()
-        # Clean up empty sets
-        if not pending_set:
-            self._pending_updates.pop(max_vin, None)
-        return evict_count
-
-    def _evict_vin_pending(self) -> int:
-        """Evict all pending updates from one VIN. Returns count evicted."""
-        if not self._pending_updates:
-            return 0
-        # Evict VIN with fewest pending (least data loss)
-        min_vin = min(self._pending_updates.keys(), key=lambda v: len(self._pending_updates.get(v, set())))
-        pending_set = self._pending_updates.pop(min_vin, set())
-        return len(pending_set)
 
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
@@ -632,19 +527,6 @@ class CardataCoordinator:
                 power_w,
             )
 
-    def _normalize_boolean_value(self, descriptor: str, value: Any) -> Any:
-        if descriptor not in _BOOLEAN_DESCRIPTORS:
-            return value
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)) and value in (0, 1):
-            return bool(int(value))
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in _BOOLEAN_VALUE_MAP:
-                return _BOOLEAN_VALUE_MAP[normalized]
-        return value
-
     async def async_handle_message(self, payload: dict[str, Any]) -> None:
         vin = payload.get("vin")
         data = payload.get("data") or {}
@@ -696,12 +578,12 @@ class CardataCoordinator:
         for descriptor, descriptor_payload in data.items():
             if not isinstance(descriptor_payload, dict):
                 continue
-            value = self._normalize_boolean_value(descriptor, descriptor_payload.get("value"))
+            value = normalize_boolean_value(descriptor, descriptor_payload.get("value"))
             unit = normalize_unit(descriptor_payload.get("unit"))
             raw_timestamp = descriptor_payload.get("timestamp")
-            timestamp = _sanitize_timestamp_string(raw_timestamp)
+            timestamp = sanitize_timestamp_string(raw_timestamp)
             parsed_ts = None
-            if timestamp and descriptor in _TIMESTAMPED_SOC_DESCRIPTORS:
+            if timestamp and descriptor in TIMESTAMPED_SOC_DESCRIPTORS:
                 parsed_ts = dt_util.parse_datetime(timestamp)
             if value is None:
                 self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
@@ -764,110 +646,29 @@ class CardataCoordinator:
                 if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
                     immediate_updates.append((vin, descriptor))
                 else:
-                    # Non-GPS: queue for batched update (includes new sensors for initial state)
-                    # Enforce hard cap on total pending items - evict oldest if at limit
-                    if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
-                        evicted = self._evict_pending_updates()
-                        if evicted:
-                            self._evicted_updates_count += evicted
+                    # Non-GPS: queue for batched update (PendingManager handles eviction)
+                    if self._pending_manager.add_update(vin, descriptor):
+                        schedule_debounce = True
+                        if debug_enabled():
                             _LOGGER.debug(
-                                "Total pending limit reached; evicted %d updates",
-                                evicted,
+                                "Added to pending: %s (total pending: %d)",
+                                descriptor.split(".")[-1],
+                                self._pending_manager.get_total_count(),
                             )
-                    # Enforce VIN limit - evict one VIN's updates if at limit
-                    if vin not in self._pending_updates:
-                        if len(self._pending_updates) >= self._MAX_PENDING_VINS:
-                            evicted = self._evict_vin_pending()
-                            if evicted:
-                                self._evicted_updates_count += evicted
-                                _LOGGER.debug(
-                                    "Max pending VINs reached; evicted %d updates from one VIN",
-                                    evicted,
-                                )
-                        self._pending_updates[vin] = set()
-                    pending_set = self._pending_updates[vin]
-                    # Enforce per-VIN size limit - evict half if at limit to make room
-                    if len(pending_set) >= self._MAX_PENDING_PER_VIN:
-                        evict_count = len(pending_set) // 2
-                        # Remove arbitrary items (set has no order, but this ensures room)
-                        for _ in range(evict_count):
-                            if pending_set:
-                                pending_set.pop()
-                        self._evicted_updates_count += evict_count
-                        _LOGGER.debug(
-                            "Per-VIN limit reached for %s; evicted %d old updates",
-                            redact_vin(vin),
-                            evict_count,
-                        )
-                    pending_set.add(descriptor)
-                    schedule_debounce = True
-                    # Track when pending updates started accumulating
-                    if self._pending_updates_started is None:
-                        self._pending_updates_started = now
-                    if debug_enabled():
-                        _LOGGER.debug(
-                            "Added to pending: %s (total pending: %d)",
-                            descriptor.split(".")[-1],  # Just the last part
-                            len(pending_set),
-                        )
 
             # Update SOC tracking for relevant descriptors
             self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
 
-        # Queue new entities for immediate notification
+        # Queue new entities for notification (PendingManager handles limits)
         if new_sensor:
-            # Enforce hard cap on total pending items
-            if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
-                _LOGGER.warning(
-                    "Total pending limit (%d) reached; dropping new sensors",
-                    self._MAX_PENDING_TOTAL,
-                )
-            elif vin not in self._pending_new_sensors:
-                if len(self._pending_new_sensors) >= self._MAX_PENDING_VINS:
-                    _LOGGER.warning(
-                        "Max pending VINs reached for new sensors; dropping for VIN %s",
-                        redact_vin(vin),
-                    )
-                else:
-                    self._pending_new_sensors[vin] = set()
-            if vin in self._pending_new_sensors:
-                pending_sensors = self._pending_new_sensors[vin]
-                # Add items one by one to respect the limit
-                total_pending = self._get_total_pending_count()
-                available = min(
-                    self._MAX_PENDING_PER_VIN - len(pending_sensors),
-                    self._MAX_PENDING_TOTAL - total_pending,
-                )
-                for item in new_sensor[:available]:
-                    pending_sensors.add(item)
-                schedule_debounce = True
+            for item in new_sensor:
+                if self._pending_manager.add_new_sensor(vin, item):
+                    schedule_debounce = True
 
         if new_binary:
-            # Enforce hard cap on total pending items
-            if self._get_total_pending_count() >= self._MAX_PENDING_TOTAL:
-                _LOGGER.warning(
-                    "Total pending limit (%d) reached; dropping new binary sensors",
-                    self._MAX_PENDING_TOTAL,
-                )
-            elif vin not in self._pending_new_binary:
-                if len(self._pending_new_binary) >= self._MAX_PENDING_VINS:
-                    _LOGGER.warning(
-                        "Max pending VINs reached for new binary; dropping for VIN %s",
-                        redact_vin(vin),
-                    )
-                else:
-                    self._pending_new_binary[vin] = set()
-            if vin in self._pending_new_binary:
-                pending_binary = self._pending_new_binary[vin]
-                # Add items one by one to respect the limit
-                total_pending = self._get_total_pending_count()
-                available = min(
-                    self._MAX_PENDING_PER_VIN - len(pending_binary),
-                    self._MAX_PENDING_TOTAL - total_pending,
-                )
-                for item in new_binary[:available]:
-                    pending_binary.add(item)
-                schedule_debounce = True
+            for item in new_binary:
+                if self._pending_manager.add_new_binary(vin, item):
+                    schedule_debounce = True
 
         self._apply_soc_estimate(vin, now)
 
@@ -923,26 +724,18 @@ class CardataCoordinator:
         """Execute the debounced batch update."""
         async with self._debounce_lock:
             self._update_debounce_handle = None
+
         if debug_enabled():
-            pending_count = sum(len(d) for d in self._pending_updates.values())
+            pending_count = self._pending_manager.get_total_count()
             _LOGGER.debug("Debounce timer fired, pending items: %d", pending_count)
-            if pending_count > 0:
-                for vin, descriptors in self._pending_updates.items():
-                    _LOGGER.debug("   VIN %s: %s", redact_vin(vin), list(descriptors)[:5])
 
         # Snapshot and clear pending updates atomically
-        updates_to_process = dict(self._pending_updates)
-        new_sensors_to_process = dict(self._pending_new_sensors)
-        new_binary_to_process = dict(self._pending_new_binary)
-        self._pending_updates.clear()
-        self._pending_new_sensors.clear()
-        self._pending_new_binary.clear()
-        self._pending_updates_started = None  # Reset staleness tracking
+        snapshot = self._pending_manager.snapshot_and_clear()
 
         if debug_enabled():
-            total_updates = sum(len(descriptors) for descriptors in updates_to_process.values())
-            total_new_sensors = sum(len(descriptors) for descriptors in new_sensors_to_process.values())
-            total_new_binary = sum(len(descriptors) for descriptors in new_binary_to_process.values())
+            total_updates = sum(len(descriptors) for descriptors in snapshot.updates.values())
+            total_new_sensors = sum(len(descriptors) for descriptors in snapshot.new_sensors.values())
+            total_new_binary = sum(len(descriptors) for descriptors in snapshot.new_binary.values())
             _LOGGER.debug(
                 "Debounced coordinator update executed: %d updates, %d new sensors, %d new binary",
                 total_updates,
@@ -951,16 +744,16 @@ class CardataCoordinator:
             )
 
         # Send batched updates for changed descriptors
-        for vin, update_descriptors in updates_to_process.items():
+        for vin, update_descriptors in snapshot.updates.items():
             for descriptor in update_descriptors:
                 self._safe_dispatcher_send(self.signal_update, vin, descriptor)
 
         # Send new entity notifications
-        for vin, sensor_descriptors in new_sensors_to_process.items():
+        for vin, sensor_descriptors in snapshot.new_sensors.items():
             for descriptor in sensor_descriptors:
                 self._safe_dispatcher_send(self.signal_new_sensor, vin, descriptor)
 
-        for vin, binary_descriptors in new_binary_to_process.items():
+        for vin, binary_descriptors in snapshot.new_binary.items():
             for descriptor in binary_descriptors:
                 self._safe_dispatcher_send(self.signal_new_binary, vin, descriptor)
 
@@ -1083,9 +876,7 @@ class CardataCoordinator:
                 self._update_debounce_handle.cancel()
                 self._update_debounce_handle = None
             # Clear pending updates to avoid stale data on restart
-            self._pending_updates.clear()
-            self._pending_new_sensors.clear()
-            self._pending_new_binary.clear()
+            self._pending_manager.snapshot_and_clear()
 
     async def _watchdog_loop(self) -> None:
         try:
@@ -1130,24 +921,8 @@ class CardataCoordinator:
         This prevents memory leaks if the debounce timer fails to fire
         (e.g., event loop issues, shutdown race conditions).
         """
-        if self._pending_updates_started is None:
-            return
-
-        age_seconds = (now - self._pending_updates_started).total_seconds()
-        if age_seconds > self._MAX_PENDING_AGE_SECONDS:
-            pending_count = sum(len(d) for d in self._pending_updates.values())
-            if pending_count > 0:
-                _LOGGER.warning(
-                    "Clearing %d stale pending updates (age: %.1fs, max: %.1fs) - debounce timer may have failed",
-                    pending_count,
-                    age_seconds,
-                    self._MAX_PENDING_AGE_SECONDS,
-                )
-                self._pending_updates.clear()
-                self._pending_new_sensors.clear()
-                self._pending_new_binary.clear()
-            self._pending_updates_started = None
-
+        cleared = self._pending_manager.check_and_clear_stale(now)
+        if cleared > 0:
             # Cancel stale debounce handle if it exists
             async with self._debounce_lock:
                 if self._update_debounce_handle is not None:
@@ -1178,9 +953,6 @@ class CardataCoordinator:
                 self._ac_voltage_v,
                 self._ac_current_a,
                 self._ac_phase_count,
-                self._pending_updates,
-                self._pending_new_sensors,
-                self._pending_new_binary,
             ]
 
             stale_vins: set[str] = set()
@@ -1199,6 +971,8 @@ class CardataCoordinator:
                         d.pop(vin, None)
                     # Cleanup motion detector for stale VINs
                     self._motion_detector.cleanup_vin(vin)
+                    # Also clean up pending manager
+                    self._pending_manager.remove_vin(vin)
                 _LOGGER.debug(
                     "Cleaned up tracking data for %d stale VIN(s)",
                     len(stale_vins),
@@ -1325,7 +1099,7 @@ class CardataCoordinator:
         Must be called while holding _lock. Use async_restore_descriptor_state for thread-safe access.
         """
         # Sanitize timestamp string before use
-        timestamp = _sanitize_timestamp_string(timestamp)
+        timestamp = sanitize_timestamp_string(timestamp)
         parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
 
