@@ -350,11 +350,27 @@ class CardataStreamManager:
                 "Skipping MQTT start - bootstrap still fetching vehicle metadata. "
                 "MQTT will start automatically when bootstrap completes."
             )
+            # Update status so users know why MQTT isn't connected
+            if self._status_callback:
+                self._run_coro_safe(
+                    cast(Coroutine[Any, Any, None], self._status_callback("waiting_for_bootstrap", None))
+                )
             return
 
         # Check circuit breaker
         if self._check_circuit_breaker():
             _LOGGER.warning("BMW MQTT connection blocked by circuit breaker")
+            # Update status so users know why MQTT isn't connected
+            if self._status_callback:
+                remaining = ""
+                if self._circuit_open_until:
+                    remaining = f" ({int(self._circuit_open_until - time.monotonic())}s remaining)"
+                self._run_coro_safe(
+                    cast(
+                        Coroutine[Any, Any, None],
+                        self._status_callback("circuit_breaker_open", f"Too many failures{remaining}"),
+                    )
+                )
             raise ConnectionError("Circuit breaker is open")
 
         # Check if already connecting or connected
