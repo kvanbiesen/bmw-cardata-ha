@@ -51,8 +51,6 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 > **Tested Environment:** since I adopted the project, I used the latest ha 2025.12 (2025.3+ is required)
 
-Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha) -> this wil me be bug fixing, some extra features but mostly bugs, i'm taking this over cause i like fixing bugs but dont have the time to ad complete new featers PR are welcome
-
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 Not required but appreciated :)
@@ -189,4 +187,9 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 ## License
 
-This project is released into the public domain. Do whatever you want with it—personal, commercial, derivative works, etc. No attribution required (though appreciated).
+This project is licensed under the BSD 2-Clause License - see the [LICENSE](LICENSE.md) file for details.
+
+### Attribution
+
+This software was created by [Kris Van Biesen](https://github.com/kvanbiesen). Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha). Please keep this notice if you redistribute or modify the co
+de.
