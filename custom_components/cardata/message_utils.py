@@ -30,22 +30,26 @@ from __future__ import annotations
 from typing import Any
 
 # Descriptors that require parsed timestamps for SOC/charging tracking
-TIMESTAMPED_SOC_DESCRIPTORS = frozenset({
-    "vehicle.drivetrain.batteryManagement.header",
-    "vehicle.drivetrain.batteryManagement.maxEnergy",
-    "vehicle.powertrain.electric.battery.charging.power",
-    "vehicle.drivetrain.electricEngine.charging.status",
-    "vehicle.powertrain.electric.battery.stateOfCharge.target",
-    "vehicle.vehicle.avgAuxPower",
-    "vehicle.drivetrain.electricEngine.charging.acVoltage",
-    "vehicle.drivetrain.electricEngine.charging.acAmpere",
-    "vehicle.drivetrain.electricEngine.charging.phaseNumber",
-})
+TIMESTAMPED_SOC_DESCRIPTORS = frozenset(
+    {
+        "vehicle.drivetrain.batteryManagement.header",
+        "vehicle.drivetrain.batteryManagement.maxEnergy",
+        "vehicle.powertrain.electric.battery.charging.power",
+        "vehicle.drivetrain.electricEngine.charging.status",
+        "vehicle.powertrain.electric.battery.stateOfCharge.target",
+        "vehicle.vehicle.avgAuxPower",
+        "vehicle.drivetrain.electricEngine.charging.acVoltage",
+        "vehicle.drivetrain.electricEngine.charging.acAmpere",
+        "vehicle.drivetrain.electricEngine.charging.phaseNumber",
+    }
+)
 
 # Descriptors that should be interpreted as boolean values
-BOOLEAN_DESCRIPTORS = frozenset({
-    "vehicle.isMoving",
-})
+BOOLEAN_DESCRIPTORS = frozenset(
+    {
+        "vehicle.isMoving",
+    }
+)
 
 # Mapping of string values to boolean
 BOOLEAN_VALUE_MAP: dict[str, bool | None] = {
@@ -114,9 +118,7 @@ def normalize_boolean_value(descriptor: str, value: Any) -> Any:
     return value
 
 
-def is_significant_numeric_change(
-    old_value: Any, new_value: Any, threshold: float = 0.01
-) -> bool:
+def is_significant_numeric_change(old_value: Any, new_value: Any, threshold: float = 0.01) -> bool:
     """Check if a numeric value has changed significantly.
 
     Returns True if:
