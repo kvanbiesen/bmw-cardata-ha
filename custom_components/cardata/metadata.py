@@ -210,13 +210,11 @@ async def async_fetch_and_store_vehicle_images(
 
             # Load existing file into coordinator for immediate use
             try:
-                image_bytes = await hass.async_add_executor_job(image_path.read_bytes)
                 if vin not in coordinator.device_metadata:
                     coordinator.device_metadata[vin] = {}
-                coordinator.device_metadata[vin]["vehicle_image"] = image_bytes
                 coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
                 async_dispatcher_send(hass, coordinator.signal_new_image, vin)
-                _LOGGER.debug("Loaded vehicle image from file for %s (%d bytes)", redacted_vin, len(image_bytes))
+                _LOGGER.debug("Vehicle image file exists for %s at %s", redacted_vin, str(image_path))
             except Exception as err:
                 safe_err = redact_vin_in_text(str(err))
                 _LOGGER.warning("Failed to load vehicle image file for %s: %s", redacted_vin, safe_err)
@@ -290,7 +288,6 @@ async def async_fetch_and_store_vehicle_images(
                 # Load into coordinator for immediate use
                 if vin not in coordinator.device_metadata:
                     coordinator.device_metadata[vin] = {}
-                coordinator.device_metadata[vin]["vehicle_image"] = image_data
                 coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
                 async_dispatcher_send(hass, coordinator.signal_new_image, vin)
 
@@ -338,14 +335,9 @@ async def async_restore_vehicle_images(
             continue
 
         try:
-            image_bytes = await hass.async_add_executor_job(image_file.read_bytes)
-
             if vin not in coordinator.device_metadata:
                 coordinator.device_metadata[vin] = {}
-
-            coordinator.device_metadata[vin]["vehicle_image"] = image_bytes
             coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_file)
-
             async_dispatcher_send(hass, coordinator.signal_new_image, vin)
 
             restored_count += 1

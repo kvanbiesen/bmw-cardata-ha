@@ -42,7 +42,7 @@ async def async_setup_entry(
             return
 
         metadata = coordinator.device_metadata.get(vin)
-        if not metadata or not metadata.get("vehicle_image"):
+        if not metadata or not metadata.get("vehicle_image_path"):
             return
 
         entity = CardataImage(coordinator, vin)
@@ -67,48 +67,58 @@ class CardataImage(CardataEntity, ImageEntity):
     _attr_translation_key = "vehicle_image"
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        """Initialize the image entity.
-
-        Note: Explicit parent __init__ calls are required here because
-        CardataEntity and ImageEntity have incompatible __init__ signatures.
-        Using super() would not correctly initialize both parents.
-        """
+        """Initialize the image entity."""
         CardataEntity.__init__(self, coordinator, vin, "image")
         ImageEntity.__init__(self, coordinator.hass)
 
         self._base_name = "Vehicle Image"
         self._update_name(write_state=False)
 
-        # Get initial image data
-        metadata = self._coordinator.device_metadata.get(self._vin, {})
-        self._image_data: bytes | None = metadata.get("vehicle_image")
-
     def image(self) -> bytes | None:
-        """Return bytes of image."""
-        # Get latest image from coordinator metadata
+        """Return bytes of image - loads from disk on demand."""
+        from pathlib import Path
+        
+        # Get image path from coordinator metadata
         metadata = self._coordinator.device_metadata.get(self._vin, {})
-        image_data = metadata.get("vehicle_image")
-
-        if image_data and isinstance(image_data, bytes):
-            return image_data
-
-        # Fallback to stored image data
-        return self._image_data
-
-    async def async_added_to_hass(self) -> None:
-        """Handle entity added to Home Assistant."""
-        await super().async_added_to_hass()
-
-        # Initial image load
-        metadata = self._coordinator.device_metadata.get(self._vin, {})
-        self._image_data = metadata.get("vehicle_image")
-
-        if self._image_data:
-            _LOGGER.debug("Vehicle image loaded for %s (%d bytes)", redact_vin(self._vin), len(self._image_data))
+        image_path_str = metadata.get("vehicle_image_path")
+        
+        if not image_path_str:
+            return None
+        
+        try:
+            image_path = Path(image_path_str)
+            
+            # Skip empty marker files (0 bytes = no image available)
+            if not image_path.exists() or image_path.stat().st_size == 0:
+                return None
+            
+            # Load image from disk (synchronous - this runs in executor automatically)
+            return image_path.read_bytes()
+            
+        except Exception as err:
+            from .utils import redact_vin, redact_vin_in_text
+            safe_err = redact_vin_in_text(str(err))
+            _LOGGER.debug(
+                "Failed to load vehicle image for %s: %s",
+                redact_vin(self._vin),
+                safe_err
+            )
+            return None
 
     @property
     def state(self) -> str:
         """Return the state of the image entity."""
-        if self._image_data or self.image():
-            return "available"
+        metadata = self._coordinator.device_metadata.get(self._vin, {})
+        image_path_str = metadata.get("vehicle_image_path")
+        
+        if image_path_str:
+            from pathlib import Path
+            try:
+                image_path = Path(image_path_str)
+                if image_path.exists() and image_path.stat().st_size > 0:
+                    return "available"
+            except Exception:
+                pass
+        
         return "unavailable"
+
