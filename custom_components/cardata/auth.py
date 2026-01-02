@@ -27,9 +27,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-import asyncio
 from contextlib import suppress
 
 import aiohttp
