@@ -95,8 +95,9 @@ def redact_vin_payload(payload: Any) -> Any:
 
 
 # Pattern to match Bearer tokens and other sensitive auth strings
-_AUTH_TOKEN_PATTERN = re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]+", re.IGNORECASE)
-_AUTHORIZATION_HEADER_PATTERN = re.compile(r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]+", re.IGNORECASE)
+# Bounded quantifiers {1,2000} prevent pathological regex performance on malformed input
+_AUTH_TOKEN_PATTERN = re.compile(r"(Bearer\s+)[A-Za-z0-9\-_\.]{1,2000}", re.IGNORECASE)
+_AUTHORIZATION_HEADER_PATTERN = re.compile(r"(Authorization['\"]?\s*:\s*['\"]?)[^'\"}\s]{1,2000}", re.IGNORECASE)
 # Maximum text length for regex redaction to prevent ReDoS on huge inputs
 _MAX_REDACT_INPUT_LENGTH = 10000
 
