@@ -28,9 +28,9 @@ from unittest.mock import ANY, AsyncMock, patch
 import pytest
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.cardata.const import DEFAULT_SCOPE, DOMAIN
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 CLIENT_ID = "31C3B263-A9B7-4C8E-B123-456789ABCDEF"
 
@@ -68,9 +68,7 @@ async def test_user_flow_success(hass):
             AsyncMock(return_value=TOKEN_DATA),
         ) as mock_poll,
     ):
-        init_result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
+        init_result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
         assert init_result["type"] == FlowResultType.FORM
         assert init_result["step_id"] == "user"
 
@@ -79,9 +77,7 @@ async def test_user_flow_success(hass):
         )
         assert user_result["type"] == FlowResultType.FORM
         assert user_result["step_id"] == "authorize"
-        assert user_result["description_placeholders"]["verification_url"].startswith(
-            "https://mock.bmw.example"
-        )
+        assert user_result["description_placeholders"]["verification_url"].startswith("https://mock.bmw.example")
 
         authorize_result = await hass.config_entries.flow.async_configure(
             user_result["flow_id"], user_input={"confirmed": True}
@@ -116,15 +112,110 @@ async def test_user_flow_success(hass):
 async def test_user_flow_invalid_client_id(hass):
     """Ensure an invalid client ID is rejected before network calls."""
 
-    init_result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    init_result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     invalid_result = await hass.config_entries.flow.async_configure(
         init_result["flow_id"], user_input={"client_id": "not-a-uuid"}
     )
 
     assert invalid_result["type"] == FlowResultType.FORM
     assert invalid_result["errors"]["base"] == "invalid_client_id"
+
+
+@pytest.mark.asyncio
+async def test_user_flow_missing_access_token(hass):
+    """Test handling of malformed token response missing access_token."""
+    malformed_token_data = {
+        # Missing access_token
+        "refresh_token": "mock-refresh-token",
+        "id_token": "mock-id-token",
+        "expires_in": 3600,
+    }
+
+    with (
+        patch(
+            "custom_components.cardata.device_flow.request_device_code",
+            AsyncMock(return_value=DEVICE_DATA),
+        ),
+        patch(
+            "custom_components.cardata.device_flow.poll_for_tokens",
+            AsyncMock(return_value=malformed_token_data),
+        ),
+    ):
+        init_result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        user_result = await hass.config_entries.flow.async_configure(
+            init_result["flow_id"], user_input={"client_id": CLIENT_ID}
+        )
+        authorize_result = await hass.config_entries.flow.async_configure(
+            user_result["flow_id"], user_input={"confirmed": True}
+        )
+
+        # Entry is created but access_token will be None
+        # This documents current behavior - entry is created with missing data
+        assert authorize_result["type"] == FlowResultType.CREATE_ENTRY
+        entry = authorize_result["result"]
+        assert entry.data["access_token"] is None
+        assert entry.data["refresh_token"] == "mock-refresh-token"
+
+
+@pytest.mark.asyncio
+async def test_user_flow_empty_token_response(hass):
+    """Test handling of empty token response."""
+    empty_token_data = {}
+
+    with (
+        patch(
+            "custom_components.cardata.device_flow.request_device_code",
+            AsyncMock(return_value=DEVICE_DATA),
+        ),
+        patch(
+            "custom_components.cardata.device_flow.poll_for_tokens",
+            AsyncMock(return_value=empty_token_data),
+        ),
+    ):
+        init_result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        user_result = await hass.config_entries.flow.async_configure(
+            init_result["flow_id"], user_input={"client_id": CLIENT_ID}
+        )
+        authorize_result = await hass.config_entries.flow.async_configure(
+            user_result["flow_id"], user_input={"confirmed": True}
+        )
+
+        # Entry is created but all token fields will be None
+        # This documents current behavior - entry is created with missing data
+        assert authorize_result["type"] == FlowResultType.CREATE_ENTRY
+        entry = authorize_result["result"]
+        assert entry.data["access_token"] is None
+        assert entry.data["refresh_token"] is None
+        assert entry.data["id_token"] is None
+
+
+@pytest.mark.asyncio
+async def test_user_flow_authorization_failed(hass):
+    """Test handling of authorization failure during token polling."""
+    from custom_components.cardata.device_flow import CardataAuthError
+
+    with (
+        patch(
+            "custom_components.cardata.device_flow.request_device_code",
+            AsyncMock(return_value=DEVICE_DATA),
+        ),
+        patch(
+            "custom_components.cardata.device_flow.poll_for_tokens",
+            AsyncMock(side_effect=CardataAuthError("Authorization timeout")),
+        ),
+    ):
+        init_result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        user_result = await hass.config_entries.flow.async_configure(
+            init_result["flow_id"], user_input={"client_id": CLIENT_ID}
+        )
+        authorize_result = await hass.config_entries.flow.async_configure(
+            user_result["flow_id"], user_input={"confirmed": True}
+        )
+
+        # Should show error form, not create entry
+        assert authorize_result["type"] == FlowResultType.FORM
+        assert authorize_result["step_id"] == "authorize"
+        assert authorize_result["errors"]["base"] == "authorization_failed"
 
 
 @pytest.mark.asyncio
