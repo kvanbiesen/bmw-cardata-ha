@@ -553,7 +553,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         from homeassistant.components import persistent_notification
         notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
         persistent_notification.async_dismiss(self.hass, notification_id)
-        
+
         return self.async_create_entry(title="", data={})
 
     async def async_step_action_cleanup_entities(self, user_input: dict[str, Any] | None = None) -> FlowResult:

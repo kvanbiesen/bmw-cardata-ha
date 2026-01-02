@@ -8,7 +8,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
