@@ -380,7 +380,28 @@ async def async_ensure_container_for_entry(
         # Keep using existing container even with mismatch
         # User can manually reset if needed
         if not force:
+            from homeassistant.components import persistent_notification
+
+            notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
+            persistent_notification.async_create(
+                hass,
+                (
+                    "BMW CarData container descriptor mismatch detected.\n\n"
+                    "This usually happens after an integration update that adds new sensors. "
+                    "Some vehicle data may not be available until you recreate the container.\n\n"
+                    "**Action required:**\n"
+                    "1. Go to Settings → Devices & Services → BMW CarData\n"
+                    "2. Click Configure on your BMW account\n"
+                    "3. Select 'Reset HV Battery Container'\n\n"
+                    "This will use 1 API call to recreate the container with updated descriptors."
+                ),
+                title="BMW CarData - Container Update Needed",
+                notification_id=notification_id,
+            )
+
+            # Keep using existing container to avoid breaking everything
             container_manager.sync_from_entry(hv_container_id)
+            # Update signature to prevent notification spam on every restart
             await async_update_entry_data(hass, entry, {"hv_descriptor_signature": desired_signature})
             return True
 
