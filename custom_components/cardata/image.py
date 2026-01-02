@@ -77,24 +77,24 @@ class CardataImage(CardataEntity, ImageEntity):
     def image(self) -> bytes | None:
         """Return bytes of image - loads from disk on demand."""
         from pathlib import Path
-        
+
         # Get image path from coordinator metadata
         metadata = self._coordinator.device_metadata.get(self._vin, {})
         image_path_str = metadata.get("vehicle_image_path")
-        
+
         if not image_path_str:
             return None
-        
+
         try:
             image_path = Path(image_path_str)
-            
+
             # Skip empty marker files (0 bytes = no image available)
             if not image_path.exists() or image_path.stat().st_size == 0:
                 return None
-            
+
             # Load image from disk (synchronous - this runs in executor automatically)
             return image_path.read_bytes()
-            
+
         except Exception as err:
             from .utils import redact_vin, redact_vin_in_text
             safe_err = redact_vin_in_text(str(err))
@@ -110,7 +110,7 @@ class CardataImage(CardataEntity, ImageEntity):
         """Return the state of the image entity."""
         metadata = self._coordinator.device_metadata.get(self._vin, {})
         image_path_str = metadata.get("vehicle_image_path")
-        
+
         if image_path_str:
             from pathlib import Path
             try:
@@ -119,6 +119,5 @@ class CardataImage(CardataEntity, ImageEntity):
                     return "available"
             except Exception:
                 pass
-        
-        return "unavailable"
 
+        return "unavailable"

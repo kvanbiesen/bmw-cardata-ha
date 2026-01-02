@@ -343,7 +343,7 @@ async def async_restore_vehicle_images(
             restored_count += 1
 
             _LOGGER.debug(
-                "Restored vehicle image for %s from %s (%d bytes)", redacted_vin, safe_image_file, len(image_bytes)
+                "Restored vehicle image for %s from %s", redacted_vin, safe_image_file
             )
         except Exception as err:
             safe_err = redact_vin_in_text(str(err))
