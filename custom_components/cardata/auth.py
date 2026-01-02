@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from contextlib import suppress
 
 import aiohttp
@@ -117,6 +118,50 @@ async def refresh_tokens_for_entry(
     Creating containers during token refresh causes excessive API calls!
     """
     hass = manager.hass
+
+    # get runtime to access the token refresh lock
+    runtime: CardataRuntimeData | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    
+    # if runtime exists and has a lock, we"ll use it
+    if runtime and runtime.token_refresh_lock:
+        lock = runtime.token_refresh_lock
+
+        try:
+            await asyncio.wait_for(lock.acquire(),timeout=30.0)
+        except TimeoutError:
+            _LOGGER.warning(
+                "Token Refresh lock timeout for entry %s; another refresh in progress",
+                entry.entry_id
+            )
+            raise CardataAuthError("Token refresh already in progress") from None
+
+        try:
+            # double check if token still needs refesh
+            expired, seconds_left = is_token_expired(entry, TOKEN_EXPIRY_BUFFER_SECONDS)
+            if not expired:
+                _LOGGER.debug(
+                    "Token was refreshed by another caller; skipping (valid for %s seconds)",
+                    seconds_left
+                )
+                return
+            await _do_token_refresh(entry, session, manager, container_manager, hass)
+
+        finally:
+            lock.release()
+    else:
+        # no lock available( should not happen but run as fallback )
+        _LOGGER.debug("No token refresh lock available; proceeding without lock")
+        await _do_token_refresh(entry, session, manager, container_manager, hass)
+
+
+async def _do_token_refresh(
+    entry: ConfigEntry,
+    session: aiohttp.ClientSession,
+    manager: CardataStreamManager,
+    container_manager: CardataContainerManager | None,
+    hass: HomeAssistant,
+) -> None:
+    """Internal function to perform the actual token refresh."""        
     data = dict(entry.data)
     refresh_token = data.get("refresh_token")
     client_id = data.get("client_id")
