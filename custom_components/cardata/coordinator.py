@@ -168,6 +168,7 @@ class CardataCoordinator:
     _evicted_updates_count: int = field(default=0, init=False)
     # Memory protection: limit total descriptors per VIN
     _MAX_DESCRIPTORS_PER_VIN: int = 1000  # Max unique descriptors stored per VIN
+    _MAX_DESCRIPTOR_AGE_SECONDS: int = 604800  # 7 days - evict descriptors not updated in this time
     _descriptors_evicted_count: int = field(default=0, init=False)
     # Track dispatcher exceptions to detect recurring issues (per-instance)
     _dispatcher_exception_count: int = field(default=0, init=False)
@@ -724,7 +725,9 @@ class CardataCoordinator:
             else:
                 value_changed = is_new or self._is_significant_change(vin, descriptor, value)
 
-            vehicle_state[descriptor] = DescriptorState(value=value, unit=unit, timestamp=timestamp)
+            vehicle_state[descriptor] = DescriptorState(
+                value=value, unit=unit, timestamp=timestamp, last_seen=time.time()
+            )
 
             # Update location tracking for derived motion detection
             if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
@@ -1110,11 +1113,12 @@ class CardataCoordinator:
             self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         self._safe_dispatcher_send(self.signal_diagnostics)
 
-        # Periodically cleanup stale VIN tracking data
+        # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1
         if self._cleanup_counter >= self._CLEANUP_INTERVAL:
             self._cleanup_counter = 0
             await self._async_cleanup_stale_vins()
+            await self._async_cleanup_old_descriptors()
 
         # Check for stale pending updates (debounce timer failed to fire)
         await self._async_check_stale_pending_updates(now)
@@ -1198,6 +1202,34 @@ class CardataCoordinator:
                     "Cleaned up tracking data for %d stale VIN(s)",
                     len(stale_vins),
                 )
+
+    async def _async_cleanup_old_descriptors(self) -> None:
+        """Remove descriptors that haven't been updated in MAX_DESCRIPTOR_AGE_SECONDS.
+
+        This prevents memory growth from descriptors that BMW stopped sending.
+        """
+        now = time.time()
+        max_age = self._MAX_DESCRIPTOR_AGE_SECONDS
+        total_evicted = 0
+
+        async with self._lock:
+            for vin, vehicle_state in list(self.data.items()):
+                old_descriptors = [
+                    desc
+                    for desc, state in vehicle_state.items()
+                    if state.last_seen > 0 and (now - state.last_seen) > max_age
+                ]
+                for desc in old_descriptors:
+                    del vehicle_state[desc]
+                    total_evicted += 1
+
+        if total_evicted > 0:
+            self._descriptors_evicted_count += total_evicted
+            _LOGGER.debug(
+                "Evicted %d old descriptor(s) not updated in %d days",
+                total_evicted,
+                max_age // 86400,
+            )
 
     def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
         """Apply SOC estimate calculation. Must be called while holding _lock."""
@@ -1319,6 +1351,7 @@ class CardataCoordinator:
             value=stored_value,
             unit=unit,
             timestamp=timestamp,
+            last_seen=time.time(),
         )
 
         # Update SOC tracking

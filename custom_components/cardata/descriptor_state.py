@@ -13,3 +13,4 @@ class DescriptorState:
     value: Any
     unit: str | None
     timestamp: str | None
+    last_seen: float = 0.0  # Wall clock time when last updated (for age-based eviction)
