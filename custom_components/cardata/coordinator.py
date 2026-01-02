@@ -51,7 +51,7 @@ from .descriptor_state import DescriptorState
 from .motion_detection import MotionDetector
 from .soc_tracking import SocTracking
 from .units import normalize_unit
-from .utils import redact_vin
+from .utils import is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -647,6 +647,21 @@ class CardataCoordinator:
         vin = payload.get("vin")
         data = payload.get("data") or {}
         if not vin or not isinstance(data, dict):
+            return
+
+        # Validate VIN format to prevent malformed data injection
+        if not is_valid_vin(vin):
+            _LOGGER.warning("Rejecting message with invalid VIN format: %s", redact_vin(vin))
+            return
+
+        # Limit descriptor count per message to prevent memory exhaustion
+        if len(data) > self._MAX_DESCRIPTORS_PER_VIN:
+            _LOGGER.warning(
+                "Rejecting message with too many descriptors (%d > %d) for VIN %s",
+                len(data),
+                self._MAX_DESCRIPTORS_PER_VIN,
+                redact_vin(vin),
+            )
             return
 
         async with self._lock:
