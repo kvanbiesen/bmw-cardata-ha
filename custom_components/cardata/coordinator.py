@@ -34,7 +34,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -55,7 +55,7 @@ from .message_utils import (
     sanitize_timestamp_string,
 )
 from .motion_detection import MotionDetector
-from .pending_manager import PendingManager
+from .pending_manager import PendingManager, UpdateBatcher
 from .soc_tracking import SocTracking
 from .units import normalize_unit
 from .utils import is_valid_vin, redact_vin
@@ -96,7 +96,7 @@ class CardataCoordinator:
     # Debouncing and pending update management
     _update_debounce_handle: asyncio.TimerHandle | None = field(default=None, init=False)
     _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    _pending_manager: PendingManager = field(default_factory=PendingManager, init=False)
+    _pending_manager: UpdateBatcher = field(default_factory=UpdateBatcher, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
@@ -112,6 +112,11 @@ class CardataCoordinator:
     # Derived motion detection from GPS position changes
     # When vehicle.isMoving is not available, derive it from location staleness
     _motion_detector: MotionDetector = field(default_factory=MotionDetector, init=False)
+
+    # Pending operation tracking to prevent duplicate work
+    _basic_data_pending: PendingManager[str] = field(
+        default_factory=lambda: PendingManager("basic_data"), init=False
+    )
 
     @staticmethod
     def _safe_vin_suffix(vin: str | None) -> str:
@@ -1309,6 +1314,16 @@ class CardataCoordinator:
         return metadata
 
     async def async_apply_basic_data(self, vin: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        """Thread-safe async version of apply_basic_data."""
-        async with self._lock:
-            return self.apply_basic_data(vin, payload)
+        """Thread-safe async version of apply_basic_data with deduplication.
+
+        Returns None if another task is already processing this VIN's basic data.
+        """
+        # Try to acquire - returns False if already pending
+        if not await self._basic_data_pending.acquire(vin):
+            return None
+
+        try:
+            async with self._lock:
+                return self.apply_basic_data(vin, payload)
+        finally:
+            await self._basic_data_pending.release(vin)

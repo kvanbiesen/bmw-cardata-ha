@@ -27,7 +27,7 @@
 
 from datetime import datetime, timedelta
 
-from custom_components.cardata.pending_manager import PendingManager, PendingSnapshot
+from custom_components.cardata.pending_manager import UpdateBatcher, PendingSnapshot
 
 
 class TestPendingManagerBasic:
@@ -35,14 +35,14 @@ class TestPendingManagerBasic:
 
     def test_add_update_single(self):
         """Test adding a single update."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         assert pm.add_update("VIN123", "descriptor.a") is True
         assert pm.get_total_count() == 1
         assert pm.has_pending() is True
 
     def test_add_update_multiple_same_vin(self):
         """Test adding multiple updates for same VIN."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.add_update("VIN123", "descriptor.b")
         pm.add_update("VIN123", "descriptor.c")
@@ -50,26 +50,26 @@ class TestPendingManagerBasic:
 
     def test_add_update_duplicate(self):
         """Test adding duplicate descriptor (set deduplication)."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.add_update("VIN123", "descriptor.a")
         assert pm.get_total_count() == 1
 
     def test_add_new_sensor(self):
         """Test adding new sensor notification."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         assert pm.add_new_sensor("VIN123", "sensor.temp") is True
         assert pm.get_total_count() == 1
 
     def test_add_new_binary(self):
         """Test adding new binary sensor notification."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         assert pm.add_new_binary("VIN123", "binary.door") is True
         assert pm.get_total_count() == 1
 
     def test_multiple_types_combined(self):
         """Test combining updates, sensors, and binary sensors."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.add_new_sensor("VIN123", "sensor.temp")
         pm.add_new_binary("VIN123", "binary.door")
@@ -77,14 +77,14 @@ class TestPendingManagerBasic:
 
     def test_started_at_tracked(self):
         """Test that started_at is set on first add."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         assert pm.started_at is None
         pm.add_update("VIN123", "descriptor.a")
         assert pm.started_at is not None
 
     def test_has_pending_empty(self):
         """Test has_pending returns False when empty."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         assert pm.has_pending() is False
 
 
@@ -93,7 +93,7 @@ class TestPendingManagerSnapshot:
 
     def test_snapshot_returns_data(self):
         """Test that snapshot contains the correct data."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.add_update("VIN456", "descriptor.b")
         pm.add_new_sensor("VIN123", "sensor.temp")
@@ -110,7 +110,7 @@ class TestPendingManagerSnapshot:
 
     def test_snapshot_clears_state(self):
         """Test that snapshot clears all internal state."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.add_new_sensor("VIN123", "sensor.temp")
         pm.add_new_binary("VIN123", "binary.door")
@@ -123,7 +123,7 @@ class TestPendingManagerSnapshot:
 
     def test_snapshot_empty(self):
         """Test snapshot on empty manager."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         snapshot = pm.snapshot_and_clear()
         assert len(snapshot.updates) == 0
         assert len(snapshot.new_sensors) == 0
@@ -135,7 +135,7 @@ class TestPendingManagerRemove:
 
     def test_remove_vin_clears_all_types(self):
         """Test removing a VIN clears all data types for that VIN."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.add_new_sensor("VIN123", "sensor.temp")
         pm.add_new_binary("VIN123", "binary.door")
@@ -147,7 +147,7 @@ class TestPendingManagerRemove:
 
     def test_remove_nonexistent_vin(self):
         """Test removing non-existent VIN doesn't raise."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.remove_vin("NONEXISTENT")  # Should not raise
         assert pm.get_total_count() == 1
@@ -158,7 +158,7 @@ class TestPendingManagerStaleClearing:
 
     def test_clear_stale_when_not_stale(self):
         """Test that non-stale updates are not cleared."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
 
         now = datetime.now()
@@ -169,7 +169,7 @@ class TestPendingManagerStaleClearing:
 
     def test_clear_stale_when_stale(self):
         """Test that stale updates are cleared."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
         pm.add_update("VIN123", "descriptor.b")
 
@@ -185,7 +185,7 @@ class TestPendingManagerStaleClearing:
 
     def test_clear_stale_no_pending(self):
         """Test clearing stale when nothing pending."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         now = datetime.now()
         cleared = pm.check_and_clear_stale(now)
         assert cleared == 0
@@ -196,7 +196,7 @@ class TestPendingManagerEviction:
 
     def test_evict_updates(self):
         """Test evict_updates removes half from largest VIN."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         # Add many updates to one VIN
         for i in range(10):
             pm.add_update("VIN123", f"descriptor.{i}")
@@ -209,13 +209,13 @@ class TestPendingManagerEviction:
 
     def test_evict_updates_empty(self):
         """Test evict_updates on empty manager."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         evicted = pm.evict_updates()
         assert evicted == 0
 
     def test_evict_vin(self):
         """Test evict_vin removes VIN with fewest updates."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.add_update("VIN_SMALL", "descriptor.a")
         for i in range(10):
             pm.add_update("VIN_LARGE", f"descriptor.{i}")
@@ -228,13 +228,13 @@ class TestPendingManagerEviction:
 
     def test_evict_vin_empty(self):
         """Test evict_vin on empty manager."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         evicted = pm.evict_vin()
         assert evicted == 0
 
     def test_per_vin_limit_triggers_eviction(self):
         """Test that per-VIN limit triggers eviction."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.MAX_PER_VIN = 10  # Lower limit for testing
 
         # Add up to the limit
@@ -249,7 +249,7 @@ class TestPendingManagerEviction:
 
     def test_max_total_limit(self):
         """Test that MAX_TOTAL limit is enforced."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.MAX_TOTAL = 20  # Lower limit for testing
 
         # Try to add more than max
@@ -261,7 +261,7 @@ class TestPendingManagerEviction:
 
     def test_max_vins_limit(self):
         """Test that MAX_VINS limit is enforced."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.MAX_VINS = 3  # Lower limit for testing
 
         # Add updates for 3 VINs
@@ -282,7 +282,7 @@ class TestPendingManagerEvictedCount:
 
     def test_evicted_count_increments(self):
         """Test that evicted_count tracks evictions."""
-        pm = PendingManager()
+        pm = UpdateBatcher()
         pm.MAX_TOTAL = 10  # Lower limit for testing
 
         assert pm.evicted_count == 0

@@ -36,6 +36,7 @@ import aiohttp
 
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
+from .pending_manager import PendingManager
 from .quota import QuotaManager
 from .ratelimit import (
     ContainerRateLimiter,
@@ -68,7 +69,6 @@ class CardataRuntimeData:
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
-    
 
     # Rate limit protection (NEW!)
     rate_limit_tracker: RateLimitTracker | None = None
@@ -77,6 +77,9 @@ class CardataRuntimeData:
 
     # Lock to protect concurrent token refresh operations
     _token_refresh_lock: asyncio.Lock | None = None
+
+    # Pending operation managers to prevent duplicate work
+    _image_fetch_pending: PendingManager[str] | None = None
 
     # Session health tracking
     _consecutive_session_failures: int = 0
@@ -92,11 +95,18 @@ class CardataRuntimeData:
             self.container_rate_limiter = ContainerRateLimiter(max_per_hour=3, max_per_day=10)
         if self._token_refresh_lock is None:
             self._token_refresh_lock = asyncio.Lock()
-    
+        if self._image_fetch_pending is None:
+            self._image_fetch_pending = PendingManager("image_fetch")
+
     @property
     def token_refresh_lock(self) -> asyncio.Lock | None:
         """Get the token refresh lock."""
         return self._token_refresh_lock
+
+    @property
+    def image_fetch_pending(self) -> PendingManager[str] | None:
+        """Get the image fetch pending manager."""
+        return self._image_fetch_pending
 
     @property
     def session_healthy(self) -> bool:

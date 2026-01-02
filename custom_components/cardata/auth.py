@@ -146,13 +146,13 @@ async def refresh_tokens_for_entry(
 
     # get runtime to access the token refresh lock
     runtime: CardataRuntimeData | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    
+
     # if runtime exists and has a lock, we"ll use it
     if runtime and runtime.token_refresh_lock:
         lock = runtime.token_refresh_lock
 
         try:
-            await asyncio.wait_for(lock.acquire(),timeout=30.0)
+            await asyncio.wait_for(lock.acquire(), timeout=30.0)
         except TimeoutError:
             _LOGGER.warning(
                 "Token Refresh lock timeout for entry %s; another refresh in progress",
@@ -186,7 +186,7 @@ async def _do_token_refresh(
     container_manager: CardataContainerManager | None,
     hass: HomeAssistant,
 ) -> None:
-    """Internal function to perform the actual token refresh."""        
+    """Internal function to perform the actual token refresh."""
     data = dict(entry.data)
     refresh_token = data.get("refresh_token")
     client_id = data.get("client_id")
