@@ -1,29 +1,4 @@
-# Copyright (c) 2025, Renaud Allard <renaud@allard.it>, Kris Van Biesen <kvanbiesen@gmail.com>, Jyri Saukkonen <jyri.saukkonen+jjyksi@gmail.com>
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice,
-#    this list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-#    this list of conditions and the following disclaimer in the documentation
-#    and/or other materials provided with the distribution.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-# POSSIBILITY OF SUCH DAMAGE.
-
-"""SOC (State of Charge) estimation with adaptive efficiency learning and drift correction."""
+"""SOC tracking and battery estimation for BMW CarData."""
 
 from __future__ import annotations
 
@@ -88,7 +63,6 @@ class SocTracking:
     EFFICIENCY_MAX: ClassVar[float] = (
         1.0  # Maximum efficiency (100%) - allows full compensation if BMW reports DC power
     )
-    EFFICIENCY_DEFAULT: ClassVar[float] = CHARGING_EFFICIENCY
     # Time constant for efficiency learning EMA (similar to power EMA).
     # Longer observations get more weight: alpha = 1 - exp(-dt/tau)
     # 10 minutes balances responsiveness with stability for typical SOC update intervals.
@@ -179,7 +153,9 @@ class SocTracking:
                 return
 
             # Fresh actual data arrived - unconditionally reset stale flag
-            # (no check needed, avoids race condition with estimate())
+            # NOTE: This can race with estimate() reading the flag, but that's acceptable:
+            # worst case is a duplicate stale log message, which doesn't affect functionality.
+            # Using a lock here would add overhead to a hot path (called on every SOC update).
             self._stale_logged = False
 
             # Reject out-of-order messages (stale data arriving late)

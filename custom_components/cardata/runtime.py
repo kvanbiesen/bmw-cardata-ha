@@ -68,6 +68,7 @@ class CardataRuntimeData:
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
+    
 
     # Rate limit protection (NEW!)
     rate_limit_tracker: RateLimitTracker | None = None
@@ -89,7 +90,9 @@ class CardataRuntimeData:
             self.unauthorized_protection = UnauthorizedLoopProtection(max_attempts=3, cooldown_hours=1)
         if self.container_rate_limiter is None:
             self.container_rate_limiter = ContainerRateLimiter(max_per_hour=3, max_per_day=10)
-
+        if self._token_refresh_lock is None:
+            self._token_refresh_lock = asyncio.Lock()
+    
     @property
     def token_refresh_lock(self) -> asyncio.Lock | None:
         """Get the token refresh lock."""

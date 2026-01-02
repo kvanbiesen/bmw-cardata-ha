@@ -23,7 +23,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Descriptor state dataclass for BMW CarData streaming payloads."""
+"""Data structures for BMW CarData coordinator."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from typing import Any
 
 @dataclass
 class DescriptorState:
-    """State of a single descriptor for a vehicle."""
+    """State for a single descriptor (value, unit, timestamp)."""
 
     value: Any
     unit: str | None

@@ -27,7 +27,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from custom_components.cardata.soc_estimator import SocTracking
+from custom_components.cardata.soc_tracking import SocTracking
 
 
 class TestSocTrackingInitialState:
@@ -52,7 +52,7 @@ class TestSocTrackingInitialState:
         """Test class constants are defined and reasonable."""
         assert SocTracking.EFFICIENCY_MIN == 0.70
         assert SocTracking.EFFICIENCY_MAX == 1.0
-        assert SocTracking.EFFICIENCY_DEFAULT == 0.92
+        assert SocTracking.CHARGING_EFFICIENCY == 0.92  # Default when learned_efficiency is None
         assert SocTracking.MAX_ESTIMATE_AGE_SECONDS == 3600.0
         assert SocTracking.DRIFT_WARNING_THRESHOLD == 5.0
         assert SocTracking.DRIFT_CORRECTION_THRESHOLD == 10.0

@@ -157,7 +157,8 @@ class TestSocTracking:
         # Test that bounds are valid
         assert SocTracking.EFFICIENCY_MIN == 0.70
         assert SocTracking.EFFICIENCY_MAX == 1.0
-        assert SocTracking.EFFICIENCY_MIN <= SocTracking.EFFICIENCY_DEFAULT <= SocTracking.EFFICIENCY_MAX
+        # CHARGING_EFFICIENCY is the default used when learned_efficiency is None
+        assert SocTracking.EFFICIENCY_MIN <= SocTracking.CHARGING_EFFICIENCY <= SocTracking.EFFICIENCY_MAX
 
 
 class TestMessageValidation:
@@ -282,7 +283,7 @@ class TestDerivedMotion:
         result = coordinator._update_location_tracking(vin, 52.5200, 13.4050)
 
         assert result is True  # First position is recorded as a change
-        assert vin in coordinator._last_location
+        assert vin in coordinator._motion_detector.get_tracked_vins()
 
     def test_update_location_tracking_small_movement(self, coordinator):
         """Test small movement is not detected as significant."""
@@ -321,9 +322,9 @@ class TestDerivedMotion:
         vin = "WBA12345678901234"
         now = datetime.now(UTC)
 
-        # Set recent location change
-        coordinator._last_location[vin] = (52.5200, 13.4050)
-        coordinator._last_location_change[vin] = now
+        # Set recent location change via motion detector
+        coordinator._motion_detector._last_location[vin] = (52.5200, 13.4050)
+        coordinator._motion_detector._last_location_change[vin] = now
 
         result = coordinator.get_derived_is_moving(vin)
 
@@ -334,9 +335,9 @@ class TestDerivedMotion:
         vin = "WBA12345678901234"
         old_time = datetime.now(UTC) - timedelta(minutes=15)  # Beyond stale threshold
 
-        # Set old location change
-        coordinator._last_location[vin] = (52.5200, 13.4050)
-        coordinator._last_location_change[vin] = old_time
+        # Set old location change via motion detector
+        coordinator._motion_detector._last_location[vin] = (52.5200, 13.4050)
+        coordinator._motion_detector._last_location_change[vin] = old_time
 
         result = coordinator.get_derived_is_moving(vin)
 
