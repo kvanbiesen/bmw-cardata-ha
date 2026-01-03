@@ -90,7 +90,14 @@ class CardataBinarySensor(CardataEntity, BinarySensorEntity):
         if getattr(self, "_attr_is_on", None) is None:
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
-                self._attr_is_on = last_state.state.lower() == "on"
+                # Special handling for vehicle.isMoving: don't restore state
+                # The motion detector loses GPS history on restart, so restored
+                # "moving" state would be stale. Let the coordinator provide fresh state.
+                if self.descriptor == "vehicle.isMoving":
+                    # Start with False (not moving) as safe default
+                    self._attr_is_on = False
+                else:
+                    self._attr_is_on = last_state.state.lower() == "on"
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,

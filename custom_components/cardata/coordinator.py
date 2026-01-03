@@ -92,6 +92,8 @@ class CardataCoordinator:
     _ac_voltage_v: dict[str, float] = field(default_factory=dict, init=False)
     _ac_current_a: dict[str, float] = field(default_factory=dict, init=False)
     _ac_phase_count: dict[str, int] = field(default_factory=dict, init=False)
+    # Cache last sent derived isMoving state to avoid duplicate updates
+    _last_derived_is_moving: dict[str, bool | None] = field(default_factory=dict, init=False)
 
     # Debouncing and pending update management
     _update_debounce_handle: asyncio.TimerHandle | None = field(default=None, init=False)
@@ -910,6 +912,25 @@ class CardataCoordinator:
             self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         self._safe_dispatcher_send(self.signal_diagnostics)
 
+        # Check for derived isMoving state changes (GPS staleness timeout)
+        # This ensures the sensor updates when GPS becomes stale (e.g., car in garage)
+        for vin in self._motion_detector.get_tracked_vins():
+            # Check if vehicle.isMoving entity exists for this VIN
+            if self._motion_detector.has_signaled_entity(vin):
+                # Get current derived state
+                current_derived = self.get_derived_is_moving(vin)
+                # Get stored state (if BMW provides it directly)
+                stored_state = self.get_state(vin, "vehicle.isMoving")
+
+                # Only update if we're using derived state (no BMW-provided state)
+                if stored_state is None and current_derived is not None:
+                    # Check if state actually changed since last update
+                    last_sent = self._last_derived_is_moving.get(vin)
+                    if last_sent != current_derived:
+                        # State changed - update cache and signal
+                        self._last_derived_is_moving[vin] = current_derived
+                        self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
+
         # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1
         if self._cleanup_counter >= self._CLEANUP_INTERVAL:
@@ -958,6 +979,7 @@ class CardataCoordinator:
                 self._ac_voltage_v,
                 self._ac_current_a,
                 self._ac_phase_count,
+                self._last_derived_is_moving,
             ]
 
             stale_vins: set[str] = set()

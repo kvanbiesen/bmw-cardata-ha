@@ -151,8 +151,11 @@ async def refresh_tokens_for_entry(
     if runtime and runtime.token_refresh_lock:
         lock = runtime.token_refresh_lock
 
+        # Track whether we successfully acquired the lock
+        lock_acquired = False
         try:
             await asyncio.wait_for(lock.acquire(), timeout=30.0)
+            lock_acquired = True
         except TimeoutError:
             _LOGGER.warning("Token Refresh lock timeout for entry %s; another refresh in progress", entry.entry_id)
             raise CardataAuthError("Token refresh already in progress") from None
@@ -166,7 +169,9 @@ async def refresh_tokens_for_entry(
             await _do_token_refresh(entry, session, manager, container_manager, hass)
 
         finally:
-            lock.release()
+            # Only release if we actually acquired the lock
+            if lock_acquired:
+                lock.release()
     else:
         # no lock available( should not happen but run as fallback )
         _LOGGER.debug("No token refresh lock available; proceeding without lock")

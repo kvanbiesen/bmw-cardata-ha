@@ -283,7 +283,7 @@ class SocTracking:
             return
         try:
             energy_window_hours = (ts - self._efficiency_energy_start).total_seconds() / 3600.0
-        except (TypeError, OverflowError) as exc:
+        except (TypeError, OverflowError, ZeroDivisionError) as exc:
             _LOGGER.debug("Datetime arithmetic failed in efficiency learning: %s", exc)
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
@@ -308,13 +308,27 @@ class SocTracking:
 
         # Calculate expected change using integrated energy (not instantaneous power)
         # This correctly handles varying power levels during the measurement period
-        if self._efficiency_energy_kwh <= 0 or self.max_energy_kwh is None:
+        if self._efficiency_energy_kwh <= 0 or self.max_energy_kwh is None or self.max_energy_kwh <= 0:
             self._last_efficiency_soc = actual_soc
             self._last_efficiency_time = ts
             self._efficiency_energy_kwh = 0.0
             self._efficiency_energy_start = None
             return
-        expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
+
+        try:
+            expected_change = (self._efficiency_energy_kwh / self.max_energy_kwh) * 100.0
+        except ZeroDivisionError:
+            _LOGGER.debug(
+                "Efficiency learning: division by zero in expected_change calculation "
+                "(energy=%.3f kWh, max_energy=%.3f kWh), skipping",
+                self._efficiency_energy_kwh,
+                self.max_energy_kwh or 0.0,
+            )
+            self._last_efficiency_soc = actual_soc
+            self._last_efficiency_time = ts
+            self._efficiency_energy_kwh = 0.0
+            self._efficiency_energy_start = None
+            return
 
         # Require minimum expected change to avoid extreme efficiency ratios from
         # near-zero denominators (e.g., 1% actual / 0.001% expected = 1000x efficiency).
@@ -330,8 +344,16 @@ class SocTracking:
             # Keep accumulating energy until we have enough for a valid measurement
             return
 
-        # Calculate observed efficiency
-        observed_efficiency = actual_change / expected_change
+        # Calculate observed efficiency (with defensive check against division by zero)
+        try:
+            observed_efficiency = actual_change / expected_change
+        except ZeroDivisionError:
+            _LOGGER.debug(
+                "Efficiency learning: division by zero (actual=%.3f, expected=%.3f), skipping",
+                actual_change,
+                expected_change,
+            )
+            return
 
         # Sanity check bounds - if out of range, keep baseline and energy intact
         # so spurious SOC readings get averaged out by the next valid observation

@@ -20,13 +20,19 @@ class MotionDetector:
     # Meters of movement required to count as "moving"
     MOTION_DISTANCE_THRESHOLD_M: ClassVar[float] = 50.0
 
+    # Minutes without ANY GPS update to consider data stale (car in garage, no GPS signal)
+    GPS_UPDATE_STALE_MINUTES: ClassVar[float] = 30.0
+
     def __init__(self) -> None:
         """Initialize motion detector."""
         # VIN -> (latitude, longitude) of last known position
         self._last_location: dict[str, tuple[float, float]] = {}
 
-        # VIN -> datetime of last significant position change (>50m movement)
+        # VIN -> datetime of last significant position change (moved > 50m)
         self._last_location_change: dict[str, datetime] = {}
+
+        # VIN -> datetime of last GPS update (any update, even if position unchanged)
+        self._last_gps_update: dict[str, datetime] = {}
 
         # VINs that have had vehicle.isMoving entity created
         self._is_moving_entity_signaled: set[str] = set()
@@ -63,6 +69,9 @@ class MotionDetector:
         now = datetime.now(UTC)
         last = self._last_location.get(vin)
 
+        # Always update the GPS timestamp - we got a GPS reading
+        self._last_gps_update[vin] = now
+
         if last is None:
             # First location seen for this VIN - just establish baseline
             # Don't count this as movement (car might be parked/charging)
@@ -77,7 +86,7 @@ class MotionDetector:
             self._last_location_change[vin] = now
             return True
 
-        # No significant movement
+        # No significant movement, but GPS is still updating
         return False
 
     def set_charging(self, vin: str, is_charging: bool) -> None:
@@ -98,7 +107,7 @@ class MotionDetector:
 
         Returns:
             True if moved within last 10 minutes (vehicle is moving),
-            False if stationary for 10+ minutes, charging, or no movement detected yet,
+            False if stationary for 10+ minutes, charging, GPS stopped, or no movement detected yet,
             None if no location data available at all
         """
         # If charging, definitely not moving
@@ -110,10 +119,28 @@ class MotionDetector:
             return False
 
         last_change = self._last_location_change.get(vin)
-        if last_change is None:
+        last_gps_update = self._last_gps_update.get(vin)
+
+        # No GPS data ever received
+        if last_change is None and last_gps_update is None:
             return None
 
-        elapsed_minutes = (datetime.now(UTC) - last_change).total_seconds() / 60.0
+        now = datetime.now(UTC)
+
+        # Check if GPS updates have completely stopped (e.g., car in garage)
+        if last_gps_update is not None:
+            gps_age_minutes = (now - last_gps_update).total_seconds() / 60.0
+            if gps_age_minutes > self.GPS_UPDATE_STALE_MINUTES:
+                # GPS hasn't updated in 30+ minutes - likely in garage or no signal
+                # Return False (not moving) instead of None to avoid "unknown" state
+                return False
+
+        # GPS is updating, check if vehicle has moved recently
+        if last_change is None:
+            # Have GPS updates but never recorded movement - vehicle is stationary
+            return False
+
+        elapsed_minutes = (now - last_change).total_seconds() / 60.0
         return elapsed_minutes < self.MOTION_LOCATION_STALE_MINUTES
 
     def has_signaled_entity(self, vin: str) -> bool:
@@ -128,6 +155,7 @@ class MotionDetector:
         """Remove all tracking data for a VIN."""
         self._last_location.pop(vin, None)
         self._last_location_change.pop(vin, None)
+        self._last_gps_update.pop(vin, None)
         self._is_moving_entity_signaled.discard(vin)
         self._charging_vins.discard(vin)
 
