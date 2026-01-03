@@ -614,12 +614,20 @@ class SocTracking:
                         if not self._stale_logged:  # only log once per stale episode
                             _LOGGER.debug(
                                 "SOC estimate stale (%.0f seconds since last actual); "
-                                "clearing estimate and returning last known value %.1f%%",
+                                "freezing estimate at %.1f%% (last_soc=%.1f%%)",
                                 time_since_actual,
+                                self.estimated_percent or 0.0,
                                 self.last_soc_percent or 0.0,
                             )
                             self._stale_logged = True
-                        # Always clear stale state and return (not just on first detection)
+                        # During charging, NEVER return a lower value than the current estimate.
+                        # Freeze at the current estimate rather than dropping to last_soc_percent.
+                        # This prevents apparent SOC drops during charging when data goes stale.
+                        if self.charging_active and self.estimated_percent is not None:
+                            # Freeze estimate - stop extrapolating but keep current value
+                            self.last_estimate_time = now  # Prevent further accumulation
+                            return self.estimated_percent
+                        # Not charging: clear stale state and return last known actual
                         # Note: Do NOT clear charging_active here - stale data doesn't mean charging stopped,
                         # it means we lost connectivity. Let charging_active be updated only by actual
                         # status messages from the vehicle.
