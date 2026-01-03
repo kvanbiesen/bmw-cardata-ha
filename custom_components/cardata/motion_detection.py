@@ -25,11 +25,14 @@ class MotionDetector:
         # VIN -> (latitude, longitude) of last known position
         self._last_location: dict[str, tuple[float, float]] = {}
 
-        # VIN -> datetime of last position change
+        # VIN -> datetime of last significant position change (>50m movement)
         self._last_location_change: dict[str, datetime] = {}
 
         # VINs that have had vehicle.isMoving entity created
         self._is_moving_entity_signaled: set[str] = set()
+
+        # VINs that are currently charging (definitely not moving)
+        self._charging_vins: set[str] = set()
 
     @staticmethod
     def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -55,16 +58,17 @@ class MotionDetector:
 
         Returns:
             True if position changed by more than MOTION_DISTANCE_THRESHOLD_M,
-            False otherwise
+            False otherwise (including first location - baseline only)
         """
         now = datetime.now(UTC)
         last = self._last_location.get(vin)
 
         if last is None:
-            # First location seen for this VIN
+            # First location seen for this VIN - just establish baseline
+            # Don't count this as movement (car might be parked/charging)
             self._last_location[vin] = (lat, lon)
-            self._last_location_change[vin] = now
-            return True
+            # Don't set _last_location_change - no movement detected yet
+            return False
 
         distance = self._calculate_distance(last[0], last[1], lat, lon)
         if distance > self.MOTION_DISTANCE_THRESHOLD_M:
@@ -76,6 +80,16 @@ class MotionDetector:
         # No significant movement
         return False
 
+    def set_charging(self, vin: str, is_charging: bool) -> None:
+        """Update charging state for a VIN.
+
+        When charging is active, the vehicle is definitely not moving.
+        """
+        if is_charging:
+            self._charging_vins.add(vin)
+        else:
+            self._charging_vins.discard(vin)
+
     def is_moving(self, vin: str) -> bool | None:
         """Determine if vehicle is currently moving based on GPS history.
 
@@ -84,9 +98,17 @@ class MotionDetector:
 
         Returns:
             True if moved within last 10 minutes (vehicle is moving),
-            False if stationary for 10+ minutes (vehicle is parked),
-            None if no location data available
+            False if stationary for 10+ minutes, charging, or no movement detected yet,
+            None if no location data available at all
         """
+        # If charging, definitely not moving
+        if vin in self._charging_vins:
+            return False
+
+        # If we have location but no movement detected yet, return False (parked)
+        if vin in self._last_location and vin not in self._last_location_change:
+            return False
+
         last_change = self._last_location_change.get(vin)
         if last_change is None:
             return None
@@ -107,6 +129,7 @@ class MotionDetector:
         self._last_location.pop(vin, None)
         self._last_location_change.pop(vin, None)
         self._is_moving_entity_signaled.discard(vin)
+        self._charging_vins.discard(vin)
 
     def get_tracked_vins(self) -> set[str]:
         """Get all VINs currently being tracked."""

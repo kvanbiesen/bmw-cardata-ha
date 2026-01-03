@@ -277,13 +277,15 @@ class TestDerivedMotion:
             return coord
 
     def test_update_location_tracking_first_location(self, coordinator):
-        """Test first location update returns True (new position recorded)."""
+        """Test first location establishes baseline but doesn't count as movement."""
         vin = "WBA12345678901234"
 
         result = coordinator._update_location_tracking(vin, 52.5200, 13.4050)
 
-        assert result is True  # First position is recorded as a change
+        assert result is False  # First position is baseline only, not movement
         assert vin in coordinator._motion_detector.get_tracked_vins()
+        # Should return False (parked) since no movement detected yet
+        assert coordinator.get_derived_is_moving(vin) is False
 
     def test_update_location_tracking_small_movement(self, coordinator):
         """Test small movement is not detected as significant."""
