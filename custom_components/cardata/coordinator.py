@@ -319,6 +319,8 @@ class CardataCoordinator:
             if isinstance(value, str):
                 tracking.update_status(value)
                 testing_tracking.update_status(value)
+                # Update motion detector - if charging, car is definitely not moving
+                self._motion_detector.set_charging(vin, tracking.charging_active)
                 return True
             return False
         elif descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
