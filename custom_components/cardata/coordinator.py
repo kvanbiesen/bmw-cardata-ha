@@ -317,8 +317,8 @@ class CardataCoordinator:
             return True
         elif descriptor == "vehicle.drivetrain.electricEngine.charging.status":
             if isinstance(value, str):
-                tracking.update_status(value)
-                testing_tracking.update_status(value)
+                tracking.update_status(value, parsed_ts)
+                testing_tracking.update_status(value, parsed_ts)
                 # Update motion detector - if charging, car is definitely not moving
                 self._motion_detector.set_charging(vin, tracking.charging_active)
                 return True

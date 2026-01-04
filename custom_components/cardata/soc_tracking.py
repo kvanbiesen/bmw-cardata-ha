@@ -27,6 +27,7 @@ class SocTracking:
     charging_paused: bool = False  # Power=0 while charging_active=true
     _consecutive_zero_power: int = 0  # Counter for pause hysteresis
     _charging_ended_at: datetime | None = None  # When charging stopped (for stale data rejection)
+    _last_status_time: datetime | None = None  # When charging status was last updated
     last_soc_percent: float | None = None
     rate_per_hour: float | None = None
     estimated_percent: float | None = None
@@ -554,16 +555,32 @@ class SocTracking:
         except Exception:
             _LOGGER.exception("Unexpected error in update_power")
 
-    def update_status(self, status: str | None) -> None:
+    def update_status(self, status: str | None, timestamp: datetime | None = None) -> None:
         try:
             if status is None:
                 return
+
+            # Normalize timestamp for out-of-order detection
+            ts = self._normalize_timestamp(timestamp) or datetime.now(UTC)
+
+            # Reject out-of-order status messages (stale data arriving late)
+            if self._last_status_time is not None:
+                normalized_last = self._normalize_timestamp(self._last_status_time)
+                if normalized_last is not None and ts < normalized_last:
+                    _LOGGER.debug(
+                        "Ignoring out-of-order status update: received=%s ts=%s, but already have ts=%s",
+                        status,
+                        ts.isoformat(),
+                        normalized_last.isoformat(),
+                    )
+                    return
+
             new_charging_active = status in {"CHARGINGACTIVE", "CHARGING_IN_PROGRESS"}
             # Snap estimate forward when charging stops, so we don't freeze mid-way
             # Must be done BEFORE clearing charging_active, otherwise rate won't apply
             if self.charging_active and not new_charging_active:
-                self.estimate(datetime.now(UTC))
-                self._charging_ended_at = datetime.now(UTC)  # Start cooldown for stale data rejection
+                self.estimate(ts)  # Use message timestamp, not now
+                self._charging_ended_at = ts  # Start cooldown for stale data rejection
             # Clear cooldown when charging starts
             if not self.charging_active and new_charging_active:
                 self._charging_ended_at = None
@@ -574,6 +591,7 @@ class SocTracking:
                 self._last_efficiency_time = None
                 self._efficiency_energy_kwh = 0.0
             self.charging_active = new_charging_active
+            self._last_status_time = ts  # Track when status was last updated
             self._recalculate_rate()
         except Exception:
             _LOGGER.exception("Unexpected error in update_status")
