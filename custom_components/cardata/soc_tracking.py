@@ -605,9 +605,9 @@ class SocTracking:
                 if base is None:
                     return None
                 self.estimated_percent = base
+                # Use normalized timestamp for estimate baseline
+                # Don't overwrite last_update - it should already be normalized from update_actual_soc()
                 normalized_last_update = self._normalize_timestamp(self.last_update)
-                if normalized_last_update is not None:
-                    self.last_update = normalized_last_update
                 self.last_estimate_time = normalized_last_update or now
                 return self.estimated_percent
 
@@ -618,15 +618,19 @@ class SocTracking:
             if normalized_estimate_time is None:
                 self.last_estimate_time = now
                 return self.estimated_percent
+            # Store the normalized timestamp to prevent normalization drift on subsequent calls
+            # This ensures we're always working with consistent UTC timestamps
             self.last_estimate_time = normalized_estimate_time
 
             # Check if estimate is stale (no actual SOC update for too long)
             if self.last_update is not None:
                 normalized_last_update = self._normalize_timestamp(self.last_update)
                 if normalized_last_update is None:
+                    # Invalid timestamp - clear it
                     self.last_update = None
                 else:
-                    self.last_update = normalized_last_update
+                    # Use normalized value for calculation but don't overwrite stored value
+                    # The stored value should already be normalized from update_actual_soc()
                     try:
                         time_since_actual = (now - normalized_last_update).total_seconds()
                     except (TypeError, OverflowError) as exc:
@@ -647,7 +651,8 @@ class SocTracking:
                         # This prevents apparent SOC drops during charging when data goes stale.
                         if self.charging_active and self.estimated_percent is not None:
                             # Freeze estimate - stop extrapolating but keep current value
-                            self.last_estimate_time = now  # Prevent further accumulation
+                            # Update with current time to prevent further accumulation
+                            self.last_estimate_time = now
                             return self.estimated_percent
                         # Not charging: clear stale state and return last known actual
                         # Note: Do NOT clear charging_active here - stale data doesn't mean charging stopped,
