@@ -487,8 +487,14 @@ class SocTracking:
 
             # Advance the running estimate to the moment this power sample was taken
             # so the previous charging rate is accounted for before we swap in the
-            # new value.
-            self.estimate(target_time)
+            # new value. Only advance if target_time is not before last_estimate_time
+            # (descriptors can arrive out-of-order with different timestamps).
+            if self.last_estimate_time is None:
+                self.estimate(target_time)
+            else:
+                normalized_estimate_time = self._normalize_timestamp(self.last_estimate_time)
+                if normalized_estimate_time is None or target_time >= normalized_estimate_time:
+                    self.estimate(target_time)
 
             # Compute all new values FIRST before modifying any state.
             # This ensures atomic-ish updates: if any computation fails, state unchanged.
