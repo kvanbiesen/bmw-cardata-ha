@@ -474,8 +474,9 @@ async def async_cleanup_ghost_devices(
     Only removes devices if they've been registered for a while to avoid removing
     legitimate new cars that are still receiving initial telemetry data.
     """
-    from homeassistant.helpers import entity_registry as er
     import time
+
+    from homeassistant.helpers import entity_registry as er
 
     entity_registry = er.async_get(hass)
 
