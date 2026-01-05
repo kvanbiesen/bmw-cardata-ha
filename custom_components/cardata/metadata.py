@@ -470,23 +470,23 @@ async def async_cleanup_ghost_devices(
     device_registry,
 ) -> None:
     """Remove devices for VINs that have insufficient telemetry data (ghost cars) or no entities.
-    
+
     Only removes devices if they've been registered for a while to avoid removing
     legitimate new cars that are still receiving initial telemetry data.
     """
     from homeassistant.helpers import entity_registry as er
     import time
-    
+
     entity_registry = er.async_get(hass)
-    
+
     # Get all devices for this config entry
     devices = device_registry.devices.get_devices_for_config_entry_id(entry.entry_id)
-    
+
     # Only cleanup devices that have been around for at least 5 minutes
     # This prevents removing new cars that are still receiving telemetry
     MIN_DEVICE_AGE_SECONDS = 300  # 5 minutes
     current_time = time.time()
-    
+
     removed_count = 0
     for device in devices:
         # Check if this is a cardata device by looking at identifiers
@@ -494,10 +494,10 @@ async def async_cleanup_ghost_devices(
             if identifier[0] == DOMAIN:
                 vin = identifier[1]
                 redacted_vin = redact_vin(vin)
-                
+
                 # Calculate device age (time since creation)
                 device_age = current_time - (device.created_at.timestamp() if device.created_at else current_time)
-                
+
                 # Skip cleanup for new devices (less than 5 minutes old)
                 # This gives new cars time to receive full telemetry
                 if device_age < MIN_DEVICE_AGE_SECONDS:
@@ -507,10 +507,10 @@ async def async_cleanup_ghost_devices(
                         device_age,
                     )
                     break
-                
+
                 # Check if coordinator has telemetry data for this VIN
                 telemetry_data = coordinator.data.get(vin, {})
-                
+
                 # Reason 1: If VIN has telemetry but insufficient data, remove the device
                 if telemetry_data and len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
                     _LOGGER.info(
@@ -521,7 +521,7 @@ async def async_cleanup_ghost_devices(
                     device_registry.async_remove_device(device.id)
                     removed_count += 1
                     break
-                
+
                 # Reason 2: If device has zero entities attached, remove it (metadata-only ghost)
                 entities = entity_registry.entities.get_entries_for_device_id(device.id)
                 if len(entities) == 0:
@@ -532,7 +532,7 @@ async def async_cleanup_ghost_devices(
                     device_registry.async_remove_device(device.id)
                     removed_count += 1
                     break
-    
+
     if removed_count > 0:
         _LOGGER.info("Removed %d ghost car device(s) with insufficient data or no entities", removed_count)
 
