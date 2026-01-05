@@ -125,11 +125,6 @@ class CardataStreamManager:
         self._connect_rc: int | None = None
         # Circuit breaker persistence serialization
         self._persist_lock = asyncio.Lock()
-        # Healthcheck for zombie connection detection
-        self._last_message_time: float | None = None
-        self._healthcheck_task: asyncio.Task | None = None
-        self._healthcheck_interval = 60.0  # Check every 60 seconds
-        self._healthcheck_stale_threshold = 300.0  # 5 minutes without messages = stale
 
     def _run_coro_safe(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Run coroutine from MQTT callback thread with exception logging.
@@ -425,9 +420,6 @@ class CardataStreamManager:
         self._intentional_disconnect = True
         self._connection_state = ConnectionState.DISCONNECTING
 
-        # Stop healthcheck task
-        await self._stop_healthcheck()
-
         disconnect_future: asyncio.Future[None] | None = None
         client = self._client
         self._client = None
@@ -604,8 +596,6 @@ class CardataStreamManager:
             self._retry_backoff = 3
             if self._status_callback:
                 self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("connected", None)))
-            # Start healthcheck to detect zombie connections
-            self._start_healthcheck()
         elif rc in (4, 5):  # bad credentials / not authorized
             self._connection_state = ConnectionState.FAILED
             self._record_failure()
@@ -642,8 +632,6 @@ class CardataStreamManager:
         everything in try/except to ensure robustness.
         """
         try:
-            # Track last message time for healthcheck
-            self._last_message_time = time.monotonic()
             payload = msg.payload.decode(errors="ignore")
             if debug_enabled():
                 _LOGGER.debug(
@@ -957,52 +945,3 @@ class CardataStreamManager:
                 self._retry_task = None
 
         self._retry_task = self.hass.loop.create_task(_retry())
-
-    def _start_healthcheck(self) -> None:
-        """Start the healthcheck task to detect zombie connections."""
-        if self._healthcheck_task is not None and not self._healthcheck_task.done():
-            return
-        self._last_message_time = time.monotonic()  # Reset on connection
-        self._healthcheck_task = self.hass.loop.create_task(self._healthcheck_loop())
-
-    async def _stop_healthcheck(self) -> None:
-        """Stop the healthcheck task."""
-        if self._healthcheck_task is not None:
-            self._healthcheck_task.cancel()
-            try:
-                await self._healthcheck_task
-            except asyncio.CancelledError:
-                pass
-            self._healthcheck_task = None
-
-    async def _healthcheck_loop(self) -> None:
-        """Periodically check for zombie connections.
-
-        A zombie connection is one where the socket appears connected but
-        no messages are being received (e.g., server-side subscription issue).
-        """
-        try:
-            while True:
-                await asyncio.sleep(self._healthcheck_interval)
-
-                # Only check if we think we're connected
-                if self._connection_state != ConnectionState.CONNECTED:
-                    continue
-
-                # Check if we've received messages recently
-                if self._last_message_time is None:
-                    continue
-
-                elapsed = time.monotonic() - self._last_message_time
-                if elapsed > self._healthcheck_stale_threshold:
-                    _LOGGER.warning(
-                        "BMW MQTT connection appears stale (no messages for %.0fs); triggering reconnect",
-                        elapsed,
-                    )
-                    # Trigger reconnect
-                    self._run_coro_safe(self._async_reconnect())
-                    # Reset to avoid repeated reconnects
-                    self._last_message_time = time.monotonic()
-
-        except asyncio.CancelledError:
-            return
