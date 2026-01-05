@@ -42,6 +42,7 @@ from .const import (
     BASIC_DATA_ENDPOINT,
     DOMAIN,
     HTTP_TIMEOUT,
+    MIN_TELEMETRY_DESCRIPTORS,
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
@@ -181,6 +182,17 @@ async def async_fetch_and_store_basic_data(
             continue
 
         await async_store_vehicle_metadata(hass, entry, vin, metadata.get("raw_data") or payload)
+
+        # Filter out "ghost" cars with minimal telemetry data (family sharing with limited access)
+        # Check if coordinator already has telemetry data loaded for this VIN
+        telemetry_data = coordinator.data.get(vin, {})
+        if telemetry_data and len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
+            _LOGGER.debug(
+                "Skipping device creation for VIN %s - insufficient telemetry data (%d descriptors, likely limited access)",
+                redacted_vin,
+                len(telemetry_data),
+            )
+            continue
 
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -422,6 +434,17 @@ async def async_restore_vehicle_metadata(
             continue
 
         if metadata:
+            # Filter out "ghost" cars with minimal telemetry data (family sharing with limited access)
+            # Check if coordinator already has telemetry data loaded for this VIN
+            telemetry_data = coordinator.data.get(vin, {})
+            if telemetry_data and len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
+                _LOGGER.debug(
+                    "Skipping device restoration for VIN %s - insufficient telemetry data (%d descriptors, likely limited access)",
+                    redacted_vin,
+                    len(telemetry_data),
+                )
+                continue
+
             device_registry.async_get_or_create(
                 config_entry_id=entry.entry_id,
                 identifiers={(DOMAIN, vin)},
@@ -435,6 +458,83 @@ async def async_restore_vehicle_metadata(
 
     # IMPORTANT: Restore vehicle images from disk
     await async_restore_vehicle_images(hass, entry, coordinator)
+
+    # Clean up ghost car devices (devices with insufficient telemetry data)
+    await async_cleanup_ghost_devices(hass, entry, coordinator, device_registry)
+
+
+async def async_cleanup_ghost_devices(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator,
+    device_registry,
+) -> None:
+    """Remove devices for VINs that have insufficient telemetry data (ghost cars) or no entities.
+    
+    Only removes devices if they've been registered for a while to avoid removing
+    legitimate new cars that are still receiving initial telemetry data.
+    """
+    from homeassistant.helpers import entity_registry as er
+    import time
+    
+    entity_registry = er.async_get(hass)
+    
+    # Get all devices for this config entry
+    devices = device_registry.devices.get_devices_for_config_entry_id(entry.entry_id)
+    
+    # Only cleanup devices that have been around for at least 5 minutes
+    # This prevents removing new cars that are still receiving telemetry
+    MIN_DEVICE_AGE_SECONDS = 300  # 5 minutes
+    current_time = time.time()
+    
+    removed_count = 0
+    for device in devices:
+        # Check if this is a cardata device by looking at identifiers
+        for identifier in device.identifiers:
+            if identifier[0] == DOMAIN:
+                vin = identifier[1]
+                redacted_vin = redact_vin(vin)
+                
+                # Calculate device age (time since creation)
+                device_age = current_time - (device.created_at.timestamp() if device.created_at else current_time)
+                
+                # Skip cleanup for new devices (less than 5 minutes old)
+                # This gives new cars time to receive full telemetry
+                if device_age < MIN_DEVICE_AGE_SECONDS:
+                    _LOGGER.debug(
+                        "Skipping cleanup for VIN %s (device is only %.0f seconds old, waiting for telemetry)",
+                        redacted_vin,
+                        device_age,
+                    )
+                    break
+                
+                # Check if coordinator has telemetry data for this VIN
+                telemetry_data = coordinator.data.get(vin, {})
+                
+                # Reason 1: If VIN has telemetry but insufficient data, remove the device
+                if telemetry_data and len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
+                    _LOGGER.info(
+                        "Removing ghost car device for VIN %s (%d descriptors, likely limited access)",
+                        redacted_vin,
+                        len(telemetry_data),
+                    )
+                    device_registry.async_remove_device(device.id)
+                    removed_count += 1
+                    break
+                
+                # Reason 2: If device has zero entities attached, remove it (metadata-only ghost)
+                entities = entity_registry.entities.get_entries_for_device_id(device.id)
+                if len(entities) == 0:
+                    _LOGGER.info(
+                        "Removing ghost car device for VIN %s (0 entities, metadata only)",
+                        redacted_vin,
+                    )
+                    device_registry.async_remove_device(device.id)
+                    removed_count += 1
+                    break
+    
+    if removed_count > 0:
+        _LOGGER.info("Removed %d ghost car device(s) with insufficient data or no entities", removed_count)
 
 
 async def async_store_vehicle_metadata(

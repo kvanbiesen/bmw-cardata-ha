@@ -67,6 +67,7 @@ from .const import (
     LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    MIN_TELEMETRY_DESCRIPTORS,
     WINDOW_DESCRIPTORS,
 )
 from .coordinator import CardataCoordinator
@@ -870,6 +871,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     def ensure_metadata_sensor(vin: str) -> None:
         """Ensure metadata sensor exists for VIN (all vehicles)."""
         if vin in metadata_entities:
+            return
+
+        # Filter out "ghost" cars with minimal data (e.g., family sharing with limited access)
+        telemetry_data = coordinator.data.get(vin, {})
+        if len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
+            _LOGGER.debug(
+                "Skipping VIN %s - insufficient telemetry data (%d descriptors, likely limited access)",
+                redact_vin(vin),
+                len(telemetry_data),
+            )
             return
 
         metadata_entities[vin] = CardataVehicleMetadataSensor(coordinator, vin)

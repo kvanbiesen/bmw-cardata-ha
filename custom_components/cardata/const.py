@@ -123,3 +123,7 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.powertrain.electric.battery.charging.power",
     "vehicle.drivetrain.electricEngine.charging.status",
 ]
+
+# Minimum number of telemetry descriptors required to consider a vehicle as "real"
+# Vehicles with fewer descriptors are likely "ghost" cars from family sharing with limited access
+MIN_TELEMETRY_DESCRIPTORS = 5
