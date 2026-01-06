@@ -34,12 +34,10 @@ migrate_entity_ids:
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     force:
       description: Force migration even if entities appear already migrated.
-      default: false
       selector:
         boolean:
     dry_run:
       description: Preview changes without applying them (logs planned actions only).
-      default: false
       selector:
         boolean:
 clean_hv_containers:
