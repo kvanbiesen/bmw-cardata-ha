@@ -49,7 +49,9 @@ _LOGGER = logging.getLogger(__name__)
 TOKEN_EXPIRY_BUFFER_SECONDS = 300  # 5 minutes
 
 
-def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS) -> tuple[bool, int | None]:
+def is_token_expired(
+    entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS
+) -> tuple[bool, int | None]:
     """Check if the access token is expired or about to expire.
 
     Args:
@@ -82,7 +84,11 @@ def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFF
 
     # Token is expired or will expire within buffer
     if seconds_until_expiry <= buffer_seconds:
-        _LOGGER.debug("Token expires in %d seconds (buffer: %d), refresh needed", seconds_until_expiry, buffer_seconds)
+        _LOGGER.debug(
+            "Token expires in %d seconds (buffer: %d), refresh needed",
+            seconds_until_expiry,
+            buffer_seconds,
+        )
         return True, seconds_until_expiry
 
     return False, seconds_until_expiry
