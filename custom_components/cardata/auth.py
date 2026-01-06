@@ -121,9 +121,10 @@ async def async_ensure_valid_token(
     _LOGGER.debug("Proactively refreshing token (expires in %s seconds)", seconds_left)
     try:
         await refresh_tokens_for_entry(entry, session, manager, container_manager)
+        _LOGGER.debug("Token refreshed successfully")
         return True
     except CardataAuthError as err:
-        _LOGGER.error("Proactive token refresh failed: %s", err)
+        _LOGGER.warning("Proactive token refresh failed: %s", err)
         return False
     except Exception as err:
         _LOGGER.exception("Unexpected error during proactive token refresh: %s", err)
@@ -263,26 +264,34 @@ async def handle_stream_error(
         elif now - runtime.last_refresh_attempt >= 30:
             runtime.last_refresh_attempt = now
             try:
-                _LOGGER.info(
-                    "Attempting token refresh after unauthorized response for entry %s",
-                    entry.entry_id,
-                )
+                _LOGGER.debug('Attempting token refresh after auth failure')
+
                 await refresh_tokens_for_entry(
                     entry,
                     runtime.session,
                     runtime.stream,
                     runtime.container_manager,
                 )
+
+                # Success! Reset the unauthorized flags
+                if runtime and runtime.reauth_in_progress:
+                    runtime.unauthorized_protection.reset()
+
                 runtime.reauth_in_progress = False
                 runtime.last_reauth_attempt = 0.0
                 runtime.reauth_pending = False
+                _LOGGER.info("BMW credentials refreshed successfully after auth failure")
                 return
+
             except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
                 _LOGGER.warning(
                     "Token refresh after unauthorized failed for entry %s: %s",
                     entry.entry_id,
                     err,
                 )
+                if runtime and runtime.unauthorized_protection:
+                    runtime.unauthorized_protection.record_attempt()
+                    _LOGGER.debug("Token refresh failed, attempt recorded")
         else:
             runtime.reauth_pending = True
             _LOGGER.debug(
@@ -300,7 +309,7 @@ async def handle_stream_error(
         runtime.reauth_in_progress = True
         runtime.last_reauth_attempt = now
         runtime.reauth_pending = False
-        _LOGGER.error("BMW stream unauthorized; starting reauth flow")
+        _LOGGER.warning("BMW stream unauthorized; starting reauth flow")
 
         if runtime.reauth_flow_id:
             with suppress(Exception):
@@ -325,7 +334,7 @@ async def handle_stream_error(
     elif reason == "recovered":
         if runtime.reauth_in_progress:
             runtime.reauth_in_progress = False
-            _LOGGER.info("BMW stream connection restored; dismissing reauth notification")
+            _LOGGER.debug("BMW stream connection restored; dismissing reauth notification")
             persistent_notification.async_dismiss(hass, notification_id)
             if runtime.reauth_flow_id:
                 with suppress(Exception):
@@ -394,10 +403,9 @@ async def async_ensure_container_for_entry(
 
     # If container exists but signature doesn't match, log warning
     if hv_container_id and stored_signature != desired_signature:
-        _LOGGER.warning(
-            "Container signature mismatch! Stored: %s, Expected: %s. "
-            "Keeping existing container to avoid API quota. "
-            "Use 'Reset Container' option if you need to recreate.",
+        _LOGGER.info(
+            "Container signature mismatch (stored: %s, expected: %s). "
+            "Keeping existing container. Use 'Reset Container' to update.",
             stored_signature,
             desired_signature,
         )
