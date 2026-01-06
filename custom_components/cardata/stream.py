@@ -730,9 +730,8 @@ class CardataStreamManager:
 
             if self._entry_id:
                 try:
-
-                    from .const import DOMAIN
                     from .auth import refresh_tokens_for_entry
+                    from .const import DOMAIN
 
                     runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                     if runtime:
