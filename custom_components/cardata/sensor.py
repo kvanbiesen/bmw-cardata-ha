@@ -67,7 +67,6 @@ from .const import (
     LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
-    MIN_TELEMETRY_DESCRIPTORS,
     WINDOW_DESCRIPTORS,
 )
 from .coordinator import CardataCoordinator
@@ -873,15 +872,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         if vin in metadata_entities:
             return
 
-        # Filter out "ghost" cars with minimal data (e.g., family sharing with limited access)
-        telemetry_data = coordinator.data.get(vin, {})
-        if len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
-            _LOGGER.debug(
-                "Skipping VIN %s - insufficient telemetry data (%d descriptors, likely limited access)",
-                redact_vin(vin),
-                len(telemetry_data),
-            )
-            return
+        # Note: Ghost device cleanup is handled by async_cleanup_ghost_devices()
+        # Don't check telemetry here during restore - entities need to be created
+        # first so they can receive data. The cleanup function will remove ghost
+        # devices after they've had time to populate telemetry.
 
         metadata_entities[vin] = CardataVehicleMetadataSensor(coordinator, vin)
         async_add_entities([metadata_entities[vin]], True)
