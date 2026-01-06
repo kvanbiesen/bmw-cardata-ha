@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Generic, NamedTuple, TypeVar
 
 _LOGGER = logging.getLogger(__name__)
@@ -136,7 +136,7 @@ class UpdateBatcher:
 
         # Track when updates started accumulating
         if self._started_at is None:
-            self._started_at = datetime.now()
+            self._started_at = datetime.now(UTC)
 
         # Add to pending set
         if vin not in self._updates:
