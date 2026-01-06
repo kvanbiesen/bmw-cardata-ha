@@ -49,9 +49,7 @@ _LOGGER = logging.getLogger(__name__)
 TOKEN_EXPIRY_BUFFER_SECONDS = 300  # 5 minutes
 
 
-def is_token_expired(
-    entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS
-) -> tuple[bool, int | None]:
+def is_token_expired(entry: ConfigEntry, buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS) -> tuple[bool, int | None]:
     """Check if the access token is expired or about to expire.
 
     Args:
@@ -270,7 +268,7 @@ async def handle_stream_error(
         elif now - runtime.last_refresh_attempt >= 30:
             runtime.last_refresh_attempt = now
             try:
-                _LOGGER.debug('Attempting token refresh after auth failure')
+                _LOGGER.debug("Attempting token refresh after auth failure")
 
                 await refresh_tokens_for_entry(
                     entry,
