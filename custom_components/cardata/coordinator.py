@@ -633,8 +633,10 @@ class CardataCoordinator:
                         if not self._motion_detector.has_signaled_entity(vin):
                             self._motion_detector.signal_entity_created(vin)
                             new_binary.append("vehicle.isMoving")
-                        elif location_changed:
-                            # Update existing entity when location changes
+                        else:
+                            # Always update motion state when GPS updates arrive
+                            # This ensures state transitions from "moving" to "not moving"
+                            # when the 10-minute timeout expires, even if location hasn't changed
                             immediate_updates.append((vin, "vehicle.isMoving"))
                     except (ValueError, TypeError):
                         pass  # Invalid coordinate values, skip tracking
