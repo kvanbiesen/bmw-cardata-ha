@@ -392,6 +392,9 @@ class CardataStreamManager:
                 await asyncio.sleep(delay)
 
         self._connection_state = ConnectionState.CONNECTING
+        # Notify coordinator that we're attempting to connect
+        if self._status_callback:
+            await self._status_callback("connecting", None)
         try:
             await self.hass.async_add_executor_job(self._start_client)
             self._reconnect_backoff = 5
