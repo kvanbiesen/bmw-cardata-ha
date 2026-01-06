@@ -626,9 +626,7 @@ class CardataCoordinator:
                 if lat_state and lon_state and lat_state.value is not None and lon_state.value is not None:
                     try:
                         # Update motion detector with new GPS coordinates
-                        self._update_location_tracking(
-                            vin, float(lat_state.value), float(lon_state.value)
-                        )
+                        self._update_location_tracking(vin, float(lat_state.value), float(lon_state.value))
                         # Signal creation of vehicle.isMoving entity if not already done
                         # This allows the derived motion state to be exposed as a sensor
                         if not self._motion_detector.has_signaled_entity(vin):
