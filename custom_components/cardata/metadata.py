@@ -183,16 +183,9 @@ async def async_fetch_and_store_basic_data(
 
         await async_store_vehicle_metadata(hass, entry, vin, metadata.get("raw_data") or payload)
 
-        # Filter out "ghost" cars with minimal telemetry data (family sharing with limited access)
-        # Check if coordinator already has telemetry data loaded for this VIN
-        telemetry_data = coordinator.data.get(vin, {})
-        if telemetry_data and len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
-            _LOGGER.debug(
-                "Skipping device creation for VIN %s - insufficient telemetry data (%d descriptors, likely limited access)",
-                redacted_vin,
-                len(telemetry_data),
-            )
-            continue
+        # Ghost detection is handled by async_cleanup_ghost_devices() after telemetry arrives
+        # Don't check telemetry here during bootstrap - data hasn't arrived yet via MQTT
+        # The cleanup function will remove ghost devices after they've had time to populate
 
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -434,17 +427,8 @@ async def async_restore_vehicle_metadata(
             continue
 
         if metadata:
-            # Filter out "ghost" cars with minimal telemetry data (family sharing with limited access)
-            # Check if coordinator already has telemetry data loaded for this VIN
-            telemetry_data = coordinator.data.get(vin, {})
-            if telemetry_data and len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
-                _LOGGER.debug(
-                    "Skipping device restoration for VIN %s - insufficient telemetry data (%d descriptors, likely limited access)",
-                    redacted_vin,
-                    len(telemetry_data),
-                )
-                continue
-
+            # Ghost detection is handled by async_cleanup_ghost_devices() below
+            # Don't check telemetry here during restore - cleanup will handle it
             device_registry.async_get_or_create(
                 config_entry_id=entry.entry_id,
                 identifiers={(DOMAIN, vin)},
@@ -483,12 +467,15 @@ async def async_cleanup_ghost_devices(
     # Get all devices for this config entry
     devices = device_registry.devices.get_devices_for_config_entry_id(entry.entry_id)
 
-    # Only cleanup devices that have been around for at least 5 minutes
+    # Only cleanup devices that have been around for at least 10 minutes
     # This prevents removing new cars that are still receiving telemetry
-    MIN_DEVICE_AGE_SECONDS = 300  # 5 minutes
+    # Increased from 5 to 10 minutes to ensure MQTT stream has time to populate
+    MIN_DEVICE_AGE_SECONDS = 600  # 10 minutes
     current_time = time.time()
 
     removed_count = 0
+    removed_vins = []
+
     for device in devices:
         # Check if this is a cardata device by looking at identifiers
         for identifier in device.identifiers:
@@ -499,8 +486,8 @@ async def async_cleanup_ghost_devices(
                 # Calculate device age (time since creation)
                 device_age = current_time - (device.created_at.timestamp() if device.created_at else current_time)
 
-                # Skip cleanup for new devices (less than 5 minutes old)
-                # This gives new cars time to receive full telemetry
+                # Skip cleanup for new devices (less than 10 minutes old)
+                # This gives new cars time to receive full telemetry via MQTT
                 if device_age < MIN_DEVICE_AGE_SECONDS:
                     _LOGGER.debug(
                         "Skipping cleanup for VIN %s (device is only %.0f seconds old, waiting for telemetry)",
@@ -511,31 +498,63 @@ async def async_cleanup_ghost_devices(
 
                 # Check if coordinator has telemetry data for this VIN
                 telemetry_data = coordinator.data.get(vin, {})
+                descriptor_count = len(telemetry_data)
 
-                # Reason 1: If VIN has telemetry but insufficient data, remove the device
-                if telemetry_data and len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
+                # Count entities for this device
+                entities = entity_registry.entities.get_entries_for_device_id(device.id)
+                entity_count = len(entities)
+
+                # Reason 1: If VIN has telemetry but insufficient descriptors, remove the device
+                # This catches shared/guest vehicles with limited API access
+                if telemetry_data and descriptor_count < MIN_TELEMETRY_DESCRIPTORS:
                     _LOGGER.info(
-                        "Removing ghost car device for VIN %s (%d descriptors, likely limited access)",
+                        "Removing ghost car device for VIN %s (%d descriptors, %d entities, likely limited access)",
                         redacted_vin,
-                        len(telemetry_data),
+                        descriptor_count,
+                        entity_count,
                     )
                     device_registry.async_remove_device(device.id)
                     removed_count += 1
+                    removed_vins.append(vin)
                     break
 
                 # Reason 2: If device has zero entities attached, remove it (metadata-only ghost)
-                entities = entity_registry.entities.get_entries_for_device_id(device.id)
-                if len(entities) == 0:
+                if entity_count == 0:
                     _LOGGER.info(
-                        "Removing ghost car device for VIN %s (0 entities, metadata only)",
+                        "Removing ghost car device for VIN %s (0 entities, %d descriptors, metadata only)",
                         redacted_vin,
+                        descriptor_count,
                     )
                     device_registry.async_remove_device(device.id)
                     removed_count += 1
+                    removed_vins.append(vin)
+                    break
+
+                # Reason 3: NEW - If device has NO telemetry data after 10 minutes, it's a ghost
+                # This catches devices that were created during bootstrap but never received MQTT data
+                if not telemetry_data:
+                    _LOGGER.info(
+                        "Removing ghost car device for VIN %s (no telemetry data after %.0f seconds, %d entities)",
+                        redacted_vin,
+                        device_age,
+                        entity_count,
+                    )
+                    device_registry.async_remove_device(device.id)
+                    removed_count += 1
+                    removed_vins.append(vin)
                     break
 
     if removed_count > 0:
         _LOGGER.info("Removed %d ghost car device(s) with insufficient data or no entities", removed_count)
+
+        # Clean up metadata for removed VINs from entry.data
+        if removed_vins:
+            stored_metadata = entry.data.get(VEHICLE_METADATA, {})
+            if isinstance(stored_metadata, dict):
+                updated_metadata = {k: v for k, v in stored_metadata.items() if k not in removed_vins}
+                if len(updated_metadata) != len(stored_metadata):
+                    await async_update_entry_data(hass, entry, {VEHICLE_METADATA: updated_metadata})
+                    _LOGGER.debug("Cleaned up metadata for %d removed VIN(s)", len(removed_vins))
 
 
 async def async_store_vehicle_metadata(

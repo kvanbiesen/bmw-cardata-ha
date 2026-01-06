@@ -247,7 +247,16 @@ async def handle_stream_error(
     reason: str,
 ) -> None:
     """Handle stream connection errors, managing reauth flow."""
-    runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
+    # Check if runtime data exists (entry might be unloading or not yet set up)
+    domain_data = hass.data.get(DOMAIN, {})
+    runtime: CardataRuntimeData | None = domain_data.get(entry.entry_id)
+    if runtime is None:
+        _LOGGER.debug(
+            "Cannot handle stream error for entry %s: runtime data not found (entry may be unloading)",
+            entry.entry_id,
+        )
+        return
+
     notification_id = f"{DOMAIN}_reauth_{entry.entry_id}"
 
     if reason == "unauthorized":

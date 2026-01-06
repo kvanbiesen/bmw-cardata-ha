@@ -118,6 +118,10 @@ class CardataCoordinator:
     # Pending operation tracking to prevent duplicate work
     _basic_data_pending: PendingManager[str] = field(default_factory=lambda: PendingManager("basic_data"), init=False)
 
+    # VIN allow-list: only process telemetry for VINs that belong to this config entry
+    # This prevents MQTT cross-contamination when multiple accounts share the same GCID
+    _allowed_vins: set[str] = field(default_factory=set, init=False)
+
     @staticmethod
     def _safe_vin_suffix(vin: str | None) -> str:
         """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
@@ -543,6 +547,17 @@ class CardataCoordinator:
         # Validate VIN format to prevent malformed data injection
         if not is_valid_vin(vin):
             _LOGGER.warning("Rejecting message with invalid VIN format: %s", redact_vin(vin))
+            return
+
+        # CRITICAL: Filter out VINs that don't belong to this config entry
+        # This prevents MQTT cross-contamination when multiple accounts share the same GCID
+        if self._allowed_vins and vin not in self._allowed_vins:
+            if debug_enabled():
+                _LOGGER.debug(
+                    "Rejecting MQTT message for VIN %s - not in allowed list for this entry (%d allowed VINs)",
+                    redact_vin(vin),
+                    len(self._allowed_vins),
+                )
             return
 
         # Limit descriptor count per message to prevent memory exhaustion

@@ -132,6 +132,16 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         coordinator = runtime.coordinator
 
+        # Register allowed VINs for this config entry to prevent MQTT cross-contamination
+        # This is CRITICAL when multiple accounts share the same GCID
+        coordinator._allowed_vins.update(vins)
+        _LOGGER.debug(
+            "Registered %d allowed VIN(s) for entry %s: %s",
+            len(vins),
+            entry.entry_id,
+            [redact_vin(v) for v in vins],
+        )
+
         # Initialize coordinator data for all VINs
         for vin in vins:
             coordinator.data.setdefault(vin, {})
@@ -181,6 +191,28 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         await async_mark_bootstrap_complete(hass, entry)
         _LOGGER.info("Bootstrap completed successfully for entry %s", entry.entry_id)
+
+        # Schedule ghost device cleanup to run after devices have had time to receive telemetry
+        # This removes shared/guest vehicles that were created but have insufficient data
+        async def _delayed_cleanup():
+            """Run ghost device cleanup after 10 minutes to remove shared/guest vehicles."""
+            import asyncio
+
+            await asyncio.sleep(600)  # Wait 10 minutes for MQTT telemetry to populate
+
+            from homeassistant.helpers import device_registry as dr
+
+            from .metadata import async_cleanup_ghost_devices
+
+            device_registry = dr.async_get(hass)
+            _LOGGER.debug("Running scheduled ghost device cleanup for entry %s", entry.entry_id)
+
+            try:
+                await async_cleanup_ghost_devices(hass, entry, coordinator, device_registry)
+            except Exception as err:
+                _LOGGER.warning("Scheduled ghost device cleanup failed for entry %s: %s", entry.entry_id, err)
+
+        hass.async_create_task(_delayed_cleanup())
 
     except Exception as err:
         _LOGGER.exception(
@@ -281,12 +313,26 @@ async def async_fetch_primary_vins(
         )
         return None, reason
 
+    # Log all mappings with their types for debugging ghost vehicle issues
+    from .api_parsing import extract_mapping_items
+
+    all_mappings = extract_mapping_items(payload)
+    if all_mappings:
+        _LOGGER.debug("Bootstrap mapping for entry %s found %d total mapping(s):", entry_id, len(all_mappings))
+        for mapping in all_mappings:
+            mapping_type = mapping.get("mappingType", "UNKNOWN")
+            vin = mapping.get("vin", "UNKNOWN")
+            redacted_vin = redact_vin(vin)
+            _LOGGER.debug("  - VIN %s: mappingType=%s", redacted_vin, mapping_type)
+
     vins = extract_primary_vins(payload)
 
     if not vins:
         _LOGGER.info("Bootstrap mapping for entry %s returned no primary vehicles", entry_id)
     else:
-        _LOGGER.debug("Bootstrap found %s mapped vehicle(s) for entry %s", len(vins), entry_id)
+        _LOGGER.info("Bootstrap found %d PRIMARY vehicle(s) for entry %s", len(vins), entry_id)
+        for vin in vins:
+            _LOGGER.debug("  - PRIMARY VIN: %s", redact_vin(vin))
 
     return vins, None
 
