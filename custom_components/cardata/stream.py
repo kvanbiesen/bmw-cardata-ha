@@ -732,7 +732,7 @@ class CardataStreamManager:
                 try:
                     from .const import DOMAIN
                     from .auth import refresh_tokens_for_entry
-               
+
                     runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
                     if runtime:
                         entry = self.hass.config_entries.async_get_entry(self._entry_id)
@@ -747,7 +747,7 @@ class CardataStreamManager:
                 except Exception as err:
                     _LOGGER.debug("Token check before reconnect: %s", err)
                     # Continue anyway -token might still be valid
-                
+
             # Use extended backoff after many consecutive failures
             if self._consecutive_reconnect_failures >= self._extended_backoff_threshold:
                 wait_time = self._extended_backoff
