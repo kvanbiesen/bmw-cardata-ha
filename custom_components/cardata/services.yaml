@@ -25,3 +25,42 @@ fetch_basic_data:
     vin:
       description: Optional VIN to query. Defaults to the VIN stored in the config entry.
       example: WBY31AW090FP15359
+migrate_entity_ids:
+  name: Migrate Entity IDs
+  description: Developer tool to migrate entity IDs from old format to new format. Use dry_run to preview changes without applying them.
+  fields:
+    entry_id:
+      description: Optional config entry id to target. If omitted, runs for all entries.
+      example: 01K65NKFESKBQZ78PBW6V9BCCX
+    force:
+      description: Force migration even if entities appear already migrated.
+      default: false
+      selector:
+        boolean:
+    dry_run:
+      description: Preview changes without applying them (logs planned actions only).
+      default: false
+      selector:
+        boolean:
+clean_hv_containers:
+  name: Clean HV Containers
+  description: Developer tool to list or delete high-voltage battery telemetry containers.
+  fields:
+    entry_id:
+      description: Optional config entry id to target. Required if multiple entries are configured.
+      example: 01K65NKFESKBQZ78PBW6V9BCCX
+    action:
+      description: Action to perform (list, delete, or delete_all_matching).
+      default: list
+      selector:
+        select:
+          options:
+            - list
+            - delete
+            - delete_all_matching
+    container_id:
+      description: Container ID to delete (required when action is 'delete').
+      example: 550e8400-e29b-41d4-a716-446655440000
+fetch_vehicle_images:
+  name: Fetch Vehicle Images
+  description: Manually fetch vehicle images for all configured vehicles.
