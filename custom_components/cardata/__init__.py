@@ -354,9 +354,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     except CardataAuthError as err:
                         # Check if this is just a concurrent refresh attempt (not a real failure)
                         if "already in progress" in str(err).lower():
-                            _LOGGER.debug(
-                                "Token refresh skipped: another refresh already in progress"
-                            )
+                            _LOGGER.debug("Token refresh skipped: another refresh already in progress")
                             # Don't count as a failure - another refresh is handling it
                             continue
 
