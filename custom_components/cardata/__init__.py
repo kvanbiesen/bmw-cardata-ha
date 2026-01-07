@@ -197,8 +197,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         else:
             _LOGGER.warning(
-                "No allowed VINs registered for entry %s after metadata restoration - "
-                "will force bootstrap to run",
+                "No allowed VINs registered for entry %s after metadata restoration - will force bootstrap to run",
                 entry.entry_id,
             )
 
