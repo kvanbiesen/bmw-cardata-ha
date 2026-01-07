@@ -159,6 +159,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Store session start time for ghost cleanup
         # This prevents removing devices that existed before this HA restart
         import time
+
         coordinator.session_start_time = time.time()
 
         # Restore stored vehicle metadata

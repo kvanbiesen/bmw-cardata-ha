@@ -477,7 +477,7 @@ async def async_cleanup_ghost_devices(
 
     # Get session start time from coordinator
     # Only remove devices created DURING this session, not devices from before restart
-    session_start_time = getattr(coordinator, 'session_start_time', None)
+    session_start_time = getattr(coordinator, "session_start_time", None)
 
     removed_count = 0
     removed_vins = []
