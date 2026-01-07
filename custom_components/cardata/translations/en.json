@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "Authorization is not complete yet (error: {error}). Please approve the device and try again.",
+      "authorization_failed": "BMW authorization was not completed. This usually means you clicked 'Deny', closed the page before approving, or the request timed out. Error details: {error}. Please remove the integration and try adding it again, making sure to click 'Approve' when BMW asks for permission.",
       "device_code_failed": "BMW rejected the device authorization request ({error}). Check that the client ID is valid and try again."
     },
     "abort": {
