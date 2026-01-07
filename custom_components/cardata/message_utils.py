@@ -105,16 +105,24 @@ def normalize_boolean_value(descriptor: str, value: Any) -> Any:
     Returns the original value if the descriptor is not a boolean descriptor
     or if the value cannot be normalized.
     """
-    if descriptor not in BOOLEAN_DESCRIPTORS:
-        return value
+    # Always pass through actual boolean values, regardless of descriptor
     if isinstance(value, bool):
         return value
+
+    # For non-boolean values, only convert if this is a known boolean descriptor
+    if descriptor not in BOOLEAN_DESCRIPTORS:
+        return value
+
+    # Convert numeric 0/1 to boolean
     if isinstance(value, int | float) and value in (0, 1):
         return bool(int(value))
+
+    # Convert string representations to boolean
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in BOOLEAN_VALUE_MAP:
             return BOOLEAN_VALUE_MAP[normalized]
+
     return value
 
 

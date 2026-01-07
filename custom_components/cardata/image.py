@@ -67,13 +67,23 @@ async def async_setup_entry(
             return
 
         metadata = coordinator.device_metadata.get(vin)
-        if not metadata or not metadata.get("vehicle_image_path"):
+        if not metadata:
+            _LOGGER.debug("No metadata for VIN %s, skipping image entity", redact_vin(vin))
+            return
+
+        image_path = metadata.get("vehicle_image_path")
+        if not image_path:
+            _LOGGER.warning(
+                "No vehicle_image_path in metadata for VIN %s (metadata keys: %s), skipping image entity",
+                redact_vin(vin),
+                list(metadata.keys()),
+            )
             return
 
         entity = CardataImage(coordinator, vin)
         entities[vin] = entity
         async_add_entities([entity])
-        _LOGGER.debug("Created image entity for VIN: %s", redact_vin(vin))
+        _LOGGER.debug("Created image entity for VIN: %s with image path: %s", redact_vin(vin), image_path)
 
     initial_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
     for vin in initial_vins:

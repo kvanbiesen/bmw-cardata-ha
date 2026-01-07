@@ -411,8 +411,14 @@ async def async_restore_vehicle_metadata(
 
     stored_metadata = entry.data.get(VEHICLE_METADATA, {})
     if not isinstance(stored_metadata, dict):
+        _LOGGER.debug("No vehicle metadata to restore for entry %s (not a dict)", entry.entry_id)
         return
 
+    if not stored_metadata:
+        _LOGGER.debug("No vehicle metadata to restore for entry %s (empty)", entry.entry_id)
+        return
+
+    _LOGGER.debug("Restoring metadata for %d vehicle(s) in entry %s", len(stored_metadata), entry.entry_id)
     device_registry = dr.async_get(hass)
 
     for vin, payload in stored_metadata.items():

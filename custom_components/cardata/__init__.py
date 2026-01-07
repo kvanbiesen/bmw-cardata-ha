@@ -195,6 +195,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 len(coordinator._allowed_vins),
                 entry.entry_id,
             )
+        else:
+            _LOGGER.warning(
+                "No allowed VINs registered for entry %s after metadata restoration - "
+                "will force bootstrap to run",
+                entry.entry_id,
+            )
 
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
@@ -414,7 +420,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
-        should_bootstrap = not data.get(BOOTSTRAP_COMPLETE)
+        # Also force bootstrap if no VINs were restored (metadata corruption/loss)
+        should_bootstrap = not data.get(BOOTSTRAP_COMPLETE) or not coordinator._allowed_vins
         bootstrap_error: str | None = None
         bootstrap_completed = False
         if should_bootstrap:
