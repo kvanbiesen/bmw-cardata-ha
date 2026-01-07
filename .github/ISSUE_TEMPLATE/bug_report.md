@@ -82,6 +82,7 @@ logger:
   logs:
     custom_components.bmw_cardata: debug
 ```
+or set debug_log in const.py to true and restart ha.
 
 ### Paste Logs Below
 
@@ -90,7 +91,7 @@ Please **remove or redact personal data** (VIN, location, tokens, etc.).
 ```
 Paste logs here
 ```
-
+due to the amount of people just asking the same questions. always include debug logs
 ---
 
 ## 🧠 Additional Context
