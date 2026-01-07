@@ -162,7 +162,7 @@ async def refresh_tokens_for_entry(
             await asyncio.wait_for(lock.acquire(), timeout=30.0)
             lock_acquired = True
         except TimeoutError:
-            _LOGGER.warning("Token Refresh lock timeout for entry %s; another refresh in progress", entry.entry_id)
+            _LOGGER.debug("Token Refresh lock timeout for entry %s; another refresh in progress", entry.entry_id)
             raise CardataAuthError("Token refresh already in progress") from None
 
         try:

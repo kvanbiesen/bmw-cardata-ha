@@ -192,27 +192,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await async_mark_bootstrap_complete(hass, entry)
         _LOGGER.info("Bootstrap completed successfully for entry %s", entry.entry_id)
 
-        # Schedule ghost device cleanup to run after devices have had time to receive telemetry
-        # This removes shared/guest vehicles that were created but have insufficient data
-        async def _delayed_cleanup():
-            """Run ghost device cleanup after 10 minutes to remove shared/guest vehicles."""
-            import asyncio
-
-            await asyncio.sleep(600)  # Wait 10 minutes for MQTT telemetry to populate
-
-            from homeassistant.helpers import device_registry as dr
-
-            from .metadata import async_cleanup_ghost_devices
-
-            device_registry = dr.async_get(hass)
-            _LOGGER.debug("Running scheduled ghost device cleanup for entry %s", entry.entry_id)
-
-            try:
-                await async_cleanup_ghost_devices(hass, entry, coordinator, device_registry)
-            except Exception as err:
-                _LOGGER.warning("Scheduled ghost device cleanup failed for entry %s: %s", entry.entry_id, err)
-
-        hass.async_create_task(_delayed_cleanup())
+        # NOTE: Ghost device cleanup is scheduled in __init__.py after platform setup
+        # This ensures it runs on both initial setup AND restart
 
     except Exception as err:
         _LOGGER.exception(

@@ -40,6 +40,7 @@ from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN, MIN_TELEMETRY_DESCRIPTORS
 from .coordinator import CardataCoordinator
@@ -69,7 +70,7 @@ DOOR_DESCRIPTORS = (
 MOTION_DESCRIPTORS = ("vehicle.isMoving",)
 
 
-class CardataBinarySensor(CardataEntity, BinarySensorEntity):
+class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 
     _attr_should_poll = False

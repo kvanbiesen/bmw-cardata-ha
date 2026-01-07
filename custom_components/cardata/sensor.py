@@ -224,7 +224,7 @@ def _validate_restored_state(state_value: str | None, unit: str | None) -> str |
     return state_value
 
 
-class CardataSensor(CardataEntity, SensorEntity):
+class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
     """Sensor for generic telematic data."""
 
     _attr_should_poll = False
@@ -554,7 +554,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         return self._attr_native_value
 
 
-class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
+class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
     """Diagnostic sensor for vehicle metadata (stored once per vehicle)."""
 
     _attr_should_poll = False
@@ -638,7 +638,7 @@ class CardataVehicleMetadataSensor(CardataEntity, SensorEntity):
         return attrs
 
 
-class _SocTrackerBase(CardataEntity, SensorEntity):
+class _SocTrackerBase(CardataEntity, RestoreEntity, SensorEntity):
     """Base class for SoC estimation sensors."""
 
     _attr_should_poll = False
@@ -1015,7 +1015,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ensure_entity(vin, descriptor)
 
     # Ensure SOC entities for all known VINs
-    for vin in list(coordinator.data.keys()):
+    # Include both VINs from coordinator.data (live MQTT data) AND
+    # VINs from device_metadata (restored from storage)
+    all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
+    for vin in all_vins:
         ensure_soc_tracking_entities(vin)
 
     # Add diagnostic sensors

@@ -156,6 +156,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = CardataCoordinator(hass=hass, entry_id=entry.entry_id)
         coordinator.diagnostic_interval = diagnostic_interval
 
+        # Store session start time for ghost cleanup
+        # This prevents removing devices that existed before this HA restart
+        import time
+        coordinator.session_start_time = time.time()
+
         # Restore stored vehicle metadata
         last_poll_ts = data.get("last_telematic_poll")
         if isinstance(last_poll_ts, (int, float)) and last_poll_ts > 0:
@@ -166,6 +171,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # CRITICAL FIX: Pre-populate coordinator.names from restored device_metadata
         # Entities check coordinator.names for the vehicle name prefix, so we must
         # populate it BEFORE the MQTT stream starts and entities are created
+        # ALSO populate _allowed_vins to prevent MQTT cross-contamination on restart
         for vin, metadata in coordinator.device_metadata.items():
             if metadata and not coordinator.names.get(vin):
                 # Extract the name that was restored from metadata
@@ -177,6 +183,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         redact_vin(vin),
                         vehicle_name,
                     )
+            # Register this VIN in the allow-list for MQTT filtering
+            # This is populated during bootstrap for new setups, but needs to be
+            # restored here for existing setups on restart
+            coordinator._allowed_vins.add(vin)
+
+        if coordinator._allowed_vins:
+            _LOGGER.debug(
+                "Registered %d allowed VIN(s) from restored metadata for entry %s",
+                len(coordinator._allowed_vins),
+                entry.entry_id,
+            )
 
         # Check if metadata is already available from restoration
         has_metadata = bool(coordinator.names)
@@ -468,6 +485,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Start telematic polling loop
         runtime_data.telematic_task = hass.loop.create_task(async_telematic_poll_loop(hass, entry.entry_id))
+
+        # Schedule ghost device cleanup to run after MQTT has had time to populate telemetry
+        # This runs on BOTH initial setup and restart to remove ghost devices
+        # The cleanup function has age checks to prevent removing legitimately new devices
+
+        async def _delayed_cleanup():
+            """Run ghost device cleanup after 10 minutes."""
+            import asyncio
+
+            from homeassistant.helpers import device_registry as dr
+
+            from .metadata import async_cleanup_ghost_devices
+
+            await asyncio.sleep(600)  # Wait 10 minutes for MQTT telemetry to populate
+
+            device_registry = dr.async_get(hass)
+            _LOGGER.debug("Running scheduled ghost device cleanup for entry %s", entry.entry_id)
+
+            try:
+                await async_cleanup_ghost_devices(hass, entry, coordinator, device_registry)
+            except Exception as err:
+                _LOGGER.warning("Scheduled ghost device cleanup failed for entry %s: %s", entry.entry_id, err)
+
+        # Create background task and register for cleanup on unload
+        cleanup_task = hass.async_create_task(_delayed_cleanup(), name=f"{DOMAIN}_ghost_cleanup_{entry.entry_id}")
+        entry.async_on_unload(lambda: cleanup_task.cancel() if not cleanup_task.done() else None)
 
         setup_succeeded = True
         return True

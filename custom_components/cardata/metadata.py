@@ -443,8 +443,10 @@ async def async_restore_vehicle_metadata(
     # IMPORTANT: Restore vehicle images from disk
     await async_restore_vehicle_images(hass, entry, coordinator)
 
-    # Clean up ghost car devices (devices with insufficient telemetry data)
-    await async_cleanup_ghost_devices(hass, entry, coordinator, device_registry)
+    # NOTE: Ghost device cleanup is NOT run here during restore
+    # It's scheduled to run 10 minutes after bootstrap (see bootstrap.py)
+    # This gives the MQTT stream time to connect and populate telemetry data
+    # Running cleanup here would remove all devices since coordinator.data is empty
 
 
 async def async_cleanup_ghost_devices(
@@ -473,6 +475,10 @@ async def async_cleanup_ghost_devices(
     MIN_DEVICE_AGE_SECONDS = 600  # 10 minutes
     current_time = time.time()
 
+    # Get session start time from coordinator
+    # Only remove devices created DURING this session, not devices from before restart
+    session_start_time = getattr(coordinator, 'session_start_time', None)
+
     removed_count = 0
     removed_vins = []
 
@@ -484,7 +490,18 @@ async def async_cleanup_ghost_devices(
                 redacted_vin = redact_vin(vin)
 
                 # Calculate device age (time since creation)
-                device_age = current_time - (device.created_at.timestamp() if device.created_at else current_time)
+                device_created_at = device.created_at.timestamp() if device.created_at else current_time
+                device_age = current_time - device_created_at
+
+                # CRITICAL: Skip devices that existed before this HA session started
+                # This prevents removing legitimate devices on restart when coordinator.data is empty
+                if session_start_time and device_created_at < session_start_time:
+                    _LOGGER.debug(
+                        "Skipping cleanup for VIN %s (device existed before this session, created %.0f seconds ago)",
+                        redacted_vin,
+                        device_age,
+                    )
+                    break
 
                 # Skip cleanup for new devices (less than 10 minutes old)
                 # This gives new cars time to receive full telemetry via MQTT
