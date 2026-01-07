@@ -510,7 +510,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.warning("Scheduled ghost device cleanup failed for entry %s: %s", entry.entry_id, err)
 
         # Create background task and register for cleanup on unload
-        cleanup_task = hass.async_create_task(_delayed_cleanup(), name=f"{DOMAIN}_ghost_cleanup_{entry.entry_id}")
+        # Use async_create_background_task so HA bootstrap doesn't wait for this 10-minute task
+        cleanup_task = hass.async_create_background_task(
+            _delayed_cleanup(),
+            name=f"{DOMAIN}_ghost_cleanup_{entry.entry_id}",
+        )
         entry.async_on_unload(lambda: cleanup_task.cancel() if not cleanup_task.done() else None)
 
         setup_succeeded = True
