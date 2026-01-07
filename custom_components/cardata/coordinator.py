@@ -75,6 +75,7 @@ class CardataCoordinator:
     connection_status: str = "connecting"
     last_disconnect_reason: str | None = None
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
+    session_start_time: float = field(default=0.0, init=False)
     watchdog_task: asyncio.Task | None = field(default=None, init=False, repr=False)
     # Lock to protect concurrent access to data, names, device_metadata, and SOC tracking dicts
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
