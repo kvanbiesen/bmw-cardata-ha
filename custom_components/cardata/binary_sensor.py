@@ -98,6 +98,9 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
 
         await super().async_added_to_hass()
 
+        # Track if we restored state (for forcing initial update)
+        restored_state = False
+
         if getattr(self, "_attr_is_on", None) is None:
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
@@ -109,13 +112,25 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
                     self._attr_is_on = False
                 else:
                     self._attr_is_on = last_state.state.lower() == "on"
+                    restored_state = True
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_update,
             self._handle_update,
         )
-        self._handle_update(self.vin, self.descriptor)
+
+        # Force initial update to get fresh data from coordinator
+        # If we restored state, temporarily clear it to allow the update through
+        if restored_state:
+            temp_value = self._attr_is_on
+            self._attr_is_on = None
+            self._handle_update(self.vin, self.descriptor)
+            # If no fresh data was available, restore the old value
+            if self._attr_is_on is None:
+                self._attr_is_on = temp_value
+        else:
+            self._handle_update(self.vin, self.descriptor)
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""
