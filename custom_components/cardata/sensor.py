@@ -511,6 +511,9 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         """Restore state and subscribe to updates."""
         await super().async_added_to_hass()
 
+        # Track if we restored state (to ensure fresh data updates it)
+        restored_state = False
+
         if self._attr_native_value is None:
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
@@ -518,12 +521,31 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
                     self._attr_native_value = dt_util.parse_datetime(last_state.state)
                 else:
                     self._attr_native_value = last_state.state
+                restored_state = True
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
             self._coordinator.signal_diagnostics,
             self._handle_update,
         )
+
+        # Get initial value from coordinator to ensure we're not stuck with old state
+        if restored_state:
+            # For connection_status, always get fresh value from coordinator
+            if self._sensor_type == "connection_status":
+                current_value = self._coordinator.connection_status
+                if current_value is not None:
+                    self._attr_native_value = current_value
+            # For timestamps, check if coordinator has fresher data
+            elif self._sensor_type == "last_message":
+                current_value = self._coordinator.last_message_at
+                if current_value is not None:
+                    self._attr_native_value = current_value
+            elif self._sensor_type == "last_telematic_api":
+                current_value = self._coordinator.last_telematic_api_at
+                if current_value is not None:
+                    self._attr_native_value = current_value
+
         self._handle_update()
 
     async def async_will_remove_from_hass(self) -> None:

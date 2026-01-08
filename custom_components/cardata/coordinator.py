@@ -593,6 +593,12 @@ class CardataCoordinator:
 
         self.last_message_at = datetime.now(UTC)
 
+        # If we're receiving messages, we must be connected
+        # Update status if it's not already "connected" to ensure diagnostic sensor shows correct state
+        if self.connection_status != "connected":
+            self.connection_status = "connected"
+            self.last_disconnect_reason = None
+
         if debug_enabled():
             _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
 
