@@ -248,7 +248,7 @@ async def async_perform_telematic_fetch(
             payload = response.text
         safe_payload = redact_vin_payload(payload)
 
-        _LOGGER.info("Cardata telematic data for %s: %s", redacted_vin, safe_payload)
+        _LOGGER.debug("Cardata telematic data for %s: %s", redacted_vin, safe_payload)
         telematic_payload = extract_telematic_payload(payload)
 
         if isinstance(telematic_payload, dict):
@@ -264,7 +264,7 @@ async def async_perform_telematic_fetch(
     if any_success:
         runtime.coordinator.last_telematic_api_at = datetime.now(UTC)
         async_dispatcher_send(runtime.coordinator.hass, runtime.coordinator.signal_diagnostics)
-        _LOGGER.info("Cardata telematic fetch succeeded for at least one VIN")
+        _LOGGER.debug("Cardata telematic fetch succeeded for at least one VIN")
         return TelematicFetchResult(True)
 
     # If we tried but got no data, return TelematicFetchResult(False) (temporary failure)
