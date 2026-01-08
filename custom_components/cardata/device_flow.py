@@ -93,6 +93,13 @@ async def poll_for_tokens(
     consecutive_500s = 0  # Track consecutive 500 errors
     max_consecutive_500s = 3  # Give up after 3 consecutive 500s
 
+    _LOGGER.debug(
+        "Starting token polling: client_id=%s, device_code=%s..., timeout=%ds",
+        client_id[:16] + "..." if len(client_id) > 16 else client_id,
+        device_code[:8] + "..." if device_code and len(device_code) > 8 else device_code,
+        timeout,
+    )
+
     while True:
         if time.monotonic() - start > timeout:
             raise CardataAuthError("Timed out waiting for device authorization")
@@ -148,6 +155,17 @@ async def poll_for_tokens(
                 safe_data = {
                     k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
                 }
+                elapsed = time.monotonic() - start
+                _LOGGER.warning(
+                    "Token polling failed after %.1fs with status %d. This may indicate:\n"
+                    "  1. Client ID changed between device code request and token polling\n"
+                    "  2. Device code expired (typically 5-10 minutes)\n"
+                    "  3. BMW API session issue\n"
+                    "Response: %s",
+                    elapsed,
+                    resp.status,
+                    safe_data,
+                )
                 raise CardataAuthError(f"Token polling failed ({resp.status}): {safe_data}")
         except (TimeoutError, aiohttp.ClientError) as err:
             consecutive_500s = 0
