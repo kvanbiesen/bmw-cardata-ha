@@ -533,18 +533,18 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         if restored_state:
             # For connection_status, always get fresh value from coordinator
             if self._sensor_type == "connection_status":
-                current_value = self._coordinator.connection_status
+                current_value: str | None = self._coordinator.connection_status
                 if current_value is not None:
                     self._attr_native_value = current_value
             # For timestamps, check if coordinator has fresher data
             elif self._sensor_type == "last_message":
-                current_value = self._coordinator.last_message_at
-                if current_value is not None:
-                    self._attr_native_value = current_value
+                current_value_ts: datetime | None = self._coordinator.last_message_at
+                if current_value_ts is not None:
+                    self._attr_native_value = current_value_ts
             elif self._sensor_type == "last_telematic_api":
-                current_value = self._coordinator.last_telematic_api_at
-                if current_value is not None:
-                    self._attr_native_value = current_value
+                current_value_api: datetime | None = self._coordinator.last_telematic_api_at
+                if current_value_api is not None:
+                    self._attr_native_value = current_value_api
 
         self._handle_update()
 
