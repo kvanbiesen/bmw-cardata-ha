@@ -121,7 +121,7 @@ KNOWN_DESCRIPTORS = list(const.HV_BATTERY_DESCRIPTORS) + [
     "vehicle.vehicleIdentification.basicVehicleData",
     "vehicle.isMoving",
 ]
-SOC_DESCRIPTORS = list(coordinator_module._TIMESTAMPED_SOC_DESCRIPTORS)
+SOC_DESCRIPTORS = list(coordinator_module.TIMESTAMPED_SOC_DESCRIPTORS)
 KNOWN_DESCRIPTORS.extend(SOC_DESCRIPTORS)
 
 
@@ -279,6 +279,8 @@ def main() -> None:
         max_time = DEFAULT_MAX_TIME
     existing_max = _existing_max_total_time(args)
     effective_max = min(existing_max, max_time) if existing_max else max_time
+    # Hard cap to ensure we always finish before CI timeout (5h)
+    effective_max = min(effective_max, DEFAULT_MAX_TIME)
     args.append(f"-max_total_time={effective_max}")
     print(f"Fuzzing for {effective_max} seconds ({effective_max / 3600:.1f} hours)")
 

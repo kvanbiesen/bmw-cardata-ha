@@ -142,7 +142,7 @@ class FakeRateLimiter:
             return False, self._reason
         return True, None
 
-    def record_429(self) -> None:
+    def record_429(self, endpoint: str | None = None, retry_after: float | None = None) -> None:
         return
 
     def record_success(self) -> None:
@@ -271,6 +271,8 @@ def main() -> None:
         max_time = DEFAULT_MAX_TIME
     existing_max = _existing_max_total_time(args)
     effective_max = min(existing_max, max_time) if existing_max else max_time
+    # Hard cap to ensure we always finish before CI timeout (5h)
+    effective_max = min(effective_max, DEFAULT_MAX_TIME)
     args.append(f"-max_total_time={effective_max}")
     print(f"Fuzzing for {effective_max} seconds ({effective_max / 3600:.1f} hours)")
 
