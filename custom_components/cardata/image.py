@@ -74,9 +74,8 @@ async def async_setup_entry(
         image_path = metadata.get("vehicle_image_path")
         if not image_path:
             _LOGGER.warning(
-                "No vehicle_image_path in metadata for VIN %s (metadata keys: %s), skipping image entity",
+                "Vehicle image not available for VIN %s. Use the 'cardata.fetch_vehicle_image' service to download it.",
                 redact_vin(vin),
-                list(metadata.keys()),
             )
             return
 
