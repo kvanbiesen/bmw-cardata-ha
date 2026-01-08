@@ -98,7 +98,7 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
 
         await super().async_added_to_hass()
 
-        # Track if we restored state (for forcing initial update)
+        # Track if we restored state (to ensure fresh data updates it)
         restored_state = False
 
         if getattr(self, "_attr_is_on", None) is None:
@@ -120,16 +120,17 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
             self._handle_update,
         )
 
-        # Force initial update to get fresh data from coordinator
-        # If we restored state, temporarily clear it to allow the update through
+        # Get initial value from coordinator (may have arrived before we subscribed)
+        # If we restored state, check for fresh data to ensure we're not stuck with old value
         if restored_state:
-            temp_value = self._attr_is_on
-            self._attr_is_on = None
-            self._handle_update(self.vin, self.descriptor)
-            # If no fresh data was available, restore the old value
-            if self._attr_is_on is None:
-                self._attr_is_on = temp_value
+            state = self._coordinator.get_state(self.vin, self.descriptor)
+            if state and isinstance(state.value, bool):
+                # Fresh data available - use it (may differ from restored value)
+                if self._attr_is_on != state.value:
+                    self._attr_is_on = state.value
+                    self.schedule_update_ha_state()
         else:
+            # No restored state - do normal initial update
             self._handle_update(self.vin, self.descriptor)
 
     async def async_will_remove_from_hass(self) -> None:
