@@ -156,7 +156,7 @@ jobs:
 
   report_failure:
     needs: fuzz
-    if: ${{ always() && needs.fuzz.result == 'failure' }}
+    if: ${{ always() && (needs.fuzz.result == 'failure' || needs.fuzz.result == 'cancelled') }}
     runs-on: ubuntu-latest
     permissions:
       actions: read
