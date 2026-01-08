@@ -142,7 +142,7 @@ class FakeRateLimiter:
             return False, self._reason
         return True, None
 
-    def record_429(self) -> None:
+    def record_429(self, endpoint: str | None = None, retry_after: float | None = None) -> None:
         return
 
     def record_success(self) -> None:
