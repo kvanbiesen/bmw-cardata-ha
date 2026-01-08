@@ -199,14 +199,17 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         initial_lat = self._fetch_coordinate(LOCATION_LATITUDE_DESCRIPTOR)
         initial_lon = self._fetch_coordinate(LOCATION_LONGITUDE_DESCRIPTOR)
         if initial_lat is not None and initial_lon is not None:
-            # Only use coordinator data if we don't have restored state
+            # Always use fresh coordinator data if available, even if we restored state
+            # The restored state is just a fallback until fresh data arrives
+            self._last_lat = initial_lat
+            self._last_lon = initial_lon
+            self._last_lat_time = time.monotonic()
+            self._last_lon_time = time.monotonic()
+
+            # Only update _current if we didn't restore (shows old location until movement confirmed)
             if self._current_lat is None or self._current_lon is None:
                 self._current_lat = initial_lat
                 self._current_lon = initial_lon
-                self._last_lat = initial_lat
-                self._last_lon = initial_lon
-                self._last_lat_time = time.monotonic()
-                self._last_lon_time = time.monotonic()
                 _LOGGER.debug(
                     "Initialized location from coordinator for %s: %.6f, %.6f",
                     self._redacted_vin,
@@ -214,6 +217,17 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     self._current_lon,
                 )
                 self.async_write_ha_state()
+            else:
+                _LOGGER.debug(
+                    "Updated tracking coordinates for %s (restored: %.6f, %.6f, fresh: %.6f, %.6f)",
+                    self._redacted_vin,
+                    self._current_lat,
+                    self._current_lon,
+                    initial_lat,
+                    initial_lon,
+                )
+                # Process the fresh coordinates through normal movement detection
+                self._process_coordinate_pair()
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
