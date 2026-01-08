@@ -121,7 +121,7 @@ KNOWN_DESCRIPTORS = list(const.HV_BATTERY_DESCRIPTORS) + [
     "vehicle.vehicleIdentification.basicVehicleData",
     "vehicle.isMoving",
 ]
-SOC_DESCRIPTORS = list(coordinator_module._TIMESTAMPED_SOC_DESCRIPTORS)
+SOC_DESCRIPTORS = list(coordinator_module.TIMESTAMPED_SOC_DESCRIPTORS)
 KNOWN_DESCRIPTORS.extend(SOC_DESCRIPTORS)
 
 
