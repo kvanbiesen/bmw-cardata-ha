@@ -660,7 +660,12 @@ class CardataCoordinator:
                             # when the 10-minute timeout expires, even if location hasn't changed
                             immediate_updates.append((vin, "vehicle.isMoving"))
                     except (ValueError, TypeError):
-                        _LOGGER.debug("Invalid GPS coordinates for %s: lat=%s, lon=%s", redact_vin(vin), lat_state.value, lon_state.value)
+                        _LOGGER.debug(
+                            "Invalid GPS coordinates for %s: lat=%s, lon=%s",
+                            redact_vin(vin),
+                            lat_state.value,
+                            lon_state.value,
+                        )
 
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
