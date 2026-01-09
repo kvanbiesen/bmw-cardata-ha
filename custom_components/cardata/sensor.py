@@ -491,9 +491,9 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
                 attrs["api_quota_remaining"] = self._quota.remaining
                 if next_reset := self._quota.next_reset_iso:
                     attrs["api_quota_next_reset"] = next_reset
-            # Expose evicted updates count for diagnostics visibility
-            if hasattr(self._coordinator, "_evicted_updates_count"):
-                attrs["evicted_updates_count"] = self._coordinator._evicted_updates_count
+            # Expose evicted descriptors count for diagnostics visibility
+            if hasattr(self._coordinator, "_descriptors_evicted_count"):
+                attrs["evicted_descriptors_count"] = self._coordinator._descriptors_evicted_count
             return attrs
 
         if self._sensor_type == "last_telematic_api":
