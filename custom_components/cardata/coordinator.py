@@ -859,12 +859,24 @@ class CardataCoordinator:
         # Take a snapshot of the data to avoid iteration issues during concurrent modification
         # Using list() on items() creates a shallow copy of the dict items at that moment
         result: list[tuple[str, str]] = []
-        data_snapshot = list(self.data.items())
-        for vin, descriptors in data_snapshot:
-            descriptors_snapshot = list(descriptors.items())
-            for descriptor, descriptor_state in descriptors_snapshot:
-                if isinstance(descriptor_state.value, bool) == binary:
-                    result.append((vin, descriptor))
+        try:
+            data_snapshot = list(self.data.items())
+            for vin, descriptors in data_snapshot:
+                try:
+                    descriptors_snapshot = list(descriptors.items())
+                    for descriptor, descriptor_state in descriptors_snapshot:
+                        try:
+                            if isinstance(descriptor_state.value, bool) == binary:
+                                result.append((vin, descriptor))
+                        except (AttributeError, TypeError):
+                            # descriptor_state was replaced during access
+                            continue
+                except (RuntimeError, AttributeError):
+                    # descriptors dict changed during iteration
+                    continue
+        except RuntimeError:
+            # data dict changed during snapshot
+            pass
         return result
 
     async def async_iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
