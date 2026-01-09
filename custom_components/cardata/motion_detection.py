@@ -149,6 +149,9 @@ class MotionDetector:
                 return False
 
         # Check if vehicle moved recently (within 5-minute window)
+        if last_change is None:
+            # Should never happen but handle defensively
+            return False
         elapsed_since_movement = (now - last_change).total_seconds() / 60.0
         return elapsed_since_movement < self.MOTION_LOCATION_STALE_MINUTES
 
