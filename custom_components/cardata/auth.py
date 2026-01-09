@@ -37,7 +37,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
+from .const import DOMAIN, ERR_TOKEN_REFRESH_IN_PROGRESS, HV_BATTERY_DESCRIPTORS
 from .container import CardataContainerManager
 from .device_flow import CardataAuthError, refresh_tokens
 from .runtime import CardataRuntimeData, async_update_entry_data
@@ -161,7 +161,7 @@ async def refresh_tokens_for_entry(
             await asyncio.wait_for(lock.acquire(), timeout=30.0)
         except TimeoutError:
             _LOGGER.debug("Token Refresh lock timeout for entry %s; another refresh in progress", entry.entry_id)
-            raise CardataAuthError("Token refresh already in progress") from None
+            raise CardataAuthError(ERR_TOKEN_REFRESH_IN_PROGRESS) from None
 
         # Lock is now acquired - use try/finally immediately to ensure release
         try:
