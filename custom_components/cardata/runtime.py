@@ -111,15 +111,21 @@ class CardataRuntimeData:
     @property
     def session_healthy(self) -> bool:
         """Check if the aiohttp session appears healthy."""
-        if self.session is None:
+        # Capture session reference to avoid race condition
+        session = self.session
+        if session is None:
             return False
-        if self.session.closed:
+        try:
+            if session.closed:
+                return False
+            # Check connector health if available
+            connector = session.connector
+            if connector is not None and connector.closed:
+                return False
+            return True
+        except AttributeError:
+            # Session was replaced during check
             return False
-        # Check connector health if available
-        connector = self.session.connector
-        if connector is not None and connector.closed:
-            return False
-        return True
 
     def record_session_success(self) -> None:
         """Record a successful session operation, resetting failure counter."""

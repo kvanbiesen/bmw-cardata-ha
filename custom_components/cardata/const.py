@@ -82,6 +82,9 @@ OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
 OPTION_DIAGNOSTIC_INTERVAL = "diagnostic_log_interval"
 
+# Error message constants (for consistent error detection)
+ERR_TOKEN_REFRESH_IN_PROGRESS = "Token refresh already in progress"
+
 # Container Management
 # If True, search for existing containers to reuse (prevents accumulation)
 CONTAINER_REUSE_EXISTING = True

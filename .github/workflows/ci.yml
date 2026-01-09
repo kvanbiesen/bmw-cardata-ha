@@ -9,6 +9,8 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -24,17 +26,39 @@ jobs:
       - name: Run flake8
         run: flake8 --ignore=E501,W503,E203 custom_components/cardata
 
-      - name: Run ruff linter
+      - name: Run ruff linter (auto-fix)
+        if: github.event_name == 'push'
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check --fix"
+          src: "custom_components/cardata"
+
+      - name: Run ruff linter (check)
+        if: github.event_name == 'pull_request'
         uses: astral-sh/ruff-action@v3
         with:
           args: "check"
           src: "custom_components/cardata"
 
+      - name: Run ruff formatter (auto-fix)
+        if: github.event_name == 'push'
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "format"
+          src: "custom_components/cardata"
+
       - name: Run ruff formatter check
+        if: github.event_name == 'pull_request'
         uses: astral-sh/ruff-action@v3
         with:
           args: "format --check"
           src: "custom_components/cardata"
+
+      - name: Commit ruff fixes
+        if: github.event_name == 'push'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: ruff autofix"
 
   typecheck:
     runs-on: ubuntu-latest

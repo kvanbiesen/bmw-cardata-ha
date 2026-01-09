@@ -48,6 +48,7 @@ from .const import (
     DEFAULT_STREAM_PORT,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
+    ERR_TOKEN_REFRESH_IN_PROGRESS,
     MQTT_KEEPALIVE,
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
@@ -353,7 +354,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     except CardataAuthError as err:
                         # Check if this is just a concurrent refresh attempt (not a real failure)
-                        if "already in progress" in str(err).lower():
+                        if ERR_TOKEN_REFRESH_IN_PROGRESS in str(err):
                             _LOGGER.debug("Token refresh skipped: another refresh already in progress")
                             # Don't count as a failure - another refresh is handling it
                             continue
@@ -446,7 +447,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Bootstrap did not complete within 30 seconds. Devices will update names when metadata arrives."
                 )
                 # Cancel the timed-out task to prevent it running in background
-                await async_cancel_task(runtime_data.bootstrap_task)
+                try:
+                    await async_cancel_task(runtime_data.bootstrap_task)
+                except Exception as cancel_err:
+                    _LOGGER.debug("Error cancelling bootstrap task: %s", cancel_err)
                 runtime_data.bootstrap_task = None
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)

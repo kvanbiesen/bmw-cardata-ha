@@ -37,7 +37,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, HV_BATTERY_DESCRIPTORS
+from .const import DOMAIN, ERR_TOKEN_REFRESH_IN_PROGRESS, HV_BATTERY_DESCRIPTORS
 from .container import CardataContainerManager
 from .device_flow import CardataAuthError, refresh_tokens
 from .runtime import CardataRuntimeData, async_update_entry_data
@@ -156,15 +156,14 @@ async def refresh_tokens_for_entry(
     if runtime and runtime.token_refresh_lock:
         lock = runtime.token_refresh_lock
 
-        # Track whether we successfully acquired the lock
-        lock_acquired = False
+        # Acquire lock with timeout
         try:
             await asyncio.wait_for(lock.acquire(), timeout=30.0)
-            lock_acquired = True
         except TimeoutError:
             _LOGGER.debug("Token Refresh lock timeout for entry %s; another refresh in progress", entry.entry_id)
-            raise CardataAuthError("Token refresh already in progress") from None
+            raise CardataAuthError(ERR_TOKEN_REFRESH_IN_PROGRESS) from None
 
+        # Lock is now acquired - use try/finally immediately to ensure release
         try:
             # double check if token still needs refesh
             expired, seconds_left = is_token_expired(entry, TOKEN_EXPIRY_BUFFER_SECONDS)
@@ -172,11 +171,8 @@ async def refresh_tokens_for_entry(
                 _LOGGER.debug("Token was refreshed by another caller; skipping (valid for %s seconds)", seconds_left)
                 return
             await _do_token_refresh(entry, session, manager, container_manager, hass)
-
         finally:
-            # Only release if we actually acquired the lock
-            if lock_acquired:
-                lock.release()
+            lock.release()
     else:
         # no lock available( should not happen but run as fallback )
         _LOGGER.debug("No token refresh lock available; proceeding without lock")

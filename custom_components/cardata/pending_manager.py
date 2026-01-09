@@ -184,13 +184,16 @@ class UpdateBatcher:
         # Check per-VIN limit
         vin_count = len(self._updates.get(vin, set()))
         if vin_count >= self.MAX_PER_VIN:
-            # Evict half from this VIN
+            # Evict half from this VIN (oldest by sorted order for determinism)
             pending_set = self._updates.get(vin, set())
             evict_count = max(1, len(pending_set) // 2)
-            for _ in range(evict_count):
-                if pending_set:
-                    pending_set.pop()
-            self.evicted_count += evict_count
+            # Sort to make eviction deterministic (alphabetically last descriptors removed first)
+            sorted_items = sorted(pending_set, reverse=True)
+            evicted_items = sorted_items[:evict_count]
+            for item in evicted_items:
+                pending_set.discard(item)
+            self.evicted_count += len(evicted_items)
+            _LOGGER.debug("Evicted %d pending updates for VIN limit", len(evicted_items))
 
         return True
 
@@ -216,17 +219,19 @@ class UpdateBatcher:
         if not pending_set:
             return 0
 
-        # Evict half
+        # Evict half (use sorted order for deterministic behavior)
         evict_count = max(1, len(pending_set) // 2)
-        for _ in range(evict_count):
-            if pending_set:
-                pending_set.pop()
+        sorted_items = sorted(pending_set, reverse=True)
+        evicted_items = sorted_items[:evict_count]
+        for item in evicted_items:
+            pending_set.discard(item)
 
         # Clean up empty sets
         if not pending_set:
             self._updates.pop(max_vin, None)
 
-        return evict_count
+        _LOGGER.debug("Evicted %d pending updates from VIN with most updates", len(evicted_items))
+        return len(evicted_items)
 
     def evict_vin(self) -> int:
         """Evict all pending updates from one VIN. Returns count evicted."""
@@ -236,7 +241,10 @@ class UpdateBatcher:
         # Evict VIN with fewest pending (least data loss)
         min_vin = min(self._updates.keys(), key=lambda v: len(self._updates.get(v, set())))
         pending_set = self._updates.pop(min_vin, set())
-        return len(pending_set)
+        evicted_count = len(pending_set)
+        if evicted_count > 0:
+            _LOGGER.debug("Evicted %d pending updates by removing VIN from tracking", evicted_count)
+        return evicted_count
 
     def snapshot_and_clear(self) -> PendingSnapshot:
         """Take a snapshot of all pending items and clear them.

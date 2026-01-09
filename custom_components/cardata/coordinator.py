@@ -343,7 +343,7 @@ class CardataCoordinator:
             try:
                 aux_value = float(value)
             except (TypeError, ValueError):
-                pass
+                _LOGGER.debug("Could not parse aux power value: %s", value)
             else:
                 if math.isfinite(aux_value):
                     if isinstance(unit, str) and unit.lower() == "w":
@@ -660,7 +660,12 @@ class CardataCoordinator:
                             # when the 10-minute timeout expires, even if location hasn't changed
                             immediate_updates.append((vin, "vehicle.isMoving"))
                     except (ValueError, TypeError):
-                        pass  # Invalid coordinate values, skip tracking
+                        _LOGGER.debug(
+                            "Invalid GPS coordinates for %s: lat=%s, lon=%s",
+                            redact_vin(vin),
+                            lat_state.value,
+                            lon_state.value,
+                        )
 
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
@@ -859,12 +864,24 @@ class CardataCoordinator:
         # Take a snapshot of the data to avoid iteration issues during concurrent modification
         # Using list() on items() creates a shallow copy of the dict items at that moment
         result: list[tuple[str, str]] = []
-        data_snapshot = list(self.data.items())
-        for vin, descriptors in data_snapshot:
-            descriptors_snapshot = list(descriptors.items())
-            for descriptor, descriptor_state in descriptors_snapshot:
-                if isinstance(descriptor_state.value, bool) == binary:
-                    result.append((vin, descriptor))
+        try:
+            data_snapshot = list(self.data.items())
+            for vin, descriptors in data_snapshot:
+                try:
+                    descriptors_snapshot = list(descriptors.items())
+                    for descriptor, descriptor_state in descriptors_snapshot:
+                        try:
+                            if isinstance(descriptor_state.value, bool) == binary:
+                                result.append((vin, descriptor))
+                        except (AttributeError, TypeError):
+                            # descriptor_state was replaced during access
+                            continue
+                except (RuntimeError, AttributeError):
+                    # descriptors dict changed during iteration
+                    continue
+        except RuntimeError:
+            # data dict changed during snapshot
+            pass
         return result
 
     async def async_iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
@@ -1219,9 +1236,9 @@ class CardataCoordinator:
             tracking.estimated_percent = estimate
             tracking.last_estimate_time = reference_time
             self._soc_estimate[vin] = round(estimate, 2)
-        if rate is not None and math.isfinite(rate):
-            tracking.rate_per_hour = rate if rate != 0 else None
-            if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
+        if rate is not None and math.isfinite(rate) and rate != 0:
+            tracking.rate_per_hour = rate
+            if tracking.rate_per_hour is not None:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
                 # Note: Do NOT set charging_active = True here. The restored rate is stale
                 # and we don't know if charging is still active. Let charging_active be set
