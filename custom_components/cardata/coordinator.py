@@ -1231,9 +1231,9 @@ class CardataCoordinator:
             tracking.estimated_percent = estimate
             tracking.last_estimate_time = reference_time
             self._soc_estimate[vin] = round(estimate, 2)
-        if rate is not None and math.isfinite(rate):
-            tracking.rate_per_hour = rate if rate != 0 else None
-            if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
+        if rate is not None and math.isfinite(rate) and rate != 0:
+            tracking.rate_per_hour = rate
+            if tracking.rate_per_hour is not None:
                 self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
                 # Note: Do NOT set charging_active = True here. The restored rate is stale
                 # and we don't know if charging is still active. Let charging_active be set
