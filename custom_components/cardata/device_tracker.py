@@ -35,7 +35,7 @@ from typing import Any
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -400,6 +400,24 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         """Apply new coordinates and trigger Home Assistant state update."""
         self._current_lat = lat
         self._current_lon = lon
+
+        # Update motion detector with properly paired coordinates
+        # This ensures isMoving sensor gets accurate data (not mismatched lat/lon)
+        self._coordinator._update_location_tracking(self._vin, lat, lon)
+
+        # Signal creation of vehicle.isMoving entity if not already done
+        if not self._coordinator._motion_detector.has_signaled_entity(self._vin):
+            self._coordinator._motion_detector.signal_entity_created(self._vin)
+            # Notify coordinator to create the binary sensor entity
+            async_dispatcher_send(
+                self._coordinator.hass, self._coordinator.signal_new_binary, self._vin, "vehicle.isMoving"
+            )
+        else:
+            # Notify binary sensor to update its state
+            async_dispatcher_send(
+                self._coordinator.hass, self._coordinator.signal_update, self._vin, "vehicle.isMoving"
+            )
+
         self.schedule_update_ha_state()
         _LOGGER.debug(
             "Location updated for %s (%s): lat=%.6f lon=%.6f",
