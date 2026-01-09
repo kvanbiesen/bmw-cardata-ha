@@ -446,7 +446,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Bootstrap did not complete within 30 seconds. Devices will update names when metadata arrives."
                 )
                 # Cancel the timed-out task to prevent it running in background
-                await async_cancel_task(runtime_data.bootstrap_task)
+                try:
+                    await async_cancel_task(runtime_data.bootstrap_task)
+                except Exception as cancel_err:
+                    _LOGGER.debug("Error cancelling bootstrap task: %s", cancel_err)
                 runtime_data.bootstrap_task = None
             except Exception as err:
                 _LOGGER.warning("Bootstrap failed: %s", err)
