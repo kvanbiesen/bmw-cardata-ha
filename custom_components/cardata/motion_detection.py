@@ -81,7 +81,18 @@ class MotionDetector:
 
         distance = self._calculate_distance(last[0], last[1], lat, lon)
         if distance > self.MOTION_DISTANCE_THRESHOLD_M:
-            # Vehicle moved significantly
+            # Check if we were already considered parked (no movement for > 5 minutes)
+            # This prevents GPS drift from resetting a long parked period
+            last_change = self._last_location_change.get(vin)
+            if last_change is not None:
+                elapsed_since_movement = (now - last_change).total_seconds() / 60.0
+                if elapsed_since_movement >= self.MOTION_LOCATION_STALE_MINUTES:
+                    # Vehicle was already parked - ignore this GPS drift
+                    # Update location but don't reset movement timer
+                    self._last_location[vin] = (lat, lon)
+                    return False
+
+            # Vehicle moved significantly and wasn't already parked
             self._last_location[vin] = (lat, lon)
             self._last_location_change[vin] = now
             return True
@@ -133,23 +144,12 @@ class MotionDetector:
         if last_gps_update is not None:
             gps_age_minutes = (now - last_gps_update).total_seconds() / 60.0
             if gps_age_minutes > self.GPS_UPDATE_STALE_MINUTES:
-                # GPS hasn't updated in 30+ minutes - likely in garage or no signal
+                # GPS hasn't updated in 15+ minutes - likely in garage or no signal
                 # Return False (not moving) instead of None to avoid "unknown" state
                 return False
 
-        # GPS is updating, check if vehicle has moved recently
-        if last_change is None:
-            # Have GPS updates but never recorded movement - vehicle is stationary
-            return False
-
-        # Check if vehicle has moved recently (within stale window)
-        # elapsed_since_movement = time since last significant movement (>50m)
-        # When GPS updates arrive showing the same location, _last_location gets updated
-        # but _last_location_change stays at the time of last movement
+        # Check if vehicle moved recently (within 5-minute window)
         elapsed_since_movement = (now - last_change).total_seconds() / 60.0
-
-        # Return True (moving) if moved within the stale window, False (parked) otherwise
-        # This single threshold avoids false "parked" at traffic lights or quick stops
         return elapsed_since_movement < self.MOTION_LOCATION_STALE_MINUTES
 
     def has_signaled_entity(self, vin: str) -> bool:
