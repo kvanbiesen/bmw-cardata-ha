@@ -129,9 +129,11 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
                 if self._attr_is_on != state.value:
                     self._attr_is_on = state.value
                     self.schedule_update_ha_state()
-        else:
-            # No restored state - do normal initial update
-            self._handle_update(self.vin, self.descriptor)
+
+        # Always do initial update to get current state from coordinator
+        # For isMoving: this gets the derived motion state from GPS tracking
+        # For other sensors: this ensures we have the latest MQTT data
+        self._handle_update(self.vin, self.descriptor)
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""
