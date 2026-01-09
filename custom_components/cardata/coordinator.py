@@ -641,32 +641,6 @@ class CardataCoordinator:
                 value=value, unit=unit, timestamp=timestamp, last_seen=time.time()
             )
 
-            # Update location tracking for derived motion detection
-            if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
-                lat_state = vehicle_state.get(LOCATION_LATITUDE_DESCRIPTOR)
-                lon_state = vehicle_state.get(LOCATION_LONGITUDE_DESCRIPTOR)
-                if lat_state and lon_state and lat_state.value is not None and lon_state.value is not None:
-                    try:
-                        # Update motion detector with new GPS coordinates
-                        self._update_location_tracking(vin, float(lat_state.value), float(lon_state.value))
-                        # Signal creation of vehicle.isMoving entity if not already done
-                        # This allows the derived motion state to be exposed as a sensor
-                        if not self._motion_detector.has_signaled_entity(vin):
-                            self._motion_detector.signal_entity_created(vin)
-                            new_binary.append("vehicle.isMoving")
-                        else:
-                            # Always update motion state when GPS updates arrive
-                            # This ensures state transitions from "moving" to "not moving"
-                            # when the 10-minute timeout expires, even if location hasn't changed
-                            immediate_updates.append((vin, "vehicle.isMoving"))
-                    except (ValueError, TypeError):
-                        _LOGGER.debug(
-                            "Invalid GPS coordinates for %s: lat=%s, lon=%s",
-                            redact_vin(vin),
-                            lat_state.value,
-                            lon_state.value,
-                        )
-
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
                 self.apply_basic_data(vin, value)
 
