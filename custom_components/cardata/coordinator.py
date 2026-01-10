@@ -1212,17 +1212,14 @@ class CardataCoordinator:
             self._soc_estimate[vin] = round(estimate, 2)
         if rate is not None and math.isfinite(rate) and rate != 0:
             tracking.rate_per_hour = rate
-            if tracking.rate_per_hour is not None:
-                self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
-                # Note: Do NOT set charging_active = True here. The restored rate is stale
-                # and we don't know if charging is still active. Let charging_active be set
-                # only by actual status updates from the vehicle. The rate is stored but
-                # won't be used for estimation until a status update confirms charging.
-                if tracking.max_energy_kwh is not None and tracking.max_energy_kwh != 0:
-                    tracking.last_power_w = (tracking.rate_per_hour / 100.0) * tracking.max_energy_kwh * 1000.0
-                tracking.last_power_time = reference_time
-            else:
-                self._soc_rate.pop(vin, None)
+            self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
+            # Note: Do NOT set charging_active = True here. The restored rate is stale
+            # and we don't know if charging is still active. Let charging_active be set
+            # only by actual status updates from the vehicle. The rate is stored but
+            # won't be used for estimation until a status update confirms charging.
+            if tracking.max_energy_kwh is not None and tracking.max_energy_kwh != 0:
+                tracking.last_power_w = (tracking.rate_per_hour / 100.0) * tracking.max_energy_kwh * 1000.0
+            tracking.last_power_time = reference_time
 
     def restore_testing_soc_cache(
         self,
