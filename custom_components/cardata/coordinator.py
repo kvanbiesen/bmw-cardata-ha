@@ -62,6 +62,9 @@ from .utils import is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
+# Pre-compiled regex for AC phase parsing (avoids recompilation on each message)
+_AC_PHASE_PATTERN = re.compile(r"(\d{1,2})")
+
 
 @dataclass
 class CardataCoordinator:
@@ -123,6 +126,27 @@ class CardataCoordinator:
     # This prevents MQTT cross-contamination when multiple accounts share the same GCID
     _allowed_vins: set[str] = field(default_factory=set, init=False)
 
+    # Cached signal strings (initialized in __post_init__ for performance)
+    _signal_new_sensor: str = field(default="", init=False)
+    _signal_new_binary: str = field(default="", init=False)
+    _signal_update: str = field(default="", init=False)
+    _signal_diagnostics: str = field(default="", init=False)
+    _signal_soc_estimate: str = field(default="", init=False)
+    _signal_telematic_api: str = field(default="", init=False)
+    _signal_new_image: str = field(default="", init=False)
+    _signal_metadata: str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        """Initialize cached values after dataclass creation."""
+        self._signal_new_sensor = f"{DOMAIN}_{self.entry_id}_new_sensor"
+        self._signal_new_binary = f"{DOMAIN}_{self.entry_id}_new_binary"
+        self._signal_update = f"{DOMAIN}_{self.entry_id}_update"
+        self._signal_diagnostics = f"{DOMAIN}_{self.entry_id}_diagnostics"
+        self._signal_soc_estimate = f"{DOMAIN}_{self.entry_id}_soc_estimate"
+        self._signal_telematic_api = f"{DOMAIN}_{self.entry_id}_telematic_api"
+        self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
+        self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
+
     @staticmethod
     def _safe_vin_suffix(vin: str | None) -> str:
         """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
@@ -132,35 +156,35 @@ class CardataCoordinator:
 
     @property
     def signal_new_sensor(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_new_sensor"
+        return self._signal_new_sensor
 
     @property
     def signal_new_binary(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_new_binary"
+        return self._signal_new_binary
 
     @property
     def signal_update(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_update"
+        return self._signal_update
 
     @property
     def signal_diagnostics(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_diagnostics"
+        return self._signal_diagnostics
 
     @property
     def signal_soc_estimate(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_soc_estimate"
+        return self._signal_soc_estimate
 
     @property
     def signal_telematic_api(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_telematic_api"
+        return self._signal_telematic_api
 
     @property
     def signal_new_image(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_new_image"
+        return self._signal_new_image
 
     @property
     def signal_metadata(self) -> str:
-        return f"{DOMAIN}_{self.entry_id}_metadata"
+        return self._signal_metadata
 
     # --- Derived motion detection from GPS ---
 
@@ -454,7 +478,7 @@ class CardataCoordinator:
         elif isinstance(phase_value, str):
             # Limit input length to prevent regex/int DoS on huge digit strings
             truncated = phase_value[:10] if len(phase_value) > 10 else phase_value
-            match = re.match(r"(\d{1,2})", truncated)  # Max 2 digits (phase 1-3)
+            match = _AC_PHASE_PATTERN.match(truncated)  # Max 2 digits (phase 1-3)
             if match:
                 try:
                     parsed = int(match.group(1))
