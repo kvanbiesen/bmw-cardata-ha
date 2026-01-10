@@ -168,12 +168,12 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 break
             await asyncio.sleep(0.1)
 
-        # Restore last known location
+        # Restore last known location (lat/lon only)
+        # Note: altitude/heading are NOT restored because their sensors are
+        # disabled by default. They will be populated when BMW sends live data.
         if (state := await self.async_get_last_state()) is not None:
             lat = state.attributes.get("latitude")
             lon = state.attributes.get("longitude")
-            state.attributes.get("gps_altitude")
-            state.attributes.get("gps_heading_deg")
 
             if lat is not None and lon is not None:
                 try:
