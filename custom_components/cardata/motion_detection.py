@@ -179,9 +179,7 @@ class MotionDetector:
             return False
 
         # Calculate distance from park anchor
-        distance_from_anchor = self._calculate_distance(
-            park_anchor[0], park_anchor[1], lat, lon
-        )
+        distance_from_anchor = self._calculate_distance(park_anchor[0], park_anchor[1], lat, lon)
 
         if distance_from_anchor <= self.PARK_RADIUS_M:
             # Within park radius - GPS jitter while parked
@@ -191,7 +189,7 @@ class MotionDetector:
 
             # Keep only most recent readings (rolling window)
             if len(park_readings) > self.MAX_PARK_READINGS:
-                park_readings = park_readings[-self.MAX_PARK_READINGS:]
+                park_readings = park_readings[-self.MAX_PARK_READINGS :]
 
             self._park_readings[vin] = park_readings
 
@@ -212,7 +210,7 @@ class MotionDetector:
             park_readings.append((lat, lon, now))
 
             if len(park_readings) > self.MAX_PARK_READINGS:
-                park_readings = park_readings[-self.MAX_PARK_READINGS:]
+                park_readings = park_readings[-self.MAX_PARK_READINGS :]
 
             self._park_readings[vin] = park_readings
 
