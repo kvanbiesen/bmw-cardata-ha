@@ -15,20 +15,20 @@ class MotionDetector:
 
     Data sources (priority order):
     1. GPS (primary) - 2 minute window, most accurate for small movements
-    2. Mileage (fallback) - 5 minute window, only when GPS unavailable
+    2. Mileage (fallback) - 10 minute window, only when GPS unavailable
     """
 
     # GPS movement window (short for responsive parking detection)
     MOTION_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 2.0
 
     # Mileage movement window (longer, less frequent updates)
-    MILEAGE_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 5.0
+    MILEAGE_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 10.0
 
     # Meters of movement required to count as "moving"
     MOTION_DISTANCE_THRESHOLD_M: ClassVar[float] = 50.0
 
     # Minutes without GPS update to consider GPS unavailable (switch to mileage fallback)
-    GPS_UPDATE_STALE_MINUTES: ClassVar[float] = 10.0
+    GPS_UPDATE_STALE_MINUTES: ClassVar[float] = 5.0
 
     def __init__(self) -> None:
         """Initialize motion detector."""
