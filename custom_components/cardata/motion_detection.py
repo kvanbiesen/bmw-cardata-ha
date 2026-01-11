@@ -94,18 +94,7 @@ class MotionDetector:
 
         distance = self._calculate_distance(last[0], last[1], lat, lon)
         if distance > self.MOTION_DISTANCE_THRESHOLD_M:
-            # Check if we were already considered parked (no movement for > 5 minutes)
-            # This prevents GPS drift from resetting a long parked period
-            last_change = self._last_location_change.get(vin)
-            if last_change is not None:
-                elapsed_since_movement = (now - last_change).total_seconds() / 60.0
-                if elapsed_since_movement >= self.MOTION_LOCATION_STALE_MINUTES:
-                    # Vehicle was already parked - ignore this GPS drift
-                    # Update location but don't reset movement timer
-                    self._last_location[vin] = (lat, lon)
-                    return False
-
-            # Vehicle moved significantly and wasn't already parked
+            # Vehicle moved significantly (50m+ is real movement, not GPS drift)
             self._last_location[vin] = (lat, lon)
             self._last_location_change[vin] = now
             return True
