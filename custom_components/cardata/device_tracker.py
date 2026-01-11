@@ -403,7 +403,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         # Update motion detector with properly paired coordinates
         # This ensures isMoving sensor gets accurate data (not mismatched lat/lon)
-        self._coordinator._update_location_tracking(self._vin, lat, lon)
+        moved = self._coordinator._update_location_tracking(self._vin, lat, lon)
 
         # Signal creation of vehicle.isMoving entity if not already done
         if not self._coordinator._motion_detector.has_signaled_entity(self._vin):
@@ -413,7 +413,16 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 self._coordinator.hass, self._coordinator.signal_new_binary, self._vin, "vehicle.isMoving"
             )
         else:
-            # Notify binary sensor to update its state
+            # Update cache and notify binary sensor
+            current_state = self._coordinator.get_derived_is_moving(self._vin)
+            _LOGGER.debug(
+                "Motion detector updated for %s: moved=%s, current_state=%s",
+                self._redacted_vin,
+                moved,
+                current_state,
+            )
+            if current_state is not None:
+                self._coordinator._last_derived_is_moving[self._vin] = current_state
             async_dispatcher_send(
                 self._coordinator.hass, self._coordinator.signal_update, self._vin, "vehicle.isMoving"
             )

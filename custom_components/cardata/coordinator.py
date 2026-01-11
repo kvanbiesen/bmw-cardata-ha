@@ -379,6 +379,14 @@ class CardataCoordinator:
         elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
             self._set_ac_phase(vin, value, parsed_ts)
             return True
+        elif descriptor == "vehicle.vehicle.travelledDistance":
+            # Update motion detector with mileage (fallback for when GPS unavailable)
+            try:
+                mileage = float(value)
+            except (TypeError, ValueError):
+                return False
+            self._motion_detector.update_mileage(vin, mileage)
+            return True
 
         return False
 
@@ -928,20 +936,30 @@ class CardataCoordinator:
 
         # Check for derived isMoving state changes (GPS staleness timeout)
         # This ensures the sensor updates when GPS becomes stale (e.g., car in garage)
-        for vin in self._motion_detector.get_tracked_vins():
+        tracked_vins = self._motion_detector.get_tracked_vins()
+        if tracked_vins:
+            _LOGGER.debug("Watchdog checking isMoving for %d VIN(s)", len(tracked_vins))
+        for vin in tracked_vins:
             # Check if vehicle.isMoving entity exists for this VIN
             if self._motion_detector.has_signaled_entity(vin):
                 # Get current derived state
                 current_derived = self.get_derived_is_moving(vin)
-                # Get stored state (if BMW provides it directly)
-                stored_state = self.get_state(vin, "vehicle.isMoving")
+                # Check if BMW provides vehicle.isMoving directly (not derived)
+                vehicle_data = self.data.get(vin)
+                bmw_provided = vehicle_data.get("vehicle.isMoving") if vehicle_data else None
 
                 # Only update if we're using derived state (no BMW-provided state)
-                if stored_state is None and current_derived is not None:
+                if bmw_provided is None and current_derived is not None:
                     # Check if state actually changed since last update
                     last_sent = self._last_derived_is_moving.get(vin)
                     if last_sent != current_derived:
                         # State changed - update cache and signal
+                        _LOGGER.debug(
+                            "isMoving state changed for %s: %s -> %s",
+                            redact_vin(vin),
+                            last_sent,
+                            current_derived,
+                        )
                         self._last_derived_is_moving[vin] = current_derived
                         self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
 
