@@ -432,12 +432,12 @@ class MotionDetector:
                             elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
                             if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
                                 _LOGGER.debug(
-                    "Motion: %s mileage fallback - %.1f min since odometer change (threshold=%.1f) - MOVING",
-                    redact_vin(vin),
-                    elapsed_mileage,
-                    self.MILEAGE_ACTIVE_WINDOW_MINUTES,
-                )
-                return True  # Still moving (confirmed by mileage)
+                                    "Motion: %s mileage fallback - %.1f min since odometer change (threshold=%.1f) - MOVING",
+                                    redact_vin(vin),
+                                    elapsed_mileage,
+                                    self.MILEAGE_ACTIVE_WINDOW_MINUTES,
+                                )
+                                return True  # Still moving (confirmed by mileage)
 
                 # If no baseline, no mileage increase, or mileage change before baseline, default to not moving
                 # (Don't use old mileage data from before GPS went stale)
@@ -452,19 +452,6 @@ class MotionDetector:
     def signal_entity_created(self, vin: str) -> None:
         """Mark that vehicle.isMoving entity has been created for this VIN."""
         self._is_moving_entity_signaled.add(vin)
-
-    def get_gps_confidence(self, vin: str) -> float | None:
-        """Get GPS confidence score for a VIN.
-
-        Returns percentage (0.0-1.0) of recent readings within park radius.
-        Compare against MIN_CONFIDENCE_THRESHOLD to check if GPS is reliable.
-
-        Returns:
-            Confidence score (0.0-1.0) or None if tracking disabled or no data
-        """
-        if not self.ENABLE_CONFIDENCE_TRACKING:
-            return None
-        return self._gps_confidence.get(vin)
 
     def cleanup_vin(self, vin: str) -> None:
         """Remove all tracking data for a VIN."""
