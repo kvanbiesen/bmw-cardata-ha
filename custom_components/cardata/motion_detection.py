@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from math import atan2, cos, radians, sin, sqrt
 from typing import ClassVar
+
+from .utils import redact_vin
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class MotionDetector:
@@ -175,11 +180,23 @@ class MotionDetector:
             # First location or no park anchor yet - establish new parking zone
             self._park_anchor[vin] = (lat, lon)
             self._park_readings[vin] = [(lat, lon, now)]
+            _LOGGER.debug(
+                "Motion: Established new park anchor for %s",
+                redact_vin(vin),
+            )
             # Don't count as movement (could be restart, first reading, etc.)
             return False
 
         # Calculate distance from park anchor
         distance_from_anchor = self._calculate_distance(park_anchor[0], park_anchor[1], lat, lon)
+
+        _LOGGER.debug(
+            "Motion: %s moved %.1fm from anchor (park=%.0fm, escape=%.0fm)",
+            redact_vin(vin),
+            distance_from_anchor,
+            self.PARK_RADIUS_M,
+            self.ESCAPE_RADIUS_M,
+        )
 
         if distance_from_anchor <= self.PARK_RADIUS_M:
             # Within park radius - GPS jitter while parked
@@ -224,6 +241,12 @@ class MotionDetector:
         else:
             # Beyond escape radius - vehicle is definitely moving!
             # Clear parking zone and establish movement
+            _LOGGER.debug(
+                "Motion: %s escaped park zone (%.1fm > %.0fm) - NOW MOVING",
+                redact_vin(vin),
+                distance_from_anchor,
+                self.ESCAPE_RADIUS_M,
+            )
             self._park_anchor[vin] = (lat, lon)
             self._park_readings[vin] = [(lat, lon, now)]
             self._last_location_change[vin] = now
@@ -257,6 +280,12 @@ class MotionDetector:
 
         # Odometer should only increase
         if mileage > last_mileage + 0.1:  # 0.1 tolerance for floating point
+            _LOGGER.debug(
+                "Motion: %s mileage increased %.1f -> %.1f (wheels turned)",
+                redact_vin(vin),
+                last_mileage,
+                mileage,
+            )
             self._last_mileage[vin] = mileage
             self._last_mileage_change[vin] = now
             return True
@@ -299,6 +328,7 @@ class MotionDetector:
 
         # 1. Charging = definitely not moving
         if vin in self._charging_vins:
+            _LOGGER.debug("Motion: %s is charging - NOT MOVING", redact_vin(vin))
             return False
 
         # Get all timestamps
@@ -315,27 +345,64 @@ class MotionDetector:
                     confidence = self._gps_confidence.get(vin, 0.0)
                     if confidence < self.MIN_CONFIDENCE_THRESHOLD:
                         # GPS unreliable (low confidence) - skip to mileage fallback
+                        _LOGGER.debug(
+                            "Motion: %s GPS unreliable (confidence=%.2f < %.2f) - falling back to mileage",
+                            redact_vin(vin),
+                            confidence,
+                            self.MIN_CONFIDENCE_THRESHOLD,
+                        )
                         pass  # Fall through to mileage check below
                     else:
                         # GPS reliable - use it (ignore mileage)
                         if last_gps_change is None:
+                            _LOGGER.debug(
+                                "Motion: %s GPS active but never moved - NOT MOVING",
+                                redact_vin(vin),
+                            )
                             return False  # GPS active but never moved
                         elapsed_gps = (now - last_gps_change).total_seconds() / 60.0
-                        return elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                        result = elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                        _LOGGER.debug(
+                            "Motion: %s GPS decision - %.1f min since movement (threshold=%.1f) - %s",
+                            redact_vin(vin),
+                            elapsed_gps,
+                            self.MOTION_ACTIVE_WINDOW_MINUTES,
+                            "MOVING" if result else "NOT MOVING",
+                        )
+                        return result
                 else:
                     # Confidence tracking disabled - trust GPS
                     if last_gps_change is None:
+                        _LOGGER.debug(
+                            "Motion: %s GPS active but never moved - NOT MOVING",
+                            redact_vin(vin),
+                        )
                         return False  # GPS active but never moved
                     elapsed_gps = (now - last_gps_change).total_seconds() / 60.0
-                    return elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                    result = elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                    _LOGGER.debug(
+                        "Motion: %s GPS decision - %.1f min since movement (threshold=%.1f) - %s",
+                        redact_vin(vin),
+                        elapsed_gps,
+                        self.MOTION_ACTIVE_WINDOW_MINUTES,
+                        "MOVING" if result else "NOT MOVING",
+                    )
+                    return result
 
         # 3. GPS stale - use mileage FALLBACK
         if last_mileage_change is not None:
             elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
             if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
+                _LOGGER.debug(
+                    "Motion: %s mileage fallback - %.1f min since odometer change (threshold=%.1f) - MOVING",
+                    redact_vin(vin),
+                    elapsed_mileage,
+                    self.MILEAGE_ACTIVE_WINDOW_MINUTES,
+                )
                 return True  # Mileage increased recently
 
         # 4. DEFAULT: Not moving (safest assumption after restart/no data)
+        _LOGGER.debug("Motion: %s no recent data - defaulting to NOT MOVING", redact_vin(vin))
         return False
 
     def has_signaled_entity(self, vin: str) -> bool:
