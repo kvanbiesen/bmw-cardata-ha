@@ -227,7 +227,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     initial_lon,
                 )
                 # Process the fresh coordinates through normal movement detection
-                self._process_coordinate_pair()
+                self.hass.async_create_task(self._process_coordinate_pair())
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
@@ -296,9 +296,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             return
 
         # Process immediately - coordinator already batches!
-        self._process_coordinate_pair()
+        self.hass.async_create_task(self._process_coordinate_pair())
 
-    def _process_coordinate_pair(self) -> None:
+    async def _process_coordinate_pair(self) -> None:
         """Process coordinate pair with intelligent pairing, smoothing, and movement threshold."""
         lat = self._last_lat
         lon = self._last_lon
@@ -374,7 +374,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             update_reason = f"initial position (Δt={time_diff:.1f}s)"
 
         # Update the tracker position
-        self._apply_new_coordinates(final_lat, final_lon, update_reason)
+        await self._apply_new_coordinates(final_lat, final_lon, update_reason)
 
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two GPS coordinates in meters using Haversine formula."""
@@ -396,7 +396,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         return distance
 
-    def _apply_new_coordinates(self, lat: float, lon: float, reason: str) -> None:
+    async def _apply_new_coordinates(self, lat: float, lon: float, reason: str) -> None:
         """Apply new coordinates and trigger Home Assistant state update."""
         self._current_lat = lat
         self._current_lon = lon

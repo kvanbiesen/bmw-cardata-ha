@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from math import atan2, cos, radians, sin, sqrt
 from typing import ClassVar
+
+from .utils import redact_vin
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class MotionDetector:
@@ -15,14 +20,14 @@ class MotionDetector:
 
     Data sources (priority order):
     1. GPS (primary) - 2 minute window, most accurate for small movements
-    2. Mileage (fallback) - 10 minute window, only when GPS unavailable
+    2. Mileage (fallback) - 7 minute window, only when GPS unavailable
     """
 
     # GPS movement window (short for responsive parking detection)
     MOTION_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 2.0
 
     # Mileage movement window (longer, less frequent updates)
-    MILEAGE_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 10.0
+    MILEAGE_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 7.0
 
     # Park zone radius - GPS readings within this distance are considered "parked jitter"
     PARK_RADIUS_M: ClassVar[float] = 35.0
@@ -61,6 +66,9 @@ class MotionDetector:
 
         # VIN -> datetime of last GPS update (any update, even if position unchanged)
         self._last_gps_update: dict[str, datetime] = {}
+
+        # VIN -> (mileage, timestamp) baseline when GPS went stale (to filter delayed updates)
+        self._mileage_baseline_when_gps_stale: dict[str, tuple[float, datetime]] = {}
 
         # VIN -> last mileage value (km or miles)
         self._last_mileage: dict[str, float] = {}
@@ -175,11 +183,23 @@ class MotionDetector:
             # First location or no park anchor yet - establish new parking zone
             self._park_anchor[vin] = (lat, lon)
             self._park_readings[vin] = [(lat, lon, now)]
+            _LOGGER.debug(
+                "Motion: Established new park anchor for %s",
+                redact_vin(vin),
+            )
             # Don't count as movement (could be restart, first reading, etc.)
             return False
 
         # Calculate distance from park anchor
         distance_from_anchor = self._calculate_distance(park_anchor[0], park_anchor[1], lat, lon)
+
+        _LOGGER.debug(
+            "Motion: %s moved %.1fm from anchor (park=%.0fm, escape=%.0fm)",
+            redact_vin(vin),
+            distance_from_anchor,
+            self.PARK_RADIUS_M,
+            self.ESCAPE_RADIUS_M,
+        )
 
         if distance_from_anchor <= self.PARK_RADIUS_M:
             # Within park radius - GPS jitter while parked
@@ -224,6 +244,12 @@ class MotionDetector:
         else:
             # Beyond escape radius - vehicle is definitely moving!
             # Clear parking zone and establish movement
+            _LOGGER.debug(
+                "Motion: %s escaped park zone (%.1fm > %.0fm) - NOW MOVING",
+                redact_vin(vin),
+                distance_from_anchor,
+                self.ESCAPE_RADIUS_M,
+            )
             self._park_anchor[vin] = (lat, lon)
             self._park_readings[vin] = [(lat, lon, now)]
             self._last_location_change[vin] = now
@@ -257,6 +283,12 @@ class MotionDetector:
 
         # Odometer should only increase
         if mileage > last_mileage + 0.1:  # 0.1 tolerance for floating point
+            _LOGGER.debug(
+                "Motion: %s mileage increased %.1f -> %.1f (wheels turned)",
+                redact_vin(vin),
+                last_mileage,
+                mileage,
+            )
             self._last_mileage[vin] = mileage
             self._last_mileage_change[vin] = now
             return True
@@ -283,11 +315,12 @@ class MotionDetector:
         """Determine if vehicle is currently moving.
 
         Philosophy: Default to NOT MOVING. Only return True with active proof.
+        Maintain last known state when GPS goes stale.
 
         Data priority:
         1. Charging → False (can't move)
         2. GPS (primary) → 2 min window, IF confidence ≥ threshold (when enabled)
-        3. Mileage (fallback) → 10 min window, when GPS stale or low confidence
+        3. When GPS stale → Maintain last GPS state + use mileage to confirm
         4. Default → False (assume parked)
 
         Returns:
@@ -298,43 +331,117 @@ class MotionDetector:
 
         # 1. Charging = definitely not moving
         if vin in self._charging_vins:
+            _LOGGER.debug("Motion: %s is charging - NOT MOVING", redact_vin(vin))
             return False
 
         # Get all timestamps
         last_gps_change = self._last_location_change.get(vin)
         last_gps_update = self._last_gps_update.get(vin)
         last_mileage_change = self._last_mileage_change.get(vin)
+        last_mileage = self._last_mileage.get(vin)
 
         # 2. GPS available (updated within 5 min) - PRIMARY
         if last_gps_update is not None:
             gps_age = (now - last_gps_update).total_seconds() / 60.0
             if gps_age <= self.GPS_UPDATE_STALE_MINUTES:
+                # GPS is active - clear mileage baseline if it was set
+                self._mileage_baseline_when_gps_stale.pop(vin, None)
+
                 # Check GPS confidence if tracking enabled
                 if self.ENABLE_CONFIDENCE_TRACKING:
                     confidence = self._gps_confidence.get(vin, 0.0)
                     if confidence < self.MIN_CONFIDENCE_THRESHOLD:
                         # GPS unreliable (low confidence) - skip to mileage fallback
+                        _LOGGER.debug(
+                            "Motion: %s GPS unreliable (confidence=%.2f < %.2f) - falling back to mileage",
+                            redact_vin(vin),
+                            confidence,
+                            self.MIN_CONFIDENCE_THRESHOLD,
+                        )
                         pass  # Fall through to mileage check below
                     else:
                         # GPS reliable - use it (ignore mileage)
                         if last_gps_change is None:
+                            _LOGGER.debug(
+                                "Motion: %s GPS active but never moved - NOT MOVING",
+                                redact_vin(vin),
+                            )
                             return False  # GPS active but never moved
                         elapsed_gps = (now - last_gps_change).total_seconds() / 60.0
-                        return elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                        result = elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                        _LOGGER.debug(
+                            "Motion: %s GPS decision - %.1f min since movement (threshold=%.1f) - %s",
+                            redact_vin(vin),
+                            elapsed_gps,
+                            self.MOTION_ACTIVE_WINDOW_MINUTES,
+                            "MOVING" if result else "NOT MOVING",
+                        )
+                        return result
                 else:
                     # Confidence tracking disabled - trust GPS
                     if last_gps_change is None:
+                        _LOGGER.debug(
+                            "Motion: %s GPS active but never moved - NOT MOVING",
+                            redact_vin(vin),
+                        )
                         return False  # GPS active but never moved
                     elapsed_gps = (now - last_gps_change).total_seconds() / 60.0
-                    return elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                    result = elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
+                    _LOGGER.debug(
+                        "Motion: %s GPS decision - %.1f min since movement (threshold=%.1f) - %s",
+                        redact_vin(vin),
+                        elapsed_gps,
+                        self.MOTION_ACTIVE_WINDOW_MINUTES,
+                        "MOVING" if result else "NOT MOVING",
+                    )
+                    return result
 
-        # 3. GPS stale - use mileage FALLBACK
-        if last_mileage_change is not None:
-            elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
-            if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
-                return True  # Mileage increased recently
+        # 3. GPS stale - maintain last known GPS state + use mileage to confirm
+        if last_gps_update is not None:
+            gps_age = (now - last_gps_update).total_seconds() / 60.0
+            if gps_age > self.GPS_UPDATE_STALE_MINUTES:
+                # Determine what last GPS state was AT THE TIME GPS WENT STALE
+                if last_gps_change is None:
+                    last_gps_was_moving = False  # Never moved according to GPS
+                else:
+                    # Calculate time between last movement and when GPS went stale
+                    time_between_movement_and_stale = (last_gps_update - last_gps_change).total_seconds() / 60.0
+                    # Was GPS showing "moving" when it went stale?
+                    last_gps_was_moving = time_between_movement_and_stale < self.MOTION_ACTIVE_WINDOW_MINUTES
 
-        # 4. DEFAULT: Not moving (safest assumption after restart/no data)
+                # If last GPS showed "not moving", stay parked (don't check mileage)
+                if not last_gps_was_moving:
+                    return False
+
+                # Last GPS showed "moving" - establish mileage baseline if needed
+                if vin not in self._mileage_baseline_when_gps_stale and last_mileage is not None:
+                    self._mileage_baseline_when_gps_stale[vin] = (last_mileage, now)
+
+                # Use mileage to confirm continued movement
+                baseline_data = self._mileage_baseline_when_gps_stale.get(vin)
+                if baseline_data is not None and last_mileage is not None and last_mileage_change is not None:
+                    baseline_mileage, baseline_time = baseline_data
+
+                    # Only count mileage changes AFTER GPS went stale (after baseline was set)
+                    if last_mileage > baseline_mileage + 0.1:
+                        # Mileage increased after GPS went stale
+                        # Also verify the mileage change happened AFTER baseline was established
+                        if last_mileage_change > baseline_time:
+                            # Mileage change is recent (after baseline)
+                            elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
+                            if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
+                                _LOGGER.debug(
+                                    "Motion: %s mileage fallback - %.1f min since odometer change (threshold=%.1f) - MOVING",
+                                    redact_vin(vin),
+                                    elapsed_mileage,
+                                    self.MILEAGE_ACTIVE_WINDOW_MINUTES,
+                                )
+                                return True  # Still moving (confirmed by mileage)
+
+                # If no baseline, no mileage increase, or mileage change before baseline, default to not moving
+                # (Don't use old mileage data from before GPS went stale)
+
+        # 4. DEFAULT: Not moving (safest assumption after restart/no data/everything stale)
         return False
 
     def has_signaled_entity(self, vin: str) -> bool:
@@ -345,19 +452,6 @@ class MotionDetector:
         """Mark that vehicle.isMoving entity has been created for this VIN."""
         self._is_moving_entity_signaled.add(vin)
 
-    def get_gps_confidence(self, vin: str) -> float | None:
-        """Get GPS confidence score for a VIN.
-
-        Returns percentage (0.0-1.0) of recent readings within park radius.
-        Compare against MIN_CONFIDENCE_THRESHOLD to check if GPS is reliable.
-
-        Returns:
-            Confidence score (0.0-1.0) or None if tracking disabled or no data
-        """
-        if not self.ENABLE_CONFIDENCE_TRACKING:
-            return None
-        return self._gps_confidence.get(vin)
-
     def cleanup_vin(self, vin: str) -> None:
         """Remove all tracking data for a VIN."""
         self._last_location.pop(vin, None)
@@ -365,6 +459,7 @@ class MotionDetector:
         self._park_readings.pop(vin, None)
         self._last_location_change.pop(vin, None)
         self._last_gps_update.pop(vin, None)
+        self._mileage_baseline_when_gps_stale.pop(vin, None)
         self._last_mileage.pop(vin, None)
         self._last_mileage_change.pop(vin, None)
         self._is_moving_entity_signaled.discard(vin)
