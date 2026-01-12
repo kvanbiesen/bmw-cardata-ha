@@ -192,13 +192,12 @@ class CardataCoordinator:
         """Update location tracking and return True if position changed significantly (>50m)."""
         return self._motion_detector.update_location(vin, lat, lon)
 
-    def get_derived_is_moving(self, vin: str) -> bool | None:
+    def get_derived_is_moving(self, vin: str) -> bool:
         """Get derived motion state from GPS position tracking.
 
         Returns:
-            True if moved within last 10 minutes (vehicle is moving)
-            False if stationary for 10+ minutes (vehicle is parked)
-            None if no location data available
+            True if moved within last 2 minutes (vehicle is moving)
+            False if stationary for 2+ minutes or no data (default: parked)
         """
         return self._motion_detector.is_moving(vin)
 

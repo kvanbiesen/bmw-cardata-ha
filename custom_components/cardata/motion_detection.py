@@ -279,7 +279,7 @@ class MotionDetector:
         else:
             self._charging_vins.discard(vin)
 
-    def is_moving(self, vin: str) -> bool | None:
+    def is_moving(self, vin: str) -> bool:
         """Determine if vehicle is currently moving.
 
         Philosophy: Default to NOT MOVING. Only return True with active proof.
@@ -291,9 +291,8 @@ class MotionDetector:
         4. Default → False (assume parked)
 
         Returns:
-            True - Active proof of movement
-            False - No recent movement (default)
-            None - Never used (always default to False for safety)
+            True - Active proof of movement within last 2 minutes
+            False - No recent movement or no data (default: parked)
         """
         now = datetime.now(UTC)
 
