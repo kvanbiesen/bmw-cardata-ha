@@ -470,4 +470,3 @@ class MotionDetector:
     def get_tracked_vins(self) -> set[str]:
         """Get all VINs currently being tracked."""
         return set(self._last_location.keys())
-
