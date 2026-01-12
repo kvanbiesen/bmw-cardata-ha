@@ -408,10 +408,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # Signal creation of vehicle.isMoving entity if not already done
         if not self._coordinator._motion_detector.has_signaled_entity(self._vin):
             self._coordinator._motion_detector.signal_entity_created(self._vin)
-            # Notify coordinator to create the binary sensor entity (thread-safe)
-            self.hass.loop.call_soon_threadsafe(
-                async_dispatcher_send,
-                self._coordinator.hass,
+            # Notify coordinator to create the binary sensor entity
+            async_dispatcher_send(
+                self.hass,
                 self._coordinator.signal_new_binary,
                 self._vin,
                 "vehicle.isMoving",
@@ -425,12 +424,10 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 moved,
                 current_state,
             )
-            if current_state is not None:
-                self._coordinator._last_derived_is_moving[self._vin] = current_state
-            # Notify binary sensor (thread-safe)
-            self.hass.loop.call_soon_threadsafe(
-                async_dispatcher_send,
-                self._coordinator.hass,
+            self._coordinator._last_derived_is_moving[self._vin] = current_state
+            # Notify binary sensor
+            async_dispatcher_send(
+                self.hass,
                 self._coordinator.signal_update,
                 self._vin,
                 "vehicle.isMoving",
