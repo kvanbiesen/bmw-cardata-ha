@@ -227,7 +227,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                     initial_lon,
                 )
                 # Process the fresh coordinates through normal movement detection
-                self.hass.async_create_task(self._process_coordinate_pair())
+                await self._process_coordinate_pair()
 
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
@@ -242,7 +242,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._unsubscribe()
             self._unsubscribe = None
 
-    def _handle_update(self, vin: str, descriptor: str) -> None:
+    async def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle location updates from coordinator."""
         if vin != self.vin or descriptor not in (
             LOCATION_LATITUDE_DESCRIPTOR,
@@ -296,7 +296,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             return
 
         # Process immediately - coordinator already batches!
-        self.hass.async_create_task(self._process_coordinate_pair())
+        await self._process_coordinate_pair()
 
     async def _process_coordinate_pair(self) -> None:
         """Process coordinate pair with intelligent pairing, smoothing, and movement threshold."""
