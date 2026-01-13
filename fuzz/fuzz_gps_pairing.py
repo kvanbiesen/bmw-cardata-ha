@@ -371,6 +371,21 @@ def TestOneInput(data: bytes) -> None:
     tracker.schedule_update_ha_state = lambda: None
     tracker.async_write_ha_state = lambda: None
 
+    # Mock hass with async_create_task that runs coroutine synchronously
+    class _MockHass:
+        def async_create_task(self, coro):
+            # Run the coroutine synchronously for testing
+            import asyncio
+
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+
+    tracker.hass = _MockHass()
+
     iterations = fdp.ConsumeIntInRange(1, 50)
     for _ in range(iterations):
         descriptor = _consume_descriptor(fdp)
