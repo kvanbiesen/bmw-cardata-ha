@@ -181,7 +181,7 @@ DESCRIPTOR_TITLES = {
     "vehicle.vehicle.preConditioning.error": "Preconditioning error reason",
     "vehicle.vehicle.preConditioning.isRemoteEngineRunning": "Preconditioning engine used",
     "vehicle.vehicle.preConditioning.isRemoteEngineStartAllowed": "Preconditioning engine use allowed",
-    "vehicle.vehicle.preConditioning.remainingTime": "Preconditioning remaining  time",
+    "vehicle.vehicle.preConditioning.remainingTime": "Preconditioning remaining time",
     "vehicle.cabin.hvac.preconditioning.status.comfortState": "Preconditioning  comfort state",
     "vehicle.cabin.hvac.preconditioning.status.isExteriorMirrorHeatingActive": "Preconditioning  exterior mirror heating active",
     "vehicle.cabin.hvac.preconditioning.status.progress": "Preconditioning  progress",
