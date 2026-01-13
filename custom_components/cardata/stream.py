@@ -642,7 +642,16 @@ class CardataStreamManager:
         everything in try/except to ensure robustness.
         """
         try:
-            payload = msg.payload.decode(errors="ignore")
+            # Handle various payload types from MQTT
+            raw_payload = msg.payload
+            if raw_payload is None:
+                return  # No payload to process
+            elif isinstance(raw_payload, str):
+                payload = raw_payload  # Already a string
+            elif isinstance(raw_payload, memoryview):
+                payload = bytes(raw_payload).decode(errors="ignore")
+            else:
+                payload = raw_payload.decode(errors="ignore")
             if debug_enabled():
                 _LOGGER.debug(
                     "BMW MQTT message on %s: %s",
