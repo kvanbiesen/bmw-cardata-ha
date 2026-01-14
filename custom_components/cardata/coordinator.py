@@ -960,8 +960,6 @@ class CardataCoordinator:
         # Check for derived isMoving state changes (GPS staleness timeout)
         # This ensures the sensor updates when GPS becomes stale (e.g., car in garage)
         tracked_vins = self._motion_detector.get_tracked_vins()
-        if tracked_vins:
-            _LOGGER.debug("Watchdog checking isMoving for %d VIN(s)", len(tracked_vins))
         for vin in tracked_vins:
             # Check if vehicle.isMoving entity exists for this VIN
             if self._motion_detector.has_signaled_entity(vin):
