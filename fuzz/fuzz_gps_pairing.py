@@ -253,9 +253,18 @@ class _Coordinator:
         self.names = {}
         self.device_metadata = {}
         self.data = {}
+        self._last_locations: dict[str, tuple[float, float]] = {}
 
     def get_state(self, vin: str, descriptor: str):
         return self.data.get(vin, {}).get(descriptor)
+
+    def _update_location_tracking(self, vin: str, lat: float, lon: float) -> bool:
+        """Stub for location tracking - returns True if position changed."""
+        prev = self._last_locations.get(vin)
+        self._last_locations[vin] = (lat, lon)
+        if prev is None:
+            return False
+        return prev != (lat, lon)
 
 
 def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
