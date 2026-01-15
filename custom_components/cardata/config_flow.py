@@ -679,7 +679,9 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 step_id="action_cleanup_entities",
                 data_schema=vol.Schema({}),
                 description_placeholders={
-                    "success": f"[OK] Found and deleted {deleted_count} orphaned entities." if deleted_count > 0 else "[OK] No orphaned entities found - everything is clean!",
+                    "success": f"[OK] Found and deleted {deleted_count} orphaned entities."
+                    if deleted_count > 0
+                    else "[OK] No orphaned entities found - everything is clean!",
                 },
             )
 
