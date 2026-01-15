@@ -342,7 +342,7 @@ def _maybe_adjust_times(
     lon_age = fdp.ConsumeIntInRange(0, 1200)
     tracker._last_lat_time = now - lat_age
     tracker._last_lon_time = now - lon_age
-    tracker._process_coordinate_pair()
+    tracker.hass.async_create_task(tracker._process_coordinate_pair())
 
 
 def _safe_parse_int(value):
@@ -414,7 +414,7 @@ def TestOneInput(data: bytes) -> None:
         else:
             vin_bucket[descriptor] = _State(_consume_floatish(fdp))
 
-        tracker._handle_update(vin, descriptor)
+        tracker.hass.async_create_task(tracker._handle_update(vin, descriptor))
 
         if fdp.ConsumeBool():
             _maybe_adjust_times(fdp, tracker)
@@ -435,6 +435,8 @@ def main() -> None:
     effective_max = min(existing_max, max_time) if existing_max else max_time
     # Hard cap to ensure we always finish before CI timeout (5h)
     effective_max = min(effective_max, DEFAULT_MAX_TIME)
+    # Remove any existing -max_total_time args to ensure our cap takes effect
+    args = [a for a in args if not a.startswith("-max_total_time")]
     args.append(f"-max_total_time={effective_max}")
     print(f"Fuzzing for {effective_max} seconds ({effective_max / 3600:.1f} hours)")
 
