@@ -583,7 +583,12 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_create_entry(title="", data={})
 
     async def async_step_action_cleanup_entities(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Clean up orphaned entities for this integration."""
+        """Clean up orphaned entities for this integration.
+
+        An entity is considered orphaned if:
+        1. It's in the entity registry but not currently loaded in Home Assistant
+        2. Or it belongs to a VIN that's no longer known to the coordinator
+        """
         from homeassistant.helpers import entity_registry as er
 
         if user_input is None:
@@ -596,7 +601,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                     }
                 ),
                 description_placeholders={
-                    "warning": "[WARN] This will delete ALL entities for this integration from the entity registry, including their history! Only do this if you have orphaned entities with wrong names.",
+                    "warning": "[WARN] This will delete orphaned entities (entities in the registry that are no longer active). Active entities will NOT be deleted.",
                 },
             )
 
@@ -615,24 +620,66 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             deleted_count = 0
             entity_ids_deleted = []
 
-            # Delete each entity
-            for entity in entities:
-                entity_ids_deleted.append(entity.entity_id)
-                entity_reg.async_remove(entity.entity_id)
-                deleted_count += 1
+            # Get known VINs from coordinator (if available)
+            runtime_data = self.hass.data.get(DOMAIN, {}).get(entry_id)
+            known_vins: set[str] = set()
+            if runtime_data and hasattr(runtime_data, "coordinator"):
+                coordinator = runtime_data.coordinator
+                # Get VINs from coordinator data and metadata
+                known_vins.update(coordinator.data.keys())
+                known_vins.update(coordinator.names.keys())
+                if hasattr(coordinator, "device_metadata"):
+                    known_vins.update(coordinator.device_metadata.keys())
 
-            _LOGGER.info(
-                "Cleaned up %s orphaned entities for entry %s: %s",
-                deleted_count,
-                entry_id,
-                f"{', '.join(entity_ids_deleted[:10])}{'...' if deleted_count > 10 else ''}",
-            )
+            # Check each entity to determine if it's orphaned
+            for entity in entities:
+                is_orphaned = False
+
+                # Check 1: Entity is not currently loaded (no state in HA)
+                state = self.hass.states.get(entity.entity_id)
+                if state is None:
+                    is_orphaned = True
+                    _LOGGER.debug(
+                        "Entity %s is orphaned (not loaded in HA)",
+                        entity.entity_id,
+                    )
+
+                # Check 2: Entity's VIN is not in coordinator's known VINs
+                # Extract VIN from unique_id (format: VIN_descriptor or VIN_platform)
+                if not is_orphaned and known_vins and entity.unique_id:
+                    # VIN is typically the first part before underscore
+                    parts = entity.unique_id.split("_", 1)
+                    if len(parts) >= 1:
+                        entity_vin = parts[0]
+                        # VINs are typically 17 characters
+                        if len(entity_vin) == 17 and entity_vin not in known_vins:
+                            is_orphaned = True
+                            _LOGGER.debug(
+                                "Entity %s is orphaned (VIN %s not in known VINs)",
+                                entity.entity_id,
+                                entity_vin[-4:],  # Redact VIN
+                            )
+
+                if is_orphaned:
+                    entity_ids_deleted.append(entity.entity_id)
+                    entity_reg.async_remove(entity.entity_id)
+                    deleted_count += 1
+
+            if deleted_count > 0:
+                _LOGGER.info(
+                    "Cleaned up %s orphaned entities for entry %s: %s",
+                    deleted_count,
+                    entry_id,
+                    f"{', '.join(entity_ids_deleted[:10])}{'...' if deleted_count > 10 else ''}",
+                )
+            else:
+                _LOGGER.info("No orphaned entities found for entry %s", entry_id)
 
             return self.async_show_form(
                 step_id="action_cleanup_entities",
                 data_schema=vol.Schema({}),
                 description_placeholders={
-                    "success": f"[OK] Successfully deleted {deleted_count} entities! They will be recreated automatically. Restart Home Assistant or wait a few seconds.",
+                    "success": f"[OK] Found and deleted {deleted_count} orphaned entities." if deleted_count > 0 else "[OK] No orphaned entities found - everything is clean!",
                 },
             )
 
