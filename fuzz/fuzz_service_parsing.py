@@ -141,6 +141,8 @@ def main() -> None:
     effective_max = min(existing_max, max_time) if existing_max else max_time
     # Hard cap to ensure we always finish before CI timeout (5h)
     effective_max = min(effective_max, DEFAULT_MAX_TIME)
+    # Remove any existing -max_total_time args to ensure our cap takes effect
+    args = [a for a in args if not a.startswith("-max_total_time")]
     args.append(f"-max_total_time={effective_max}")
     print(f"Fuzzing for {effective_max} seconds ({effective_max / 3600:.1f} hours)")
 
