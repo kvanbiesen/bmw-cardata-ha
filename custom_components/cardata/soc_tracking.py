@@ -184,14 +184,14 @@ class SocTracking:
                     pass
             if (
                 (self.charging_active or in_cooldown)
-                and self.estimated_percent is not None
-                and percent < self.estimated_percent
+                and self.last_soc_percent is not None
+                and percent < self.last_soc_percent
             ):
                 _LOGGER.debug(
-                    "Ignoring SOC that would decrease estimate %s: received=%.1f%%, estimate=%.1f%%",
+                    "Ignoring SOC that would decrease actual value %s: received=%.1f%%, last_actual=%.1f%%",
                     "during charging" if self.charging_active else "during post-charging cooldown",
                     percent,
-                    self.estimated_percent,
+                    self.last_soc_percent,
                 )
                 return
 
