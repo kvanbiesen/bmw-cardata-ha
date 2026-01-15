@@ -242,8 +242,13 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._unsubscribe()
             self._unsubscribe = None
 
-    async def _handle_update(self, vin: str, descriptor: str) -> None:
-        """Handle location updates from coordinator."""
+    def _handle_update(self, vin: str, descriptor: str) -> None:
+        """Handle location updates from coordinator.
+
+        Note: This must be a sync function because the dispatcher may call it
+        from worker threads. Async work is scheduled via hass.add_job which
+        is thread-safe.
+        """
         if vin != self.vin or descriptor not in (
             LOCATION_LATITUDE_DESCRIPTOR,
             LOCATION_LONGITUDE_DESCRIPTOR,
@@ -295,8 +300,8 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if not updated:
             return
 
-        # Process immediately - coordinator already batches!
-        await self._process_coordinate_pair()
+        # Schedule async processing - hass.add_job is thread-safe
+        self.hass.add_job(self._process_coordinate_pair)
 
     async def _process_coordinate_pair(self) -> None:
         """Process coordinate pair with intelligent pairing, smoothing, and movement threshold."""
