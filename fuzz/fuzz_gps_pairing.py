@@ -342,7 +342,7 @@ def _maybe_adjust_times(
     lon_age = fdp.ConsumeIntInRange(0, 1200)
     tracker._last_lat_time = now - lat_age
     tracker._last_lon_time = now - lon_age
-    tracker._process_coordinate_pair()
+    tracker.hass.async_create_task(tracker._process_coordinate_pair())
 
 
 def _safe_parse_int(value):
@@ -414,7 +414,7 @@ def TestOneInput(data: bytes) -> None:
         else:
             vin_bucket[descriptor] = _State(_consume_floatish(fdp))
 
-        tracker._handle_update(vin, descriptor)
+        tracker.hass.async_create_task(tracker._handle_update(vin, descriptor))
 
         if fdp.ConsumeBool():
             _maybe_adjust_times(fdp, tracker)
