@@ -343,7 +343,7 @@ class CardataContainerManager:
             headers["Content-Type"] = "application/json"
         url = f"{API_BASE_URL}{path}"
         if debug_enabled():
-            _LOGGER.debug("[%s] %s %s", self._entry_id, method, url)
+            _LOGGER.debug("[%s] %s %s", self._entry_id, method, redact_vin_in_text(url))
         try:
             async with self._session.request(
                 method,

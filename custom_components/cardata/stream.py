@@ -663,7 +663,7 @@ class CardataStreamManager:
             try:
                 data = json.loads(payload)
             except json.JSONDecodeError:
-                _LOGGER.debug("Failed to parse MQTT message as JSON: %s", payload[:100])
+                _LOGGER.debug("Failed to parse MQTT message as JSON: %s", redact_vin_in_text(payload[:100]))
                 return
             self._run_coro_safe(cast(Coroutine[Any, Any, None], self._message_callback(data)))
         except Exception as err:
