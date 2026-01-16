@@ -414,7 +414,7 @@ def TestOneInput(data: bytes) -> None:
         else:
             vin_bucket[descriptor] = _State(_consume_floatish(fdp))
 
-        tracker.hass.async_create_task(tracker._handle_update(vin, descriptor))
+        tracker._handle_update(vin, descriptor)
 
         if fdp.ConsumeBool():
             _maybe_adjust_times(fdp, tracker)

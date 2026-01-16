@@ -293,6 +293,14 @@ async def handle_stream_error(
                 return
 
             except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
+                # Check if this is just a concurrent refresh attempt (not a real failure)
+                if ERR_TOKEN_REFRESH_IN_PROGRESS in str(err):
+                    _LOGGER.debug(
+                        "Token refresh skipped for entry %s: another refresh already in progress",
+                        entry.entry_id,
+                    )
+                    # Don't record as unauthorized attempt - the other refresh will handle it
+                    return
                 _LOGGER.warning(
                     "Token refresh after unauthorized failed for entry %s: %s",
                     entry.entry_id,

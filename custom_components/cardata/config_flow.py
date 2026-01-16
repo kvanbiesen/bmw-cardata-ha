@@ -43,6 +43,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
 from .const import DOMAIN
+from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -657,7 +658,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                             _LOGGER.debug(
                                 "Entity %s is orphaned (VIN %s not in known VINs)",
                                 entity.entity_id,
-                                entity_vin[-4:],  # Redact VIN
+                                redact_vin(entity_vin),
                             )
 
                 if is_orphaned:
