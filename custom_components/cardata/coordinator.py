@@ -876,9 +876,9 @@ class CardataCoordinator:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
                 # Fall back to derived fuel range for vehicle.drivetrain.fuelRange
                 elif descriptor == "vehicle.drivetrain.fuelRange":
-                    derived = self.get_derived_fuel_range(vin)
-                    if derived is not None:
-                        return DescriptorState(value=derived, unit="km", timestamp=None)
+                    fuel_range = self.get_derived_fuel_range(vin)
+                    if fuel_range is not None:
+                        return DescriptorState(value=fuel_range, unit="km", timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -907,9 +907,9 @@ class CardataCoordinator:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
                 # Fall back to derived fuel range for vehicle.drivetrain.fuelRange
                 elif descriptor == "vehicle.drivetrain.fuelRange":
-                    derived = self.get_derived_fuel_range(vin)
-                    if derived is not None:
-                        return DescriptorState(value=derived, unit="km", timestamp=None)
+                    fuel_range = self.get_derived_fuel_range(vin)
+                    if fuel_range is not None:
+                        return DescriptorState(value=fuel_range, unit="km", timestamp=None)
                 return None
             return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
