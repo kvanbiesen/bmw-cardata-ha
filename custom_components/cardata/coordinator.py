@@ -201,6 +201,42 @@ class CardataCoordinator:
         """
         return self._motion_detector.is_moving(vin)
 
+    def get_derived_fuel_range(self, vin: str) -> float | None:
+        """Get derived fuel/petrol range for hybrid vehicles (total - electric).
+
+        Only applicable for PHEV/BEV/MHEV/Hybrid vehicles with both total and electric range data.
+
+        Returns:
+            Fuel range in km (total - electric), or None if not applicable/available
+        """
+        vehicle_data = self.data.get(vin)
+        if not vehicle_data:
+            return None
+
+        # Get total range (last sent)
+        total_range_state = vehicle_data.get("vehicle.drivetrain.lastRemainingRange")
+        # Get electric range
+        electric_range_state = vehicle_data.get("vehicle.drivetrain.electricEngine.kombiRemainingElectricRange")
+
+        # Only show if BOTH descriptors have data
+        if total_range_state is None or electric_range_state is None:
+            return None
+
+        try:
+            total_range = float(total_range_state.value)
+            electric_range = float(electric_range_state.value)
+
+            # Calculate fuel range (total - electric)
+            fuel_range = total_range - electric_range
+
+            # Sanity check: fuel range should be non-negative
+            if fuel_range < 0:
+                return 0.0
+
+            return fuel_range
+        except (ValueError, TypeError, AttributeError):
+            return None
+
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
 
@@ -710,6 +746,13 @@ class CardataCoordinator:
                 if self._pending_manager.add_new_binary(vin, item):
                     schedule_debounce = True
 
+        # Check if fuel range sensor should be created (when both dependencies are available)
+        if descriptor in ("vehicle.drivetrain.lastRemainingRange", "vehicle.drivetrain.electricEngine.kombiRemainingElectricRange"):
+            if self.get_derived_fuel_range(vin) is not None:
+                # Both dependencies available - signal fuel range sensor creation
+                if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelRange"):
+                    schedule_debounce = True
+
         self._apply_soc_estimate(vin, now)
 
         return immediate_updates, schedule_debounce
@@ -831,6 +874,11 @@ class CardataCoordinator:
                     derived = self.get_derived_is_moving(vin)
                     if derived is not None:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
+                # Fall back to derived fuel range for vehicle.drivetrain.fuelRange
+                elif descriptor == "vehicle.drivetrain.fuelRange":
+                    derived = self.get_derived_fuel_range(vin)
+                    if derived is not None:
+                        return DescriptorState(value=derived, unit="km", timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -857,6 +905,11 @@ class CardataCoordinator:
                     derived = self.get_derived_is_moving(vin)
                     if derived is not None:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
+                # Fall back to derived fuel range for vehicle.drivetrain.fuelRange
+                elif descriptor == "vehicle.drivetrain.fuelRange":
+                    derived = self.get_derived_fuel_range(vin)
+                    if derived is not None:
+                        return DescriptorState(value=derived, unit="km", timestamp=None)
                 return None
             return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
