@@ -747,7 +747,10 @@ class CardataCoordinator:
                     schedule_debounce = True
 
         # Check if fuel range sensor should be created (when both dependencies are available)
-        if descriptor in ("vehicle.drivetrain.lastRemainingRange", "vehicle.drivetrain.electricEngine.kombiRemainingElectricRange"):
+        if descriptor in (
+            "vehicle.drivetrain.lastRemainingRange",
+            "vehicle.drivetrain.electricEngine.kombiRemainingElectricRange",
+        ):
             if self.get_derived_fuel_range(vin) is not None:
                 # Both dependencies available - signal fuel range sensor creation
                 if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelRange"):
