@@ -220,7 +220,7 @@ DESCRIPTOR_TITLES = {
     "vehicle.drivetrain.fuelSystem.remainingFuel": "Range Tank level",
     "vehicle.drivetrain.lastRemainingRange": "Range Total range (last sent)",
     "vehicle.drivetrain.totalRemainingRange": "Range Estimate during charging",
-    "vehicle.drivetrain.fuelRange": "Range Fuel tank",
+    "vehicle.drivetrain.fuelSystem.remainingFuelRange": "Range Fuel tank",
     "vehicle.drivetrain.avgElectricRangeConsumption": "Range EV Average electric consumption",
     "vehicle.drivetrain.electricEngine.hvsMaxEnergyAbsolute": "Range EV Battery energy max",
     "vehicle.drivetrain.electricEngine.kombiRemainingElectricRange": "Range EV Remaining range",

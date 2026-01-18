@@ -753,7 +753,7 @@ class CardataCoordinator:
         ):
             if self.get_derived_fuel_range(vin) is not None:
                 # Both dependencies available - signal fuel range sensor creation
-                if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelRange"):
+                if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelSystem.remainingFuelRange"):
                     schedule_debounce = True
 
         self._apply_soc_estimate(vin, now)
@@ -877,8 +877,8 @@ class CardataCoordinator:
                     derived = self.get_derived_is_moving(vin)
                     if derived is not None:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
-                # Fall back to derived fuel range for vehicle.drivetrain.fuelRange
-                elif descriptor == "vehicle.drivetrain.fuelRange":
+                # Fall back to derived fuel range for vehicle.drivetrain.fuelSystem.remainingFuelRange
+                elif descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
                     fuel_range = self.get_derived_fuel_range(vin)
                     if fuel_range is not None:
                         return DescriptorState(value=fuel_range, unit="km", timestamp=None)
@@ -908,8 +908,8 @@ class CardataCoordinator:
                     derived = self.get_derived_is_moving(vin)
                     if derived is not None:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
-                # Fall back to derived fuel range for vehicle.drivetrain.fuelRange
-                elif descriptor == "vehicle.drivetrain.fuelRange":
+                # Fall back to derived fuel range for vehicle.drivetrain.fuelSystem.remainingFuelRange
+                elif descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
                     fuel_range = self.get_derived_fuel_range(vin)
                     if fuel_range is not None:
                         return DescriptorState(value=fuel_range, unit="km", timestamp=None)
