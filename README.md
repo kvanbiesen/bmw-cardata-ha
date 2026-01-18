@@ -100,32 +100,9 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
    Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for +30 seconds, then select the another one and wait agin.
 6. Don't press the button Authenticate device!!!!
 7. Scroll down to **CARDATA STREAMING** and press **Configure data stream** and on that new page, load all descriptors (keep clicking “Load more”).
-8. Manually check every descriptor you want to stream or optionally to automate this, open the browser console and run:
+8. Manually check every descriptor you want to stream or optionally to automate this, open the browser console (F12) and run:
 ```js
-(() => {
-  const labels = document.querySelectorAll('.css-k008qs label.chakra-checkbox');
-  let changed = 0;
-
-  labels.forEach(label => {
-    const input = label.querySelector('input.chakra-checkbox__input[type="checkbox"]');
-    if (!input || input.disabled || input.checked) return;
-
-    label.click();
-    if (!input.checked) {
-      const ctrl = label.querySelector('.chakra-checkbox__control');
-      if (ctrl) ctrl.click();
-    }
-    if (!input.checked) {
-      input.checked = true;
-      ['click', 'input', 'change'].forEach(type =>
-        input.dispatchEvent(new Event(type, { bubbles: true }))
-      );
-    }
-    if (input.checked) changed++;
-  });
-
-  console.log(`Checked ${changed} of ${labels.length} checkboxes.`);
-})();
+document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l => l.click());
 ```
    - If you want the "Extrapolated SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the extrapolated state of charge and calculate the charging slope between stream updates. It seems like the `vehicle.drivetrain.batteryManagement.maxEnergy` always get sended even tho its not explicitly set, but check it anyways.
 
