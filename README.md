@@ -134,7 +134,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 11. In Home Assistant, install this integration via HACS (see below under Installation (HACS)) and still in Home Assistant, step trough the Configuration Flow also described here below.
 12. During the Home Assistant config flow, paste the client ID, visit the provided verification URL, enter the code (if asked), and approve. **Do not click Continue/Submit in Home Assistant until the BMW page confirms the approval**; submitting early leaves the flow stuck and requires a restart.
 13. If Step 12 Fails with error 500, remove the integration, go back to bmw page and create a new id (delete current and make new again) Wait couple of minutes and then try installing the integration again
-14. Wait for the car to send data—triggering an action via the MyBMW app (lock/unlock doors) usually produces updates immediately.
+14. Wait for the car to send data—triggering an action via the MyBMW app (lock/unlock doors) usually produces updates immediately. (older cars might need a drive before sensors start popping up, idrive6)
 
 ## Installation (HACS)
 
