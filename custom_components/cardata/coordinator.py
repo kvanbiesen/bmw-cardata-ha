@@ -1180,7 +1180,31 @@ class CardataCoordinator:
                 estimate_changed = True
         else:
             rounded_percent = round(percent, 2)
-            if self._soc_estimate.get(vin) != rounded_percent:
+            current_estimate = self._soc_estimate.get(vin)
+            # During charging or cooldown, NEVER allow the displayed estimate to decrease.
+            # This is defense-in-depth: even if SocTracking returns a lower value due to
+            # edge cases (status glitches, stale data), the user should never see SOC drop
+            # while the car is plugged in and charging.
+            in_cooldown = False
+            if tracking._charging_ended_at is not None:
+                try:
+                    cooldown_elapsed = (now - tracking._charging_ended_at).total_seconds()
+                    in_cooldown = cooldown_elapsed < tracking.POST_CHARGING_COOLDOWN_SECONDS
+                except (TypeError, OverflowError):
+                    pass
+            if (
+                (tracking.charging_active or in_cooldown)
+                and current_estimate is not None
+                and rounded_percent < current_estimate
+            ):
+                _LOGGER.debug(
+                    "Rejecting SOC estimate decrease %s: new=%.2f%%, current=%.2f%%",
+                    "during charging" if tracking.charging_active else "during post-charging cooldown",
+                    rounded_percent,
+                    current_estimate,
+                )
+                # Keep current estimate, don't update
+            elif self._soc_estimate.get(vin) != rounded_percent:
                 self._soc_estimate[vin] = rounded_percent
                 estimate_changed = True
         updated = rate_changed or estimate_changed
