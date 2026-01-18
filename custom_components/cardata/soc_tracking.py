@@ -175,6 +175,10 @@ class SocTracking:
             # When charging, the car is plugged in and cannot move, so SOC can only
             # increase. Any lower value is stale/erroneous data and must be rejected.
             # Also apply during cooldown after charging ends, as BMW may send stale data.
+            # Check against BOTH last_soc_percent AND estimated_percent - if the new value
+            # would decrease either, reject it. This prevents the displayed estimate from
+            # dropping when an actual value arrives that's higher than the last actual
+            # but lower than the current estimate (which can happen due to extrapolation).
             in_cooldown = False
             if self._charging_ended_at is not None:
                 try:
@@ -182,18 +186,26 @@ class SocTracking:
                     in_cooldown = cooldown_elapsed < self.POST_CHARGING_COOLDOWN_SECONDS
                 except (TypeError, OverflowError):
                     pass
-            if (
-                (self.charging_active or in_cooldown)
-                and self.last_soc_percent is not None
-                and percent < self.last_soc_percent
-            ):
-                _LOGGER.debug(
-                    "Ignoring SOC that would decrease actual value %s: received=%.1f%%, last_actual=%.1f%%",
-                    "during charging" if self.charging_active else "during post-charging cooldown",
-                    percent,
-                    self.last_soc_percent,
-                )
-                return
+            if self.charging_active or in_cooldown:
+                # During charging: reject if new value would decrease last_soc_percent
+                if self.last_soc_percent is not None and percent < self.last_soc_percent:
+                    _LOGGER.debug(
+                        "Ignoring SOC that would decrease actual value %s: received=%.1f%%, last_actual=%.1f%%",
+                        "during charging" if self.charging_active else "during post-charging cooldown",
+                        percent,
+                        self.last_soc_percent,
+                    )
+                    return
+                # During charging: also reject if new value would decrease the estimate
+                # (the estimate may have extrapolated higher than the actual value)
+                if self.estimated_percent is not None and percent < self.estimated_percent:
+                    _LOGGER.debug(
+                        "Ignoring SOC that would decrease estimate %s: received=%.1f%%, current_estimate=%.1f%%",
+                        "during charging" if self.charging_active else "during post-charging cooldown",
+                        percent,
+                        self.estimated_percent,
+                    )
+                    return
 
             # Check for drift between estimate and actual
             if self.estimated_percent is not None:

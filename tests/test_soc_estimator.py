@@ -126,6 +126,34 @@ class TestUpdateActualSoc:
         # Should keep the estimate value
         assert tracking.estimated_percent == 55.0
 
+    def test_rejects_soc_below_estimate_while_charging(self):
+        """Test that SOC values below estimate are rejected, even if above last actual.
+
+        Scenario: Car at 50% starts charging, estimate extrapolates to 55%,
+        then actual value arrives at 52% (higher than 50% but lower than 55%).
+        The estimate should NOT drop from 55% to 52% - during charging, the
+        displayed SOC can never decrease.
+        """
+        tracking = SocTracking()
+        now = datetime.now(UTC)
+
+        # Initial state: 50% SOC
+        tracking.update_actual_soc(50.0, now)
+        assert tracking.last_soc_percent == 50.0
+        assert tracking.estimated_percent == 50.0
+
+        # Charging starts and estimate extrapolates higher
+        tracking.charging_active = True
+        tracking.estimated_percent = 55.0  # Simulating extrapolation
+
+        # New actual value arrives at 52% - above last_soc (50%) but below estimate (55%)
+        tracking.update_actual_soc(52.0, now + timedelta(minutes=1))
+
+        # The estimate should NOT drop - it must stay at 55%
+        assert tracking.estimated_percent == 55.0
+        # last_soc_percent should also not change
+        assert tracking.last_soc_percent == 50.0
+
     def test_accepts_higher_soc_while_charging(self):
         """Test that higher SOC values are accepted while charging."""
         tracking = SocTracking()
