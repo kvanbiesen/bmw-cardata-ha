@@ -96,9 +96,17 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 2. Choose **BMW CarData** or **Mini CarData**.
 3. Generate a client ID as described here: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Technical-registration_Step-1
 4. Under section CARDATA API, you see **Client ID**. Copy this to your clipboard because you will need it during **Configuration Flow** in Home Assistant.
-5. Now select Request access to CarData API and CarData Stream.
-   Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for +30 seconds, then select the another one and wait agin.
-6. Don't press the button Authenticate device!!!!
+   **Don't press the button Authenticate device (NEVER) **!!!!
+5. Request access to **CarData API** first:
+   - Click "Request access to CarData API"
+   - ⏱️ **Wait 60 seconds** (BMW needs time to propagate permissions)
+   Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for 120 seconds, then select the another one and wait agin.
+6. Then request access to **CarData Stream**:
+   - Click "Request access to CarData Stream"  
+   - ⏱️ **Wait another 60 seconds**
+   
+   **Why?** BMW's backend needs time to activate permissions. Rushing causes 403 errors.
+   
 7. Scroll down to **CARDATA STREAMING** and press **Configure data stream** and on that new page, load all descriptors (keep clicking “Load more”).
 8. Manually check every descriptor you want to stream or optionally to automate this, open the browser console (F12) and run:
 ```js
@@ -110,8 +118,50 @@ document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l
 10. Repeat for all the cars you want to support
 11. In Home Assistant, install this integration via HACS (see below under Installation (HACS)) and still in Home Assistant, step trough the Configuration Flow also described here below.
 12. During the Home Assistant config flow, paste the client ID, visit the provided verification URL, enter the code (if asked), and approve. **Do not click Continue/Submit in Home Assistant until the BMW page confirms the approval**; submitting early leaves the flow stuck and requires a restart.
-13. If Step 12 Fails with error 500, remove the integration, go back to bmw page and create a new id (delete current and make new again) Wait couple of minutes and then try installing the integration again
+13. *If you get Error 500 during setup:**
+    
+    **Immediate actions:**
+    - ❌ Remove the integration from Home Assistant
+    - 🔄 Go to BMW portal → Delete current Client ID
+    - ⏱️ **Wait 5 minutes** (BMW backend needs to clear old session)
+    - ✅ Create new Client ID
+    - ⏱️ **Wait another 2 minutes**
+    - ✅ Try installation again
+    
+    **If error persists after 2-3 attempts:**
+    - ⏱️ Wait 24 hours (you may have hit daily rate limit)
+    - Try during different time of day (BMW servers less loaded
 14. Wait for the car to send data—triggering an action via the MyBMW app (lock/unlock doors) usually produces updates immediately. (older cars might need a drive before sensors start popping up, idrive6)
+
+## Troubleshooting Setup Errors:
+
+### Error 403 (Forbidden)
+**Cause**: Authentication credentials incorrect or permissions not activated
+
+**Solutions**:
+1. ✅ Verify `clientid` is from BMW portal (NOT your login email)
+2. ✅ Ensure both "CarData API" AND "CarData Stream" are enabled
+3. ✅ Wait 2-3 minutes after enabling permissions before trying again
+4. ✅ Delete and regenerate Client ID if permissions were recently changed
+5. ✅ Check that your BMW account has an active ConnectedDrive subscription
+
+### Error 500 (Server Error)
+**Cause**: BMW API temporary issue or rate limiting
+
+**Solutions**:
+1. ⏱️ Wait 5-10 minutes before retrying
+2. 🔄 Delete integration, create new Client ID in BMW portal
+3. 🔄 Try setup during off-peak hours (early morning/late evening)
+4. ✅ Ensure you didn't click "Authenticate device" in BMW portal (skip this!)
+5. 📧 If persistent, contact BMW CarData support - may be account-specific issue -> bmwcardata-b2c-support@bmwgroup.com
+
+### Error: "Stuck on waiting for approval"
+**Cause**: Submitted HA config flow before BMW page confirmed approval
+
+**Solution**:
+1. 🛑 Wait for BMW page to show: "Device authenticated successfully"
+2. ✅ Only then click "Submit" in Home Assistant
+3. If already stuck: Restart Home Assistant and start over
 
 ## Installation (HACS)
 
