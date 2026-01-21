@@ -46,6 +46,53 @@ _LOGGER = logging.getLogger(__name__)
 PARALLEL_UPDATES = 0
 
 
+async def _async_auto_fetch_image(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    vin: str,
+) -> None:
+    """Automatically fetch vehicle image for a VIN that doesn't have one.
+
+    This is called when the image entity setup detects a missing image.
+    After fetching, the image entity will be created via the signal_new_image dispatcher.
+    """
+    from .metadata import async_fetch_and_store_vehicle_images
+
+    redacted = redact_vin(vin)
+
+    try:
+        # Get runtime data for session and quota
+        runtime_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if not runtime_data:
+            _LOGGER.debug("No runtime data for auto-fetch image of %s", redacted)
+            return
+
+        session = runtime_data.session
+        quota = runtime_data.quota_manager
+        access_token = entry.data.get("access_token")
+
+        if not access_token:
+            _LOGGER.debug("No access token for auto-fetch image of %s", redacted)
+            return
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "x-version": "v1",
+            "Accept": "*/*",
+        }
+
+        _LOGGER.debug("Auto-fetching vehicle image for %s", redacted)
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, [vin], quota, session)
+        _LOGGER.info("Successfully auto-fetched vehicle image for %s", redacted)
+
+    except Exception as err:
+        _LOGGER.warning(
+            "Failed to auto-fetch vehicle image for %s: %s",
+            redacted,
+            str(err),
+        )
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -73,9 +120,15 @@ async def async_setup_entry(
 
         image_path = metadata.get("vehicle_image_path")
         if not image_path:
-            _LOGGER.warning(
-                "Vehicle image not available for VIN %s. Use the 'cardata.fetch_vehicle_image' service to download it.",
+            # Auto-fetch image if not available
+            _LOGGER.info(
+                "Vehicle image not available for VIN %s, attempting to fetch automatically...",
                 redact_vin(vin),
+            )
+            # Schedule async image fetch
+            hass.async_create_task(
+                _async_auto_fetch_image(hass, config_entry, vin),
+                name=f"cardata_auto_fetch_image_{vin[-4:]}",
             )
             return
 
