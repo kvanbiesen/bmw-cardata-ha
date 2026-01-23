@@ -584,8 +584,25 @@ class CardataCoordinator:
             self._charging_power_w.pop(vin, None)
             return
         self._charging_power_w[vin] = effective_power
+        # If we receive meaningful charging power, activate charging immediately
+        # This allows SOC prediction to start as soon as power is detected,
+        # without waiting for the charging status descriptor
+        min_charging_power = 100.0  # Watts - threshold to avoid sensor noise
+        should_activate = effective_power >= min_charging_power and not tracking.charging_active
+        # Update power first so _recalculate_rate() has the power value available
         tracking.update_power(effective_power, timestamp)
         testing_tracking.update_power(self._adjust_power_for_testing(vin, effective_power), timestamp)
+        # Now activate charging if needed - this calls _recalculate_rate() which uses last_power_w
+        if should_activate:
+            _LOGGER.debug(
+                "Activating charging for %s based on power: %.0fW",
+                self._safe_vin_suffix(vin),
+                effective_power,
+            )
+            tracking.update_status("CHARGINGACTIVE", timestamp)
+            testing_tracking.update_status("CHARGINGACTIVE", timestamp)
+            # Update motion detector - if charging, car is definitely not moving
+            self._motion_detector.set_charging(vin, True)
         # Consistency check: warn if power and charging status don't match
         self._check_power_status_consistency(vin, tracking, effective_power)
 
