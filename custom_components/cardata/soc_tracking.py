@@ -629,6 +629,17 @@ class SocTracking:
         except Exception:
             _LOGGER.exception("Unexpected error in update_target_soc")
 
+    def clear_charging_cooldown(self) -> None:
+        """Clear the post-charging cooldown when the car starts moving.
+
+        The cooldown is designed to reject stale SOC data after charging ends,
+        but if the car is actually driving, SOC decreases are legitimate and
+        should be accepted.
+        """
+        if self._charging_ended_at is not None:
+            _LOGGER.debug("Clearing post-charging cooldown due to vehicle motion")
+            self._charging_ended_at = None
+
     def estimate(self, now: datetime) -> float | None:
         """Estimate current SOC based on charging rate and elapsed time.
 

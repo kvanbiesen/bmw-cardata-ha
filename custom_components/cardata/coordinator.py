@@ -444,7 +444,12 @@ class CardataCoordinator:
                 mileage = float(value)
             except (TypeError, ValueError):
                 return False
-            self._motion_detector.update_mileage(vin, mileage)
+            mileage_increased = self._motion_detector.update_mileage(vin, mileage)
+            # If mileage increased, the car is driving - clear charging cooldown
+            # so SOC decreases are accepted
+            if mileage_increased:
+                tracking.clear_charging_cooldown()
+                testing_tracking.clear_charging_cooldown()
             return True
 
         return False
