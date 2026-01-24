@@ -206,6 +206,18 @@ class SocTracking:
                         self.estimated_percent,
                     )
                     return
+            else:
+                # When NOT charging: reject significant SOC increases (likely stale data)
+                # Small increases (< 1%) are allowed for regenerative braking
+                max_regen_increase = 1.0  # Maximum plausible regen increase in %
+                if self.last_soc_percent is not None and percent > self.last_soc_percent + max_regen_increase:
+                    _LOGGER.debug(
+                        "Ignoring stale SOC increase while not charging: received=%.1f%%, last_actual=%.1f%% (max regen=%.1f%%)",
+                        percent,
+                        self.last_soc_percent,
+                        max_regen_increase,
+                    )
+                    return
 
             # Check for drift between estimate and actual
             if self.estimated_percent is not None:
