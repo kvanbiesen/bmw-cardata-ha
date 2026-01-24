@@ -206,6 +206,18 @@ class SocTracking:
                         self.estimated_percent,
                     )
                     return
+            else:
+                # When NOT charging: reject significant SOC increases (likely stale data)
+                # Small increases (< 1%) are allowed for regenerative braking
+                max_regen_increase = 1.0  # Maximum plausible regen increase in %
+                if self.last_soc_percent is not None and percent > self.last_soc_percent + max_regen_increase:
+                    _LOGGER.debug(
+                        "Ignoring stale SOC increase while not charging: received=%.1f%%, last_actual=%.1f%% (max regen=%.1f%%)",
+                        percent,
+                        self.last_soc_percent,
+                        max_regen_increase,
+                    )
+                    return
 
             # Check for drift between estimate and actual
             if self.estimated_percent is not None:
@@ -628,6 +640,17 @@ class SocTracking:
                 self.last_estimate_time = normalized_ts or datetime.now(UTC)
         except Exception:
             _LOGGER.exception("Unexpected error in update_target_soc")
+
+    def clear_charging_cooldown(self) -> None:
+        """Clear the post-charging cooldown when the car starts moving.
+
+        The cooldown is designed to reject stale SOC data after charging ends,
+        but if the car is actually driving, SOC decreases are legitimate and
+        should be accepted.
+        """
+        if self._charging_ended_at is not None:
+            _LOGGER.debug("Clearing post-charging cooldown due to vehicle motion")
+            self._charging_ended_at = None
 
     def estimate(self, now: datetime) -> float | None:
         """Estimate current SOC based on charging rate and elapsed time.
