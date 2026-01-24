@@ -78,7 +78,7 @@ class SocTracking:
     PAUSE_ZERO_COUNT_THRESHOLD: ClassVar[int] = 2
     # Cooldown after charging ends: reject SOC values that would decrease estimate
     # BMW may send stale data with current timestamps after charging stops
-    POST_CHARGING_COOLDOWN_SECONDS: ClassVar[float] = 300.0  # 5 minutes
+    POST_CHARGING_COOLDOWN_SECONDS: ClassVar[float] = 30.0  # 30 seconds
     # Maximum charging rate to prevent sensor errors from causing huge estimate jumps
     # 300%/hour = 100% in 20 minutes, faster than any production EV can charge
     MAX_RATE_PER_HOUR: ClassVar[float] = 300.0
