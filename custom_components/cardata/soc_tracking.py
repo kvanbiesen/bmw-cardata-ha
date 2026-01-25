@@ -82,6 +82,9 @@ class SocTracking:
     # Maximum charging rate to prevent sensor errors from causing huge estimate jumps
     # 300%/hour = 100% in 20 minutes, faster than any production EV can charge
     MAX_RATE_PER_HOUR: ClassVar[float] = 300.0
+    # Timeout for charging power - if no power received for this duration while
+    # charging_active is True, consider charging as ended (handles preheating, etc.)
+    CHARGING_POWER_TIMEOUT_SECONDS: ClassVar[float] = 300.0  # 5 minutes
 
     # Maximum allowed timestamp skew from current time (24 hours)
     MAX_TIMESTAMP_SKEW_SECONDS: ClassVar[float] = 86400.0
@@ -186,7 +189,21 @@ class SocTracking:
                     in_cooldown = cooldown_elapsed < self.POST_CHARGING_COOLDOWN_SECONDS
                 except (TypeError, OverflowError):
                     pass
-            if self.charging_active or in_cooldown:
+            # Check if charging state is stale (no power received recently)
+            # This handles cases like preheating where battery drains while stationary
+            charging_power_stale = False
+            if self.charging_active and self.last_power_time is not None:
+                try:
+                    power_age = (ts - self.last_power_time).total_seconds()
+                    charging_power_stale = power_age > self.CHARGING_POWER_TIMEOUT_SECONDS
+                    if charging_power_stale:
+                        _LOGGER.debug(
+                            "Charging power stale (%.0f seconds old), allowing SOC decrease",
+                            power_age,
+                        )
+                except (TypeError, OverflowError):
+                    pass
+            if (self.charging_active and not charging_power_stale) or in_cooldown:
                 # During charging: reject if new value would decrease last_soc_percent
                 if self.last_soc_percent is not None and percent < self.last_soc_percent:
                     _LOGGER.debug(

@@ -444,8 +444,20 @@ class CardataCoordinator:
                 mileage = float(value)
             except (TypeError, ValueError):
                 return False
-            self._motion_detector.update_mileage(vin, mileage)
-            # Note: charging state is cleared based on is_moving() check after all descriptors
+            mileage_increased = self._motion_detector.update_mileage(vin, mileage)
+            # If mileage increased, car is driving - clear charging state immediately
+            # (can't wait for is_moving() check since SOC might be processed first)
+            if mileage_increased:
+                tracking.clear_charging_cooldown()
+                testing_tracking.clear_charging_cooldown()
+                if tracking.charging_active:
+                    _LOGGER.debug(
+                        "Deactivating charging for %s: mileage increased",
+                        self._safe_vin_suffix(vin),
+                    )
+                    tracking.update_status("NOT_CHARGING", None)
+                if testing_tracking.charging_active:
+                    testing_tracking.update_status("NOT_CHARGING", None)
             return True
 
         return False
