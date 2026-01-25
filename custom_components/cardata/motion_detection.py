@@ -254,6 +254,11 @@ class MotionDetector:
             self._park_readings[vin] = [(lat, lon, now)]
             self._last_location_change[vin] = now
 
+            # Can't be charging while driving - auto-clear charging state
+            if vin in self._charging_vins:
+                _LOGGER.debug("Motion: %s clearing charging state (GPS movement)", redact_vin(vin))
+                self._charging_vins.discard(vin)
+
             # Reset confidence (starting fresh)
             if self.ENABLE_CONFIDENCE_TRACKING:
                 self._gps_confidence[vin] = 0.0
@@ -291,6 +296,10 @@ class MotionDetector:
             )
             self._last_mileage[vin] = mileage
             self._last_mileage_change[vin] = now
+            # Can't be charging while driving - auto-clear charging state
+            if vin in self._charging_vins:
+                _LOGGER.debug("Motion: %s clearing charging state (mileage increased)", redact_vin(vin))
+                self._charging_vins.discard(vin)
             return True
         elif mileage < last_mileage - 1.0:
             # Shouldn't happen - possible sensor error
