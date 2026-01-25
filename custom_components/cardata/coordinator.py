@@ -444,21 +444,8 @@ class CardataCoordinator:
                 mileage = float(value)
             except (TypeError, ValueError):
                 return False
-            mileage_increased = self._motion_detector.update_mileage(vin, mileage)
-            # If mileage increased, the car is driving - can't be charging
-            if mileage_increased:
-                # Clear charging cooldown so SOC decreases are accepted
-                tracking.clear_charging_cooldown()
-                testing_tracking.clear_charging_cooldown()
-                # Also deactivate charging if somehow still active (can't charge while driving)
-                if tracking.charging_active:
-                    _LOGGER.debug(
-                        "Deactivating charging for %s: car is moving (mileage increased)",
-                        self._safe_vin_suffix(vin),
-                    )
-                    tracking.update_status("NOT_CHARGING", None)
-                    testing_tracking.update_status("NOT_CHARGING", None)
-                    self._motion_detector.set_charging(vin, False)
+            self._motion_detector.update_mileage(vin, mileage)
+            # Note: charging state is cleared based on is_moving() check after all descriptors
             return True
 
         return False
@@ -807,6 +794,24 @@ class CardataCoordinator:
                 # Both dependencies available - signal fuel range sensor creation
                 if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelSystem.remainingFuelRange"):
                     schedule_debounce = True
+
+        # Check if car is moving (uses GPS with mileage fallback) - if so, clear charging state
+        if self.get_derived_is_moving(vin):
+            tracking = self._soc_tracking.get(vin)
+            if tracking:
+                tracking.clear_charging_cooldown()
+                if tracking.charging_active:
+                    _LOGGER.debug(
+                        "Deactivating charging for %s: car is moving",
+                        self._safe_vin_suffix(vin),
+                    )
+                    tracking.update_status("NOT_CHARGING", None)
+                    self._motion_detector.set_charging(vin, False)
+            testing_tracking = self._testing_soc_tracking.get(vin)
+            if testing_tracking:
+                testing_tracking.clear_charging_cooldown()
+                if testing_tracking.charging_active:
+                    testing_tracking.update_status("NOT_CHARGING", None)
 
         self._apply_soc_estimate(vin, now)
 
