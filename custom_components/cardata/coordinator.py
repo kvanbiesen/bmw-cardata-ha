@@ -1334,6 +1334,24 @@ class CardataCoordinator:
             self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
             return
 
+        # Don't restore stale charging status to prevent endless extrapolation from old sessions
+        if descriptor == "vehicle.drivetrain.electricEngine.charging.status" and isinstance(value, str):
+            if value in {"CHARGINGACTIVE", "CHARGING_IN_PROGRESS"} and parsed_ts is not None:
+                now = datetime.now(UTC)
+                try:
+                    age_minutes = (now - parsed_ts).total_seconds() / 60.0
+                    if age_minutes > 30:  # 30 minutes threshold
+                        _LOGGER.debug(
+                            "Not restoring charging status '%s' for %s - data is %.1f minutes old",
+                            value,
+                            self._safe_vin_suffix(vin),
+                            age_minutes,
+                        )
+                        return
+                except (TypeError, OverflowError):
+                    # Invalid timestamp comparison, skip restoration
+                    return
+
         # Store descriptor state
         vehicle_state = self.data.setdefault(vin, {})
         stored_value: Any = value
