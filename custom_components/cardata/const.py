@@ -50,6 +50,9 @@ BATTERY_DESCRIPTORS = {
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
 }
 
+# Predicted SOC sensor (calculated during charging)
+PREDICTED_SOC_DESCRIPTOR = "vehicle.predicted_soc"
+
 DEFAULT_SCOPE = "authenticate_user openid cardata:api:read cardata:streaming:read"
 DEVICE_CODE_URL = "https://customer.bmwgroup.com/gcdm/oauth/device/code"
 TOKEN_URL = "https://customer.bmwgroup.com/gcdm/oauth/token"

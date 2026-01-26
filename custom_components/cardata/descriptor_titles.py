@@ -319,4 +319,6 @@ DESCRIPTOR_TITLES = {
     "vehicle.cabin.window.row1.passenger.status": "Window state (front passenger)",
     "vehicle.cabin.window.row2.driver.status": "Window state (rear driver)",
     "vehicle.cabin.window.row2.passenger.status": "Window state (rear passenger)",
+    # Derived/calculated sensors
+    "vehicle.predicted_soc": "Battery EV Predicted State Of Charge",
 }
