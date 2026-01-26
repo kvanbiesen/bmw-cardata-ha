@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -39,7 +38,6 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
-from homeassistant.util import dt as dt_util
 
 from .const import (
     DIAGNOSTIC_LOG_INTERVAL,
@@ -50,7 +48,6 @@ from .const import (
 from .debug import debug_enabled
 from .descriptor_state import DescriptorState
 from .message_utils import (
-    TIMESTAMPED_SOC_DESCRIPTORS,
     normalize_boolean_value,
     sanitize_timestamp_string,
 )
@@ -310,8 +307,6 @@ class CardataCoordinator:
         if debug_enabled():
             _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
 
-        now = datetime.now(UTC)
-
         for descriptor, descriptor_payload in data.items():
             if not isinstance(descriptor_payload, dict):
                 continue
@@ -319,9 +314,6 @@ class CardataCoordinator:
             unit = normalize_unit(descriptor_payload.get("unit"))
             raw_timestamp = descriptor_payload.get("timestamp")
             timestamp = sanitize_timestamp_string(raw_timestamp)
-            parsed_ts = None
-            if timestamp and descriptor in TIMESTAMPED_SOC_DESCRIPTORS:
-                parsed_ts = dt_util.parse_datetime(timestamp)
             if value is None:
                 continue
             is_new = descriptor not in vehicle_state
@@ -675,6 +667,7 @@ class CardataCoordinator:
             await self._async_cleanup_old_descriptors()
 
         # Check for stale pending updates (debounce timer failed to fire)
+        now = datetime.now(UTC)
         await self._async_check_stale_pending_updates(now)
 
     async def _async_check_stale_pending_updates(self, now: datetime) -> None:
