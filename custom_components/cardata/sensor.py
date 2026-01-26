@@ -660,234 +660,13 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
         return attrs
 
 
-class _SocTrackerBase(CardataEntity, RestoreEntity, SensorEntity):
-    """Base class for SoC estimation sensors."""
-
-    _attr_should_poll = False
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "%"
-    _attr_device_class = SensorDeviceClass.BATTERY
-    _attr_native_value: float | None = None
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str, base_name: str) -> None:
-        super().__init__(coordinator, vin, descriptor)
-        self._base_name = base_name
-        self._update_name(write_state=False)
-        self._unsubscribe = None
-
-    async def async_added_to_hass(self) -> None:
-        """Restore state and subscribe to updates."""
-        await super().async_added_to_hass()
-
-        last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in ("unknown", "unavailable"):
-            try:
-                self._attr_native_value = float(last_state.state)
-            except (TypeError, ValueError):
-                self._attr_native_value = None
-            else:
-                await self._async_restore_from_state(last_state)
-
-        self._unsubscribe = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_soc_estimate,
-            self._handle_update,
-        )
-
-        self._load_current_value()
-        self.schedule_update_ha_state()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Unsubscribe from updates."""
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-
-    async def _async_restore_from_state(self, last_state) -> None:
-        """Restore coordinator cache from last state. Override in subclass."""
-
-    def _load_current_value(self) -> None:
-        """Load current value from coordinator. Override in subclass."""
-
-    def _handle_update(self, vin: str) -> None:
-        """Handle updates from coordinator.
-
-        SMART FILTERING: Only updates Home Assistant if the SOC value
-        actually changed. This prevents HA spam while ensuring sensors
-        restore from 'unknown' state after reload.
-        """
-        if vin != self.vin:
-            return
-
-        # Get new value from coordinator
-        old_value = self._attr_native_value
-        self._load_current_value()
-        new_value = self._attr_native_value
-
-        # SMART FILTERING: Only update if value changed or sensor is unknown
-        if old_value == new_value:
-            return  # Skip HA update - no change
-
-        # Value changed or sensor was unknown - update HA!
-        self.schedule_update_ha_state()
-
-
-class CardataSocEstimateSensor(_SocTrackerBase):
-    """Sensor for predicted state of charge (SOC)."""
-
-    _attr_translation_key = "battery"
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(
-            coordinator,
-            vin,
-            "soc_estimate",
-            "State Of Charge (Predicted on Integration side)",
-        )
-
-    async def _async_restore_from_state(self, last_state) -> None:
-        """Restore SOC estimate cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
-        if self._coordinator.get_soc_estimate(self.vin) is None:
-            await self._coordinator.async_restore_soc_cache(
-                self.vin,
-                estimate=self._attr_native_value,
-                timestamp=reference,
-            )
-
-    def _load_current_value(self) -> None:
-        """Load current SOC estimate."""
-        existing = self._coordinator.get_soc_estimate(self.vin)
-        if existing is not None:
-            self._attr_native_value = existing
-
-
-class CardataTestingSocEstimateSensor(_SocTrackerBase):
-    """Sensor for testing new SOC estimation algorithm."""
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(
-            coordinator,
-            vin,
-            "soc_estimate_testing",
-            "New Extrapolation Testing sensor",
-        )
-
-    async def _async_restore_from_state(self, last_state) -> None:
-        """Restore testing SOC cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
-        if self._coordinator.get_testing_soc_estimate(self.vin) is None:
-            await self._coordinator.async_restore_testing_soc_cache(
-                self.vin,
-                estimate=self._attr_native_value,
-                timestamp=reference,
-            )
-
-    def _load_current_value(self) -> None:
-        """Load current testing SOC estimate."""
-        existing = self._coordinator.get_testing_soc_estimate(self.vin)
-        if existing is not None:
-            self._attr_native_value = existing
-
-
-class CardataSocRateSensor(_SocTrackerBase):
-    """Sensor for predicted charge speed."""
-
-    _attr_native_unit_of_measurement = "%/h"
-    _attr_icon = "mdi:battery-clock"
-    _attr_device_class = None
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(
-            coordinator,
-            vin,
-            "soc_rate",
-            "Predicted charge speed",
-        )
-
-    async def _async_restore_from_state(self, last_state) -> None:
-        """Restore SOC rate cache."""
-        restored_ts = last_state.attributes.get("timestamp")
-        reference = dt_util.parse_datetime(restored_ts) if restored_ts else None
-        if reference is None:
-            reference = last_state.last_changed
-        if reference is not None:
-            reference = dt_util.as_utc(reference)
-        if self._coordinator.get_soc_rate(self.vin) is None:
-            await self._coordinator.async_restore_soc_cache(
-                self.vin,
-                rate=self._attr_native_value,
-                timestamp=reference,
-            )
-
-    def _load_current_value(self) -> None:
-        """Load current SOC rate."""
-        existing = self._coordinator.get_soc_rate(self.vin)
-        if existing is not None:
-            self._attr_native_value = existing
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     """Set up sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
     coordinator: CardataCoordinator = runtime.coordinator
 
     entities: dict[tuple[str, str], CardataSensor] = {}
-    soc_estimate_entities: dict[str, CardataSocEstimateSensor] = {}
-    soc_testing_entities: dict[str, CardataTestingSocEstimateSensor] = {}
-    soc_rate_entities: dict[str, CardataSocRateSensor] = {}
     metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
-    # Cache stores (drive_train_value, is_electric_result) to detect metadata changes
-    _electric_vehicle_cache: dict[str, tuple[str, bool]] = {}
-
-    def is_electric_vehicle(vin: str) -> bool | None:
-        """Check if vehicle is electric/hybrid based on metadata (cached with invalidation).
-
-        Returns:
-            True if electric/hybrid, False if not, None if metadata not yet available.
-        """
-        metadata = coordinator.device_metadata.get(vin, {})
-        extra = metadata.get("extra_attributes", {})
-        drive_train = extra.get("drive_train", "").lower()
-
-        # Check cache - invalidate if drive_train changed
-        if vin in _electric_vehicle_cache:
-            cached_drive_train, cached_result = _electric_vehicle_cache[vin]
-            if cached_drive_train == drive_train:
-                return cached_result
-            # drive_train changed, re-evaluate below
-
-        if not drive_train:
-            # Clear stale cache entry when metadata is removed/unavailable
-            _electric_vehicle_cache.pop(vin, None)
-            _LOGGER.debug("VIN %s: No metadata yet, will check again later", redact_vin(vin))
-            return None  # Don't cache - let caller decide to wait for metadata
-
-        is_electric = any(x in drive_train for x in ["electric", "phev", "bev", "plugin", "hybrid", "mhev"])
-
-        # Cache result with the drive_train value used for the decision
-        _electric_vehicle_cache[vin] = (drive_train, is_electric)
-
-        _LOGGER.debug(
-            "VIN %s is %s (drive_train: %s)",
-            redact_vin(vin),
-            "electric/hybrid" if is_electric else "NOT electric",
-            drive_train,
-        )
-
-        return is_electric
 
     def ensure_metadata_sensor(vin: str) -> None:
         """Ensure metadata sensor exists for VIN (all vehicles)."""
@@ -902,35 +681,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         metadata_entities[vin] = CardataVehicleMetadataSensor(coordinator, vin)
         async_add_entities([metadata_entities[vin]], True)
 
-    def ensure_soc_tracking_entities(vin: str) -> None:
-        ensure_metadata_sensor(vin)
-
-        electric_status = is_electric_vehicle(vin)
-        if electric_status is None:
-            # wait for meta, so skip
-            return
-
-        # Skip SOC sensors for non-electric vehicles
-        if not electric_status:
-            return
-
-        new_entities = []
-
-        if vin not in soc_estimate_entities:
-            soc_estimate_entities[vin] = CardataSocEstimateSensor(coordinator, vin)
-            new_entities.append(soc_estimate_entities[vin])
-
-        if vin not in soc_testing_entities:
-            soc_testing_entities[vin] = CardataTestingSocEstimateSensor(coordinator, vin)
-            new_entities.append(soc_testing_entities[vin])
-
-        if vin not in soc_rate_entities:
-            soc_rate_entities[vin] = CardataSocRateSensor(coordinator, vin)
-            new_entities.append(soc_rate_entities[vin])
-
-        if new_entities:
-            async_add_entities(new_entities, True)
-
     def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False, from_signal: bool = False) -> None:
         """Ensure sensor entity exists for VIN + descriptor.
 
@@ -942,7 +692,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             from_signal: If True, trust the signal and create entity even without
                 coordinator state. Used when called from dispatcher signals.
         """
-        ensure_soc_tracking_entities(vin)
+        ensure_metadata_sensor(vin)
 
         if (vin, descriptor) in entities:
             return
@@ -1000,15 +750,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # - iter_descriptors() loop below handles existing data at startup
     # - Individual entities also subscribe to signal_update for their own state updates
 
-    async def async_handle_soc_update(vin: str) -> None:
-        ensure_soc_tracking_entities(vin)
-
-    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_soc_estimate, async_handle_soc_update))
-
     async def async_handle_metadata_update(vin: str) -> None:
-        # When metadata updates, re-check if vehicle is now detected as EV
-        # The is_electric_vehicle() cache will invalidate if drive_train changed
-        ensure_soc_tracking_entities(vin)
+        ensure_metadata_sensor(vin)
 
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update))
 
@@ -1026,8 +769,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         vin, descriptor = unique_id.split("_", 1)
 
-        if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing", "diagnostics_vehicle_metadata"):
-            ensure_soc_tracking_entities(vin)
+        # Skip removed SOC sensors - they no longer exist
+        if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing"):
+            continue
+
+        if descriptor == "diagnostics_vehicle_metadata":
+            ensure_metadata_sensor(vin)
             continue
 
         ensure_entity(vin, descriptor, assume_sensor=True)
@@ -1036,12 +783,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     for vin, descriptor in coordinator.iter_descriptors(binary=False):
         ensure_entity(vin, descriptor)
 
-    # Ensure SOC entities for all known VINs
+    # Ensure metadata entities for all known VINs
     # Include both VINs from coordinator.data (live MQTT data) AND
     # VINs from device_metadata (restored from storage)
     all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
     for vin in all_vins:
-        ensure_soc_tracking_entities(vin)
+        ensure_metadata_sensor(vin)
 
     # Add diagnostic sensors
     diagnostic_entities: list[CardataDiagnosticsSensor] = []

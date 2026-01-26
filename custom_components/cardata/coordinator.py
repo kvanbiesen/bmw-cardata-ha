@@ -56,7 +56,6 @@ from .message_utils import (
 )
 from .motion_detection import MotionDetector
 from .pending_manager import PendingManager, UpdateBatcher
-from .soc_tracking import SocTracking
 from .units import normalize_unit
 from .utils import is_valid_vin, redact_vin
 
@@ -80,22 +79,8 @@ class CardataCoordinator:
     diagnostic_interval: int = DIAGNOSTIC_LOG_INTERVAL
     session_start_time: float = field(default=0.0, init=False)
     watchdog_task: asyncio.Task | None = field(default=None, init=False, repr=False)
-    # Lock to protect concurrent access to data, names, device_metadata, and SOC tracking dicts
+    # Lock to protect concurrent access to data, names, and device_metadata
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    _soc_tracking: dict[str, SocTracking] = field(default_factory=dict, init=False)
-    _soc_rate: dict[str, float] = field(default_factory=dict, init=False)
-    _soc_estimate: dict[str, float] = field(default_factory=dict, init=False)
-    _testing_soc_tracking: dict[str, SocTracking] = field(default_factory=dict, init=False)
-    _testing_soc_estimate: dict[str, float] = field(default_factory=dict, init=False)
-    _avg_aux_power_w: dict[str, float] = field(default_factory=dict, init=False)
-    _aux_exceeds_charging_warned: dict[str, bool] = field(
-        default_factory=dict, init=False
-    )  # Track if we warned about aux > charging
-    _charging_power_w: dict[str, float] = field(default_factory=dict, init=False)
-    _direct_power_w: dict[str, float] = field(default_factory=dict, init=False)
-    _ac_voltage_v: dict[str, float] = field(default_factory=dict, init=False)
-    _ac_current_a: dict[str, float] = field(default_factory=dict, init=False)
-    _ac_phase_count: dict[str, int] = field(default_factory=dict, init=False)
     # Cache last sent derived isMoving state to avoid duplicate updates
     _last_derived_is_moving: dict[str, bool | None] = field(default_factory=dict, init=False)
 
@@ -131,7 +116,6 @@ class CardataCoordinator:
     _signal_new_binary: str = field(default="", init=False)
     _signal_update: str = field(default="", init=False)
     _signal_diagnostics: str = field(default="", init=False)
-    _signal_soc_estimate: str = field(default="", init=False)
     _signal_telematic_api: str = field(default="", init=False)
     _signal_new_image: str = field(default="", init=False)
     _signal_metadata: str = field(default="", init=False)
@@ -142,7 +126,6 @@ class CardataCoordinator:
         self._signal_new_binary = f"{DOMAIN}_{self.entry_id}_new_binary"
         self._signal_update = f"{DOMAIN}_{self.entry_id}_update"
         self._signal_diagnostics = f"{DOMAIN}_{self.entry_id}_diagnostics"
-        self._signal_soc_estimate = f"{DOMAIN}_{self.entry_id}_soc_estimate"
         self._signal_telematic_api = f"{DOMAIN}_{self.entry_id}_telematic_api"
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
@@ -169,10 +152,6 @@ class CardataCoordinator:
     @property
     def signal_diagnostics(self) -> str:
         return self._signal_diagnostics
-
-    @property
-    def signal_soc_estimate(self) -> str:
-        return self._signal_soc_estimate
 
     @property
     def signal_telematic_api(self) -> str:
@@ -268,395 +247,6 @@ class CardataCoordinator:
             if debug_enabled():
                 raise
 
-    def _get_testing_tracking(self, vin: str) -> SocTracking:
-        """Get or create testing SOC tracking for VIN. Must be called while holding _lock."""
-        return self._testing_soc_tracking.setdefault(vin, SocTracking())
-
-    def _adjust_power_for_testing(self, vin: str, power_w: float) -> float:
-        """Adjust power for testing by subtracting aux power. Must be called while holding _lock."""
-        aux_power = self._avg_aux_power_w.get(vin)
-        if aux_power is None:
-            self._aux_exceeds_charging_warned.pop(vin, None)
-            return max(power_w, 0.0)
-
-        adjusted = power_w - aux_power
-
-        # Check if aux power exceeds charging power (net zero charging)
-        tracking = self._soc_tracking.get(vin)
-        is_charging = tracking and tracking.charging_active and power_w > 0
-
-        if is_charging and adjusted <= 0:
-            if not self._aux_exceeds_charging_warned.get(vin):
-                _LOGGER.warning(
-                    "Aux power exceeds charging power for %s: aux=%.0fW, charging=%.0fW "
-                    "(net charging is zero - battery not gaining charge)",
-                    self._safe_vin_suffix(vin),
-                    aux_power,
-                    power_w,
-                )
-                self._aux_exceeds_charging_warned[vin] = True
-        elif self._aux_exceeds_charging_warned.get(vin):
-            # Condition resolved
-            _LOGGER.debug(
-                "Aux power no longer exceeds charging for %s: aux=%.0fW, charging=%.0fW",
-                self._safe_vin_suffix(vin),
-                aux_power,
-                power_w,
-            )
-            self._aux_exceeds_charging_warned[vin] = False
-
-        return max(adjusted, 0.0)
-
-    def _update_testing_power(self, vin: str, timestamp: datetime | None) -> None:
-        """Update testing power tracking. Must be called while holding _lock."""
-        raw_power = self._charging_power_w.get(vin)
-        if raw_power is None:
-            return
-        testing_tracking = self._get_testing_tracking(vin)
-        testing_tracking.update_power(self._adjust_power_for_testing(vin, raw_power), timestamp)
-
-    def _update_soc_tracking_for_descriptor(
-        self,
-        vin: str,
-        descriptor: str,
-        value: Any,
-        unit: str | None,
-        parsed_ts: datetime | None,
-    ) -> bool:
-        """Update SOC tracking for a descriptor. Returns True if tracking was updated.
-
-        Must be called while holding _lock.
-        """
-        tracking = self._soc_tracking.setdefault(vin, SocTracking())
-        testing_tracking = self._get_testing_tracking(vin)
-
-        # Handle None values
-        if value is None:
-            if descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
-                tracking.update_target_soc(None, parsed_ts)
-                testing_tracking.update_target_soc(None, parsed_ts)
-                return True
-            elif descriptor == "vehicle.vehicle.avgAuxPower":
-                self._avg_aux_power_w.pop(vin, None)
-                self._update_testing_power(vin, parsed_ts)
-                return True
-            elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                self._set_direct_power(vin, None, parsed_ts)
-                return True
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
-                self._set_ac_voltage(vin, None, parsed_ts)
-                return True
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
-                self._set_ac_current(vin, None, parsed_ts)
-                return True
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
-                self._set_ac_phase(vin, None, parsed_ts)
-                return True
-            return False
-
-        # Handle actual values
-        if descriptor == "vehicle.drivetrain.batteryManagement.header":
-            try:
-                percent = float(value)
-            except (TypeError, ValueError):
-                return False
-            tracking.update_actual_soc(percent, parsed_ts)
-            testing_tracking.update_actual_soc(percent, parsed_ts)
-            return True
-        elif descriptor == "vehicle.drivetrain.batteryManagement.maxEnergy":
-            try:
-                max_energy = float(value)
-            except (TypeError, ValueError):
-                return False
-            tracking.update_max_energy(max_energy)
-            testing_tracking.update_max_energy(max_energy)
-            return True
-        elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-            try:
-                power_w = float(value)
-            except (TypeError, ValueError):
-                self._set_direct_power(vin, None, parsed_ts)
-            else:
-                self._set_direct_power(vin, power_w, parsed_ts)
-            return True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.status":
-            if isinstance(value, str):
-                tracking.update_status(value, parsed_ts)
-                testing_tracking.update_status(value, parsed_ts)
-                # Update motion detector - if charging, car is definitely not moving
-                self._motion_detector.set_charging(vin, tracking.charging_active)
-                return True
-            return False
-        elif descriptor == "vehicle.powertrain.electric.battery.stateOfCharge.target":
-            try:
-                target = float(value)
-            except (TypeError, ValueError):
-                tracking.update_target_soc(None, parsed_ts)
-                testing_tracking.update_target_soc(None, parsed_ts)
-            else:
-                tracking.update_target_soc(target, parsed_ts)
-                testing_tracking.update_target_soc(target, parsed_ts)
-            return True
-        elif descriptor == "vehicle.vehicle.avgAuxPower":
-            aux_w: float | None = None
-            try:
-                aux_value = float(value)
-            except (TypeError, ValueError):
-                _LOGGER.debug("Could not parse aux power value: %s", value)
-            else:
-                if math.isfinite(aux_value):
-                    if isinstance(unit, str) and unit.lower() == "w":
-                        aux_w = aux_value
-                    else:
-                        aux_w = aux_value * 1000.0
-                else:
-                    _LOGGER.warning("Ignoring invalid aux power: %s (must be finite)", aux_value)
-            if aux_w is not None:
-                aux_w = max(aux_w, 0.0)
-            if aux_w is None:
-                self._avg_aux_power_w.pop(vin, None)
-            else:
-                self._avg_aux_power_w[vin] = aux_w
-            self._update_testing_power(vin, parsed_ts)
-            return True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.acVoltage":
-            try:
-                voltage_v = float(value)
-            except (TypeError, ValueError):
-                self._set_ac_voltage(vin, None, parsed_ts)
-            else:
-                self._set_ac_voltage(vin, voltage_v, parsed_ts)
-            return True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.acAmpere":
-            try:
-                current_a = float(value)
-            except (TypeError, ValueError):
-                self._set_ac_current(vin, None, parsed_ts)
-            else:
-                self._set_ac_current(vin, current_a, parsed_ts)
-            return True
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.phaseNumber":
-            self._set_ac_phase(vin, value, parsed_ts)
-            return True
-        elif descriptor == "vehicle.vehicle.travelledDistance":
-            # Update motion detector with mileage (fallback for when GPS unavailable)
-            try:
-                mileage = float(value)
-            except (TypeError, ValueError):
-                return False
-            mileage_increased = self._motion_detector.update_mileage(vin, mileage)
-            # If mileage increased, car is driving - clear charging state immediately
-            # (can't wait for is_moving() check since SOC might be processed first)
-            if mileage_increased:
-                tracking.clear_charging_cooldown()
-                testing_tracking.clear_charging_cooldown()
-                if tracking.charging_active:
-                    _LOGGER.debug(
-                        "Deactivating charging for %s: mileage increased",
-                        self._safe_vin_suffix(vin),
-                    )
-                    tracking.update_status("NOT_CHARGING", None)
-                if testing_tracking.charging_active:
-                    testing_tracking.update_status("NOT_CHARGING", None)
-            return True
-
-        return False
-
-    def _set_direct_power(self, vin: str, power_w: float | None, timestamp: datetime | None) -> None:
-        """Set direct charging power. Must be called while holding _lock."""
-        if power_w is None:
-            self._direct_power_w.pop(vin, None)
-        elif not math.isfinite(power_w):
-            _LOGGER.warning("Ignoring invalid direct power: %s W (must be finite), clearing stored value", power_w)
-            self._direct_power_w.pop(vin, None)
-        elif power_w > self._DC_POWER_MAX_W:
-            _LOGGER.warning(
-                "Ignoring excessive direct power: %.0fW > %.0fW max, clearing stored value",
-                power_w,
-                self._DC_POWER_MAX_W,
-            )
-            self._direct_power_w.pop(vin, None)
-        else:
-            self._direct_power_w[vin] = max(power_w, 0.0)
-        self._apply_effective_power(vin, timestamp)
-
-    # AC power sanity check constants
-    _AC_VOLTAGE_MIN: float = 100.0  # Minimum valid voltage (V)
-    _AC_VOLTAGE_MAX: float = 500.0  # Maximum valid voltage (V) - covers 400V 3-phase
-    _AC_CURRENT_MAX: float = 100.0  # Maximum valid current (A) - industrial chargers
-    _AC_PHASE_MAX: int = 3  # Maximum valid phases
-    _AC_POWER_MAX_W: float = 22000.0  # Maximum AC power (22kW) - highest onboard charger
-    # Maximum direct/DC power - 350kW covers fastest production DC chargers (Ionity, etc.)
-    _DC_POWER_MAX_W: float = 350000.0
-
-    def _set_ac_voltage(self, vin: str, voltage_v: float | None, timestamp: datetime | None) -> None:
-        """Set AC voltage. Must be called while holding _lock."""
-        if voltage_v is None or voltage_v == 0.0:
-            self._ac_voltage_v.pop(vin, None)
-        elif not math.isfinite(voltage_v) or voltage_v < self._AC_VOLTAGE_MIN or voltage_v > self._AC_VOLTAGE_MAX:
-            _LOGGER.warning(
-                "Ignoring invalid AC voltage: %s V (expected finite %d-%dV), clearing stored value",
-                voltage_v,
-                int(self._AC_VOLTAGE_MIN),
-                int(self._AC_VOLTAGE_MAX),
-            )
-            self._ac_voltage_v.pop(vin, None)
-        else:
-            self._ac_voltage_v[vin] = voltage_v
-        self._apply_effective_power(vin, timestamp)
-
-    def _set_ac_current(self, vin: str, current_a: float | None, timestamp: datetime | None) -> None:
-        """Set AC current. Must be called while holding _lock."""
-        if current_a is None or current_a == 0.0:
-            self._ac_current_a.pop(vin, None)
-        elif not math.isfinite(current_a) or current_a < 0 or current_a > self._AC_CURRENT_MAX:
-            _LOGGER.warning(
-                "Ignoring invalid AC current: %s A (expected finite 0-%dA), clearing stored value",
-                current_a,
-                int(self._AC_CURRENT_MAX),
-            )
-            self._ac_current_a.pop(vin, None)
-        else:
-            self._ac_current_a[vin] = current_a
-        self._apply_effective_power(vin, timestamp)
-
-    def _set_ac_phase(self, vin: str, phase_value: Any | None, timestamp: datetime | None) -> None:
-        """Set AC phase count. Must be called while holding _lock."""
-        phase_count: int | None = None
-        if phase_value is None:
-            phase_count = None
-        elif isinstance(phase_value, (int, float)):
-            try:
-                parsed = int(phase_value)
-            except (TypeError, ValueError):
-                parsed = None
-            phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
-        elif isinstance(phase_value, str):
-            # Limit input length to prevent regex/int DoS on huge digit strings
-            truncated = phase_value[:10] if len(phase_value) > 10 else phase_value
-            match = _AC_PHASE_PATTERN.match(truncated)  # Max 2 digits (phase 1-3)
-            if match:
-                try:
-                    parsed = int(match.group(1))
-                except (TypeError, ValueError):
-                    parsed = None
-                phase_count = parsed if parsed and 0 < parsed <= self._AC_PHASE_MAX else None
-        if phase_count is None:
-            self._ac_phase_count.pop(vin, None)
-            if phase_value is not None:
-                _LOGGER.debug(
-                    "Ignoring invalid AC phase count: %s (expected 1-%d)",
-                    phase_value,
-                    self._AC_PHASE_MAX,
-                )
-                return
-        else:
-            self._ac_phase_count[vin] = phase_count
-        self._apply_effective_power(vin, timestamp)
-
-    def _derive_ac_power(self, vin: str) -> float | None:
-        """Derive AC charging power from voltage, current, and phases.
-
-        Uses P = V * I * phases, which assumes BMW reports phase voltage (L-N, e.g. 230V)
-        and per-phase current. If BMW reports line voltage (L-L, e.g. 400V), this would
-        overestimate by ~73% (factor of 3/sqrt(3)), but the 22kW cap catches such cases.
-
-        Must be called while holding _lock.
-        """
-        voltage = self._ac_voltage_v.get(vin)
-        current = self._ac_current_a.get(vin)
-        phases = self._ac_phase_count.get(vin)
-        if voltage is None or current is None or phases is None:
-            return None
-        derived = voltage * current * phases
-        if derived > self._AC_POWER_MAX_W:
-            _LOGGER.warning(
-                "Derived AC power exceeds maximum: %.0fW (V=%.1f, A=%.1f, phases=%d) > %.0fW max",
-                derived,
-                voltage,
-                current,
-                phases,
-                self._AC_POWER_MAX_W,
-            )
-            return None
-        return max(derived, 0.0)
-
-    def _compute_effective_power(self, vin: str) -> float | None:
-        """Compute effective charging power (direct or derived from AC). Must be called while holding _lock."""
-        direct = self._direct_power_w.get(vin)
-        if direct is not None:
-            return direct
-        return self._derive_ac_power(vin)
-
-    def _apply_effective_power(self, vin: str, timestamp: datetime | None) -> None:
-        """Apply effective power to SOC tracking. Must be called while holding _lock."""
-        tracking = self._soc_tracking.setdefault(vin, SocTracking())
-        testing_tracking = self._get_testing_tracking(vin)
-        effective_power = self._compute_effective_power(vin)
-        if effective_power is None:
-            self._charging_power_w.pop(vin, None)
-            # Deactivate charging if power becomes unavailable
-            if tracking.charging_active:
-                _LOGGER.debug(
-                    "Deactivating charging for %s: power unavailable",
-                    self._safe_vin_suffix(vin),
-                )
-                tracking.update_status("NOT_CHARGING", timestamp)
-                testing_tracking.update_status("NOT_CHARGING", timestamp)
-                self._motion_detector.set_charging(vin, False)
-            return
-        self._charging_power_w[vin] = effective_power
-        # If we receive meaningful charging power, activate charging immediately
-        # This allows SOC prediction to start as soon as power is detected,
-        # without waiting for the charging status descriptor
-        min_charging_power = 100.0  # Watts - threshold to avoid sensor noise
-        should_activate = effective_power >= min_charging_power and not tracking.charging_active
-        # Also deactivate charging when power drops below threshold
-        # This ensures charging_active doesn't get stuck if status descriptor never arrives
-        should_deactivate = effective_power < min_charging_power and tracking.charging_active
-        # Update power first so _recalculate_rate() has the power value available
-        tracking.update_power(effective_power, timestamp)
-        testing_tracking.update_power(self._adjust_power_for_testing(vin, effective_power), timestamp)
-        # Now activate or deactivate charging based on power level
-        if should_activate:
-            _LOGGER.debug(
-                "Activating charging for %s based on power: %.0fW",
-                self._safe_vin_suffix(vin),
-                effective_power,
-            )
-            tracking.update_status("CHARGINGACTIVE", timestamp)
-            testing_tracking.update_status("CHARGINGACTIVE", timestamp)
-            # Update motion detector - if charging, car is definitely not moving
-            self._motion_detector.set_charging(vin, True)
-        elif should_deactivate:
-            _LOGGER.debug(
-                "Deactivating charging for %s based on power: %.0fW",
-                self._safe_vin_suffix(vin),
-                effective_power,
-            )
-            tracking.update_status("NOT_CHARGING", timestamp)
-            testing_tracking.update_status("NOT_CHARGING", timestamp)
-            self._motion_detector.set_charging(vin, False)
-        # Consistency check: warn if power and charging status don't match
-        self._check_power_status_consistency(vin, tracking, effective_power)
-
-    def _check_power_status_consistency(self, vin: str, tracking: SocTracking, power_w: float) -> None:
-        """Log warning if power and charging status are inconsistent."""
-        # Define threshold for "meaningful" power (avoid false positives from noise)
-        min_charging_power = 100.0  # Watts
-        if tracking.charging_active and power_w < min_charging_power:
-            _LOGGER.debug(
-                "Power/status inconsistency for %s: charging_active=True but power=%.0fW",
-                self._safe_vin_suffix(vin),
-                power_w,
-            )
-        elif not tracking.charging_active and power_w >= min_charging_power:
-            _LOGGER.debug(
-                "Power/status inconsistency for %s: charging_active=False but power=%.0fW",
-                self._safe_vin_suffix(vin),
-                power_w,
-            )
-
     async def async_handle_message(self, payload: dict[str, Any]) -> None:
         vin = payload.get("vin")
         data = payload.get("data") or {}
@@ -733,7 +323,6 @@ class CardataCoordinator:
             if timestamp and descriptor in TIMESTAMPED_SOC_DESCRIPTORS:
                 parsed_ts = dt_util.parse_datetime(timestamp)
             if value is None:
-                self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
                 continue
             is_new = descriptor not in vehicle_state
 
@@ -783,9 +372,6 @@ class CardataCoordinator:
                                 self._pending_manager.get_total_count(),
                             )
 
-            # Update SOC tracking for relevant descriptors
-            self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
-
         # Queue new entities for notification (PendingManager handles limits)
         if new_sensor:
             for item in new_sensor:
@@ -806,26 +392,6 @@ class CardataCoordinator:
                 # Both dependencies available - signal fuel range sensor creation
                 if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelSystem.remainingFuelRange"):
                     schedule_debounce = True
-
-        # Check if car is moving (uses GPS with mileage fallback) - if so, clear charging state
-        if self.get_derived_is_moving(vin):
-            tracking = self._soc_tracking.get(vin)
-            if tracking:
-                tracking.clear_charging_cooldown()
-                if tracking.charging_active:
-                    _LOGGER.debug(
-                        "Deactivating charging for %s: car is moving",
-                        self._safe_vin_suffix(vin),
-                    )
-                    tracking.update_status("NOT_CHARGING", None)
-                    self._motion_detector.set_charging(vin, False)
-            testing_tracking = self._testing_soc_tracking.get(vin)
-            if testing_tracking:
-                testing_tracking.clear_charging_cooldown()
-                if testing_tracking.charging_active:
-                    testing_tracking.update_status("NOT_CHARGING", None)
-
-        self._apply_soc_estimate(vin, now)
 
         return immediate_updates, schedule_debounce
 
@@ -1072,14 +638,6 @@ class CardataCoordinator:
                 self.last_disconnect_reason,
                 self.last_message_at,
             )
-        now = datetime.now(UTC)
-        updated_vins: list[str] = []
-        async with self._lock:
-            for vin in list(self._soc_tracking.keys()):
-                if self._apply_soc_estimate(vin, now, notify=False):
-                    updated_vins.append(vin)
-        for vin in updated_vins:
-            self._safe_dispatcher_send(self.signal_soc_estimate, vin)
         self._safe_dispatcher_send(self.signal_diagnostics)
 
         # Check for derived isMoving state changes (GPS staleness timeout)
@@ -1146,17 +704,6 @@ class CardataCoordinator:
 
             # Collect all VINs from tracking dicts
             tracking_dicts: list[dict[str, Any]] = [
-                self._soc_tracking,
-                self._soc_rate,
-                self._soc_estimate,
-                self._testing_soc_tracking,
-                self._testing_soc_estimate,
-                self._avg_aux_power_w,
-                self._charging_power_w,
-                self._direct_power_w,
-                self._ac_voltage_v,
-                self._ac_current_a,
-                self._ac_phase_count,
                 self._last_derived_is_moving,
             ]
 
@@ -1208,110 +755,6 @@ class CardataCoordinator:
                 max_age // 86400,
             )
 
-    def _apply_soc_estimate(self, vin: str, now: datetime, notify: bool = True) -> bool:
-        """Apply SOC estimate calculation. Must be called while holding _lock."""
-        tracking = self._soc_tracking.get(vin)
-        testing_tracking = self._testing_soc_tracking.get(vin)
-        if not tracking:
-            removed_estimate = self._soc_estimate.pop(vin, None) is not None
-            removed_rate = self._soc_rate.pop(vin, None) is not None
-            testing_removed = self._testing_soc_estimate.pop(vin, None) is not None
-            if vin in self._testing_soc_tracking:
-                self._testing_soc_tracking.pop(vin, None)
-            self._avg_aux_power_w.pop(vin, None)
-            self._charging_power_w.pop(vin, None)
-            self._direct_power_w.pop(vin, None)
-            self._ac_voltage_v.pop(vin, None)
-            self._ac_current_a.pop(vin, None)
-            self._ac_phase_count.pop(vin, None)
-            changed = removed_estimate or removed_rate or testing_removed
-            if notify and changed:
-                self._safe_dispatcher_send(self.signal_soc_estimate, vin)
-            return changed
-        percent = tracking.estimate(now)
-        rate = tracking.current_rate_per_hour()
-
-        rate_changed = False
-        if rate is None or rate == 0:
-            if vin in self._soc_rate:
-                self._soc_rate.pop(vin, None)
-                rate_changed = True
-        else:
-            rounded_rate = round(rate, 3)
-            if self._soc_rate.get(vin) != rounded_rate:
-                self._soc_rate[vin] = rounded_rate
-                rate_changed = True
-
-        estimate_changed = False
-        if percent is None:
-            if vin in self._soc_estimate:
-                self._soc_estimate.pop(vin, None)
-                estimate_changed = True
-        else:
-            rounded_percent = round(percent, 2)
-            current_estimate = self._soc_estimate.get(vin)
-            # During charging or cooldown, NEVER allow the displayed estimate to decrease.
-            # This is defense-in-depth: even if SocTracking returns a lower value due to
-            # edge cases (status glitches, stale data), the user should never see SOC drop
-            # while the car is plugged in and charging.
-            in_cooldown = False
-            if tracking._charging_ended_at is not None:
-                try:
-                    cooldown_elapsed = (now - tracking._charging_ended_at).total_seconds()
-                    in_cooldown = cooldown_elapsed < tracking.POST_CHARGING_COOLDOWN_SECONDS
-                except (TypeError, OverflowError):
-                    pass
-            if (
-                (tracking.charging_active or in_cooldown)
-                and current_estimate is not None
-                and rounded_percent < current_estimate
-            ):
-                _LOGGER.debug(
-                    "Rejecting SOC estimate decrease %s: new=%.2f%%, current=%.2f%%",
-                    "during charging" if tracking.charging_active else "during post-charging cooldown",
-                    rounded_percent,
-                    current_estimate,
-                )
-                # Keep current estimate, don't update
-            elif self._soc_estimate.get(vin) != rounded_percent:
-                self._soc_estimate[vin] = rounded_percent
-                estimate_changed = True
-        updated = rate_changed or estimate_changed
-
-        testing_changed = False
-        if testing_tracking:
-            testing_percent = testing_tracking.estimate(now)
-            if testing_percent is None:
-                if vin in self._testing_soc_estimate:
-                    self._testing_soc_estimate.pop(vin, None)
-                    testing_changed = True
-            else:
-                rounded_testing = round(testing_percent, 2)
-                if self._testing_soc_estimate.get(vin) != rounded_testing:
-                    self._testing_soc_estimate[vin] = rounded_testing
-                    testing_changed = True
-        else:
-            if vin in self._testing_soc_estimate:
-                self._testing_soc_estimate.pop(vin, None)
-                testing_changed = True
-
-        final_updated = updated or testing_changed
-        if notify and final_updated:
-            self._safe_dispatcher_send(self.signal_soc_estimate, vin)
-        return final_updated
-
-    def get_soc_rate(self, vin: str) -> float | None:
-        """Get current SOC rate for VIN. Thread-safe for read-only access."""
-        return self._soc_rate.get(vin)
-
-    def get_soc_estimate(self, vin: str) -> float | None:
-        """Get current SOC estimate for VIN. Thread-safe for read-only access."""
-        return self._soc_estimate.get(vin)
-
-    def get_testing_soc_estimate(self, vin: str) -> float | None:
-        """Get testing SOC estimate for VIN. Thread-safe for read-only access."""
-        return self._testing_soc_estimate.get(vin)
-
     def restore_descriptor_state(
         self,
         vin: str,
@@ -1326,31 +769,11 @@ class CardataCoordinator:
         """
         # Sanitize timestamp string before use
         timestamp = sanitize_timestamp_string(timestamp)
-        parsed_ts = dt_util.parse_datetime(timestamp) if timestamp else None
         unit = normalize_unit(unit)
 
         # Handle None values
         if value is None:
-            self._update_soc_tracking_for_descriptor(vin, descriptor, None, unit, parsed_ts)
             return
-
-        # Don't restore stale charging status to prevent endless extrapolation from old sessions
-        if descriptor == "vehicle.drivetrain.electricEngine.charging.status" and isinstance(value, str):
-            if value in {"CHARGINGACTIVE", "CHARGING_IN_PROGRESS"} and parsed_ts is not None:
-                now = datetime.now(UTC)
-                try:
-                    age_minutes = (now - parsed_ts).total_seconds() / 60.0
-                    if age_minutes > 30:  # 30 minutes threshold
-                        _LOGGER.debug(
-                            "Not restoring charging status '%s' for %s - data is %.1f minutes old",
-                            value,
-                            self._safe_vin_suffix(vin),
-                            age_minutes,
-                        )
-                        return
-                except (TypeError, OverflowError):
-                    # Invalid timestamp comparison, skip restoration
-                    return
 
         # Store descriptor state
         vehicle_state = self.data.setdefault(vin, {})
@@ -1373,79 +796,6 @@ class CardataCoordinator:
             last_seen=time.time(),
         )
 
-        # Update SOC tracking
-        updated = self._update_soc_tracking_for_descriptor(vin, descriptor, value, unit, parsed_ts)
-
-        if not updated:
-            return
-
-        # Update SOC estimates from tracking state
-        tracking = self._soc_tracking.get(vin)
-        testing_tracking = self._testing_soc_tracking.get(vin)
-
-        if tracking:
-            if tracking.estimated_percent is not None:
-                self._soc_estimate[vin] = round(tracking.estimated_percent, 2)
-            elif tracking.last_soc_percent is not None:
-                self._soc_estimate[vin] = round(tracking.last_soc_percent, 2)
-            if tracking.rate_per_hour is not None and tracking.rate_per_hour != 0:
-                self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
-            else:
-                self._soc_rate.pop(vin, None)
-
-        if testing_tracking and testing_tracking.estimated_percent is not None:
-            self._testing_soc_estimate[vin] = round(testing_tracking.estimated_percent, 2)
-        elif vin in self._testing_soc_estimate:
-            self._testing_soc_estimate.pop(vin, None)
-
-    def restore_soc_cache(
-        self,
-        vin: str,
-        *,
-        estimate: float | None = None,
-        rate: float | None = None,
-        timestamp: datetime | None = None,
-    ) -> None:
-        """Restore SOC cache from saved state.
-
-        Must be called while holding _lock. Use async_restore_soc_cache for thread-safe access.
-        """
-        tracking = self._soc_tracking.setdefault(vin, SocTracking())
-        reference_time = timestamp or datetime.now(UTC)
-        if estimate is not None and math.isfinite(estimate):
-            tracking.estimated_percent = estimate
-            tracking.last_estimate_time = reference_time
-            self._soc_estimate[vin] = round(estimate, 2)
-        if rate is not None and math.isfinite(rate) and rate != 0:
-            tracking.rate_per_hour = rate
-            self._soc_rate[vin] = round(tracking.rate_per_hour, 3)
-            # Note: Do NOT set charging_active = True here. The restored rate is stale
-            # and we don't know if charging is still active. Let charging_active be set
-            # only by actual status updates from the vehicle. The rate is stored but
-            # won't be used for estimation until a status update confirms charging.
-            if tracking.max_energy_kwh is not None and tracking.max_energy_kwh != 0:
-                tracking.last_power_w = (tracking.rate_per_hour / 100.0) * tracking.max_energy_kwh * 1000.0
-            tracking.last_power_time = reference_time
-
-    def restore_testing_soc_cache(
-        self,
-        vin: str,
-        *,
-        estimate: float | None = None,
-        timestamp: datetime | None = None,
-    ) -> None:
-        """Restore testing SOC cache from saved state.
-
-        Must be called while holding _lock. Use async_restore_testing_soc_cache for thread-safe access.
-        """
-        tracking = self._get_testing_tracking(vin)
-        reference_time = timestamp or datetime.now(UTC)
-        if estimate is None or not math.isfinite(estimate):
-            return
-        tracking.estimated_percent = estimate
-        tracking.last_estimate_time = reference_time
-        self._testing_soc_estimate[vin] = round(estimate, 2)
-
     async def async_restore_descriptor_state(
         self,
         vin: str,
@@ -1457,29 +807,6 @@ class CardataCoordinator:
         """Thread-safe async version of restore_descriptor_state."""
         async with self._lock:
             self.restore_descriptor_state(vin, descriptor, value, unit, timestamp)
-
-    async def async_restore_soc_cache(
-        self,
-        vin: str,
-        *,
-        estimate: float | None = None,
-        rate: float | None = None,
-        timestamp: datetime | None = None,
-    ) -> None:
-        """Thread-safe async version of restore_soc_cache."""
-        async with self._lock:
-            self.restore_soc_cache(vin, estimate=estimate, rate=rate, timestamp=timestamp)
-
-    async def async_restore_testing_soc_cache(
-        self,
-        vin: str,
-        *,
-        estimate: float | None = None,
-        timestamp: datetime | None = None,
-    ) -> None:
-        """Thread-safe async version of restore_testing_soc_cache."""
-        async with self._lock:
-            self.restore_testing_soc_cache(vin, estimate=estimate, timestamp=timestamp)
 
     @staticmethod
     def _build_device_metadata(vin: str, payload: dict[str, Any]) -> dict[str, Any]:
