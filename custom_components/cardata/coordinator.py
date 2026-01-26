@@ -44,6 +44,7 @@ from .const import (
     DOMAIN,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    PREDICTED_SOC_DESCRIPTOR,
 )
 from .debug import debug_enabled
 from .descriptor_state import DescriptorState
@@ -53,6 +54,7 @@ from .message_utils import (
 )
 from .motion_detection import MotionDetector
 from .pending_manager import PendingManager, UpdateBatcher
+from .soc_prediction import SOCPredictor
 from .units import normalize_unit
 from .utils import is_valid_vin, redact_vin
 
@@ -100,6 +102,9 @@ class CardataCoordinator:
     # Derived motion detection from GPS position changes
     # When vehicle.isMoving is not available, derive it from location staleness
     _motion_detector: MotionDetector = field(default_factory=MotionDetector, init=False)
+
+    # SOC prediction during charging
+    _soc_predictor: SOCPredictor = field(default_factory=SOCPredictor, init=False)
 
     # Pending operation tracking to prevent duplicate work
     _basic_data_pending: PendingManager[str] = field(default_factory=lambda: PendingManager("basic_data"), init=False)
@@ -212,6 +217,89 @@ class CardataCoordinator:
             return fuel_range
         except (ValueError, TypeError, AttributeError):
             return None
+
+    def get_predicted_soc(self, vin: str) -> float | None:
+        """Get predicted SOC during charging, or BMW SOC when not charging.
+
+        Returns:
+            Predicted or actual SOC percentage, or None if no data
+        """
+        vehicle_data = self.data.get(vin)
+        if not vehicle_data:
+            return None
+
+        # Get current BMW SOC
+        soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+        bmw_soc = None
+        if soc_state and soc_state.value is not None:
+            try:
+                bmw_soc = float(soc_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        # Get charging power (handle both W and kW)
+        power_state = vehicle_data.get("vehicle.powertrain.electric.battery.charging.power")
+        charging_power_w = 0.0
+        if power_state and power_state.value is not None:
+            try:
+                power_val = float(power_state.value)
+                # Normalize to Watts (assume kW if < 1000, otherwise already W)
+                if power_state.unit and power_state.unit.lower() == "kw":
+                    power_val *= 1000
+                charging_power_w = power_val
+            except (TypeError, ValueError):
+                pass
+
+        # Get auxiliary power
+        aux_state = vehicle_data.get("vehicle.vehicle.avgAuxPower")
+        aux_power_w = 0.0
+        if aux_state and aux_state.value is not None:
+            try:
+                aux_power_w = float(aux_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        return self._soc_predictor.get_predicted_soc(
+            vin=vin,
+            charging_power_w=charging_power_w,
+            aux_power_w=aux_power_w,
+            bmw_soc=bmw_soc,
+        )
+
+    def _anchor_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
+        """Anchor SOC prediction session when charging starts.
+
+        Must be called while holding _lock.
+        """
+        # Get current SOC
+        soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+        if not soc_state or soc_state.value is None:
+            return
+        try:
+            current_soc = float(soc_state.value)
+        except (TypeError, ValueError):
+            return
+
+        # Get battery capacity (prefer batterySizeMax, fallback to maxEnergy)
+        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
+        if not capacity_state or capacity_state.value is None:
+            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+        if not capacity_state or capacity_state.value is None:
+            return
+        try:
+            capacity_kwh = float(capacity_state.value)
+        except (TypeError, ValueError):
+            return
+
+        # Get charging method if available
+        method_state = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.method")
+        charging_method = "AC"
+        if method_state and method_state.value:
+            method_str = str(method_state.value).upper()
+            if "DC" in method_str:
+                charging_method = "DC"
+
+        self._soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method)
 
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
@@ -385,6 +473,45 @@ class CardataCoordinator:
                 if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelSystem.remainingFuelRange"):
                     schedule_debounce = True
 
+        # SOC prediction: track charging status, method, power, and SOC updates
+        # Process all descriptor updates for SOC prediction tracking
+        for descriptor, descriptor_payload in data.items():
+            if not isinstance(descriptor_payload, dict):
+                continue
+            value = descriptor_payload.get("value")
+
+            # Track charging status changes
+            if descriptor == "vehicle.drivetrain.electricEngine.charging.status":
+                status_changed = self._soc_predictor.update_charging_status(vin, str(value) if value else None)
+                if status_changed and self._soc_predictor.is_charging(vin):
+                    # Charging started - try to anchor session
+                    self._anchor_soc_session(vin, vehicle_state)
+
+            # Track charging method for efficiency selection
+            elif descriptor == "vehicle.drivetrain.electricEngine.charging.method":
+                if value:
+                    self._soc_predictor.set_charging_method(vin, str(value))
+
+            # Update power reading timestamp for staleness tracking
+            elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
+                self._soc_predictor.update_power_reading(vin)
+
+            # Update BMW SOC for staleness tracking
+            elif descriptor == "vehicle.drivetrain.batteryManagement.header":
+                if value is not None:
+                    try:
+                        self._soc_predictor.update_bmw_soc(vin, float(value))
+                    except (TypeError, ValueError):
+                        pass
+
+        # Check if predicted_soc sensor should be created (when EV descriptors are seen)
+        # Signal creation when we see HV battery SOC (indicates EV/PHEV)
+        if not self._soc_predictor.has_signaled_entity(vin):
+            if "vehicle.drivetrain.batteryManagement.header" in vehicle_state:
+                self._soc_predictor.signal_entity_created(vin)
+                if self._pending_manager.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
+                    schedule_debounce = True
+
         return immediate_updates, schedule_debounce
 
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
@@ -509,6 +636,11 @@ class CardataCoordinator:
                     fuel_range = self.get_derived_fuel_range(vin)
                     if fuel_range is not None:
                         return DescriptorState(value=fuel_range, unit="km", timestamp=None)
+                # Fall back to predicted SOC for vehicle.predicted_soc
+                elif descriptor == PREDICTED_SOC_DESCRIPTOR:
+                    predicted_soc = self.get_predicted_soc(vin)
+                    if predicted_soc is not None:
+                        return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -540,6 +672,11 @@ class CardataCoordinator:
                     fuel_range = self.get_derived_fuel_range(vin)
                     if fuel_range is not None:
                         return DescriptorState(value=fuel_range, unit="km", timestamp=None)
+                # Fall back to predicted SOC for vehicle.predicted_soc
+                elif descriptor == PREDICTED_SOC_DESCRIPTOR:
+                    predicted_soc = self.get_predicted_soc(vin)
+                    if predicted_soc is not None:
+                        return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
                 return None
             return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
@@ -707,12 +844,17 @@ class CardataCoordinator:
             # Also check motion detector for stale VINs
             stale_vins.update(vin for vin in self._motion_detector.get_tracked_vins() if vin not in valid_vins)
 
+            # Also check SOC predictor for stale VINs
+            stale_vins.update(vin for vin in self._soc_predictor.get_tracked_vins() if vin not in valid_vins)
+
             if stale_vins:
                 for vin in stale_vins:
                     for d in tracking_dicts:
                         d.pop(vin, None)
                     # Cleanup motion detector for stale VINs
                     self._motion_detector.cleanup_vin(vin)
+                    # Cleanup SOC predictor for stale VINs
+                    self._soc_predictor.cleanup_vin(vin)
                     # Also clean up pending manager
                     self._pending_manager.remove_vin(vin)
                 _LOGGER.debug(

@@ -67,6 +67,7 @@ from .const import (
     LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    PREDICTED_SOC_DESCRIPTOR,
     WINDOW_DESCRIPTORS,
 )
 from .coordinator import CardataCoordinator
@@ -147,6 +148,10 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
             normalized_unit = map_unit_to_ha(unit)
             if normalized_unit == "%":
                 return SensorDeviceClass.BATTERY
+
+        # Predicted SOC is always a battery sensor
+        if descriptor == PREDICTED_SOC_DESCRIPTOR:
+            return SensorDeviceClass.BATTERY
 
         # Special case: 'm' can be meters OR minutes depending on context
         if unit == "m":
@@ -364,6 +369,10 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if self._descriptor == "vehicle.vehicle.travelledDistance":
             return SensorStateClass.TOTAL_INCREASING
 
+        # Special case: predicted SOC
+        if self._descriptor == PREDICTED_SOC_DESCRIPTOR:
+            return SensorStateClass.MEASUREMENT
+
         # Check unit of measurement
         unit = getattr(self, "_attr_native_unit_of_measurement", None)
 
@@ -389,6 +398,10 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
+        # Predicted SOC sensor - battery charging icon
+        if self.descriptor == PREDICTED_SOC_DESCRIPTOR:
+            return "mdi:battery-charging"
+
         if self.descriptor and self.descriptor == "vehicle.cabin.door.status":
             value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "unlocked" in value:
