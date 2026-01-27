@@ -56,7 +56,7 @@ from .motion_detection import MotionDetector
 from .pending_manager import PendingManager, UpdateBatcher
 from .soc_prediction import SOCPredictor
 from .units import normalize_unit
-from .utils import is_valid_vin, redact_vin
+from .utils import get_all_registered_vins, is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -346,13 +346,22 @@ class CardataCoordinator:
         # CRITICAL: Filter out VINs that don't belong to this config entry
         # This prevents MQTT cross-contamination when multiple accounts share the same GCID
         if self._allowed_vins and vin not in self._allowed_vins:
-            if debug_enabled():
-                _LOGGER.debug(
-                    "Rejecting MQTT message for VIN %s - not in allowed list for this entry (%d allowed VINs)",
-                    redact_vin(vin),
-                    len(self._allowed_vins),
-                )
-            return
+            # Check if we can claim this VIN (not owned by another entry)
+            other_vins = get_all_registered_vins(self.hass, exclude_entry_id=self.entry_id)
+            if vin in other_vins:
+                if debug_enabled():
+                    _LOGGER.debug(
+                        "Rejecting VIN %s - already registered by another entry",
+                        redact_vin(vin),
+                    )
+                return
+            # Claim the new VIN dynamically
+            self._allowed_vins.add(vin)
+            _LOGGER.info(
+                "Dynamically registered VIN %s for entry %s",
+                redact_vin(vin),
+                self.entry_id,
+            )
 
         # Limit descriptor count per message to prevent memory exhaustion
         if len(data) > self._MAX_DESCRIPTORS_PER_VIN:

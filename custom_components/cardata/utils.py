@@ -211,3 +211,32 @@ async def async_wait_for_bootstrap(
             timeout,
         )
         return False
+
+
+def get_all_registered_vins(
+    hass: Any,
+    exclude_entry_id: str | None = None,
+) -> set[str]:
+    """Collect VINs registered by other config entries.
+
+    This is used for cross-entry VIN deduplication when multiple BMW accounts
+    are configured. A VIN should only be managed by one config entry.
+
+    Args:
+        hass: Home Assistant instance
+        exclude_entry_id: Entry ID to exclude from the search (typically the current entry)
+
+    Returns:
+        Set of VINs registered by other config entries
+    """
+    from .const import DOMAIN
+
+    all_vins: set[str] = set()
+    for entry_id, runtime in hass.data.get(DOMAIN, {}).items():
+        # Skip internal keys (prefixed with _) and the excluded entry
+        if entry_id.startswith("_") or entry_id == exclude_entry_id:
+            continue
+        # Check if runtime has a coordinator with allowed VINs
+        if hasattr(runtime, "coordinator") and runtime.coordinator:
+            all_vins.update(runtime.coordinator._allowed_vins)
+    return all_vins

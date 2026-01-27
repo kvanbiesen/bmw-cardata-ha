@@ -39,7 +39,7 @@ from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData, async_update_entry_data
-from .utils import is_valid_vin, redact_vin, redact_vin_in_text
+from .utils import get_all_registered_vins, is_valid_vin, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,6 +131,20 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
         coordinator = runtime.coordinator
+
+        # Get VINs already registered by other config entries
+        other_vins = get_all_registered_vins(hass, exclude_entry_id=entry.entry_id)
+
+        # Filter out VINs already claimed by other entries to prevent duplicates
+        if other_vins:
+            skipped = [v for v in vins if v in other_vins]
+            vins = [v for v in vins if v not in other_vins]
+            if skipped:
+                _LOGGER.info(
+                    "Skipped %d VIN(s) already registered by other entries: %s",
+                    len(skipped),
+                    [redact_vin(v) for v in skipped],
+                )
 
         # Register allowed VINs for this config entry to prevent MQTT cross-contamination
         # This is CRITICAL when multiple accounts share the same GCID
