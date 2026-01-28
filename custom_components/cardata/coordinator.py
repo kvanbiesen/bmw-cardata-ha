@@ -346,21 +346,32 @@ class CardataCoordinator:
         # CRITICAL: Filter out VINs that don't belong to this config entry
         # This prevents MQTT cross-contamination when multiple accounts share the same GCID
         if self._allowed_vins and vin not in self._allowed_vins:
+            _LOGGER.debug(
+                "MQTT VIN dedup: VIN %s not in allowed list (%d VINs) for entry %s",
+                redact_vin(vin),
+                len(self._allowed_vins),
+                self.entry_id,
+            )
             # Check if we can claim this VIN (not owned by another entry)
             other_vins = get_all_registered_vins(self.hass, exclude_entry_id=self.entry_id)
+            _LOGGER.debug(
+                "MQTT VIN dedup: other entries own %d VIN(s): %s",
+                len(other_vins),
+                [redact_vin(v) for v in other_vins],
+            )
             if vin in other_vins:
-                if debug_enabled():
-                    _LOGGER.debug(
-                        "Rejecting VIN %s - already registered by another entry",
-                        redact_vin(vin),
-                    )
+                _LOGGER.debug(
+                    "MQTT VIN dedup: rejecting VIN %s - already registered by another entry",
+                    redact_vin(vin),
+                )
                 return
             # Claim the new VIN dynamically
             self._allowed_vins.add(vin)
             _LOGGER.info(
-                "Dynamically registered VIN %s for entry %s",
+                "MQTT VIN dedup: dynamically claimed VIN %s for entry %s (now has %d VINs)",
                 redact_vin(vin),
                 self.entry_id,
+                len(self._allowed_vins),
             )
 
         # Limit descriptor count per message to prevent memory exhaustion

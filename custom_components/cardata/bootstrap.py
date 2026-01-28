@@ -133,18 +133,36 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         coordinator = runtime.coordinator
 
         # Get VINs already registered by other config entries
+        _LOGGER.debug(
+            "Bootstrap VIN dedup: checking %d discovered VIN(s) for entry %s: %s",
+            len(vins),
+            entry.entry_id,
+            [redact_vin(v) for v in vins],
+        )
         other_vins = get_all_registered_vins(hass, exclude_entry_id=entry.entry_id)
+        _LOGGER.debug(
+            "Bootstrap VIN dedup: other entries have %d VIN(s): %s",
+            len(other_vins),
+            [redact_vin(v) for v in other_vins],
+        )
 
         # Filter out VINs already claimed by other entries to prevent duplicates
         if other_vins:
             skipped = [v for v in vins if v in other_vins]
             vins = [v for v in vins if v not in other_vins]
+            _LOGGER.debug(
+                "Bootstrap VIN dedup: after filtering - %d to register, %d skipped",
+                len(vins),
+                len(skipped),
+            )
             if skipped:
                 _LOGGER.info(
                     "Skipped %d VIN(s) already registered by other entries: %s",
                     len(skipped),
                     [redact_vin(v) for v in skipped],
                 )
+        else:
+            _LOGGER.debug("Bootstrap VIN dedup: no other entries have VINs, registering all")
 
         # Register allowed VINs for this config entry to prevent MQTT cross-contamination
         # This is CRITICAL when multiple accounts share the same GCID

@@ -232,11 +232,32 @@ def get_all_registered_vins(
     from .const import DOMAIN
 
     all_vins: set[str] = set()
-    for entry_id, runtime in hass.data.get(DOMAIN, {}).items():
+    domain_data = hass.data.get(DOMAIN, {})
+    _LOGGER.debug(
+        "VIN dedup: scanning %d domain entries (excluding %s)",
+        len(domain_data),
+        exclude_entry_id,
+    )
+    for entry_id, runtime in domain_data.items():
         # Skip internal keys (prefixed with _) and the excluded entry
         if entry_id.startswith("_") or entry_id == exclude_entry_id:
+            _LOGGER.debug("VIN dedup: skipping entry %s", entry_id)
             continue
         # Check if runtime has a coordinator with allowed VINs
         if hasattr(runtime, "coordinator") and runtime.coordinator:
-            all_vins.update(runtime.coordinator._allowed_vins)
+            entry_vins = runtime.coordinator._allowed_vins
+            _LOGGER.debug(
+                "VIN dedup: entry %s has %d VIN(s): %s",
+                entry_id,
+                len(entry_vins),
+                [redact_vin(v) for v in entry_vins],
+            )
+            all_vins.update(entry_vins)
+        else:
+            _LOGGER.debug("VIN dedup: entry %s has no coordinator", entry_id)
+    _LOGGER.debug(
+        "VIN dedup: found %d total VIN(s) from other entries: %s",
+        len(all_vins),
+        [redact_vin(v) for v in all_vins],
+    )
     return all_vins
