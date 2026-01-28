@@ -25,9 +25,9 @@
 
 """Tests for pending_manager module."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from custom_components.cardata.pending_manager import UpdateBatcher, PendingSnapshot
+from custom_components.cardata.pending_manager import PendingSnapshot, UpdateBatcher
 
 
 class TestPendingManagerBasic:
@@ -161,7 +161,7 @@ class TestPendingManagerStaleClearing:
         pm = UpdateBatcher()
         pm.add_update("VIN123", "descriptor.a")
 
-        now = datetime.now()
+        now = datetime.now(UTC)
         cleared = pm.check_and_clear_stale(now)
 
         assert cleared == 0
@@ -174,9 +174,9 @@ class TestPendingManagerStaleClearing:
         pm.add_update("VIN123", "descriptor.b")
 
         # Simulate old started_at
-        pm._started_at = datetime.now() - timedelta(seconds=pm.MAX_AGE_SECONDS + 10)
+        pm._started_at = datetime.now(UTC) - timedelta(seconds=pm.MAX_AGE_SECONDS + 10)
 
-        now = datetime.now()
+        now = datetime.now(UTC)
         cleared = pm.check_and_clear_stale(now)
 
         assert cleared == 2
@@ -186,7 +186,7 @@ class TestPendingManagerStaleClearing:
     def test_clear_stale_no_pending(self):
         """Test clearing stale when nothing pending."""
         pm = UpdateBatcher()
-        now = datetime.now()
+        now = datetime.now(UTC)
         cleared = pm.check_and_clear_stale(now)
         assert cleared == 0
 
