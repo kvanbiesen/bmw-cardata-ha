@@ -301,6 +301,35 @@ class CardataCoordinator:
 
         self._soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method)
 
+    def _end_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
+        """End SOC prediction session when charging stops.
+
+        Must be called while holding _lock.
+        """
+        # Get current SOC
+        soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+        current_soc = None
+        if soc_state and soc_state.value is not None:
+            try:
+                current_soc = float(soc_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        # Get charging target SOC if available
+        target_state = vehicle_state.get("vehicle.powertrain.electric.battery.stateOfCharge.target")
+        target_soc = None
+        if target_state and target_state.value is not None:
+            try:
+                target_soc = float(target_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        # End the session - if we don't have current SOC, use last predicted
+        if current_soc is None:
+            current_soc = self._soc_predictor._last_predicted_soc.get(vin)
+        if current_soc is not None:
+            self._soc_predictor.end_session(vin, current_soc, target_soc)
+
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
 
@@ -482,19 +511,38 @@ class CardataCoordinator:
 
             # Track charging status changes
             if descriptor == "vehicle.drivetrain.electricEngine.charging.status":
+                was_charging = self._soc_predictor.is_charging(vin)
                 status_changed = self._soc_predictor.update_charging_status(vin, str(value) if value else None)
-                if status_changed and self._soc_predictor.is_charging(vin):
-                    # Charging started - try to anchor session
-                    self._anchor_soc_session(vin, vehicle_state)
+                if status_changed:
+                    if self._soc_predictor.is_charging(vin):
+                        # Charging started - try to anchor session
+                        self._anchor_soc_session(vin, vehicle_state)
+                    elif was_charging:
+                        # Charging stopped - end session for learning
+                        self._end_soc_session(vin, vehicle_state)
 
             # Track charging method for efficiency selection
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.method":
                 if value:
                     self._soc_predictor.set_charging_method(vin, str(value))
 
-            # Update power reading timestamp for staleness tracking
+            # Update power reading with power value for energy accumulation
             elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                self._soc_predictor.update_power_reading(vin)
+                power_kw = None
+                if value is not None:
+                    try:
+                        power_val = float(value)
+                        # Get unit from payload
+                        unit = descriptor_payload.get("unit", "").lower()
+                        # Convert to kW if needed
+                        if unit == "w":
+                            power_kw = power_val / 1000.0
+                        else:
+                            # Assume kW
+                            power_kw = power_val
+                    except (TypeError, ValueError):
+                        pass
+                self._soc_predictor.update_power_reading(vin, power_kw)
 
             # Update BMW SOC for staleness tracking
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
