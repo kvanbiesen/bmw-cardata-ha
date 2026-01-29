@@ -133,3 +133,20 @@ HV_BATTERY_DESCRIPTORS = [
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"
 # Vehicles with fewer descriptors are likely "ghost" cars from family sharing with limited access
 MIN_TELEMETRY_DESCRIPTORS = 5
+
+# SOC Learning parameters
+# Learning rate for Exponential Moving Average (0.2 = 20% new, 80% old)
+LEARNING_RATE = 0.2
+# Minimum SOC gain required to learn from a session (percentage)
+MIN_LEARNING_SOC_GAIN = 5.0
+# Valid efficiency bounds - reject outliers outside this range
+MIN_VALID_EFFICIENCY = 0.82
+MAX_VALID_EFFICIENCY = 0.98
+# Tolerance for matching target SOC (percentage) - if within this, finalize immediately
+TARGET_SOC_TOLERANCE = 2.0
+# Grace period for BMW SOC update after charge ends (minutes)
+DC_SESSION_FINALIZE_MINUTES = 5.0
+AC_SESSION_FINALIZE_MINUTES = 15.0
+# Storage key and version for learned efficiency data
+SOC_LEARNING_STORAGE_KEY = "cardata.soc_learning"
+SOC_LEARNING_STORAGE_VERSION = 1

@@ -37,6 +37,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.storage import Store
 
 from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
@@ -53,6 +54,8 @@ from .const import (
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
     OPTION_MQTT_KEEPALIVE,
+    SOC_LEARNING_STORAGE_KEY,
+    SOC_LEARNING_STORAGE_VERSION,
 )
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
@@ -73,6 +76,7 @@ PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.DEVICE_TRACKER,
     Platform.IMAGE,
+    Platform.BUTTON,
 ]
 
 
@@ -162,6 +166,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         import time
 
         coordinator.session_start_time = time.time()
+
+        # Set up SOC learning storage
+        soc_learning_store: Store = Store(
+            hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry.entry_id}"
+        )
+
+        # Load learned efficiency data
+        try:
+            stored_learning = await soc_learning_store.async_load()
+            if stored_learning and isinstance(stored_learning, dict):
+                coordinator._soc_predictor.load_learned_efficiency(stored_learning)
+                _LOGGER.debug("Loaded SOC learning data for %d vehicle(s)", len(stored_learning))
+        except Exception as err:
+            _LOGGER.warning("Failed to load SOC learning data: %s", err)
+
+        # Set up persistence callback for learning updates
+        async def _save_learning_data() -> None:
+            """Save learned efficiency data to storage."""
+            try:
+                data_to_save = coordinator._soc_predictor.get_learned_efficiency_data()
+                await soc_learning_store.async_save(data_to_save)
+                _LOGGER.debug("Saved SOC learning data")
+            except Exception as err:
+                _LOGGER.warning("Failed to save SOC learning data: %s", err)
+
+        def _trigger_save() -> None:
+            """Trigger async save from sync context."""
+            hass.async_create_task(_save_learning_data())
+
+        coordinator._soc_predictor.set_learning_callback(_trigger_save)
 
         # Restore stored vehicle metadata
         last_poll_ts = data.get("last_telematic_poll")

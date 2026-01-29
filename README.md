@@ -190,6 +190,53 @@ If BMW rejects the token (e.g. because the portal revoked it), please use the Co
 ## Debug Logging
 Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (disabled by default). To reduce noise, change it to `False` and reload HA.
 
+## Predicted SOC with Learning
+
+The integration includes a predicted SOC (State of Charge) sensor that estimates battery charge during charging sessions. This sensor uses real-time power data to calculate charging progress more frequently than BMW's native SOC updates.
+
+### How Learning Works
+
+The predicted SOC sensor automatically learns your vehicle's charging efficiency:
+
+- **AC charging efficiency**: Starts at 90%, learns from actual charging sessions
+- **DC charging efficiency**: Starts at 93%, learns from actual charging sessions
+- Uses **Exponential Moving Average (EMA)** with 20% learning rate
+- Separate learning for AC and DC charging
+- Learning data persists across Home Assistant restarts
+
+### Learning Requirements
+
+For learning to occur, a charging session must meet these criteria:
+- Minimum 5% SOC gain during the session
+- Calculated efficiency between 82% and 98% (outliers are rejected)
+- Valid power data recorded throughout the session
+
+### Session Finalization
+
+Learning happens when a charging session ends:
+- **Target reached**: If charging stops within 2% of the target SOC, learning happens immediately
+- **Charge interrupted**: If stopped before target, waits for BMW SOC confirmation:
+  - DC charging: 5-minute grace period
+  - AC charging: 15-minute grace period
+
+### PHEV-Specific Behavior
+
+For Plug-in Hybrid Electric Vehicles (PHEVs), the predicted SOC has special handling:
+
+- **Automatic PHEV detection**: Vehicles with both an HV battery and fuel system are detected as PHEVs
+- **Sync down on battery depletion**: If the actual BMW SOC is lower than the predicted value, the prediction syncs down immediately. This handles scenarios where the hybrid system depletes the battery (e.g., battery recovery mode, engine-priority driving)
+- **BEVs**: For pure electric vehicles, the predicted SOC only syncs when not actively charging (standard behavior)
+
+This ensures the predicted SOC stays accurate for PHEVs even when the hybrid system uses battery power in ways that don't register as "discharging" in the BMW API.
+
+### Reset Buttons
+
+Each EV/PHEV vehicle gets two button entities to reset learned efficiency:
+- **Reset AC Learning**: Resets AC efficiency to default (90%)
+- **Reset DC Learning**: Resets DC efficiency to default (93%)
+
+These buttons appear in the vehicle's device page under Configuration entities.
+
 ## Developer Tools Services
 
 Home Assistant's Developer Tools expose helper services for manual API checks:
