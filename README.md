@@ -219,6 +219,16 @@ Learning happens when a charging session ends:
   - DC charging: 5-minute grace period
   - AC charging: 15-minute grace period
 
+### PHEV-Specific Behavior
+
+For Plug-in Hybrid Electric Vehicles (PHEVs), the predicted SOC has special handling:
+
+- **Automatic PHEV detection**: Vehicles with both an HV battery and fuel system are detected as PHEVs
+- **Sync down on battery depletion**: If the actual BMW SOC is lower than the predicted value, the prediction syncs down immediately. This handles scenarios where the hybrid system depletes the battery (e.g., battery recovery mode, engine-priority driving)
+- **BEVs**: For pure electric vehicles, the predicted SOC only syncs when not actively charging (standard behavior)
+
+This ensures the predicted SOC stays accurate for PHEVs even when the hybrid system uses battery power in ways that don't register as "discharging" in the BMW API.
+
 ### Reset Buttons
 
 Each EV/PHEV vehicle gets two button entities to reset learned efficiency:

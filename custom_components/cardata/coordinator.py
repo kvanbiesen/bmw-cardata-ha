@@ -560,6 +560,16 @@ class CardataCoordinator:
                 if self._pending_manager.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
                     schedule_debounce = True
 
+        # Detect PHEV: has both HV battery and fuel system
+        # PHEVs need special handling for SOC prediction (hybrid system can deplete battery)
+        has_hv_battery = "vehicle.drivetrain.batteryManagement.header" in vehicle_state
+        has_fuel_system = (
+            "vehicle.drivetrain.fuelSystem.remainingFuel" in vehicle_state
+            or "vehicle.drivetrain.fuelSystem.level" in vehicle_state
+        )
+        if has_hv_battery:
+            self._soc_predictor.set_vehicle_is_phev(vin, has_fuel_system)
+
         return immediate_updates, schedule_debounce
 
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:

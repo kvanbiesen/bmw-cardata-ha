@@ -161,6 +161,10 @@ class SOCPredictor:
         # Callback for when learning data is updated (for persistence)
         self._on_learning_updated: Callable[[], None] | None = None
 
+        # VIN -> bool for PHEV detection (has both HV battery and fuel system)
+        # PHEVs need special handling: sync predicted SOC down when actual is lower
+        self._is_phev: dict[str, bool] = {}
+
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
 
@@ -197,6 +201,36 @@ class SOCPredictor:
             LearnedEfficiency if available, None otherwise
         """
         return self._learned_efficiency.get(vin)
+
+    def set_vehicle_is_phev(self, vin: str, is_phev: bool) -> None:
+        """Mark a vehicle as PHEV or not.
+
+        PHEVs have both HV battery and fuel system. They need special handling
+        because the hybrid system can deplete the battery in ways that don't
+        register as "not charging" (e.g., battery recovery mode).
+
+        Args:
+            vin: Vehicle identification number
+            is_phev: True if vehicle is a PHEV, False for BEV
+        """
+        if self._is_phev.get(vin) != is_phev:
+            self._is_phev[vin] = is_phev
+            _LOGGER.debug(
+                "SOC: Vehicle %s marked as %s",
+                redact_vin(vin),
+                "PHEV" if is_phev else "BEV",
+            )
+
+    def is_phev(self, vin: str) -> bool:
+        """Check if vehicle is a PHEV.
+
+        Args:
+            vin: Vehicle identification number
+
+        Returns:
+            True if PHEV, False otherwise (default to BEV behavior)
+        """
+        return self._is_phev.get(vin, False)
 
     def reset_learned_efficiency(self, vin: str, charging_method: str | None = None) -> bool:
         """Reset learned efficiency for a VIN.
@@ -348,6 +382,8 @@ class SOCPredictor:
         """Record BMW SOC update for staleness tracking.
 
         Also updates last_predicted_soc when not charging (passthrough mode).
+        For PHEVs, also syncs down if actual SOC is lower than predicted
+        (hybrid system can deplete battery in ways that don't register as "not charging").
         Attempts to finalize any pending session waiting for BMW SOC.
 
         Args:
@@ -358,8 +394,25 @@ class SOCPredictor:
         now = timestamp or datetime.now(UTC)
         self._last_bmw_soc_update[vin] = now
 
-        # When not charging, BMW SOC becomes our "prediction"
-        if not self._is_charging.get(vin, False):
+        is_charging = self._is_charging.get(vin, False)
+        current_predicted = self._last_predicted_soc.get(vin)
+
+        # For PHEVs: sync down if actual is lower than predicted, even during charging
+        # This handles battery recovery mode and other hybrid system behaviors
+        if self._is_phev.get(vin, False) and current_predicted is not None:
+            if soc < current_predicted:
+                _LOGGER.debug(
+                    "SOC: PHEV %s actual (%.1f%%) < predicted (%.1f%%), syncing down",
+                    redact_vin(vin),
+                    soc,
+                    current_predicted,
+                )
+                self._last_predicted_soc[vin] = soc
+            elif not is_charging:
+                # Not charging: sync to actual BMW SOC
+                self._last_predicted_soc[vin] = soc
+        elif not is_charging:
+            # BEV or unknown: only sync when not charging (original behavior)
             self._last_predicted_soc[vin] = soc
 
         # Try to finalize pending session if one exists
