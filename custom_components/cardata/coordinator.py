@@ -564,8 +564,17 @@ class CardataCoordinator:
                         pass
                 self._soc_predictor.update_power_reading(vin, power_kw)
 
-            # Update BMW SOC for staleness tracking
+            # Update BMW SOC for staleness tracking (primary source)
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
+                if value is not None:
+                    try:
+                        self._soc_predictor.update_bmw_soc(vin, float(value))
+                    except (TypeError, ValueError):
+                        pass
+
+            # Fallback: BMW's charging.level is often sent when batteryManagement.header isn't
+            # (e.g., when waking car via app). Use it as secondary source for predicted SOC sync.
+            elif descriptor == "vehicle.drivetrain.electricEngine.charging.level":
                 if value is not None:
                     try:
                         self._soc_predictor.update_bmw_soc(vin, float(value))
