@@ -381,9 +381,10 @@ class SOCPredictor:
     def update_bmw_soc(self, vin: str, soc: float, timestamp: datetime | None = None) -> None:
         """Record BMW SOC update for staleness tracking.
 
-        Also updates last_predicted_soc when not charging (passthrough mode).
-        For PHEVs, also syncs down if actual SOC is lower than predicted
-        (hybrid system can deplete battery in ways that don't register as "not charging").
+        Also updates last_predicted_soc when not plug charging (passthrough mode).
+        During plug charging, the prediction runs independently to avoid jumps
+        from BMW's delayed SOC updates. Works the same for BEV and PHEV.
+
         Attempts to finalize any pending session waiting for BMW SOC.
 
         Args:
@@ -391,31 +392,49 @@ class SOCPredictor:
             soc: BMW-reported SOC percentage
             timestamp: Optional timestamp (defaults to now)
         """
+        # Validate SOC value - ignore clearly invalid readings
+        if soc < 0 or soc > 100:
+            _LOGGER.debug(
+                "SOC: %s ignoring invalid BMW SOC value: %.1f%% (out of range 0-100)",
+                redact_vin(vin),
+                soc,
+            )
+            return
+
         now = timestamp or datetime.now(UTC)
         self._last_bmw_soc_update[vin] = now
 
-        is_charging = self._is_charging.get(vin, False)
+        is_plug_charging = self._is_charging.get(vin, False)
+        has_active_session = vin in self._sessions
         current_predicted = self._last_predicted_soc.get(vin)
 
-        # For PHEVs: sync down if actual is lower than predicted, even during charging
-        # This handles battery recovery mode and other hybrid system behaviors
-        if self._is_phev.get(vin, False) and current_predicted is not None:
-            if soc < current_predicted:
-                _LOGGER.debug(
-                    "SOC: PHEV %s actual (%.1f%%) < predicted (%.1f%%), syncing down",
-                    redact_vin(vin),
-                    soc,
-                    current_predicted,
-                )
-                self._last_predicted_soc[vin] = soc
-            elif not is_charging:
-                # Not charging: sync to actual BMW SOC
-                self._last_predicted_soc[vin] = soc
-        elif not is_charging:
-            # BEV or unknown: only sync when not charging (original behavior)
+        # Determine if we should sync
+        # Sync when NOT plug charging - this allows:
+        # - PHEVs to sync during recovery mode / driving
+        # - All vehicles to sync when parked
+        # - Regen braking changes to be reflected
+        if is_plug_charging or has_active_session:
+            # Plug charging - don't sync, preserve prediction integrity
+            _LOGGER.debug(
+                "SOC: %s BMW SOC %.1f%% received during plug charging - not syncing (predicted=%.1f%%)",
+                redact_vin(vin),
+                soc,
+                current_predicted if current_predicted is not None else 0.0,
+            )
+        else:
+            # Not plug charging - sync to BMW SOC
+            # This handles: driving, parked, PHEV recovery mode, regen, etc.
+            old_predicted = current_predicted
             self._last_predicted_soc[vin] = soc
+            if old_predicted is not None and abs(soc - old_predicted) > 0.5:
+                _LOGGER.debug(
+                    "SOC: %s synced to BMW SOC: %.1f%% -> %.1f%%",
+                    redact_vin(vin),
+                    old_predicted,
+                    soc,
+                )
 
-        # Try to finalize pending session if one exists
+        # Try to finalize pending session if one exists (for learning)
         self.try_finalize_pending_session(vin, soc, time.time())
 
     def end_session(
