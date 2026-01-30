@@ -790,40 +790,26 @@ class SOCPredictor:
 
         return predicted_soc
 
-    def _get_passthrough_soc(self, vin: str, bmw_soc: float | None, now: datetime) -> float | None:
-        """Get SOC when not charging (passthrough or stale fallback).
+    def _get_passthrough_soc(self, vin: str, bmw_soc: float | None) -> float | None:
+        """Get SOC when not charging (uses gradual convergence value).
 
         Args:
             vin: Vehicle identification number
             bmw_soc: BMW-reported SOC (may be None)
-            now: Current time
 
         Returns:
-            BMW SOC if fresh, last predicted if BMW stale, or None
+            Gradual convergence value from _last_predicted_soc, or bmw_soc as fallback
         """
-        # Check if BMW SOC data is stale
-        last_bmw_update = self._last_bmw_soc_update.get(vin)
-        bmw_is_stale = False
-        if last_bmw_update is not None:
-            time_since_bmw = (now - last_bmw_update).total_seconds() / 60.0
-            bmw_is_stale = time_since_bmw > self.BMW_SOC_STALE_MINUTES
-
-        if bmw_soc is not None and not bmw_is_stale:
-            # Fresh BMW data - use it
-            return bmw_soc
-
-        # BMW data stale or unavailable - use last predicted
+        # Use the value set by update_bmw_soc() which includes gradual convergence
         last_pred = self._last_predicted_soc.get(vin)
         if last_pred is not None:
-            _LOGGER.debug(
-                "SOC: BMW data stale for %s, using last predicted %.1f%%",
-                redact_vin(vin),
-                last_pred,
-            )
             return last_pred
 
-        # No prediction available either - return BMW even if stale (better than nothing)
-        return bmw_soc
+        # No predicted value yet - use BMW SOC directly if available
+        if bmw_soc is not None:
+            return bmw_soc
+
+        return None
 
     def is_charging(self, vin: str) -> bool:
         """Check if vehicle is currently charging.

@@ -575,13 +575,12 @@ class CardataCoordinator:
                             self._soc_predictor.signal_entity_created(vin)
                             if self._pending_manager.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
                                 schedule_debounce = True
-                        # Queue update for predicted SOC sensor so it refreshes with new value
+                        # Send IMMEDIATE update for predicted SOC sensor (bypass debounce)
                         # Only when NOT charging - during charging, prediction runs independently
                         is_charging = self._soc_predictor.is_charging(vin)
                         has_session = self._soc_predictor.has_active_session(vin)
                         if not is_charging and not has_session:
-                            if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
-                                schedule_debounce = True
+                            immediate_updates.append((vin, PREDICTED_SOC_DESCRIPTOR))
                     except (TypeError, ValueError):
                         pass
 
@@ -591,15 +590,14 @@ class CardataCoordinator:
                 if value is not None:
                     try:
                         self._soc_predictor.update_bmw_soc(vin, float(value))
-                        # Queue update for predicted SOC sensor so it refreshes with new value
+                        # Send IMMEDIATE update for predicted SOC sensor (bypass debounce)
                         # Only when NOT charging - during charging, prediction runs independently
                         if (
                             self._soc_predictor.has_signaled_entity(vin)
                             and not self._soc_predictor.is_charging(vin)
                             and not self._soc_predictor.has_active_session(vin)
                         ):
-                            if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
-                                schedule_debounce = True
+                            immediate_updates.append((vin, PREDICTED_SOC_DESCRIPTOR))
                     except (TypeError, ValueError):
                         pass
 
@@ -719,6 +717,14 @@ class CardataCoordinator:
             A defensive copy of the state, or None if not found/race condition.
         """
         try:
+            # Predicted SOC is always calculated dynamically - check BEFORE stored state
+            # This prevents restored sensor values from shadowing the live calculation
+            if descriptor == PREDICTED_SOC_DESCRIPTOR:
+                predicted_soc = self.get_predicted_soc(vin)
+                if predicted_soc is not None:
+                    return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
+                return None
+
             # Access nested dict directly - no intermediate copy needed since
             # we only need one descriptor. This minimizes the race window.
             vehicle_data = self.data.get(vin)
@@ -737,11 +743,6 @@ class CardataCoordinator:
                     fuel_range = self.get_derived_fuel_range(vin)
                     if fuel_range is not None:
                         return DescriptorState(value=fuel_range, unit="km", timestamp=None)
-                # Fall back to predicted SOC for vehicle.predicted_soc
-                elif descriptor == PREDICTED_SOC_DESCRIPTOR:
-                    predicted_soc = self.get_predicted_soc(vin)
-                    if predicted_soc is not None:
-                        return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
