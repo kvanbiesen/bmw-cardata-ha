@@ -876,7 +876,7 @@ class SOCPredictor:
             vin: Vehicle identification number
 
         Returns:
-            True if still converging (needs another update), False if at target or N/A
+            True if value was moved (sensor should update), False if no change
         """
         # Don't converge while charging - charging prediction is independent
         if self._is_charging.get(vin, False) or vin in self._sessions:
@@ -907,29 +907,8 @@ class SOCPredictor:
             target,
         )
 
-        # Still converging if not at target yet
-        return abs(target - new_soc) > 0.1
-
-    def is_converging(self, vin: str) -> bool:
-        """Check if VIN is currently converging toward a target.
-
-        Args:
-            vin: Vehicle identification number
-
-        Returns:
-            True if predicted SOC differs from target (needs convergence)
-        """
-        # Don't converge while charging
-        if self._is_charging.get(vin, False) or vin in self._sessions:
-            return False
-
-        target = self._target_soc.get(vin)
-        current = self._last_predicted_soc.get(vin)
-
-        if target is None or current is None:
-            return False
-
-        return abs(target - current) > 0.1
+        # Return True because we moved the value (sensor needs update)
+        return True
 
     def cleanup_vin(self, vin: str) -> None:
         """Remove all tracking data for a VIN.
