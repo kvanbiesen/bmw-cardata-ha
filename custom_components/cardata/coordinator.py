@@ -901,15 +901,6 @@ class CardataCoordinator:
                         self._last_derived_is_moving[vin] = current_derived
                         self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
 
-        # Check for SOC convergence (gradual sync to BMW SOC when not charging)
-        # This continues convergence even when no new BMW updates are received
-        for vin in list(self.data.keys()):
-            if self._soc_predictor.has_signaled_entity(vin):
-                # Advance convergence one step - returns True if value changed
-                if self._soc_predictor.check_convergence(vin):
-                    # Trigger sensor update to show new value
-                    self._safe_dispatcher_send(self.signal_update, vin, PREDICTED_SOC_DESCRIPTOR)
-
         # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1
         if self._cleanup_counter >= self._CLEANUP_INTERVAL:
