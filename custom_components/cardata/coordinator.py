@@ -568,14 +568,18 @@ class CardataCoordinator:
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
                 if value is not None:
                     try:
-                        self._soc_predictor.update_bmw_soc(vin, float(value))
+                        soc_value = float(value)
+                        self._soc_predictor.update_bmw_soc(vin, soc_value)
+                        # Ensure entity is signaled before checking (fixes first-message-after-reboot)
+                        if not self._soc_predictor.has_signaled_entity(vin):
+                            self._soc_predictor.signal_entity_created(vin)
+                            if self._pending_manager.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
+                                schedule_debounce = True
                         # Queue update for predicted SOC sensor so it refreshes with new value
                         # Only when NOT charging - during charging, prediction runs independently
-                        if (
-                            self._soc_predictor.has_signaled_entity(vin)
-                            and not self._soc_predictor.is_charging(vin)
-                            and not self._soc_predictor.has_active_session(vin)
-                        ):
+                        is_charging = self._soc_predictor.is_charging(vin)
+                        has_session = self._soc_predictor.has_active_session(vin)
+                        if not is_charging and not has_session:
                             if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                                 schedule_debounce = True
                     except (TypeError, ValueError):
@@ -598,14 +602,6 @@ class CardataCoordinator:
                                 schedule_debounce = True
                     except (TypeError, ValueError):
                         pass
-
-        # Check if predicted_soc sensor should be created (when EV descriptors are seen)
-        # Signal creation when we see HV battery SOC (indicates EV/PHEV)
-        if not self._soc_predictor.has_signaled_entity(vin):
-            if "vehicle.drivetrain.batteryManagement.header" in vehicle_state:
-                self._soc_predictor.signal_entity_created(vin)
-                if self._pending_manager.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
-                    schedule_debounce = True
 
         # Detect PHEV: has both HV battery and fuel system
         # PHEVs need special handling for SOC prediction (hybrid system can deplete battery)
