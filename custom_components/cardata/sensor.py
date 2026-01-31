@@ -799,7 +799,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # Ensure metadata entities for all known VINs
     # Include both VINs from coordinator.data (live MQTT data) AND
     # VINs from device_metadata (restored from storage)
+    # Filter by _allowed_vins to prevent creating entities for VINs owned by other entries
     all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
+    if coordinator._allowed_vins:
+        all_vins = all_vins & coordinator._allowed_vins
     for vin in all_vins:
         ensure_metadata_sensor(vin)
 

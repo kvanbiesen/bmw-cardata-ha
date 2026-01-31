@@ -137,7 +137,10 @@ async def async_setup_entry(
         async_add_entities([entity])
         _LOGGER.debug("Created image entity for VIN: %s with image path: %s", redact_vin(vin), image_path)
 
+    # Filter by _allowed_vins to prevent creating entities for VINs owned by other entries
     initial_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
+    if coordinator._allowed_vins:
+        initial_vins = initial_vins & coordinator._allowed_vins
     for vin in initial_vins:
         ensure_entity(vin)
 
