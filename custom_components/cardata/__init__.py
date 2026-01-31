@@ -248,9 +248,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for vin in vins_to_remove:
                 coordinator.device_metadata.pop(vin, None)
                 coordinator.names.pop(vin, None)
-                # Also remove device from registry (was created by async_restore_vehicle_metadata)
+                # Also remove device from registry IF it belongs to this entry
+                # (was created by async_restore_vehicle_metadata for this entry)
                 device = device_registry.async_get_device(identifiers={(DOMAIN, vin)})
-                if device:
+                if device and entry.entry_id in device.config_entries:
                     device_registry.async_remove_device(device.id)
                     _LOGGER.info(
                         "Removed device for VIN %s (not in allowed list for this entry)",
