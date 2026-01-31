@@ -564,7 +564,7 @@ class CardataCoordinator:
                         pass
                 self._soc_predictor.update_power_reading(vin, power_kw)
 
-            # Update BMW SOC for staleness tracking
+            # Update BMW SOC for convergence tracking
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
                 if value is not None:
                     try:
@@ -696,6 +696,14 @@ class CardataCoordinator:
             A defensive copy of the state, or None if not found/race condition.
         """
         try:
+            # Predicted SOC is ALWAYS calculated dynamically - check BEFORE stored state
+            # This prevents restored sensor values from shadowing the live calculation
+            if descriptor == PREDICTED_SOC_DESCRIPTOR:
+                predicted_soc = self.get_predicted_soc(vin)
+                if predicted_soc is not None:
+                    return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
+                return None
+
             # Access nested dict directly - no intermediate copy needed since
             # we only need one descriptor. This minimizes the race window.
             vehicle_data = self.data.get(vin)
@@ -714,11 +722,6 @@ class CardataCoordinator:
                     fuel_range = self.get_derived_fuel_range(vin)
                     if fuel_range is not None:
                         return DescriptorState(value=fuel_range, unit="km", timestamp=None)
-                # Fall back to predicted SOC for vehicle.predicted_soc
-                elif descriptor == PREDICTED_SOC_DESCRIPTOR:
-                    predicted_soc = self.get_predicted_soc(vin)
-                    if predicted_soc is not None:
-                        return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -873,6 +876,14 @@ class CardataCoordinator:
                         )
                         self._last_derived_is_moving[vin] = current_derived
                         self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
+
+        # Check for SOC convergence (gradual sync to BMW SOC when not charging)
+        # This runs every ~60 seconds, moving 2% toward target each time
+        for vin in list(self.data.keys()):
+            if self._soc_predictor.has_signaled_entity(vin):
+                if self._soc_predictor.check_convergence(vin):
+                    # Value changed - notify sensor
+                    self._safe_dispatcher_send(self.signal_update, vin, PREDICTED_SOC_DESCRIPTOR)
 
         # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1

@@ -15,6 +15,8 @@ from .const import (
     MAX_VALID_EFFICIENCY,
     MIN_LEARNING_SOC_GAIN,
     MIN_VALID_EFFICIENCY,
+    SOC_CONVERGENCE_STEP,
+    SOC_CONVERGENCE_THRESHOLD,
     TARGET_SOC_TOLERANCE,
 )
 from .utils import redact_vin
@@ -164,6 +166,10 @@ class SOCPredictor:
         # VIN -> bool for PHEV detection (has both HV battery and fuel system)
         # PHEVs need special handling: sync predicted SOC down when actual is lower
         self._is_phev: dict[str, bool] = {}
+
+        # Gradual convergence: VIN -> target SOC from BMW
+        # When not charging, predicted SOC gradually moves toward this target
+        self._target_soc: dict[str, float] = {}
 
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
@@ -384,6 +390,7 @@ class SOCPredictor:
         Also updates last_predicted_soc when not charging (passthrough mode).
         For PHEVs, also syncs down if actual SOC is lower than predicted
         (hybrid system can deplete battery in ways that don't register as "not charging").
+        Uses gradual convergence (2% per step) instead of direct sync.
         Attempts to finalize any pending session waiting for BMW SOC.
 
         Args:
@@ -408,15 +415,49 @@ class SOCPredictor:
                     current_predicted,
                 )
                 self._last_predicted_soc[vin] = soc
+                self._target_soc[vin] = soc
             elif not is_charging:
-                # Not charging: sync to actual BMW SOC
-                self._last_predicted_soc[vin] = soc
+                # Not charging: gradually converge to actual BMW SOC
+                self._target_soc[vin] = soc
+                self._apply_convergence_step(vin, soc, current_predicted)
         elif not is_charging:
             # BEV or unknown: only sync when not charging (original behavior)
-            self._last_predicted_soc[vin] = soc
+            # Use gradual convergence instead of direct sync
+            self._target_soc[vin] = soc
+            if current_predicted is None:
+                self._last_predicted_soc[vin] = soc
+            else:
+                self._apply_convergence_step(vin, soc, current_predicted)
 
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())
+
+    def _apply_convergence_step(self, vin: str, target_soc: float, current_predicted: float) -> None:
+        """Apply one step of gradual convergence toward target SOC.
+
+        Args:
+            vin: Vehicle identification number
+            target_soc: Target SOC to converge toward
+            current_predicted: Current predicted SOC value
+        """
+        diff = abs(target_soc - current_predicted)
+        if diff <= SOC_CONVERGENCE_THRESHOLD:
+            # Close enough - sync directly
+            self._last_predicted_soc[vin] = target_soc
+        else:
+            # Gradual convergence - move one step toward target
+            if target_soc > current_predicted:
+                new_soc = min(current_predicted + SOC_CONVERGENCE_STEP, target_soc)
+            else:
+                new_soc = max(current_predicted - SOC_CONVERGENCE_STEP, target_soc)
+            self._last_predicted_soc[vin] = new_soc
+            _LOGGER.debug(
+                "SOC: %s converging %.1f%% -> %.1f%% (target=%.1f%%)",
+                redact_vin(vin),
+                current_predicted,
+                new_soc,
+                target_soc,
+            )
 
     def end_session(
         self,
@@ -671,9 +712,9 @@ class SOCPredictor:
         """
         now = datetime.now(UTC)
 
-        # Not charging? Use BMW SOC or last predicted if BMW is stale
+        # Not charging? Return gradual convergence value
         if not self._is_charging.get(vin, False):
-            return self._get_passthrough_soc(vin, bmw_soc, now)
+            return self._get_passthrough_soc(vin, bmw_soc)
 
         # Charging - calculate prediction
         session = self._sessions.get(vin)
@@ -739,39 +780,33 @@ class SOCPredictor:
 
         return predicted_soc
 
-    def _get_passthrough_soc(self, vin: str, bmw_soc: float | None, now: datetime) -> float | None:
-        """Get SOC when not charging (passthrough or stale fallback).
+    def _get_passthrough_soc(self, vin: str, bmw_soc: float | None) -> float | None:
+        """Get SOC when not charging (returns gradual convergence value).
 
         Args:
             vin: Vehicle identification number
             bmw_soc: BMW-reported SOC (may be None)
-            now: Current time
 
         Returns:
-            BMW SOC if fresh, last predicted if BMW stale, or None
+            Gradual convergence value, or bmw_soc as fallback
         """
-        # Check if BMW SOC data is stale
-        last_bmw_update = self._last_bmw_soc_update.get(vin)
-        bmw_is_stale = False
-        if last_bmw_update is not None:
-            time_since_bmw = (now - last_bmw_update).total_seconds() / 60.0
-            bmw_is_stale = time_since_bmw > self.BMW_SOC_STALE_MINUTES
-
-        if bmw_soc is not None and not bmw_is_stale:
-            # Fresh BMW data - use it
-            return bmw_soc
-
-        # BMW data stale or unavailable - use last predicted
+        # Return the gradual convergence value (set by update_bmw_soc/check_convergence)
         last_pred = self._last_predicted_soc.get(vin)
         if last_pred is not None:
-            _LOGGER.debug(
-                "SOC: BMW data stale for %s, using last predicted %.1f%%",
-                redact_vin(vin),
-                last_pred,
-            )
+            # Check if BMW SOC data is stale (for logging only)
+            last_bmw_update = self._last_bmw_soc_update.get(vin)
+            if last_bmw_update is not None:
+                time_since_bmw = (datetime.now(UTC) - last_bmw_update).total_seconds() / 60.0
+                if time_since_bmw > self.BMW_SOC_STALE_MINUTES:
+                    _LOGGER.debug(
+                        "SOC: BMW data stale for %s (%.1f min), using last predicted %.1f%%",
+                        redact_vin(vin),
+                        time_since_bmw,
+                        last_pred,
+                    )
             return last_pred
 
-        # No prediction available either - return BMW even if stale (better than nothing)
+        # No convergence value yet - use BMW SOC directly if available
         return bmw_soc
 
     def is_charging(self, vin: str) -> bool:
@@ -815,6 +850,48 @@ class SOCPredictor:
         """
         self._entity_signaled.add(vin)
 
+    def check_convergence(self, vin: str) -> bool:
+        """Continue gradual convergence toward BMW target (called every ~60s).
+
+        Only converges when NOT charging. Moves 2% toward target per call.
+
+        Args:
+            vin: Vehicle identification number
+
+        Returns:
+            True if value changed (sensor should update), False if no change
+        """
+        # Don't converge while charging
+        if self._is_charging.get(vin, False) or vin in self._sessions:
+            return False
+
+        target_soc = self._target_soc.get(vin)
+        current_predicted = self._last_predicted_soc.get(vin)
+
+        if target_soc is None or current_predicted is None:
+            return False
+
+        diff = abs(target_soc - current_predicted)
+        if diff <= SOC_CONVERGENCE_THRESHOLD:
+            # Already at target
+            return False
+
+        # Move one step toward target
+        if target_soc > current_predicted:
+            new_soc = min(current_predicted + SOC_CONVERGENCE_STEP, target_soc)
+        else:
+            new_soc = max(current_predicted - SOC_CONVERGENCE_STEP, target_soc)
+
+        self._last_predicted_soc[vin] = new_soc
+        _LOGGER.debug(
+            "SOC: %s convergence step %.1f%% -> %.1f%% (target=%.1f%%)",
+            redact_vin(vin),
+            current_predicted,
+            new_soc,
+            target_soc,
+        )
+        return True
+
     def cleanup_vin(self, vin: str) -> None:
         """Remove all tracking data for a VIN.
 
@@ -827,6 +904,7 @@ class SOCPredictor:
         self._last_bmw_soc_update.pop(vin, None)
         self._entity_signaled.discard(vin)
         self._pending_sessions.pop(vin, None)
+        self._target_soc.pop(vin, None)
         # Note: We don't remove learned efficiency - that's persistent data
 
     def get_tracked_vins(self) -> set[str]:
