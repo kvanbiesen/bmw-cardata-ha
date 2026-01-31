@@ -35,7 +35,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .api_parsing import extract_primary_vins, extract_telematic_payload, try_parse_json
-from .const import API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
+from .const import ALLOWED_VINS_KEY, API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
 from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData, async_update_entry_data
@@ -122,10 +122,13 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 "Bootstrap complete for entry %s: no vehicles found",
                 entry.entry_id,
             )
+            # Store empty allowed_vins to prevent bootstrap re-running on every restart
+            await async_update_entry_data(hass, entry, {ALLOWED_VINS_KEY: []})
             await async_mark_bootstrap_complete(hass, entry)
             return
 
         from .metadata import (
+            async_cleanup_deduplicated_devices,
             async_fetch_and_store_basic_data,
             async_fetch_and_store_vehicle_images,
         )
@@ -147,6 +150,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
         # Filter out VINs already claimed by other entries to prevent duplicates
+        skipped: list[str] = []
         if other_vins:
             skipped = [v for v in vins if v in other_vins]
             vins = [v for v in vins if v not in other_vins]
@@ -161,6 +165,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                     len(skipped),
                     [redact_vin(v) for v in skipped],
                 )
+                # Clean up any existing devices/entities for deduplicated VINs
+                await async_cleanup_deduplicated_devices(hass, entry, skipped)
         else:
             _LOGGER.debug("Bootstrap VIN dedup: no other entries have VINs, registering all")
 
@@ -173,6 +179,9 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             entry.entry_id,
             [redact_vin(v) for v in vins],
         )
+
+        # Persist deduplicated VINs to entry data for restoration on restart
+        await async_update_entry_data(hass, entry, {ALLOWED_VINS_KEY: list(vins)})
 
         # Initialize coordinator data for all VINs
         for vin in vins:

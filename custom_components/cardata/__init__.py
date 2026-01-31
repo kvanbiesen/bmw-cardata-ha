@@ -42,6 +42,7 @@ from homeassistant.helpers.storage import Store
 from .auth import handle_stream_error, refresh_tokens_for_entry
 from .bootstrap import async_run_bootstrap
 from .const import (
+    ALLOWED_VINS_KEY,
     BOOTSTRAP_COMPLETE,
     DEBUG_LOG,
     DEFAULT_REFRESH_INTERVAL,
@@ -207,7 +208,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # CRITICAL FIX: Pre-populate coordinator.names from restored device_metadata
         # Entities check coordinator.names for the vehicle name prefix, so we must
         # populate it BEFORE the MQTT stream starts and entities are created
-        # ALSO populate _allowed_vins to prevent MQTT cross-contamination on restart
         for vin, metadata in coordinator.device_metadata.items():
             if metadata and not coordinator.names.get(vin):
                 # Extract the name that was restored from metadata
@@ -219,20 +219,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         redact_vin(vin),
                         vehicle_name,
                     )
-            # Register this VIN in the allow-list for MQTT filtering
-            # This is populated during bootstrap for new setups, but needs to be
-            # restored here for existing setups on restart
-            coordinator._allowed_vins.add(vin)
 
-        if coordinator._allowed_vins:
+        # Restore allowed VINs from entry data (already deduplicated by bootstrap)
+        # This prevents VIN duplication across config entries on restart
+        # Note: We check for None explicitly to distinguish "not set" from "empty list"
+        # An empty list means all VINs were deduplicated to other entries (valid state)
+        stored_allowed_vins = data.get(ALLOWED_VINS_KEY)
+        if stored_allowed_vins is not None and isinstance(stored_allowed_vins, list):
+            coordinator._allowed_vins.update(stored_allowed_vins)
             _LOGGER.debug(
-                "Registered %d allowed VIN(s) from restored metadata for entry %s",
-                len(coordinator._allowed_vins),
+                "Restored %d allowed VIN(s) from entry data for entry %s",
+                len(stored_allowed_vins),
                 entry.entry_id,
             )
         else:
             _LOGGER.warning(
-                "No allowed VINs registered for entry %s after metadata restoration - will force bootstrap to run",
+                "No allowed VINs key in entry data for entry %s - will force bootstrap to run",
                 entry.entry_id,
             )
 
@@ -460,8 +462,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Start bootstrap FIRST (before MQTT and before setting up platforms)
         # This ensures we fetch vehicle metadata before any entities are created
-        # Also force bootstrap if no VINs were restored (metadata corruption/loss)
-        should_bootstrap = not data.get(BOOTSTRAP_COMPLETE) or not coordinator._allowed_vins
+        # Also force bootstrap if allowed_vins key is missing (metadata corruption/loss)
+        # Note: We check for key existence, not emptiness - an empty list means all VINs
+        # were deduplicated to other entries, which is a valid state that doesn't need bootstrap
+        has_allowed_vins_key = data.get(ALLOWED_VINS_KEY) is not None
+        should_bootstrap = not data.get(BOOTSTRAP_COMPLETE) or not has_allowed_vins_key
         bootstrap_error: str | None = None
         bootstrap_completed = False
         if should_bootstrap:

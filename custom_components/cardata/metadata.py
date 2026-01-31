@@ -630,3 +630,62 @@ async def async_store_vehicle_metadata(
     new_metadata = dict(existing_metadata)
     new_metadata[vin] = payload
     await async_update_entry_data(hass, entry, {VEHICLE_METADATA: new_metadata})
+
+
+async def async_cleanup_deduplicated_devices(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    skipped_vins: list[str],
+) -> None:
+    """Remove devices for VINs that were deduplicated to another config entry.
+
+    This is called during bootstrap when VINs are found to already belong to
+    another config entry. Any existing devices/entities for these VINs in THIS
+    entry are duplicates and should be removed.
+
+    Args:
+        hass: Home Assistant instance
+        entry: Config entry being set up
+        skipped_vins: List of VINs that belong to another entry
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    if not skipped_vins:
+        return
+
+    device_registry = dr.async_get(hass)
+    devices = device_registry.devices.get_devices_for_config_entry_id(entry.entry_id)
+
+    removed_count = 0
+
+    for device in devices:
+        for identifier in device.identifiers:
+            if identifier[0] == DOMAIN:
+                vin = identifier[1]
+                if vin in skipped_vins:
+                    redacted_vin = redact_vin(vin)
+                    _LOGGER.info(
+                        "Removing duplicate device for VIN %s (now owned by another entry)",
+                        redacted_vin,
+                    )
+                    device_registry.async_remove_device(device.id)
+                    removed_count += 1
+                    break
+
+    if removed_count > 0:
+        _LOGGER.info(
+            "Removed %d duplicate device(s) for entry %s after VIN deduplication",
+            removed_count,
+            entry.entry_id,
+        )
+
+    # Clean up metadata for removed VINs from entry.data
+    stored_metadata = entry.data.get(VEHICLE_METADATA, {})
+    if isinstance(stored_metadata, dict):
+        updated_metadata = {k: v for k, v in stored_metadata.items() if k not in skipped_vins}
+        if len(updated_metadata) != len(stored_metadata):
+            await async_update_entry_data(hass, entry, {VEHICLE_METADATA: updated_metadata})
+            _LOGGER.debug(
+                "Cleaned up metadata for %d deduplicated VIN(s)",
+                len(stored_metadata) - len(updated_metadata),
+            )

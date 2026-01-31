@@ -153,3 +153,6 @@ AC_SESSION_FINALIZE_MINUTES = 15.0
 # Storage key and version for learned efficiency data
 SOC_LEARNING_STORAGE_KEY = "cardata.soc_learning"
 SOC_LEARNING_STORAGE_VERSION = 1
+
+# Key for storing deduplicated allowed VINs in entry data
+ALLOWED_VINS_KEY = "allowed_vins"
