@@ -679,6 +679,19 @@ async def async_cleanup_deduplicated_devices(
             entry.entry_id,
         )
 
+    # Clean up coordinator.device_metadata for skipped VINs
+    # This prevents entity platforms from creating entities for VINs we don't own
+    runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if runtime and hasattr(runtime, "coordinator"):
+        coordinator = runtime.coordinator
+        for vin in skipped_vins:
+            if vin in coordinator.device_metadata:
+                coordinator.device_metadata.pop(vin, None)
+                _LOGGER.debug(
+                    "Cleared coordinator.device_metadata for deduplicated VIN %s",
+                    redact_vin(vin),
+                )
+
     # Clean up metadata for removed VINs from entry.data
     stored_metadata = entry.data.get(VEHICLE_METADATA, {})
     if isinstance(stored_metadata, dict):
