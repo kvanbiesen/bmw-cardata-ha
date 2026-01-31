@@ -112,6 +112,8 @@ class CardataCoordinator:
     # VIN allow-list: only process telemetry for VINs that belong to this config entry
     # This prevents MQTT cross-contamination when multiple accounts share the same GCID
     _allowed_vins: set[str] = field(default_factory=set, init=False)
+    # Flag to track if _allowed_vins has been initialized (distinguishes "not set" from "empty")
+    _allowed_vins_initialized: bool = field(default=False, init=False)
 
     # Cached signal strings (initialized in __post_init__ for performance)
     _signal_new_sensor: str = field(default="", init=False)
@@ -374,7 +376,9 @@ class CardataCoordinator:
 
         # CRITICAL: Filter out VINs that don't belong to this config entry
         # This prevents MQTT cross-contamination when multiple accounts share the same GCID
-        if self._allowed_vins and vin not in self._allowed_vins:
+        # Note: We check _allowed_vins_initialized to distinguish "not yet set" from "set to empty"
+        # If initialized but empty, this entry owns no VINs and should reject ALL messages
+        if self._allowed_vins_initialized and vin not in self._allowed_vins:
             _LOGGER.debug(
                 "MQTT VIN dedup: VIN %s not in allowed list (%d VINs) for entry %s",
                 redact_vin(vin),

@@ -124,6 +124,8 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
             # Store empty allowed_vins to prevent bootstrap re-running on every restart
             await async_update_entry_data(hass, entry, {ALLOWED_VINS_KEY: []})
+            # Mark allowed VINs as initialized (empty means no VINs for this entry)
+            runtime.coordinator._allowed_vins_initialized = True
             await async_mark_bootstrap_complete(hass, entry)
             return
 
@@ -173,6 +175,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # Register allowed VINs for this config entry to prevent MQTT cross-contamination
         # This is CRITICAL when multiple accounts share the same GCID
         coordinator._allowed_vins.update(vins)
+        coordinator._allowed_vins_initialized = True
         _LOGGER.debug(
             "Registered %d allowed VIN(s) for entry %s: %s",
             len(vins),

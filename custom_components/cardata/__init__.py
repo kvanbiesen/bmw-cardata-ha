@@ -227,11 +227,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         stored_allowed_vins = data.get(ALLOWED_VINS_KEY)
         if stored_allowed_vins is not None and isinstance(stored_allowed_vins, list):
             coordinator._allowed_vins.update(stored_allowed_vins)
+            coordinator._allowed_vins_initialized = True
             _LOGGER.debug(
                 "Restored %d allowed VIN(s) from entry data for entry %s",
                 len(stored_allowed_vins),
                 entry.entry_id,
             )
+
+            # Clean up device_metadata, names, and devices for VINs not in allowed list
+            # This is needed because async_restore_vehicle_metadata creates devices for
+            # ALL VINs in stored metadata before we know which VINs are allowed
+            # Note: We always run this cleanup when allowed_vins key exists, even if empty
+            # An empty allowed list means this entry owns no VINs, so remove ALL VINs
+            from homeassistant.helpers import device_registry as dr
+
+            device_registry = dr.async_get(hass)
+            vins_to_remove = [
+                vin for vin in list(coordinator.device_metadata.keys()) if vin not in coordinator._allowed_vins
+            ]
+            for vin in vins_to_remove:
+                coordinator.device_metadata.pop(vin, None)
+                coordinator.names.pop(vin, None)
+                # Also remove device from registry IF it belongs to this entry
+                # (was created by async_restore_vehicle_metadata for this entry)
+                device = device_registry.async_get_device(identifiers={(DOMAIN, vin)})
+                if device and entry.entry_id in device.config_entries:
+                    device_registry.async_remove_device(device.id)
+                    _LOGGER.info(
+                        "Removed device for VIN %s (not in allowed list for this entry)",
+                        redact_vin(vin),
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Removed VIN %s from coordinator (not in allowed list for this entry)",
+                        redact_vin(vin),
+                    )
         else:
             _LOGGER.warning(
                 "No allowed VINs key in entry data for entry %s - will force bootstrap to run",
