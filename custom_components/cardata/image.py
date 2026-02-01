@@ -90,7 +90,9 @@ async def _async_auto_fetch_image(
         if metadata.get("vehicle_image_path"):
             _LOGGER.info("Successfully auto-fetched vehicle image for %s", redacted)
         else:
-            _LOGGER.debug("Auto-fetch completed but no image saved for %s (may have been rate limited or unavailable)", redacted)
+            _LOGGER.debug(
+                "Auto-fetch completed but no image saved for %s (may have been rate limited or unavailable)", redacted
+            )
 
     except Exception as err:
         _LOGGER.warning(
