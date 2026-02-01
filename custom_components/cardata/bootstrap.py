@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -42,6 +43,11 @@ from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import get_all_registered_vins, is_valid_vin, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
+
+# Global lock to serialize VIN claiming across all config entries during bootstrap
+# This prevents race conditions when multiple entries start simultaneously (HA uses asyncio.gather)
+# Without this lock, both entries could claim the same VINs before either has updated _allowed_vins
+_GLOBAL_VIN_CLAIM_LOCK = asyncio.Lock()
 
 
 async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -137,54 +143,57 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         coordinator = runtime.coordinator
 
-        # Get VINs already registered by other config entries
-        _LOGGER.debug(
-            "Bootstrap VIN dedup: checking %d discovered VIN(s) for entry %s: %s",
-            len(vins),
-            entry.entry_id,
-            [redact_vin(v) for v in vins],
-        )
-        other_vins = get_all_registered_vins(hass, exclude_entry_id=entry.entry_id)
-        _LOGGER.debug(
-            "Bootstrap VIN dedup: other entries have %d VIN(s): %s",
-            len(other_vins),
-            [redact_vin(v) for v in other_vins],
-        )
-
-        # Filter out VINs already claimed by other entries to prevent duplicates
-        skipped: list[str] = []
-        if other_vins:
-            skipped = [v for v in vins if v in other_vins]
-            vins = [v for v in vins if v not in other_vins]
+        # Use global lock to serialize VIN claiming across all config entries
+        # This prevents race conditions when multiple entries bootstrap simultaneously
+        async with _GLOBAL_VIN_CLAIM_LOCK:
+            # Get VINs already registered by other config entries
             _LOGGER.debug(
-                "Bootstrap VIN dedup: after filtering - %d to register, %d skipped",
+                "Bootstrap VIN dedup: checking %d discovered VIN(s) for entry %s: %s",
                 len(vins),
-                len(skipped),
+                entry.entry_id,
+                [redact_vin(v) for v in vins],
             )
-            if skipped:
-                _LOGGER.info(
-                    "Skipped %d VIN(s) already registered by other entries: %s",
+            other_vins = get_all_registered_vins(hass, exclude_entry_id=entry.entry_id)
+            _LOGGER.debug(
+                "Bootstrap VIN dedup: other entries have %d VIN(s): %s",
+                len(other_vins),
+                [redact_vin(v) for v in other_vins],
+            )
+
+            # Filter out VINs already claimed by other entries to prevent duplicates
+            skipped: list[str] = []
+            if other_vins:
+                skipped = [v for v in vins if v in other_vins]
+                vins = [v for v in vins if v not in other_vins]
+                _LOGGER.debug(
+                    "Bootstrap VIN dedup: after filtering - %d to register, %d skipped",
+                    len(vins),
                     len(skipped),
-                    [redact_vin(v) for v in skipped],
                 )
-                # Clean up any existing devices/entities for deduplicated VINs
-                await async_cleanup_deduplicated_devices(hass, entry, skipped)
-        else:
-            _LOGGER.debug("Bootstrap VIN dedup: no other entries have VINs, registering all")
+                if skipped:
+                    _LOGGER.info(
+                        "Skipped %d VIN(s) already registered by other entries: %s",
+                        len(skipped),
+                        [redact_vin(v) for v in skipped],
+                    )
+                    # Clean up any existing devices/entities for deduplicated VINs
+                    await async_cleanup_deduplicated_devices(hass, entry, skipped)
+            else:
+                _LOGGER.debug("Bootstrap VIN dedup: no other entries have VINs, registering all")
 
-        # Register allowed VINs for this config entry to prevent MQTT cross-contamination
-        # This is CRITICAL when multiple accounts share the same GCID
-        coordinator._allowed_vins.update(vins)
-        coordinator._allowed_vins_initialized = True
-        _LOGGER.debug(
-            "Registered %d allowed VIN(s) for entry %s: %s",
-            len(vins),
-            entry.entry_id,
-            [redact_vin(v) for v in vins],
-        )
+            # Register allowed VINs for this config entry to prevent MQTT cross-contamination
+            # This is CRITICAL when multiple accounts share the same GCID
+            coordinator._allowed_vins.update(vins)
+            coordinator._allowed_vins_initialized = True
+            _LOGGER.debug(
+                "Registered %d allowed VIN(s) for entry %s: %s",
+                len(vins),
+                entry.entry_id,
+                [redact_vin(v) for v in vins],
+            )
 
-        # Persist deduplicated VINs to entry data for restoration on restart
-        await async_update_entry_data(hass, entry, {ALLOWED_VINS_KEY: list(vins)})
+            # Persist deduplicated VINs to entry data for restoration on restart
+            await async_update_entry_data(hass, entry, {ALLOWED_VINS_KEY: list(vins)})
 
         # Initialize coordinator data for all VINs
         for vin in vins:
