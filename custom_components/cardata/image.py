@@ -83,7 +83,14 @@ async def _async_auto_fetch_image(
 
         _LOGGER.debug("Auto-fetching vehicle image for %s", redacted)
         await async_fetch_and_store_vehicle_images(hass, entry, headers, [vin], quota, session)
-        _LOGGER.info("Successfully auto-fetched vehicle image for %s", redacted)
+
+        # Check if image was actually saved by verifying vehicle_image_path in metadata
+        coordinator = runtime_data.coordinator
+        metadata = coordinator.device_metadata.get(vin, {})
+        if metadata.get("vehicle_image_path"):
+            _LOGGER.info("Successfully auto-fetched vehicle image for %s", redacted)
+        else:
+            _LOGGER.debug("Auto-fetch completed but no image saved for %s (may have been rate limited or unavailable)", redacted)
 
     except Exception as err:
         _LOGGER.warning(
