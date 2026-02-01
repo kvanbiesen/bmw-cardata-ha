@@ -46,6 +46,13 @@ from .utils import redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
 
+# Global lock to serialize MQTT connection attempts across all entries
+# This prevents multiple accounts from connecting simultaneously, which can cause:
+# - Thread pool contention
+# - BMW server-side throttling
+# - Race conditions in network handling
+_GLOBAL_MQTT_CONNECT_LOCK = asyncio.Lock()
+
 
 class ConnectionState(Enum):
     """MQTT connection states."""
@@ -113,7 +120,7 @@ class CardataStreamManager:
         # Reconnect attempt tracking for extended backoff
         self._consecutive_reconnect_failures = 0
         self._extended_backoff_threshold = 10  # After this many failures, use extended backoff
-        self._extended_backoff = 1800  # 30 minutes extended backoff
+        self._extended_backoff = 600  # 10 minutes extended backoff (reduced from 30 min)
         # Flag to prevent MQTT start during bootstrap
         self._bootstrap_in_progress: bool = False
         # Event signaled when bootstrap completes (for efficient waiting)
@@ -396,7 +403,15 @@ class CardataStreamManager:
         if self._status_callback:
             await self._status_callback("connecting", None)
         try:
-            await self.hass.async_add_executor_job(self._start_client)
+            # Use global lock to serialize MQTT connections across all config entries
+            # This prevents multi-account setups from overwhelming BMW servers or
+            # causing thread pool contention with simultaneous connection attempts
+            async with _GLOBAL_MQTT_CONNECT_LOCK:
+                if debug_enabled():
+                    _LOGGER.debug("Acquired global MQTT connection lock for entry %s", self._entry_id)
+                await self.hass.async_add_executor_job(self._start_client)
+                if debug_enabled():
+                    _LOGGER.debug("Released global MQTT connection lock for entry %s", self._entry_id)
             self._reconnect_backoff = 5
         except Exception:
             self._connection_state = ConnectionState.FAILED
