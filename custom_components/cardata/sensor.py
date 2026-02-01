@@ -769,44 +769,54 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update))
 
     # Restore enabled sensors from entity registry
-    for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
-        if entity_entry.domain != "sensor" or entity_entry.disabled_by is not None:
-            continue
+    # Wrap in try/except to ensure diagnostic sensors are always created even if restoration fails
+    try:
+        for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
+            if entity_entry.domain != "sensor" or entity_entry.disabled_by is not None:
+                continue
 
-        unique_id = entity_entry.unique_id
-        if not unique_id or "_" not in unique_id:
-            continue
+            unique_id = entity_entry.unique_id
+            if not unique_id or "_" not in unique_id:
+                continue
 
-        if unique_id.startswith(f"{entry.entry_id}_diagnostics_"):
-            continue
+            if unique_id.startswith(f"{entry.entry_id}_diagnostics_"):
+                continue
 
-        vin, descriptor = unique_id.split("_", 1)
+            vin, descriptor = unique_id.split("_", 1)
 
-        # Skip removed SOC sensors - they no longer exist
-        if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing"):
-            continue
+            # Skip removed SOC sensors - they no longer exist
+            if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing"):
+                continue
 
-        if descriptor == "diagnostics_vehicle_metadata":
-            ensure_metadata_sensor(vin)
-            continue
+            if descriptor == "diagnostics_vehicle_metadata":
+                ensure_metadata_sensor(vin)
+                continue
 
-        ensure_entity(vin, descriptor, assume_sensor=True)
+            ensure_entity(vin, descriptor, assume_sensor=True)
+    except Exception as err:
+        _LOGGER.warning("Error restoring sensors from entity registry: %s", err)
 
     # Add sensors from coordinator state
-    for vin, descriptor in coordinator.iter_descriptors(binary=False):
-        ensure_entity(vin, descriptor)
+    try:
+        for vin, descriptor in coordinator.iter_descriptors(binary=False):
+            ensure_entity(vin, descriptor)
+    except Exception as err:
+        _LOGGER.warning("Error creating sensors from coordinator state: %s", err)
 
     # Ensure metadata entities for all known VINs
     # Include both VINs from coordinator.data (live MQTT data) AND
     # VINs from device_metadata (restored from storage)
     # Filter by _allowed_vins to prevent creating entities for VINs owned by other entries
-    all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
-    if coordinator._allowed_vins_initialized:
-        all_vins = all_vins & coordinator._allowed_vins
-    for vin in all_vins:
-        ensure_metadata_sensor(vin)
+    try:
+        all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
+        if coordinator._allowed_vins_initialized:
+            all_vins = all_vins & coordinator._allowed_vins
+        for vin in all_vins:
+            ensure_metadata_sensor(vin)
+    except Exception as err:
+        _LOGGER.warning("Error creating metadata sensors: %s", err)
 
-    # Add diagnostic sensors
+    # Add diagnostic sensors (CRITICAL - must always be created for debug device)
     diagnostic_entities: list[CardataDiagnosticsSensor] = []
     stream_manager = runtime.stream
 
@@ -837,3 +847,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     if diagnostic_entities:
         async_add_entities(diagnostic_entities, True)
+        _LOGGER.debug(
+            "Created %d diagnostic sensor(s) for entry %s (CarData Debug Device)",
+            len(diagnostic_entities),
+            entry.entry_id,
+        )
