@@ -106,6 +106,9 @@ class CardataCoordinator:
     # SOC prediction during charging
     _soc_predictor: SOCPredictor = field(default_factory=SOCPredictor, init=False)
 
+    # Track VINs that have had fuel range sensor created (hybrid vehicles only)
+    _fuel_range_signaled: set[str] = field(default_factory=set, init=False)
+
     # Pending operation tracking to prevent duplicate work
     _basic_data_pending: PendingManager[str] = field(default_factory=lambda: PendingManager("basic_data"), init=False)
 
@@ -516,15 +519,30 @@ class CardataCoordinator:
                 if self._pending_manager.add_new_binary(vin, item):
                     schedule_debounce = True
 
-        # Check if fuel range sensor should be created (when both dependencies are available)
-        if descriptor in (
+        # Check if fuel range sensor needs creation or update (HYBRID VEHICLES ONLY)
+        fuel_range_dependencies = (
             "vehicle.drivetrain.lastRemainingRange",
             "vehicle.drivetrain.electricEngine.kombiRemainingElectricRange",
-        ):
+        )
+        fuel_range_descriptor = "vehicle.drivetrain.fuelSystem.remainingFuelRange"
+
+        # Check if any fuel range dependency was updated in this message
+        fuel_range_dependency_updated = any(dep in data for dep in fuel_range_dependencies)
+
+        if fuel_range_dependency_updated:
+            # Only proceed if this is a hybrid with both range values (non-hybrids return None)
             if self.get_derived_fuel_range(vin) is not None:
-                # Both dependencies available - signal fuel range sensor creation
-                if self._pending_manager.add_new_sensor(vin, "vehicle.drivetrain.fuelSystem.remainingFuelRange"):
-                    schedule_debounce = True
+                if vin in self._fuel_range_signaled:
+                    # Sensor already created - signal update to recalculate derived value
+                    if self._pending_manager.add_update(vin, fuel_range_descriptor):
+                        schedule_debounce = True
+                        if debug_enabled():
+                            _LOGGER.debug("Fuel range dependency changed, queuing update for %s", redact_vin(vin))
+                else:
+                    # Sensor doesn't exist yet - signal creation and track it
+                    if self._pending_manager.add_new_sensor(vin, fuel_range_descriptor):
+                        self._fuel_range_signaled.add(vin)
+                        schedule_debounce = True
 
         # SOC prediction: track charging status, method, power, and SOC updates
         # Process all descriptor updates for SOC prediction tracking
