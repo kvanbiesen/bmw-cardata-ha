@@ -248,11 +248,13 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 ## API Quota and MQTT Streaming
 
-BMW imposes a **50 calls/day** limit on the CarData API. This integration is designed to minimize API usage:
+BMW imposes a **50 calls/day** limit on the CarData API. This integration is designed to minimize API usage through event-driven polling:
 
-- **MQTT Stream (primary)**: The MQTT stream is unlimited and provides real-time updates. This is the primary data source.
-- **API Polling (fallback)**: The integration only polls the API when MQTT has been inactive for 1+ hour. This dramatically reduces API usage.
-- **Multi-VIN setups**: All vehicles share the same 50 call/day quota. The conditional polling ensures you stay within limits even with multiple cars.
+- **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc.
+- **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state.
+- **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor.
+- **Fallback polling**: The integration polls every 12 hours as a fallback in case MQTT stream fails or after Home Assistant restarts.
+- **Multi-VIN setups**: All vehicles share the same 50 call/day quota.
 
 ### Quota Warnings
 

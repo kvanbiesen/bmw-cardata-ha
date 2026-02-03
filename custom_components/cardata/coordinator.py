@@ -562,6 +562,13 @@ class CardataCoordinator:
                     elif was_charging:
                         # Charging stopped - end session for learning
                         self._end_soc_session(vin, vehicle_state)
+                        # Request immediate API poll to get actual BMW SOC for learning calibration
+                        runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
+                        if runtime is not None:
+                            runtime.request_trip_poll(vin)
+                            _LOGGER.debug(
+                                "Charging ended for VIN %s, requesting API poll for SOC verification", redact_vin(vin)
+                            )
 
             # Track charging method for efficiency selection
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.method":
@@ -612,6 +619,23 @@ class CardataCoordinator:
         )
         if has_hv_battery:
             self._soc_predictor.set_vehicle_is_phev(vin, has_fuel_system)
+
+        # Detect BMW-provided vehicle.isMoving transitions (True -> False = trip ended)
+        # This triggers immediate API poll to capture post-trip battery state
+        if "vehicle.isMoving" in data:
+            is_moving_payload = data["vehicle.isMoving"]
+            if isinstance(is_moving_payload, dict):
+                new_is_moving = normalize_boolean_value("vehicle.isMoving", is_moving_payload.get("value"))
+                # Check previous state (before this update)
+                last_bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
+                if last_bmw_moving is True and new_is_moving is False:
+                    # Trip ended - request immediate API poll
+                    runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
+                    if runtime is not None:
+                        runtime.request_trip_poll(vin)
+                # Update tracking for BMW-provided state
+                if new_is_moving is not None:
+                    self._last_derived_is_moving[f"{vin}_bmw"] = new_is_moving
 
         return immediate_updates, schedule_debounce
 
@@ -923,6 +947,13 @@ class CardataCoordinator:
                         )
                         self._last_derived_is_moving[vin] = current_derived
                         self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
+
+                        # Trip ended (moving -> stopped): request immediate API poll
+                        # to capture post-trip battery state
+                        if last_sent is True and current_derived is False:
+                            runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
+                            if runtime is not None:
+                                runtime.request_trip_poll(vin)
 
         # Check for SOC convergence (gradual sync to BMW SOC when not charging)
         # This runs every ~60 seconds, moving 2% toward target each time
