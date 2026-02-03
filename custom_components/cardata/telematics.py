@@ -42,6 +42,7 @@ from .const import (
     API_BASE_URL,
     API_VERSION,
     DOMAIN,
+    MQTT_INACTIVITY_THRESHOLD,
     TELEMATIC_POLL_INTERVAL,
     VEHICLE_METADATA,
 )
@@ -361,6 +362,18 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     wait,
                 )
                 last_poll_local = now
+
+            # Skip API poll if MQTT stream is active (received message within threshold)
+            coordinator = runtime.coordinator
+            if coordinator.last_message_at is not None:
+                mqtt_age = (datetime.now(UTC) - coordinator.last_message_at).total_seconds()
+                if mqtt_age < MQTT_INACTIVITY_THRESHOLD:
+                    _LOGGER.debug(
+                        "MQTT stream active (last message %.0f seconds ago), skipping API poll",
+                        mqtt_age,
+                    )
+                    last_poll_local = now  # Reset timer to check again later
+                    continue
 
             # Time to poll - wrap with timeout to prevent indefinite hangs
             try:

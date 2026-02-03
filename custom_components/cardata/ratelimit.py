@@ -77,7 +77,7 @@ class RateLimitTracker:
         _LOGGER.error(
             "BMW API rate limit hit (429) on %s! This is attempt #%d. "
             "Cooling down for %.1f hours until %s (using %s). "
-            "BMW's daily quota is typically 500 calls/day and resets at midnight UTC. "
+            "BMW's daily quota is typically 50 calls/day and resets at midnight UTC. "
             "The integration will pause API calls during cooldown.",
             endpoint,
             self._429_count,

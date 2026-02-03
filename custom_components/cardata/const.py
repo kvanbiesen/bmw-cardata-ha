@@ -69,14 +69,16 @@ DIAGNOSTIC_LOG_INTERVAL = 30  # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
 REQUEST_LOG = "request_log"
 REQUEST_LOG_VERSION = 1
-# API Quota - 80% of BMW's ~500/day limit (leaves safety margin)
-REQUEST_LIMIT = 400
+# API Quota - 80% of BMW's 50/day limit (leaves safety margin)
+REQUEST_LIMIT = 40
 # How long API Quota is reserved after API Call in seconds
 REQUEST_WINDOW_SECONDS = 24 * 60 * 60
 
 # Quota thresholds for warnings (percentages of REQUEST_LIMIT)
-QUOTA_WARNING_THRESHOLD = 280  # Warn at 70% of REQUEST_LIMIT
-QUOTA_CRITICAL_THRESHOLD = 360  # Critical at 90% of REQUEST_LIMIT
+QUOTA_WARNING_THRESHOLD = 28  # Warn at 70% of REQUEST_LIMIT
+QUOTA_CRITICAL_THRESHOLD = 36  # Critical at 90% of REQUEST_LIMIT
+# How long MQTT must be inactive before API polling triggers (seconds)
+MQTT_INACTIVITY_THRESHOLD = 60 * 60  # 1 hour
 # How often to call the Telematic API in seconds
 TELEMATIC_POLL_INTERVAL = 40 * 60
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
