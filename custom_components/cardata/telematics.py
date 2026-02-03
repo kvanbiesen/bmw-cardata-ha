@@ -42,7 +42,6 @@ from .const import (
     API_BASE_URL,
     API_VERSION,
     DOMAIN,
-    MQTT_INACTIVITY_THRESHOLD,
     TELEMATIC_POLL_INTERVAL,
     VEHICLE_METADATA,
 )
@@ -346,14 +345,62 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             # Always wait at least 1 second to prevent spin
             if wait > 0:
-                # Not time to poll yet, sleep until next poll time
+                # Not time to poll yet - wait for either:
+                # 1. Regular poll interval elapsed
+                # 2. Trip-end event (vehicle stopped moving)
                 _LOGGER.debug(
                     "Next telematic poll in %.1f seconds (%.1f minutes) [failures=%d]",
                     wait,
                     wait / 60,
                     consecutive_failures,
                 )
-                await asyncio.sleep(wait)
+
+                # Wait with trip-end event support
+                trip_event = runtime.trip_poll_event
+                if trip_event is not None:
+                    sleep_task = asyncio.create_task(asyncio.sleep(wait))
+                    event_task = asyncio.create_task(trip_event.wait())
+                    done, pending = await asyncio.wait(
+                        [sleep_task, event_task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    # Cancel the pending task
+                    for task in pending:
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+
+                    # Check if immediate poll event triggered (trip-end or charge-end)
+                    if event_task in done:
+                        trip_vins = runtime.get_trip_poll_vins()
+                        if trip_vins:
+                            _LOGGER.info(
+                                "Event triggered for %d VIN(s), triggering immediate API poll",
+                                len(trip_vins),
+                            )
+                            # Poll only the VINs that just finished trips
+                            for vin in trip_vins:
+                                # Re-fetch entry before each poll
+                                entry = hass.config_entries.async_get_entry(entry_id)
+                                if entry is None:
+                                    _LOGGER.debug("Entry removed during trip poll, stopping")
+                                    return
+                                try:
+                                    await asyncio.wait_for(
+                                        async_perform_telematic_fetch(hass, entry, runtime, vin_override=vin),
+                                        timeout=TELEMATIC_FETCH_TIMEOUT,
+                                    )
+                                except TimeoutError:
+                                    _LOGGER.warning("Trip-end poll timed out for VIN")
+                                except Exception as err:
+                                    _LOGGER.debug("Trip-end poll failed: %s", err)
+                            # Continue waiting for regular interval (don't reset last_poll_local)
+                            continue
+                    # Sleep completed or event fired with no VINs - loop back, poll will happen on next iteration
+                else:
+                    await asyncio.sleep(wait)
                 continue
             elif wait < -interval:
                 # Guard against clock skew or very stale timestamps
@@ -362,18 +409,6 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     wait,
                 )
                 last_poll_local = now
-
-            # Skip API poll if MQTT stream is active (received message within threshold)
-            coordinator = runtime.coordinator
-            if coordinator.last_message_at is not None:
-                mqtt_age = (datetime.now(UTC) - coordinator.last_message_at).total_seconds()
-                if mqtt_age < MQTT_INACTIVITY_THRESHOLD:
-                    _LOGGER.debug(
-                        "MQTT stream active (last message %.0f seconds ago), skipping API poll",
-                        mqtt_age,
-                    )
-                    last_poll_local = now  # Reset timer to check again later
-                    continue
 
             # Time to poll - wrap with timeout to prevent indefinite hangs
             try:

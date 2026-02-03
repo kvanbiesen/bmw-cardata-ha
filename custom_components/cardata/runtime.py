@@ -85,6 +85,10 @@ class CardataRuntimeData:
     _consecutive_session_failures: int = 0
     _SESSION_FAILURE_THRESHOLD: int = 5  # Recreate after this many consecutive failures
 
+    # Trip-end polling: signal immediate API poll when vehicle stops moving
+    _trip_poll_event: asyncio.Event | None = None
+    _trip_poll_vins: set | None = None
+
     def __post_init__(self):
         """Initialize rate limiters if not provided."""
         if self.rate_limit_tracker is None:
@@ -97,6 +101,10 @@ class CardataRuntimeData:
             self._token_refresh_lock = asyncio.Lock()
         if self._image_fetch_pending is None:
             self._image_fetch_pending = PendingManager("image_fetch")
+        if self._trip_poll_event is None:
+            self._trip_poll_event = asyncio.Event()
+        if self._trip_poll_vins is None:
+            self._trip_poll_vins = set()
 
     @property
     def token_refresh_lock(self) -> asyncio.Lock | None:
@@ -107,6 +115,32 @@ class CardataRuntimeData:
     def image_fetch_pending(self) -> PendingManager[str] | None:
         """Get the image fetch pending manager."""
         return self._image_fetch_pending
+
+    def request_trip_poll(self, vin: str) -> None:
+        """Request an immediate API poll for a VIN after trip ends.
+
+        Called by coordinator when vehicle.isMoving transitions True -> False.
+        """
+        if self._trip_poll_vins is not None:
+            self._trip_poll_vins.add(vin)
+        if self._trip_poll_event is not None:
+            self._trip_poll_event.set()
+        _LOGGER.debug("Trip ended for VIN %s, requesting immediate API poll", vin[-4:])
+
+    def get_trip_poll_vins(self) -> set:
+        """Get and clear the set of VINs needing post-trip polling."""
+        if self._trip_poll_vins is None:
+            return set()
+        vins = self._trip_poll_vins.copy()
+        self._trip_poll_vins.clear()
+        if self._trip_poll_event is not None:
+            self._trip_poll_event.clear()
+        return vins
+
+    @property
+    def trip_poll_event(self) -> asyncio.Event | None:
+        """Get the trip poll event for waiting."""
+        return self._trip_poll_event
 
     @property
     def session_healthy(self) -> bool:

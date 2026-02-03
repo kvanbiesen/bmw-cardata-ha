@@ -77,10 +77,8 @@ REQUEST_WINDOW_SECONDS = 24 * 60 * 60
 # Quota thresholds for warnings (percentages of REQUEST_LIMIT)
 QUOTA_WARNING_THRESHOLD = 28  # Warn at 70% of REQUEST_LIMIT
 QUOTA_CRITICAL_THRESHOLD = 36  # Critical at 90% of REQUEST_LIMIT
-# How long MQTT must be inactive before API polling triggers (seconds)
-MQTT_INACTIVITY_THRESHOLD = 60 * 60  # 1 hour
-# How often to call the Telematic API in seconds
-TELEMATIC_POLL_INTERVAL = 40 * 60
+# How often to call the Telematic API in seconds (fallback only - primary updates via trip/charge-end events)
+TELEMATIC_POLL_INTERVAL = 12 * 60 * 60
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
