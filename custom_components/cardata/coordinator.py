@@ -735,6 +735,20 @@ class CardataCoordinator:
                     return DescriptorState(value=fuel_range, unit="km", timestamp=None)
                 return None
 
+            # Derived isMoving: try derived first, fall back to stored (BMW-provided)
+            # This ensures fresh GPS-based motion detection overrides stale restored values
+            if descriptor == "vehicle.isMoving":
+                derived = self.get_derived_is_moving(vin)
+                if derived is not None:
+                    return DescriptorState(value=derived, unit=None, timestamp=None)
+                # Fall back to stored value (might be BMW-provided via MQTT)
+                vehicle_data = self.data.get(vin)
+                if vehicle_data:
+                    state = vehicle_data.get(descriptor)
+                    if state is not None:
+                        return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
+                return None
+
             # Access nested dict directly - no intermediate copy needed since
             # we only need one descriptor. This minimizes the race window.
             vehicle_data = self.data.get(vin)
@@ -743,11 +757,6 @@ class CardataCoordinator:
 
             state = vehicle_data.get(descriptor)
             if state is None:
-                # Fall back to derived motion state for vehicle.isMoving
-                if descriptor == "vehicle.isMoving":
-                    derived = self.get_derived_is_moving(vin)
-                    if derived is not None:
-                        return DescriptorState(value=derived, unit=None, timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -778,16 +787,24 @@ class CardataCoordinator:
                     return DescriptorState(value=fuel_range, unit="km", timestamp=None)
                 return None
 
+            # Derived isMoving: try derived first, fall back to stored (BMW-provided)
+            if descriptor == "vehicle.isMoving":
+                derived = self.get_derived_is_moving(vin)
+                if derived is not None:
+                    return DescriptorState(value=derived, unit=None, timestamp=None)
+                # Fall back to stored value (might be BMW-provided via MQTT)
+                vehicle_data = self.data.get(vin)
+                if vehicle_data:
+                    state = vehicle_data.get(descriptor)
+                    if state is not None:
+                        return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
+                return None
+
             vehicle_data = self.data.get(vin)
             if vehicle_data is None:
                 return None
             state = vehicle_data.get(descriptor)
             if state is None:
-                # Fall back to derived motion state for vehicle.isMoving
-                if descriptor == "vehicle.isMoving":
-                    derived = self.get_derived_is_moving(vin)
-                    if derived is not None:
-                        return DescriptorState(value=derived, unit=None, timestamp=None)
                 return None
             return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
