@@ -532,16 +532,16 @@ class CardataCoordinator:
         if fuel_range_dependency_updated:
             # Only proceed if this is a hybrid with both range values (non-hybrids return None)
             if self.get_derived_fuel_range(vin) is not None:
-                if vin in self._fuel_range_signaled:
-                    # Sensor already created - signal update to recalculate derived value
+                # Check if sensor exists (created or restored) by looking in vehicle_state
+                if fuel_range_descriptor in vehicle_state:
+                    # Sensor exists - signal update to recalculate derived value
                     if self._pending_manager.add_update(vin, fuel_range_descriptor):
                         schedule_debounce = True
                         if debug_enabled():
                             _LOGGER.debug("Fuel range dependency changed, queuing update for %s", redact_vin(vin))
                 else:
-                    # Sensor doesn't exist yet - signal creation and track it
+                    # Sensor doesn't exist yet - signal creation
                     if self._pending_manager.add_new_sensor(vin, fuel_range_descriptor):
-                        self._fuel_range_signaled.add(vin)
                         schedule_debounce = True
 
         # SOC prediction: track charging status, method, power, and SOC updates
@@ -596,9 +596,10 @@ class CardataCoordinator:
 
         # Check if predicted_soc sensor should be created (when EV descriptors are seen)
         # Signal creation when we see HV battery SOC (indicates EV/PHEV)
-        if not self._soc_predictor.has_signaled_entity(vin):
-            if "vehicle.drivetrain.batteryManagement.header" in vehicle_state:
-                self._soc_predictor.signal_entity_created(vin)
+        # Check vehicle_state instead of in-memory tracking (survives restarts)
+        if "vehicle.drivetrain.batteryManagement.header" in vehicle_state:
+            if PREDICTED_SOC_DESCRIPTOR not in vehicle_state:
+                # Sensor doesn't exist yet - signal creation
                 if self._pending_manager.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
                     schedule_debounce = True
 
@@ -726,6 +727,14 @@ class CardataCoordinator:
                     return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
                 return None
 
+            # Derived fuel range is ALWAYS calculated dynamically - check BEFORE stored state
+            # This prevents restored sensor values from shadowing the live calculation
+            if descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
+                fuel_range = self.get_derived_fuel_range(vin)
+                if fuel_range is not None:
+                    return DescriptorState(value=fuel_range, unit="km", timestamp=None)
+                return None
+
             # Access nested dict directly - no intermediate copy needed since
             # we only need one descriptor. This minimizes the race window.
             vehicle_data = self.data.get(vin)
@@ -739,11 +748,6 @@ class CardataCoordinator:
                     derived = self.get_derived_is_moving(vin)
                     if derived is not None:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
-                # Fall back to derived fuel range for vehicle.drivetrain.fuelSystem.remainingFuelRange
-                elif descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
-                    fuel_range = self.get_derived_fuel_range(vin)
-                    if fuel_range is not None:
-                        return DescriptorState(value=fuel_range, unit="km", timestamp=None)
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -760,6 +764,20 @@ class CardataCoordinator:
     async def async_get_state(self, vin: str, descriptor: str) -> DescriptorState | None:
         """Get state for a descriptor with proper lock acquisition."""
         async with self._lock:
+            # Predicted SOC is ALWAYS calculated dynamically
+            if descriptor == PREDICTED_SOC_DESCRIPTOR:
+                predicted_soc = self.get_predicted_soc(vin)
+                if predicted_soc is not None:
+                    return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
+                return None
+
+            # Derived fuel range is ALWAYS calculated dynamically
+            if descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
+                fuel_range = self.get_derived_fuel_range(vin)
+                if fuel_range is not None:
+                    return DescriptorState(value=fuel_range, unit="km", timestamp=None)
+                return None
+
             vehicle_data = self.data.get(vin)
             if vehicle_data is None:
                 return None
@@ -770,16 +788,6 @@ class CardataCoordinator:
                     derived = self.get_derived_is_moving(vin)
                     if derived is not None:
                         return DescriptorState(value=derived, unit=None, timestamp=None)
-                # Fall back to derived fuel range for vehicle.drivetrain.fuelSystem.remainingFuelRange
-                elif descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
-                    fuel_range = self.get_derived_fuel_range(vin)
-                    if fuel_range is not None:
-                        return DescriptorState(value=fuel_range, unit="km", timestamp=None)
-                # Fall back to predicted SOC for vehicle.predicted_soc
-                elif descriptor == PREDICTED_SOC_DESCRIPTOR:
-                    predicted_soc = self.get_predicted_soc(vin)
-                    if predicted_soc is not None:
-                        return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
                 return None
             return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
 
@@ -902,7 +910,9 @@ class CardataCoordinator:
         # Check for SOC convergence (gradual sync to BMW SOC when not charging)
         # This runs every ~60 seconds, moving 2% toward target each time
         for vin in list(self.data.keys()):
-            if self._soc_predictor.has_signaled_entity(vin):
+            # Check if predicted_soc sensor exists (created or restored)
+            vehicle_data = self.data.get(vin)
+            if vehicle_data and PREDICTED_SOC_DESCRIPTOR in vehicle_data:
                 if self._soc_predictor.check_convergence(vin):
                     # Value changed - notify sensor
                     self._safe_dispatcher_send(self.signal_update, vin, PREDICTED_SOC_DESCRIPTOR)
