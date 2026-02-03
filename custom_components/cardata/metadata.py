@@ -63,7 +63,7 @@ _MAX_PATH_LENGTH = 255
 def get_images_directory(hass: HomeAssistant) -> Path:
     """Get the directory for storing vehicle images.
 
-    Returns Path to: /config/media/cardata/
+    Returns Path to: /config/www/community/cardata/
     Creates directory if it doesn't exist.
     """
     images_dir = Path(hass.config.path("www/community/cardata"))
@@ -74,7 +74,7 @@ def get_images_directory(hass: HomeAssistant) -> Path:
 def get_image_path(hass: HomeAssistant, vin: str) -> Path | None:
     """Get the file path for a specific vehicle image.
 
-    Returns: /config/media/cardata/{vin}.png, or None if VIN is invalid.
+    Returns: /config/www/community/cardata/{vin}.png, or None if VIN is invalid.
 
     Security: Validates VIN format and path length to prevent attacks.
     """
@@ -209,7 +209,7 @@ async def async_fetch_and_store_vehicle_images(
 ) -> None:
     """Fetch vehicle images for each VIN and store as PNG files.
 
-    Images are stored in /config/.storage/cardata_images/{vin}.png
+    Images are stored in /config/www/community/cardata/{vin}.png
     Only fetches if file doesn't exist - NEVER refetches!
 
     Args:

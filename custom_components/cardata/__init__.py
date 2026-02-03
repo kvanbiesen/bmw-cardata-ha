@@ -62,7 +62,7 @@ from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .debug import set_debug_enabled
 from .device_flow import CardataAuthError
-from .metadata import async_restore_vehicle_metadata
+from .metadata import async_restore_vehicle_images, async_restore_vehicle_metadata
 from .quota import QuotaManager
 from .runtime import CardataRuntimeData, cleanup_entry_lock
 from .services import async_register_services, async_unregister_services
@@ -563,6 +563,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Start coordinator watchdog
         await coordinator.async_handle_connection_event("connecting")
         await coordinator.async_start_watchdog()
+
+        # Restore vehicle images from disk before platform setup (only after bootstrap)
+        # This ensures images fetched during bootstrap are properly loaded into metadata
+        # (bootstrap saves images but the dispatcher signal may not reach the image platform yet)
+        # Note: On restart, async_restore_vehicle_metadata already calls this, and the
+        # allowed_vins cleanup runs after - we must NOT call it again or it would
+        # re-add VINs that were just cleaned up (breaking multi-account setups)
+        if bootstrap_completed:
+            await async_restore_vehicle_images(hass, entry, coordinator)
 
         # NOW set up platforms - coordinator.names should be populated        # Forward setup to platforms
         # If metadata was restored or fetched by bootstrap, coordinator.names will have car names
