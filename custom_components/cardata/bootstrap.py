@@ -317,7 +317,7 @@ async def async_fetch_primary_vins(
         reason = f"rate limited (429): {error_excerpt}"
         _LOGGER.error(
             "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
-            "BMW's daily quota (typically 500 calls/day) has been reached. "
+            "BMW's daily quota (typically 50 calls/day) has been reached. "
             "The limit resets at midnight UTC. Please wait and try again later. "
             "Error details: %s",
             entry_id,
@@ -440,7 +440,7 @@ async def async_seed_telematic_data(
             error_excerpt = redact_vin_in_text(response.text[:200])
             _LOGGER.error(
                 "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
-                "BMW's daily quota (typically 500 calls/day) has been reached. "
+                "BMW's daily quota (typically 50 calls/day) has been reached. "
                 "The limit resets at midnight UTC. Skipping remaining vehicles. "
                 "Error details: %s",
                 redacted_vin,

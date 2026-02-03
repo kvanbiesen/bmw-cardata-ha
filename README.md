@@ -246,12 +246,26 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN.
 - `migrations` call for proper renaming the sensors from old installations
 
+## API Quota and MQTT Streaming
+
+BMW imposes a **50 calls/day** limit on the CarData API. This integration is designed to minimize API usage:
+
+- **MQTT Stream (primary)**: The MQTT stream is unlimited and provides real-time updates. This is the primary data source.
+- **API Polling (fallback)**: The integration only polls the API when MQTT has been inactive for 1+ hour. This dramatically reduces API usage.
+- **Multi-VIN setups**: All vehicles share the same 50 call/day quota. The conditional polling ensures you stay within limits even with multiple cars.
+
+### Quota Warnings
+
+- At 70% usage (28 calls): Warning logged
+- At 90% usage (36 calls): Critical warning logged
+- At 100% usage (40 calls): API calls blocked until quota resets at midnight UTC
+
 ## Requirements
 
 - BMW CarData account with streaming access (CarData API + CarData Streaming subscribed in the portal).
 - Client ID created in the BMW portal (see "BMW Portal Setup").
 - Home Assistant 2025.3+.
-- Familiarity with BMW’s CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
+- Familiarity with BMW's CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
 ## Known Limitations
 
