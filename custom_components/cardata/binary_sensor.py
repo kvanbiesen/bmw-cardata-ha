@@ -257,6 +257,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities[(vin, descriptor)] = entity
         async_add_entities([entity])
 
+        # Re-populate tracking set for derived isMoving sensor so coordinator knows it exists
+        # This is critical after restart when tracking set is empty but entity is restored
+        if descriptor == "vehicle.isMoving":
+            coordinator._motion_detector.signal_entity_created(vin)
+
     # Subscribe to signals FIRST to catch any descriptors arriving during setup
     # This prevents race conditions where descriptors arrive between iter_descriptors
     # and signal subscription

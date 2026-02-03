@@ -958,9 +958,8 @@ class CardataCoordinator:
         # Check for SOC convergence (gradual sync to BMW SOC when not charging)
         # This runs every ~60 seconds, moving 2% toward target each time
         for vin in list(self.data.keys()):
-            # Check if predicted_soc sensor exists (created or restored)
-            vehicle_data = self.data.get(vin)
-            if vehicle_data and PREDICTED_SOC_DESCRIPTOR in vehicle_data:
+            # Check if predicted_soc sensor was created for this VIN
+            if self._soc_predictor.has_signaled_entity(vin):
                 if self._soc_predictor.check_convergence(vin):
                     # Value changed - notify sensor
                     self._safe_dispatcher_send(self.signal_update, vin, PREDICTED_SOC_DESCRIPTOR)

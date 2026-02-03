@@ -725,6 +725,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities[(vin, descriptor)] = entity
         async_add_entities([entity])
 
+        # Re-populate tracking sets for derived/virtual sensors so coordinator knows they exist
+        # This is critical after restart when tracking sets are empty but entities are restored
+        if descriptor == PREDICTED_SOC_DESCRIPTOR:
+            coordinator._soc_predictor.signal_entity_created(vin)
+        elif descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
+            coordinator._fuel_range_signaled.add(vin)
+
     # Handle entity registry migrations
     entity_registry = async_get(hass)
 
