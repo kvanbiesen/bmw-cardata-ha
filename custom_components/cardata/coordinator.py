@@ -566,7 +566,9 @@ class CardataCoordinator:
                         runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
                         if runtime is not None:
                             runtime.request_trip_poll(vin)
-                            _LOGGER.debug("Charging ended for VIN %s, requesting API poll for SOC verification", redact_vin(vin))
+                            _LOGGER.debug(
+                                "Charging ended for VIN %s, requesting API poll for SOC verification", redact_vin(vin)
+                            )
 
             # Track charging method for efficiency selection
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.method":
