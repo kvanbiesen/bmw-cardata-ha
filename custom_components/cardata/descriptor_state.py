@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-@dataclass
+@dataclass(slots=True)
 class DescriptorState:
     """State for a single descriptor (value, unit, timestamp)."""
 

@@ -69,6 +69,9 @@ BOOLEAN_VALUE_MAP: dict[str, bool | None] = {
 # Maximum length for raw timestamp strings to prevent memory issues
 MAX_TIMESTAMP_STRING_LENGTH = 64
 
+# Valid characters for ISO-8601 timestamps
+_ALLOWED_TIMESTAMP_CHARS = frozenset("0123456789-:TZ.+ ")
+
 
 def sanitize_timestamp_string(timestamp: str | None) -> str | None:
     """Sanitize raw timestamp string for storage.
@@ -88,8 +91,7 @@ def sanitize_timestamp_string(timestamp: str | None) -> str | None:
     if not timestamp or not timestamp[0].isdigit():
         return None
     # Only allow characters valid in ISO-8601 timestamps
-    allowed = set("0123456789-:TZ.+ ")
-    if not all(c in allowed for c in timestamp):
+    if not all(c in _ALLOWED_TIMESTAMP_CHARS for c in timestamp):
         return None
     return timestamp
 

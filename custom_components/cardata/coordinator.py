@@ -592,6 +592,11 @@ class CardataCoordinator:
                     except (TypeError, ValueError):
                         pass
                 self._soc_predictor.update_power_reading(vin, power_kw)
+                # Trigger predicted_soc sensor update during charging
+                if self._soc_predictor.is_charging(vin):
+                    if self._soc_predictor.has_signaled_entity(vin):
+                        if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                            schedule_debounce = True
 
             # Update BMW SOC for convergence tracking
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
