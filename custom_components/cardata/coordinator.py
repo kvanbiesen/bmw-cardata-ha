@@ -598,6 +598,10 @@ class CardataCoordinator:
                 if value is not None:
                     try:
                         self._soc_predictor.update_bmw_soc(vin, float(value))
+                        # Trigger predicted_soc sensor update if it exists
+                        if self._soc_predictor.has_signaled_entity(vin):
+                            if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                                schedule_debounce = True
                     except (TypeError, ValueError):
                         pass
 
