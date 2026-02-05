@@ -598,7 +598,7 @@ class CardataCoordinator:
                         if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                             schedule_debounce = True
 
-            # Update BMW SOC for convergence tracking
+            # Update BMW SOC tracking
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
                 if value is not None:
                     try:
@@ -963,15 +963,6 @@ class CardataCoordinator:
                             runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
                             if runtime is not None:
                                 runtime.request_trip_poll(vin)
-
-        # Check for SOC convergence (gradual sync to BMW SOC when not charging)
-        # This runs every ~60 seconds, moving 2% toward target each time
-        for vin in list(self.data.keys()):
-            # Check if predicted_soc sensor was created for this VIN
-            if self._soc_predictor.has_signaled_entity(vin):
-                if self._soc_predictor.check_convergence(vin):
-                    # Value changed - notify sensor
-                    self._safe_dispatcher_send(self.signal_update, vin, PREDICTED_SOC_DESCRIPTOR)
 
         # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1
