@@ -203,6 +203,7 @@ The predicted SOC sensor automatically learns your vehicle's charging efficiency
 - Uses **Exponential Moving Average (EMA)** with 20% learning rate
 - Separate learning for AC and DC charging
 - Learning data persists across Home Assistant restarts
+- Active charging sessions and pending sessions survive HA restarts (restored sessions skip learning to avoid polluted data from energy gaps)
 
 ### Learning Requirements
 

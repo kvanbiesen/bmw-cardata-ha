@@ -12,6 +12,7 @@ from .const import (
     AC_SESSION_FINALIZE_MINUTES,
     DC_SESSION_FINALIZE_MINUTES,
     LEARNING_RATE,
+    MAX_ENERGY_GAP_SECONDS,
     MAX_VALID_EFFICIENCY,
     MIN_LEARNING_SOC_GAIN,
     MIN_VALID_EFFICIENCY,
@@ -64,6 +65,27 @@ class PendingSession:
     charging_method: str  # "AC" or "DC"
     battery_capacity_kwh: float  # Battery capacity for calculations
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for persistence."""
+        return {
+            "end_timestamp": self.end_timestamp,
+            "anchor_soc": self.anchor_soc,
+            "total_energy_kwh": self.total_energy_kwh,
+            "charging_method": self.charging_method,
+            "battery_capacity_kwh": self.battery_capacity_kwh,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PendingSession:
+        """Create from dictionary."""
+        return cls(
+            end_timestamp=data["end_timestamp"],
+            anchor_soc=data["anchor_soc"],
+            total_energy_kwh=data["total_energy_kwh"],
+            charging_method=data["charging_method"],
+            battery_capacity_kwh=data["battery_capacity_kwh"],
+        )
+
 
 @dataclass
 class ChargingSession:
@@ -79,6 +101,37 @@ class ChargingSession:
     total_energy_kwh: float = 0.0  # Accumulated energy input
     last_power_kw: float = 0.0  # Last power reading for trapezoidal integration
     last_energy_update: float | None = None  # Timestamp of last energy accumulation
+    restored: bool = False  # True when loaded from storage (energy data incomplete)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for persistence."""
+        return {
+            "anchor_soc": self.anchor_soc,
+            "anchor_timestamp": self.anchor_timestamp.isoformat(),
+            "battery_capacity_kwh": self.battery_capacity_kwh,
+            "last_predicted_soc": self.last_predicted_soc,
+            "last_power_update": self.last_power_update.isoformat(),
+            "charging_method": self.charging_method,
+            "total_energy_kwh": self.total_energy_kwh,
+            "last_power_kw": self.last_power_kw,
+            "last_energy_update": self.last_energy_update,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ChargingSession:
+        """Create from dictionary. Sets restored=True."""
+        return cls(
+            anchor_soc=data["anchor_soc"],
+            anchor_timestamp=datetime.fromisoformat(data["anchor_timestamp"]),
+            battery_capacity_kwh=data["battery_capacity_kwh"],
+            last_predicted_soc=data["last_predicted_soc"],
+            last_power_update=datetime.fromisoformat(data["last_power_update"]),
+            charging_method=data["charging_method"],
+            total_energy_kwh=data.get("total_energy_kwh", 0.0),
+            last_power_kw=data.get("last_power_kw", 0.0),
+            last_energy_update=data.get("last_energy_update"),
+            restored=True,
+        )
 
     def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
         """Accumulate net energy using trapezoidal integration.
@@ -92,8 +145,9 @@ class ChargingSession:
             timestamp: Current Unix timestamp
         """
         if self.last_energy_update is not None and power_kw > 0:
-            hours = (timestamp - self.last_energy_update) / 3600.0
-            if hours > 0:
+            gap = timestamp - self.last_energy_update
+            hours = gap / 3600.0
+            if hours > 0 and gap <= MAX_ENERGY_GAP_SECONDS:
                 # Trapezoidal integration: average of last and current power
                 avg_power = (self.last_power_kw + power_kw) / 2.0
                 net_power = max(avg_power - aux_power_kw, 0.0)
@@ -194,6 +248,75 @@ class SOCPredictor:
             Dictionary mapping VIN to learned efficiency data
         """
         return {vin: eff.to_dict() for vin, eff in self._learned_efficiency.items()}
+
+    def get_all_session_data(self) -> dict[str, Any]:
+        """Get all session data for v2 persistence.
+
+        Returns:
+            Dictionary with learned_efficiency, pending_sessions, active_sessions,
+            and charging_status sections.
+        """
+        return {
+            "learned_efficiency": {vin: eff.to_dict() for vin, eff in self._learned_efficiency.items()},
+            "pending_sessions": {vin: ps.to_dict() for vin, ps in self._pending_sessions.items()},
+            "active_sessions": {vin: s.to_dict() for vin, s in self._sessions.items()},
+            "charging_status": {vin: v for vin, v in self._is_charging.items() if v},
+        }
+
+    def load_session_data(self, data: dict[str, Any]) -> None:
+        """Load session data from storage (v1 or v2 format).
+
+        v1 format: flat dict mapping VIN to learned efficiency data.
+        v2 format: dict with learned_efficiency, pending_sessions, active_sessions,
+        and charging_status keys.
+
+        Args:
+            data: Stored data dictionary
+        """
+        if "learned_efficiency" not in data:
+            # v1 migration: entire dict is learned efficiency
+            self.load_learned_efficiency(data)
+            _LOGGER.debug("Loaded v1 SOC learning data (migrated)")
+            return
+
+        # v2 format
+        learned = data.get("learned_efficiency", {})
+        for vin, eff_data in learned.items():
+            try:
+                self._learned_efficiency[vin] = LearnedEfficiency.from_dict(eff_data)
+            except Exception as err:
+                _LOGGER.warning("SOC: Failed to load learned efficiency for %s: %s", redact_vin(vin), err)
+
+        pending = data.get("pending_sessions", {})
+        for vin, ps_data in pending.items():
+            try:
+                self._pending_sessions[vin] = PendingSession.from_dict(ps_data)
+            except Exception as err:
+                _LOGGER.warning("SOC: Failed to load pending session for %s: %s", redact_vin(vin), err)
+
+        active = data.get("active_sessions", {})
+        for vin, s_data in active.items():
+            try:
+                session = ChargingSession.from_dict(s_data)
+                self._sessions[vin] = session
+                self._last_predicted_soc[vin] = session.last_predicted_soc
+            except Exception as err:
+                _LOGGER.warning("SOC: Failed to load active session for %s: %s", redact_vin(vin), err)
+
+        charging = data.get("charging_status", {})
+        for vin, is_charging in charging.items():
+            try:
+                self._is_charging[vin] = bool(is_charging)
+            except Exception as err:
+                _LOGGER.warning("SOC: Failed to load charging status for %s: %s", redact_vin(vin), err)
+
+        _LOGGER.debug(
+            "Loaded v2 SOC data: %d learned, %d pending, %d active, %d charging",
+            len(self._learned_efficiency),
+            len(self._pending_sessions),
+            len(self._sessions),
+            sum(1 for v in self._is_charging.values() if v),
+        )
 
     def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
         """Get learned efficiency for a VIN.
@@ -450,6 +573,16 @@ class SOCPredictor:
         # Preserve last predicted for stale fallback
         self._last_predicted_soc[vin] = session.last_predicted_soc
 
+        if session.restored:
+            _LOGGER.info(
+                "SOC: Ending restored session for %s without learning (energy data incomplete)",
+                redact_vin(vin),
+            )
+            del self._sessions[vin]
+            if self._on_learning_updated:
+                self._on_learning_updated()
+            return
+
         # Check if target was reached (within tolerance)
         if target_soc is not None and abs(current_soc - target_soc) <= TARGET_SOC_TOLERANCE:
             _LOGGER.debug(
@@ -477,6 +610,10 @@ class SOCPredictor:
 
         # Clear active session
         del self._sessions[vin]
+
+        # Persist updated state (pending session added or session removed)
+        if self._on_learning_updated:
+            self._on_learning_updated()
 
     def try_finalize_pending_session(self, vin: str, bmw_soc: float, soc_timestamp: float) -> bool:
         """Attempt to finalize a pending session with fresh BMW SOC.
@@ -510,6 +647,8 @@ class SOCPredictor:
                 grace_minutes,
             )
             del self._pending_sessions[vin]
+            if self._on_learning_updated:
+                self._on_learning_updated()
             return False
 
         # Finalize learning with this SOC
@@ -525,6 +664,13 @@ class SOCPredictor:
             session: The charging session
             end_soc: Final SOC percentage
         """
+        if session.restored:
+            _LOGGER.info(
+                "SOC: Skipping learning for restored session %s (energy data incomplete)",
+                redact_vin(vin),
+            )
+            return
+
         # Validate session
         soc_gain = end_soc - session.anchor_soc
         if soc_gain < MIN_LEARNING_SOC_GAIN:

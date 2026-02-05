@@ -48,6 +48,7 @@ from .stream import CardataStreamManager
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.storage import Store
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class CardataRuntimeData:
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
+    soc_store: Store | None = None
 
     # Rate limit protection (NEW!)
     rate_limit_tracker: RateLimitTracker | None = None
