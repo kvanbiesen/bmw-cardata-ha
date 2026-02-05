@@ -280,21 +280,21 @@ class SOCPredictor:
             return
 
         # v2 format
-        learned = data.get("learned_efficiency", {})
+        learned = data.get("learned_efficiency") or {}
         for vin, eff_data in learned.items():
             try:
                 self._learned_efficiency[vin] = LearnedEfficiency.from_dict(eff_data)
             except Exception as err:
                 _LOGGER.warning("SOC: Failed to load learned efficiency for %s: %s", redact_vin(vin), err)
 
-        pending = data.get("pending_sessions", {})
+        pending = data.get("pending_sessions") or {}
         for vin, ps_data in pending.items():
             try:
                 self._pending_sessions[vin] = PendingSession.from_dict(ps_data)
             except Exception as err:
                 _LOGGER.warning("SOC: Failed to load pending session for %s: %s", redact_vin(vin), err)
 
-        active = data.get("active_sessions", {})
+        active = data.get("active_sessions") or {}
         for vin, s_data in active.items():
             try:
                 session = ChargingSession.from_dict(s_data)
@@ -303,7 +303,7 @@ class SOCPredictor:
             except Exception as err:
                 _LOGGER.warning("SOC: Failed to load active session for %s: %s", redact_vin(vin), err)
 
-        charging = data.get("charging_status", {})
+        charging = data.get("charging_status") or {}
         for vin, is_charging in charging.items():
             try:
                 self._is_charging[vin] = bool(is_charging)
