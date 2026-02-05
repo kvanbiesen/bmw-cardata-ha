@@ -242,34 +242,7 @@ class CardataCoordinator:
             except (TypeError, ValueError):
                 pass
 
-        # Get charging power (handle both W and kW)
-        power_state = vehicle_data.get("vehicle.powertrain.electric.battery.charging.power")
-        charging_power_w = 0.0
-        if power_state and power_state.value is not None:
-            try:
-                power_val = float(power_state.value)
-                # Normalize to Watts (assume kW if < 1000, otherwise already W)
-                if power_state.unit and power_state.unit.lower() == "kw":
-                    power_val *= 1000
-                charging_power_w = power_val
-            except (TypeError, ValueError):
-                pass
-
-        # Get auxiliary power
-        aux_state = vehicle_data.get("vehicle.vehicle.avgAuxPower")
-        aux_power_w = 0.0
-        if aux_state and aux_state.value is not None:
-            try:
-                aux_power_w = float(aux_state.value)
-            except (TypeError, ValueError):
-                pass
-
-        return self._soc_predictor.get_predicted_soc(
-            vin=vin,
-            charging_power_w=charging_power_w,
-            aux_power_w=aux_power_w,
-            bmw_soc=bmw_soc,
-        )
+        return self._soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
 
     def _anchor_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
         """Anchor SOC prediction session when charging starts.
@@ -591,7 +564,15 @@ class CardataCoordinator:
                             power_kw = power_val
                     except (TypeError, ValueError):
                         pass
-                self._soc_predictor.update_power_reading(vin, power_kw)
+                # Get current aux power for net energy calculation
+                aux_kw = 0.0
+                aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+                if aux_state and aux_state.value is not None:
+                    try:
+                        aux_kw = float(aux_state.value) / 1000.0  # Convert W to kW
+                    except (TypeError, ValueError):
+                        pass
+                self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
                 # Trigger predicted_soc sensor update during charging
                 if self._soc_predictor.is_charging(vin):
                     if self._soc_predictor.has_signaled_entity(vin):

@@ -80,11 +80,15 @@ class ChargingSession:
     last_power_kw: float = 0.0  # Last power reading for trapezoidal integration
     last_energy_update: float | None = None  # Timestamp of last energy accumulation
 
-    def accumulate_energy(self, power_kw: float, timestamp: float) -> None:
-        """Accumulate energy using trapezoidal integration.
+    def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
+        """Accumulate net energy using trapezoidal integration.
+
+        Subtracts auxiliary power (preheating, etc.) during accumulation so that
+        total_energy_kwh reflects only the energy reaching the battery.
 
         Args:
-            power_kw: Current power in kW
+            power_kw: Current gross charging power in kW
+            aux_power_kw: Auxiliary power consumption in kW
             timestamp: Current Unix timestamp
         """
         if self.last_energy_update is not None and power_kw > 0:
@@ -92,7 +96,8 @@ class ChargingSession:
             if hours > 0:
                 # Trapezoidal integration: average of last and current power
                 avg_power = (self.last_power_kw + power_kw) / 2.0
-                self.total_energy_kwh += avg_power * hours
+                net_power = max(avg_power - aux_power_kw, 0.0)
+                self.total_energy_kwh += net_power * hours
         self.last_power_kw = power_kw
         self.last_energy_update = timestamp
 
@@ -108,10 +113,10 @@ class SOCPredictor:
     per-vehicle AC and DC charging efficiency using EMA.
 
     Key behaviors:
-    - Charging: Calculate prediction, never decrease (unless aux > charging)
+    - Charging: Calculate prediction from accumulated net energy, never decrease
     - Not charging + fresh BMW data: Use BMW SOC
     - Not charging + stale BMW data: Use last predicted value
-    - Charging + stale power data: Hold at last predicted value
+    - Charging + no energy accumulated: Hold at last predicted value
     """
 
     # Default charging efficiency by method (used before learning)
@@ -119,7 +124,6 @@ class SOCPredictor:
     DC_EFFICIENCY: ClassVar[float] = 0.93  # 93% for DC fast charging
 
     # Staleness thresholds
-    POWER_STALE_MINUTES: ClassVar[float] = 10.0  # Stop extrapolating after 10 min
     BMW_SOC_STALE_MINUTES: ClassVar[float] = 30.0  # BMW SOC considered stale
 
     # Cap predicted SOC
@@ -361,12 +365,15 @@ class SOCPredictor:
                     session.charging_method,
                 )
 
-    def update_power_reading(self, vin: str, power_kw: float | None = None, timestamp: datetime | None = None) -> None:
+    def update_power_reading(
+        self, vin: str, power_kw: float | None = None, aux_power_kw: float = 0.0, timestamp: datetime | None = None
+    ) -> None:
         """Record power update for staleness tracking and energy accumulation.
 
         Args:
             vin: Vehicle identification number
-            power_kw: Current charging power in kW (optional, for energy tracking)
+            power_kw: Current gross charging power in kW (optional, for energy tracking)
+            aux_power_kw: Auxiliary power consumption in kW (preheating, etc.)
             timestamp: Optional timestamp (defaults to now)
         """
         session = self._sessions.get(vin)
@@ -374,9 +381,9 @@ class SOCPredictor:
             now = timestamp or datetime.now(UTC)
             session.last_power_update = now
 
-            # Accumulate energy if power provided
+            # Accumulate net energy if power provided
             if power_kw is not None and power_kw > 0:
-                session.accumulate_energy(power_kw, time.time())
+                session.accumulate_energy(power_kw, aux_power_kw, time.time())
 
     def update_bmw_soc(self, vin: str, soc: float, timestamp: datetime | None = None) -> None:
         """Record BMW SOC update for staleness tracking.
@@ -655,23 +662,22 @@ class SOCPredictor:
     def get_predicted_soc(
         self,
         vin: str,
-        charging_power_w: float,
-        aux_power_w: float = 0.0,
         bmw_soc: float | None = None,
     ) -> float | None:
-        """Calculate predicted SOC based on charging power and time.
+        """Calculate predicted SOC based on accumulated energy.
+
+        Uses trapezoidal-integrated net energy (accumulated in real time via
+        update_power_reading) instead of instantaneous power * elapsed time.
+        This handles power variations (DC taper, cold-battery ramp-up, grid
+        fluctuations) naturally.
 
         Args:
             vin: Vehicle identification number
-            charging_power_w: Current charging power in Watts
-            aux_power_w: Auxiliary power consumption in Watts (preheating, etc.)
             bmw_soc: Current BMW-reported SOC (for passthrough when not charging)
 
         Returns:
             Predicted SOC percentage, or None if no data available
         """
-        now = datetime.now(UTC)
-
         # Not charging? Return last known predicted value
         if not self._is_charging.get(vin, False):
             return self._get_passthrough_soc(vin, bmw_soc)
@@ -684,37 +690,15 @@ class SOCPredictor:
                 return bmw_soc
             return self._last_predicted_soc.get(vin)
 
-        # Check for stale power data
-        time_since_power = (now - session.last_power_update).total_seconds() / 60.0
-        if time_since_power > self.POWER_STALE_MINUTES:
-            _LOGGER.debug(
-                "SOC: Power data stale for %s (%.1f min), holding at %.1f%%",
-                redact_vin(vin),
-                time_since_power,
-                session.last_predicted_soc,
-            )
-            return session.last_predicted_soc
-
-        # Calculate net charging power (charging - aux)
-        net_power_w = charging_power_w - aux_power_w
-
-        # If net power is zero or negative, maintain last prediction
-        if net_power_w <= 0:
-            _LOGGER.debug(
-                "SOC: Net power %.0fW for %s (aux=%.0fW), holding at %.1f%%",
-                net_power_w,
-                redact_vin(vin),
-                aux_power_w,
-                session.last_predicted_soc,
-            )
+        # No energy accumulated yet - hold at last prediction
+        if session.total_energy_kwh == 0:
             return session.last_predicted_soc
 
         # Get efficiency (learned or default)
         efficiency = self._get_efficiency(vin, session.charging_method)
 
-        # Calculate energy added since anchor
-        elapsed_hours = (now - session.anchor_timestamp).total_seconds() / 3600.0
-        energy_added_kwh = (net_power_w / 1000.0) * elapsed_hours * efficiency
+        # Use accumulated net energy (already has aux subtracted)
+        energy_added_kwh = session.total_energy_kwh * efficiency
 
         # Convert to SOC percentage
         soc_added = (energy_added_kwh / session.battery_capacity_kwh) * 100.0
@@ -729,12 +713,11 @@ class SOCPredictor:
         self._last_predicted_soc[vin] = predicted_soc
 
         _LOGGER.debug(
-            "SOC: Predicted %.1f%% for %s (anchor=%.1f%%, +%.2f kWh, %.1f min, eff=%.0f%%)",
+            "SOC: Predicted %.1f%% for %s (anchor=%.1f%%, +%.2f kWh net, eff=%.0f%%)",
             predicted_soc,
             redact_vin(vin),
             session.anchor_soc,
             energy_added_kwh,
-            elapsed_hours * 60,
             efficiency * 100,
         )
 

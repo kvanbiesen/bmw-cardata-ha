@@ -192,7 +192,7 @@ Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT
 
 ## Predicted SOC with Learning
 
-The integration includes a predicted SOC (State of Charge) sensor that estimates battery charge during charging sessions. This sensor uses real-time power data to calculate charging progress more frequently than BMW's native SOC updates.
+The integration includes a predicted SOC (State of Charge) sensor that estimates battery charge during charging sessions. This sensor uses real-time accumulated energy (trapezoidal integration of charging power minus auxiliary consumption) to calculate charging progress more frequently than BMW's native SOC updates. This handles varying power levels naturally (DC taper above 80%, cold-battery ramp-up, grid fluctuations).
 
 ### How Learning Works
 
