@@ -268,6 +268,8 @@ class CardataCoordinator:
             capacity_kwh = float(capacity_state.value)
         except (TypeError, ValueError):
             return
+        if capacity_kwh <= 0:
+            return
 
         # Get charging method if available
         method_state = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.method")

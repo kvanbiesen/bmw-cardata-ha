@@ -850,9 +850,9 @@ class SOCPredictor:
         soc_added = (energy_added_kwh / session.battery_capacity_kwh) * 100.0
         predicted_soc = session.anchor_soc + soc_added
 
-        # Apply constraints: cap at 100%, never decrease
-        predicted_soc = min(predicted_soc, self.MAX_SOC)
+        # Apply constraints: never decrease, then cap at 100%
         predicted_soc = max(predicted_soc, session.last_predicted_soc)
+        predicted_soc = min(predicted_soc, self.MAX_SOC)
 
         # Update session and global tracking
         session.last_predicted_soc = predicted_soc
