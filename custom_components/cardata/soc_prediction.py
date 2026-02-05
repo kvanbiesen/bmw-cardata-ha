@@ -505,7 +505,7 @@ class SOCPredictor:
             session.last_power_update = now
 
             # Accumulate net energy if power provided
-            if power_kw is not None and power_kw > 0:
+            if power_kw is not None and power_kw >= 0:
                 session.accumulate_energy(power_kw, aux_power_kw, time.time())
 
     def update_bmw_soc(self, vin: str, soc: float, timestamp: datetime | None = None) -> None:
