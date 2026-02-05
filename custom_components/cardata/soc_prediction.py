@@ -654,6 +654,9 @@ class SOCPredictor:
         # Finalize learning with this SOC
         self._finalize_learning_from_pending(vin, pending, bmw_soc)
         del self._pending_sessions[vin]
+        # Persist removal of pending session (even if learning was rejected)
+        if self._on_learning_updated:
+            self._on_learning_updated()
         return True
 
     def _finalize_learning(self, vin: str, session: ChargingSession, end_soc: float) -> None:
@@ -838,6 +841,10 @@ class SOCPredictor:
 
         # No energy accumulated yet - hold at last prediction
         if session.total_energy_kwh == 0:
+            return session.last_predicted_soc
+
+        # Guard against invalid capacity (corrupted storage)
+        if session.battery_capacity_kwh <= 0:
             return session.last_predicted_soc
 
         # Get efficiency (learned or default)
