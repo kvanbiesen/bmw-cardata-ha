@@ -242,34 +242,7 @@ class CardataCoordinator:
             except (TypeError, ValueError):
                 pass
 
-        # Get charging power (handle both W and kW)
-        power_state = vehicle_data.get("vehicle.powertrain.electric.battery.charging.power")
-        charging_power_w = 0.0
-        if power_state and power_state.value is not None:
-            try:
-                power_val = float(power_state.value)
-                # Normalize to Watts (assume kW if < 1000, otherwise already W)
-                if power_state.unit and power_state.unit.lower() == "kw":
-                    power_val *= 1000
-                charging_power_w = power_val
-            except (TypeError, ValueError):
-                pass
-
-        # Get auxiliary power
-        aux_state = vehicle_data.get("vehicle.vehicle.avgAuxPower")
-        aux_power_w = 0.0
-        if aux_state and aux_state.value is not None:
-            try:
-                aux_power_w = float(aux_state.value)
-            except (TypeError, ValueError):
-                pass
-
-        return self._soc_predictor.get_predicted_soc(
-            vin=vin,
-            charging_power_w=charging_power_w,
-            aux_power_w=aux_power_w,
-            bmw_soc=bmw_soc,
-        )
+        return self._soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
 
     def _anchor_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
         """Anchor SOC prediction session when charging starts.
@@ -294,6 +267,8 @@ class CardataCoordinator:
         try:
             capacity_kwh = float(capacity_state.value)
         except (TypeError, ValueError):
+            return
+        if capacity_kwh <= 0:
             return
 
         # Get charging method if available
@@ -591,14 +566,22 @@ class CardataCoordinator:
                             power_kw = power_val
                     except (TypeError, ValueError):
                         pass
-                self._soc_predictor.update_power_reading(vin, power_kw)
+                # Get current aux power for net energy calculation
+                aux_kw = 0.0
+                aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+                if aux_state and aux_state.value is not None:
+                    try:
+                        aux_kw = float(aux_state.value) / 1000.0  # Convert W to kW
+                    except (TypeError, ValueError):
+                        pass
+                self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
                 # Trigger predicted_soc sensor update during charging
                 if self._soc_predictor.is_charging(vin):
                     if self._soc_predictor.has_signaled_entity(vin):
                         if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                             schedule_debounce = True
 
-            # Update BMW SOC for convergence tracking
+            # Update BMW SOC tracking
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
                 if value is not None:
                     try:
@@ -963,15 +946,6 @@ class CardataCoordinator:
                             runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
                             if runtime is not None:
                                 runtime.request_trip_poll(vin)
-
-        # Check for SOC convergence (gradual sync to BMW SOC when not charging)
-        # This runs every ~60 seconds, moving 2% toward target each time
-        for vin in list(self.data.keys()):
-            # Check if predicted_soc sensor was created for this VIN
-            if self._soc_predictor.has_signaled_entity(vin):
-                if self._soc_predictor.check_convergence(vin):
-                    # Value changed - notify sensor
-                    self._safe_dispatcher_send(self.signal_update, vin, PREDICTED_SOC_DESCRIPTOR)
 
         # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1

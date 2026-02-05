@@ -144,15 +144,14 @@ MIN_VALID_EFFICIENCY = 0.82
 MAX_VALID_EFFICIENCY = 0.98
 # Tolerance for matching target SOC (percentage) - if within this, finalize immediately
 TARGET_SOC_TOLERANCE = 2.0
-# Gradual convergence settings (when syncing predicted SOC to BMW SOC)
-SOC_CONVERGENCE_STEP = 2.0  # Move 2% per convergence step
-SOC_CONVERGENCE_THRESHOLD = 0.5  # Consider synced if within 0.5%
 # Grace period for BMW SOC update after charge ends (minutes)
 DC_SESSION_FINALIZE_MINUTES = 5.0
 AC_SESSION_FINALIZE_MINUTES = 15.0
 # Storage key and version for learned efficiency data
 SOC_LEARNING_STORAGE_KEY = "cardata.soc_learning"
-SOC_LEARNING_STORAGE_VERSION = 1
+SOC_LEARNING_STORAGE_VERSION = 2
+# Maximum gap between energy readings before skipping integration (seconds)
+MAX_ENERGY_GAP_SECONDS = 600
 
 # Key for storing deduplicated allowed VINs in entry data
 ALLOWED_VINS_KEY = "allowed_vins"

@@ -173,24 +173,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry.entry_id}"
         )
 
-        # Load learned efficiency data
+        # Load SOC session data (v1 learned efficiency or v2 full session state)
         try:
             stored_learning = await soc_learning_store.async_load()
             if stored_learning and isinstance(stored_learning, dict):
-                coordinator._soc_predictor.load_learned_efficiency(stored_learning)
-                _LOGGER.debug("Loaded SOC learning data for %d vehicle(s)", len(stored_learning))
+                coordinator._soc_predictor.load_session_data(stored_learning)
         except Exception as err:
             _LOGGER.warning("Failed to load SOC learning data: %s", err)
 
         # Set up persistence callback for learning updates
         async def _save_learning_data() -> None:
-            """Save learned efficiency data to storage."""
+            """Save SOC session data to storage."""
             try:
-                data_to_save = coordinator._soc_predictor.get_learned_efficiency_data()
+                data_to_save = coordinator._soc_predictor.get_all_session_data()
                 await soc_learning_store.async_save(data_to_save)
-                _LOGGER.debug("Saved SOC learning data")
+                _LOGGER.debug("Saved SOC session data")
             except Exception as err:
-                _LOGGER.warning("Failed to save SOC learning data: %s", err)
+                _LOGGER.warning("Failed to save SOC session data: %s", err)
 
         def _trigger_save() -> None:
             """Trigger async save from sync context."""
@@ -483,6 +482,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             reauth_in_progress=False,
             reauth_flow_id=None,
         )
+        runtime_data.soc_store = soc_learning_store
         hass.data[DOMAIN][entry.entry_id] = runtime_data
 
         # Register services if not already done
@@ -645,6 +645,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
+
+    # Save SOC session data before shutdown
+    if data.soc_store is not None:
+        try:
+            session_data = data.coordinator._soc_predictor.get_all_session_data()
+            await data.soc_store.async_save(session_data)
+        except Exception as err:
+            _LOGGER.warning("Failed to save SOC session data on shutdown: %s", err)
 
     # Stop coordinator
     await data.coordinator.async_stop_watchdog()
