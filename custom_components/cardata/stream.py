@@ -710,6 +710,7 @@ class CardataStreamManager:
         elif debug_enabled():
             _LOGGER.debug("BMW MQTT intentional disconnect rc=%s", rc)
 
+        previous_disconnect = self._last_disconnect
         self._last_disconnect = time.monotonic()
 
         # Update connection state
@@ -738,7 +739,7 @@ class CardataStreamManager:
 
         if rc in (4, 5):
             now = time.monotonic()
-            if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
+            if rc == 5 and previous_disconnect is not None and now - previous_disconnect < 10:
                 if debug_enabled():
                     _LOGGER.debug("Ignoring transient MQTT rc=5; scheduling retry instead")
                 self._schedule_retry(3)
