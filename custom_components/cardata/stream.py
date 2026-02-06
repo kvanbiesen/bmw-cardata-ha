@@ -558,7 +558,9 @@ class CardataStreamManager:
 
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
-                _LOGGER.debug("BMW MQTT connection timed out after %.0f seconds (entry %s)", self._connect_timeout, self._entry_id)
+                _LOGGER.debug(
+                    "BMW MQTT connection timed out after %.0f seconds (entry %s)", self._connect_timeout, self._entry_id
+                )
                 self._connect_event = None
                 raise TimeoutError(f"MQTT connection timed out after {self._connect_timeout} seconds")
 
