@@ -221,14 +221,16 @@ def _get_entry_lock(entry_id: str) -> asyncio.Lock:
     regardless of whether runtime data is available yet.
     """
     if entry_id not in _entry_locks:
-        # Safety cap: if we have too many locks, clear old ones
+        # Safety cap: if we have too many locks, evict unlocked entries
         # This prevents unbounded memory growth if cleanup fails
         if len(_entry_locks) >= _MAX_ENTRY_LOCKS:
             _LOGGER.warning(
-                "Entry lock registry exceeded %d entries; clearing stale locks",
+                "Entry lock registry exceeded %d entries; evicting unlocked entries",
                 _MAX_ENTRY_LOCKS,
             )
-            _entry_locks.clear()
+            unlocked = [eid for eid, lock in _entry_locks.items() if not lock.locked()]
+            for eid in unlocked:
+                del _entry_locks[eid]
         _entry_locks[entry_id] = asyncio.Lock()
     return _entry_locks[entry_id]
 
