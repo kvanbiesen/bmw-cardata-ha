@@ -95,7 +95,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 1. Select the vehicle you want to stream.
 2. Choose **BMW CarData** or **Mini CarData**.
 3. Generate a client ID as described here: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Technical-registration_Step-1
-4. Under section CARDATA API, you see **Client ID**. Copy this to your clipboard because you will need it during **Configuration Flow** in Home Assistant.
+4. Under section CARDATA API, you see **Client ID**. Delete the original one and make a new one. Copy this new one to your clipboard because you will need it during **Configuration Flow** in Home Assistant.
    **Don't press the button Authenticate device (NEVER) **!!!!
 5. Request access to **CarData API** first:
    - Click "Request access to CarData API"
