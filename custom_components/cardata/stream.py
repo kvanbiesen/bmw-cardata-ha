@@ -558,7 +558,7 @@ class CardataStreamManager:
 
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
-                _LOGGER.debug("BMW MQTT connection timed out after %.0f seconds", self._connect_timeout)
+                _LOGGER.debug("BMW MQTT connection timed out after %.0f seconds (entry %s)", self._connect_timeout, self._entry_id)
                 self._connect_event = None
                 raise TimeoutError(f"MQTT connection timed out after {self._connect_timeout} seconds")
 
@@ -578,7 +578,7 @@ class CardataStreamManager:
                 error_reason = (
                     error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
                 )
-                _LOGGER.warning("BMW MQTT connection failed: %s", error_reason)
+                _LOGGER.warning("BMW MQTT connection failed (entry %s): %s", self._entry_id, error_reason)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
 
             # Success - transfer ownership to self._client
@@ -824,14 +824,16 @@ class CardataStreamManager:
                 self._consecutive_reconnect_failures += 1
                 if self._consecutive_reconnect_failures <= 3:
                     _LOGGER.debug(
-                        "BMW MQTT reconnect failed (attempt %d): %s",
+                        "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
                         self._consecutive_reconnect_failures,
+                        self._entry_id,
                         err,
                     )
                 else:
                     _LOGGER.warning(
-                        "BMW MQTT reconnect failed (attempt %d): %s",
+                        "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
                         self._consecutive_reconnect_failures,
+                        self._entry_id,
                         err,
                     )
                 self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
@@ -841,8 +843,9 @@ class CardataStreamManager:
                 # Success - reset counters
                 if self._consecutive_reconnect_failures > 0:
                     _LOGGER.info(
-                        "MQTT reconnected successfully after %d failed attempts",
+                        "MQTT reconnected successfully after %d failed attempts (entry %s)",
                         self._consecutive_reconnect_failures,
+                        self._entry_id,
                     )
                 self._consecutive_reconnect_failures = 0
                 self._reconnect_backoff = 5
