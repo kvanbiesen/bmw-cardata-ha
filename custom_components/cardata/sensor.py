@@ -565,6 +565,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""
+        await super().async_will_remove_from_hass()
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
