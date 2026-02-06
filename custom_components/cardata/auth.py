@@ -227,7 +227,11 @@ async def _do_token_refresh(
             _LOGGER.debug("Synced existing container %s to manager", hv_container_id)
 
     await async_update_entry_data(hass, entry, token_updates)
-    await manager.async_update_credentials(
+    # Update credentials in memory only — callers handle reconnection.
+    # Using set_credentials avoids acquiring _credential_lock and _connect_lock,
+    # which would deadlock when called from _async_reconnect (holds _connect_lock)
+    # or cause AB-BA deadlocks with refresh_loop vs _async_reconnect.
+    manager.set_credentials(
         gcid=data.get("gcid"),
         id_token=new_id_token,
     )
@@ -290,6 +294,12 @@ async def handle_stream_error(
                 runtime.last_reauth_attempt = 0.0
                 runtime.reauth_pending = False
                 _LOGGER.info("BMW credentials refreshed successfully after auth failure")
+
+                # Reconnect MQTT with the new credentials
+                try:
+                    await runtime.stream.async_start()
+                except Exception as start_err:
+                    _LOGGER.warning("MQTT reconnect after credential refresh failed: %s", start_err)
                 return
 
             except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:

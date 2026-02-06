@@ -915,6 +915,22 @@ class CardataStreamManager:
             self._awaiting_new_credentials = False
         await self._notify_recovered()
 
+    def set_credentials(
+        self,
+        *,
+        gcid: str | None = None,
+        id_token: str | None = None,
+    ) -> None:
+        """Update credentials in memory without reconnecting or acquiring locks.
+
+        Use this when the caller will handle reconnection separately
+        (e.g. _async_reconnect already holds _connect_lock and restarts MQTT itself).
+        """
+        if gcid and gcid != self._gcid:
+            self._gcid = gcid
+        if id_token and id_token != self._password:
+            self._password = id_token
+
     async def async_update_credentials(
         self,
         *,
