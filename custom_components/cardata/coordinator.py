@@ -137,13 +137,6 @@ class CardataCoordinator:
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
 
-    @staticmethod
-    def _safe_vin_suffix(vin: str | None) -> str:
-        """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
-        if not vin:
-            return "<unknown>"
-        return vin[-6:] if len(vin) >= 6 else vin
-
     @property
     def signal_new_sensor(self) -> str:
         return self._signal_new_sensor
@@ -990,7 +983,12 @@ class CardataCoordinator:
 
             stale_vins: set[str] = set()
             for d in tracking_dicts:
-                stale_vins.update(k for k in d.keys() if k not in valid_vins)
+                for k in d.keys():
+                    # Keys may have a _bmw suffix for BMW-provided motion state;
+                    # strip it before comparing against valid VINs
+                    base_vin = k.removesuffix("_bmw")
+                    if base_vin not in valid_vins:
+                        stale_vins.add(k)
 
             # Also check motion detector for stale VINs
             stale_vins.update(vin for vin in self._motion_detector.get_tracked_vins() if vin not in valid_vins)

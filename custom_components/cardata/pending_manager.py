@@ -234,16 +234,26 @@ class UpdateBatcher:
         return len(evicted_items)
 
     def evict_vin(self) -> int:
-        """Evict all pending updates from one VIN. Returns count evicted."""
-        if not self._updates:
+        """Evict all pending data from one VIN across all dicts. Returns count evicted."""
+        # Find a VIN to evict from the union of all tracking dicts
+        all_vins = set(self._updates.keys()) | set(self._new_sensors.keys()) | set(self._new_binary.keys())
+        if not all_vins:
             return 0
 
-        # Evict VIN with fewest pending (least data loss)
-        min_vin = min(self._updates.keys(), key=lambda v: len(self._updates.get(v, set())))
-        pending_set = self._updates.pop(min_vin, set())
-        evicted_count = len(pending_set)
+        # Evict VIN with fewest total pending items (least data loss)
+        def _vin_count(v: str) -> int:
+            return (
+                len(self._updates.get(v, set()))
+                + len(self._new_sensors.get(v, set()))
+                + len(self._new_binary.get(v, set()))
+            )
+
+        min_vin = min(all_vins, key=_vin_count)
+        evicted_count = len(self._updates.pop(min_vin, set()))
+        evicted_count += len(self._new_sensors.pop(min_vin, set()))
+        evicted_count += len(self._new_binary.pop(min_vin, set()))
         if evicted_count > 0:
-            _LOGGER.debug("Evicted %d pending updates by removing VIN from tracking", evicted_count)
+            _LOGGER.debug("Evicted %d pending items by removing VIN from tracking", evicted_count)
         return evicted_count
 
     def snapshot_and_clear(self) -> PendingSnapshot:

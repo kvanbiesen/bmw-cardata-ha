@@ -137,7 +137,7 @@ async def async_setup_entry(
             # Schedule async image fetch
             hass.async_create_task(
                 _async_auto_fetch_image(hass, config_entry, vin),
-                name=f"cardata_auto_fetch_image_{vin[-4:]}",
+                name=f"cardata_auto_fetch_image_{redact_vin(vin)}",
             )
             return
 
@@ -202,8 +202,8 @@ class CardataImage(CardataEntity, ImageEntity):
             return None
 
     @property
-    def state(self) -> str:
-        """Return the state of the image entity."""
+    def available(self) -> bool:
+        """Return True if the vehicle image file exists on disk."""
         metadata = self._coordinator.device_metadata.get(self._vin, {})
         image_path_str = metadata.get("vehicle_image_path")
 
@@ -213,8 +213,8 @@ class CardataImage(CardataEntity, ImageEntity):
             try:
                 image_path = Path(image_path_str)
                 if image_path.exists() and image_path.stat().st_size > 0:
-                    return "available"
+                    return True
             except Exception:
                 pass
 
-        return "unavailable"
+        return False

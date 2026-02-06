@@ -201,10 +201,10 @@ def convert_value_for_unit(
     return value
 
 
-def _validate_restored_state(state_value: str | None, unit: str | None) -> str | None:
+def _validate_restored_state(state_value: str | None, unit: str | None) -> float | str | None:
     """Validate a restored state value is usable.
 
-    Returns the validated value or None if invalid.
+    Returns the validated value (float for numeric, str otherwise) or None if invalid.
     """
     if state_value is None:
         return None
@@ -221,6 +221,8 @@ def _validate_restored_state(state_value: str | None, unit: str | None) -> str |
             if not math.isfinite(numeric):
                 _LOGGER.debug("Rejecting non-finite restored value: %s", state_value)
                 return None
+            # Return as float so it compares correctly with live numeric values
+            return numeric
         except (TypeError, ValueError):
             # Non-numeric string with a unit - could be enum value like "OPEN"
             # Allow these through
@@ -563,6 +565,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""
+        await super().async_will_remove_from_hass()
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None

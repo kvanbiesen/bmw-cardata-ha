@@ -38,6 +38,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .utils import redact_vin
 
 if TYPE_CHECKING:
     from .coordinator import CardataCoordinator
@@ -62,7 +63,7 @@ async def async_setup_entry(
         # Check if this vehicle has HV battery (EV/PHEV)
         vehicle_data = coordinator.data.get(vin, {})
         if "vehicle.drivetrain.batteryManagement.header" in vehicle_data:
-            vehicle_name = coordinator.names.get(vin, vin[-6:])
+            vehicle_name = coordinator.names.get(vin, redact_vin(vin))
 
             entities.append(
                 ResetACLearningButton(
@@ -80,7 +81,7 @@ async def async_setup_entry(
                     entry_id=entry.entry_id,
                 )
             )
-            _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, vin[-6:])
+            _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, redact_vin(vin))
 
     if entities:
         async_add_entities(entities)
@@ -114,7 +115,7 @@ class ResetACLearningButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.info("Resetting AC learning for VIN %s", self._vin[-6:])
+        _LOGGER.info("Resetting AC learning for VIN %s", redact_vin(self._vin))
         self._coordinator._soc_predictor.reset_learned_efficiency(self._vin, "AC")
 
 
@@ -145,5 +146,5 @@ class ResetDCLearningButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.info("Resetting DC learning for VIN %s", self._vin[-6:])
+        _LOGGER.info("Resetting DC learning for VIN %s", redact_vin(self._vin))
         self._coordinator._soc_predictor.reset_learned_efficiency(self._vin, "DC")

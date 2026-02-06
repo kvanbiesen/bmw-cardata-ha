@@ -531,9 +531,14 @@ class CardataStreamManager:
         client.on_message = self._handle_message
         client.on_disconnect = self._handle_disconnect
         context = ssl.create_default_context()
-        if hasattr(ssl, "TLSVersion"):
-            # Set minimum TLS 1.2, allow TLS 1.3 if supported by server
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
+        if not hasattr(ssl, "TLSVersion") or not hasattr(ssl.TLSVersion, "TLSv1_3"):
+            ssl_lib = getattr(ssl, "OPENSSL_VERSION", "unknown SSL library")
+            raise ConnectionError(
+                f"BMW CarData MQTT requires TLS 1.3 but your SSL library "
+                f"({ssl_lib}) does not support it. Upgrade to OpenSSL 1.1.1+, "
+                f"LibreSSL 3.2.0+, or use a newer Home Assistant OS image."
+            )
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
         client.tls_set_context(context)
         client.tls_insecure_set(False)
         client.reconnect_delay_set(min_delay=5, max_delay=60)
@@ -553,7 +558,9 @@ class CardataStreamManager:
 
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
-                _LOGGER.debug("BMW MQTT connection timed out after %.0f seconds", self._connect_timeout)
+                _LOGGER.debug(
+                    "BMW MQTT connection timed out after %.0f seconds (entry %s)", self._connect_timeout, self._entry_id
+                )
                 self._connect_event = None
                 raise TimeoutError(f"MQTT connection timed out after {self._connect_timeout} seconds")
 
@@ -563,6 +570,7 @@ class CardataStreamManager:
 
             if rc is None or rc != 0:
                 error_reasons = {
+                    -1: "Connection lost before MQTT handshake",
                     1: "Incorrect protocol version",
                     2: "Invalid client identifier",
                     3: "Server unavailable",
@@ -572,7 +580,7 @@ class CardataStreamManager:
                 error_reason = (
                     error_reasons.get(rc, f"Unknown error (rc={rc})") if rc is not None else "No response received"
                 )
-                _LOGGER.warning("BMW MQTT connection failed: %s", error_reason)
+                _LOGGER.warning("BMW MQTT connection failed (entry %s): %s", self._entry_id, error_reason)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
 
             # Success - transfer ownership to self._client
@@ -694,6 +702,13 @@ class CardataStreamManager:
             5: "Not authorized",
         }.get(rc, "Unknown")
 
+        # If _connect_event is still pending, the TCP connection failed before
+        # the MQTT handshake completed (on_connect was never called).
+        # Signal it immediately so _start_client doesn't wait the full timeout.
+        if self._connect_event is not None and not self._connect_event.is_set():
+            self._connect_rc = rc if rc != 0 else -1
+            self._connect_event.set()
+
         # Only log if not an intentional disconnect
         if not self._intentional_disconnect:
             if rc == 0:
@@ -710,6 +725,7 @@ class CardataStreamManager:
         elif debug_enabled():
             _LOGGER.debug("BMW MQTT intentional disconnect rc=%s", rc)
 
+        previous_disconnect = self._last_disconnect
         self._last_disconnect = time.monotonic()
 
         # Update connection state
@@ -738,7 +754,7 @@ class CardataStreamManager:
 
         if rc in (4, 5):
             now = time.monotonic()
-            if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
+            if rc == 5 and previous_disconnect is not None and now - previous_disconnect < 10:
                 if debug_enabled():
                     _LOGGER.debug("Ignoring transient MQTT rc=5; scheduling retry instead")
                 self._schedule_retry(3)
@@ -808,11 +824,20 @@ class CardataStreamManager:
                 await self._async_start_locked()
             except Exception as err:
                 self._consecutive_reconnect_failures += 1
-                _LOGGER.warning(
-                    "BMW MQTT reconnect failed (attempt %d): %s",
-                    self._consecutive_reconnect_failures,
-                    err,
-                )
+                if self._consecutive_reconnect_failures <= 3:
+                    _LOGGER.debug(
+                        "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
+                        self._consecutive_reconnect_failures,
+                        self._entry_id,
+                        err,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
+                        self._consecutive_reconnect_failures,
+                        self._entry_id,
+                        err,
+                    )
                 self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
                 # Schedule another reconnect attempt (will use extended backoff if threshold reached)
                 self._run_coro_safe(self._async_reconnect())
@@ -820,8 +845,9 @@ class CardataStreamManager:
                 # Success - reset counters
                 if self._consecutive_reconnect_failures > 0:
                     _LOGGER.info(
-                        "MQTT reconnected successfully after %d failed attempts",
+                        "MQTT reconnected successfully after %d failed attempts (entry %s)",
                         self._consecutive_reconnect_failures,
+                        self._entry_id,
                     )
                 self._consecutive_reconnect_failures = 0
                 self._reconnect_backoff = 5

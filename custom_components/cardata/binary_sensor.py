@@ -46,7 +46,7 @@ from .const import DOMAIN, MIN_TELEMETRY_DESCRIPTORS
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
-from .utils import async_wait_for_bootstrap, redact_vin
+from .utils import async_wait_for_bootstrap
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,16 +86,6 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
-        # Filter out "ghost" cars with minimal data (e.g., family sharing with limited access)
-        telemetry_data = self._coordinator.data.get(self._vin, {})
-        if len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
-            _LOGGER.debug(
-                "Skipping VIN %s - insufficient telemetry data (%d descriptors, likely limited access)",
-                redact_vin(self._vin),
-                len(telemetry_data),
-            )
-            return
-
         await super().async_added_to_hass()
 
         # Track if we restored state (to ensure fresh data updates it)
@@ -150,6 +140,11 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
         restore from 'unknown' state after reload.
         """
         if vin != self.vin or descriptor != self.descriptor:
+            return
+
+        # Filter out "ghost" cars with minimal data (e.g., family sharing with limited access)
+        telemetry_data = self._coordinator.data.get(self._vin, {})
+        if len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
             return
 
         state = self._coordinator.get_state(vin, descriptor)

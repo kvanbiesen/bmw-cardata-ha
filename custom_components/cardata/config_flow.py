@@ -115,6 +115,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         self._code_verifier: str | None = None
         self._token_data: dict[str, Any] | None = None
         self._reauth_entry: config_entries.ConfigEntry | None = None
+        self._entries_to_remove: list[str] = []
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is None:
@@ -130,10 +131,14 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
                 errors={"base": "invalid_client_id"},
             )
 
-        for entry in list(self._async_current_entries()):
-            existing_client_id = entry.data.get("client_id") if hasattr(entry, "data") else None
-            if entry.unique_id == client_id or existing_client_id == client_id:
-                await self.hass.config_entries.async_remove(entry.entry_id)
+        # Remember entries to remove AFTER successful setup (not before)
+        # to prevent data loss if BMW API is down during re-setup
+        self._entries_to_remove = [
+            entry.entry_id
+            for entry in self._async_current_entries()
+            if entry.unique_id == client_id
+            or (entry.data.get("client_id") if hasattr(entry, "data") else None) == client_id
+        ]
 
         await self.async_set_unique_id(client_id)
         self._client_id = client_id
@@ -141,6 +146,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         try:
             await self._request_device_code()
         except Exception as err:
+            self._entries_to_remove = []
             return self.async_show_form(
                 step_id="user",
                 data_schema=vol.Schema({vol.Required("client_id"): str}),
@@ -281,12 +287,15 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             persistent_notification.async_dismiss(self.hass, notification_id)
             return self.async_abort(reason="reauth_successful")
 
+        # Remove old entries only after successful token acquisition
+        for entry_id in self._entries_to_remove:
+            await self.hass.config_entries.async_remove(entry_id)
+        self._entries_to_remove = []
+
         friendly_title = f"BMW CarData ({self._client_id[:8]})"
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
-        from custom_components.cardata.device_flow import CardataAuthError
-
         entry_id = entry_data.get("entry_id")
         if entry_id:
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
@@ -296,7 +305,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             return self.async_abort(reason="reauth_missing_client_id")
         try:
             await self._request_device_code()
-        except CardataAuthError as err:
+        except Exception as err:
             _LOGGER.error(
                 "Unable to request BMW device authorization code for entry %s: %s",
                 entry_id,
