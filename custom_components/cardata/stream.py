@@ -568,6 +568,7 @@ class CardataStreamManager:
 
             if rc is None or rc != 0:
                 error_reasons = {
+                    -1: "Connection lost before MQTT handshake",
                     1: "Incorrect protocol version",
                     2: "Invalid client identifier",
                     3: "Server unavailable",
@@ -699,6 +700,13 @@ class CardataStreamManager:
             5: "Not authorized",
         }.get(rc, "Unknown")
 
+        # If _connect_event is still pending, the TCP connection failed before
+        # the MQTT handshake completed (on_connect was never called).
+        # Signal it immediately so _start_client doesn't wait the full timeout.
+        if self._connect_event is not None and not self._connect_event.is_set():
+            self._connect_rc = rc if rc != 0 else -1
+            self._connect_event.set()
+
         # Only log if not an intentional disconnect
         if not self._intentional_disconnect:
             if rc == 0:
@@ -814,11 +822,18 @@ class CardataStreamManager:
                 await self._async_start_locked()
             except Exception as err:
                 self._consecutive_reconnect_failures += 1
-                _LOGGER.warning(
-                    "BMW MQTT reconnect failed (attempt %d): %s",
-                    self._consecutive_reconnect_failures,
-                    err,
-                )
+                if self._consecutive_reconnect_failures <= 3:
+                    _LOGGER.debug(
+                        "BMW MQTT reconnect failed (attempt %d): %s",
+                        self._consecutive_reconnect_failures,
+                        err,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "BMW MQTT reconnect failed (attempt %d): %s",
+                        self._consecutive_reconnect_failures,
+                        err,
+                    )
                 self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
                 # Schedule another reconnect attempt (will use extended backoff if threshold reached)
                 self._run_coro_safe(self._async_reconnect())
