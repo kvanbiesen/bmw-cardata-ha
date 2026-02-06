@@ -251,7 +251,7 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 BMW imposes a **50 calls/day** limit on the CarData API. This integration is designed to minimize API usage through event-driven polling:
 
-- **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc.
+- **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages.
 - **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state.
 - **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor.
 - **Fallback polling**: The integration polls every 12 hours as a fallback in case MQTT stream fails or after Home Assistant restarts.
