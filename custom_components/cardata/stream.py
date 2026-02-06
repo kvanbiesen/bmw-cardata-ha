@@ -531,9 +531,13 @@ class CardataStreamManager:
         client.on_message = self._handle_message
         client.on_disconnect = self._handle_disconnect
         context = ssl.create_default_context()
-        if hasattr(ssl, "TLSVersion"):
-            # Set minimum TLS 1.2, allow TLS 1.3 if supported by server
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
+        if not hasattr(ssl, "TLSVersion") or not hasattr(ssl.TLSVersion, "TLSv1_3"):
+            raise ConnectionError(
+                "BMW CarData MQTT requires TLS 1.3 but your system's OpenSSL "
+                "does not support it. Upgrade OpenSSL to 1.1.1+ or use a newer "
+                "Home Assistant OS image."
+            )
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
         client.tls_set_context(context)
         client.tls_insecure_set(False)
         client.reconnect_delay_set(min_delay=5, max_delay=60)

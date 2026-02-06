@@ -268,6 +268,7 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration is des
 - BMW CarData account with streaming access (CarData API + CarData Streaming subscribed in the portal).
 - Client ID created in the BMW portal (see "BMW Portal Setup").
 - Home Assistant 2025.3+.
+- OpenSSL 1.1.1+ with TLS 1.3 support (BMW's MQTT server requires TLS 1.3).
 - Familiarity with BMW's CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
 ## Known Limitations
