@@ -242,8 +242,10 @@ class UpdateBatcher:
 
         # Evict VIN with fewest total pending items (least data loss)
         def _vin_count(v: str) -> int:
-            return len(self._updates.get(v, set())) + len(self._new_sensors.get(v, set())) + len(
-                self._new_binary.get(v, set())
+            return (
+                len(self._updates.get(v, set()))
+                + len(self._new_sensors.get(v, set()))
+                + len(self._new_binary.get(v, set()))
             )
 
         min_vin = min(all_vins, key=_vin_count)
