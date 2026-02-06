@@ -401,9 +401,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         return
 
                     try:
+                        # Use runtime.session (not the closure variable) so that
+                        # session recreation via async_recreate_session is respected
+                        current_runtime = hass.data.get(DOMAIN, {}).get(entry_id)
+                        current_session = current_runtime.session if current_runtime else session
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
-                            refresh_tokens_for_entry(current_entry, session, manager, container_manager), timeout=60.0
+                            refresh_tokens_for_entry(current_entry, current_session, manager, container_manager),
+                            timeout=60.0,
                         )
                         # Success - reset failure counters
                         if consecutive_auth_failures > 0:
