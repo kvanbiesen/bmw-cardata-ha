@@ -137,13 +137,6 @@ class CardataCoordinator:
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
 
-    @staticmethod
-    def _safe_vin_suffix(vin: str | None) -> str:
-        """Return last 6 chars of VIN for logging, or '<unknown>' if invalid."""
-        if not vin:
-            return "<unknown>"
-        return vin[-6:] if len(vin) >= 6 else vin
-
     @property
     def signal_new_sensor(self) -> str:
         return self._signal_new_sensor

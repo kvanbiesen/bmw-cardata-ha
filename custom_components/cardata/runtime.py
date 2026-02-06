@@ -44,6 +44,7 @@ from .ratelimit import (
     UnauthorizedLoopProtection,
 )
 from .stream import CardataStreamManager
+from .utils import redact_vin
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -127,7 +128,7 @@ class CardataRuntimeData:
             self._trip_poll_vins.add(vin)
         if self._trip_poll_event is not None:
             self._trip_poll_event.set()
-        _LOGGER.debug("Trip ended for VIN %s, requesting immediate API poll", vin[-4:])
+        _LOGGER.debug("Trip ended for VIN %s, requesting immediate API poll", redact_vin(vin))
 
     def get_trip_poll_vins(self) -> set:
         """Get and clear the set of VINs needing post-trip polling."""

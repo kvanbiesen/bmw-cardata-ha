@@ -137,7 +137,7 @@ async def async_setup_entry(
             # Schedule async image fetch
             hass.async_create_task(
                 _async_auto_fetch_image(hass, config_entry, vin),
-                name=f"cardata_auto_fetch_image_{vin[-4:]}",
+                name=f"cardata_auto_fetch_image_{redact_vin(vin)}",
             )
             return
 
