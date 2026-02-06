@@ -296,8 +296,6 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
-        from custom_components.cardata.device_flow import CardataAuthError
-
         entry_id = entry_data.get("entry_id")
         if entry_id:
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
@@ -307,7 +305,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             return self.async_abort(reason="reauth_missing_client_id")
         try:
             await self._request_device_code()
-        except CardataAuthError as err:
+        except Exception as err:
             _LOGGER.error(
                 "Unable to request BMW device authorization code for entry %s: %s",
                 entry_id,
