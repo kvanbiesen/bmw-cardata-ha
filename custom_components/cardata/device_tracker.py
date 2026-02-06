@@ -324,9 +324,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         except (ValueError, TypeError):
             return None
 
-    def _check_coordinate_pairing(
-        self, lat_time: float, lon_time: float
-    ) -> tuple[bool, str]:
+    def _check_coordinate_pairing(self, lat_time: float, lon_time: float) -> tuple[bool, str]:
         """Check if lat/lon form a valid pair using BMW timestamps or arrival time.
 
         Returns (accepted, reason_string).
