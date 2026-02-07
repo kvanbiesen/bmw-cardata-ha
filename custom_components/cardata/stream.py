@@ -878,6 +878,10 @@ class CardataStreamManager:
             self._connect_lock.release()
 
     async def _handle_unauthorized(self) -> None:
+        blocked = False
+        block_reason = None
+        should_notify = False
+
         async with self._unauthorized_lock:
             if self._unauthorized_retry_in_progress:
                 return
@@ -895,23 +899,25 @@ class CardataStreamManager:
                 if unauthorized_protection:
                     can_retry, block_reason = unauthorized_protection.can_retry()
                     if not can_retry:
-                        _LOGGER.error("BMW MQTT unauthorized retry blocked: %s", block_reason)
-                        await self.async_stop()
-                        if self._status_callback:
-                            await self._status_callback("unauthorized_blocked", block_reason)
-                        return
-                    # don't attempt to record here, do it after reconnect attempt
-                    # unauthorized_protection.record_attempt()
+                        blocked = True
 
-                # Update flags while holding the lock to prevent races
-                self._awaiting_new_credentials = True
-                should_notify = not self._reauth_notified
-                if should_notify:
-                    self._reauth_notified = True
+                if not blocked:
+                    # Update flags while holding the lock to prevent races
+                    self._awaiting_new_credentials = True
+                    should_notify = not self._reauth_notified
+                    if should_notify:
+                        self._reauth_notified = True
             finally:
                 self._unauthorized_retry_in_progress = False
 
-        # Perform callbacks outside the lock to avoid deadlocks
+        # Perform all callbacks outside the lock to avoid long lock holds
+        if blocked:
+            _LOGGER.error("BMW MQTT unauthorized retry blocked: %s", block_reason)
+            await self.async_stop()
+            if self._status_callback:
+                await self._status_callback("unauthorized_blocked", block_reason)
+            return
+
         if should_notify:
             await self._notify_error("unauthorized")
         else:
