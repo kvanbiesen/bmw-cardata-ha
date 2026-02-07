@@ -958,6 +958,7 @@ class SOCPredictor:
         self._last_bmw_soc_update.pop(vin, None)
         self._entity_signaled.discard(vin)
         self._pending_sessions.pop(vin, None)
+        self._is_phev.pop(vin, None)
         # Note: We don't remove learned efficiency - that's persistent data
 
     def get_tracked_vins(self) -> set[str]:
