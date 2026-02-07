@@ -107,9 +107,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 "Bootstrap: Container not ready for entry %s. Continuing without container.", entry.entry_id
             )
 
-        vins, fetch_error = await async_fetch_primary_vins(
-            runtime.session, headers, entry.entry_id, rate_limiter
-        )
+        vins, fetch_error = await async_fetch_primary_vins(runtime.session, headers, entry.entry_id, rate_limiter)
 
         if vins is None:
             # API call failed - don't mark bootstrap complete so it retries
