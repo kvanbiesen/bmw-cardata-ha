@@ -209,8 +209,12 @@ async def _do_token_refresh(
     if not new_id_token:
         raise CardataAuthError("Token refresh response did not include id_token")
 
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        raise CardataAuthError("Token refresh response did not include access_token")
+
     token_updates = {
-        "access_token": token_data.get("access_token"),
+        "access_token": new_access_token,
         "refresh_token": token_data.get("refresh_token", refresh_token),
         "id_token": new_id_token,
         "expires_in": token_data.get("expires_in"),
