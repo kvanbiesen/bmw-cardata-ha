@@ -48,6 +48,7 @@ from .const import (
     API_BASE_URL,
     API_VERSION,
     DOMAIN,
+    HTTP_TIMEOUT,
     HV_BATTERY_CONTAINER_NAME,
     HV_BATTERY_CONTAINER_PURPOSE,
 )
@@ -219,7 +220,8 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
             return
 
     try:
-        async with runtime.session.get(url, headers=headers) as response:
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+        async with runtime.session.get(url, headers=headers, timeout=timeout) as response:
             text = await response.text()
             log_text = redact_vin_in_text(text)
             if response.status != 200:
@@ -304,7 +306,8 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
             return
 
     try:
-        async with runtime.session.get(url, headers=headers) as response:
+        timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
+        async with runtime.session.get(url, headers=headers, timeout=timeout) as response:
             text = await response.text()
             log_text = redact_vin_in_text(text)
             if response.status != 200:
@@ -442,12 +445,13 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
     }
 
     session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession()
+    request_timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
 
     # Helper: fetch list of containers
     async def _list_containers() -> list[dict[str, Any]]:
         url = f"{API_BASE_URL}/customers/containers"
         try:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, timeout=request_timeout) as resp:
                 text = await resp.text()
                 if resp.status != 200:
                     _LOGGER.warning(
@@ -477,7 +481,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
     async def _delete_container(cid: str) -> tuple[bool, int, str]:
         url = f"{API_BASE_URL}/customers/containers/{cid}"
         try:
-            async with session.delete(url, headers=headers) as resp:
+            async with session.delete(url, headers=headers, timeout=request_timeout) as resp:
                 text = await resp.text()
                 if resp.status in (200, 204):
                     _LOGGER.info("clean_hv_containers: deleted container %s for entry %s", cid, entry.entry_id)
