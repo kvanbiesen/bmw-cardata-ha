@@ -441,6 +441,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 await manager.async_start()
                             except Exception as err:
                                 _LOGGER.warning("Proactive MQTT reconnect after token refresh failed: %s", err)
+                                # async_stop succeeded but async_start failed — MQTT is dead.
+                                # Schedule a recovery attempt so the stream doesn't stay down
+                                # until the next token refresh cycle (~45 min).
+                                try:
+                                    await asyncio.sleep(5)
+                                    await manager.async_start()
+                                except Exception as retry_err:
+                                    _LOGGER.error("MQTT recovery retry also failed: %s", retry_err)
 
                     except CardataAuthError as err:
                         # Check if this is just a concurrent refresh attempt (not a real failure)
