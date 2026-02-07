@@ -46,7 +46,6 @@ from .const import (
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
-from .quota import CardataQuotaError, QuotaManager
 from .runtime import async_update_entry_data
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text
 
@@ -107,7 +106,6 @@ async def async_fetch_and_store_basic_data(
     entry: ConfigEntry,
     headers: dict[str, str],
     vins: list[str],
-    quota: QuotaManager | None,
     session: aiohttp.ClientSession,
 ) -> None:
     """Fetch basic data for each VIN and store metadata."""
@@ -127,17 +125,6 @@ async def async_fetch_and_store_basic_data(
             )
             continue
         url = f"{API_BASE_URL}{BASIC_DATA_ENDPOINT.format(vin=vin)}"
-
-        if quota:
-            try:
-                await quota.async_claim()
-            except CardataQuotaError as err:
-                _LOGGER.warning(
-                    "Basic data request skipped for %s: %s",
-                    redacted_vin,
-                    err,
-                )
-                break
 
         response, error = await async_request_with_retry(
             session,
@@ -204,7 +191,6 @@ async def async_fetch_and_store_vehicle_images(
     entry: ConfigEntry,
     headers: dict[str, str],
     vins: list[str],
-    quota: QuotaManager | None,
     session: aiohttp.ClientSession,
 ) -> None:
     """Fetch vehicle images for each VIN and store as PNG files.
@@ -217,7 +203,6 @@ async def async_fetch_and_store_vehicle_images(
         entry: Config entry
         headers: API request headers
         vins: List of VINs to fetch images for
-        quota: Quota manager for API call tracking
         session: aiohttp session for requests
     """
     runtime = hass.data[DOMAIN][entry.entry_id]
@@ -262,17 +247,6 @@ async def async_fetch_and_store_vehicle_images(
 
             # File doesn't exist - fetch from API
             url = f"{API_BASE_URL}{IMAGE_ENDPOINT.format(vin=vin)}"
-
-            if quota:
-                try:
-                    await quota.async_claim()
-                except CardataQuotaError as err:
-                    _LOGGER.debug(
-                        "Vehicle image request skipped for %s: %s (will retry on next bootstrap)",
-                        redacted_vin,
-                        err,
-                    )
-                    break
 
             timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
             try:

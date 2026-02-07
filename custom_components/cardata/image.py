@@ -61,14 +61,13 @@ async def _async_auto_fetch_image(
     redacted = redact_vin(vin)
 
     try:
-        # Get runtime data for session and quota
+        # Get runtime data for session
         runtime_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
         if not runtime_data:
             _LOGGER.debug("No runtime data for auto-fetch image of %s", redacted)
             return
 
         session = runtime_data.session
-        quota = runtime_data.quota_manager
         access_token = entry.data.get("access_token")
 
         if not access_token:
@@ -82,7 +81,7 @@ async def _async_auto_fetch_image(
         }
 
         _LOGGER.debug("Auto-fetching vehicle image for %s", redacted)
-        await async_fetch_and_store_vehicle_images(hass, entry, headers, [vin], quota, session)
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, [vin], session)
 
         # Check if image was actually saved by verifying vehicle_image_path in metadata
         coordinator = runtime_data.coordinator

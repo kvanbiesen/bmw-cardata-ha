@@ -209,16 +209,6 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
     }
     url = f"{API_BASE_URL}/customers/vehicles/mappings"
 
-    quota = runtime.quota_manager
-    if quota:
-        from .quota import CardataQuotaError
-
-        try:
-            await quota.async_claim()
-        except CardataQuotaError as err:
-            _LOGGER.warning("Cardata fetch_vehicle_mappings blocked: %s", err)
-            return
-
     try:
         timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
         async with runtime.session.get(url, headers=headers, timeout=timeout) as response:
@@ -294,16 +284,6 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
         "Accept": "application/json",
     }
     url = f"{API_BASE_URL}{BASIC_DATA_ENDPOINT.format(vin=vin)}"
-
-    quota = runtime.quota_manager
-    if quota:
-        from .quota import CardataQuotaError
-
-        try:
-            await quota.async_claim()
-        except CardataQuotaError as err:
-            _LOGGER.warning("Cardata fetch_basic_data blocked for %s: %s", redacted_vin, err)
-            return
 
     try:
         timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
@@ -625,7 +605,6 @@ async def async_fetch_vehicle_images_service(call) -> None:
 
         coordinator = runtime_data.coordinator
         session = runtime_data.session
-        quota = runtime_data.quota_manager
         vins = list(coordinator.data.keys())
         access_token = entry.data.get("access_token")
 
@@ -641,4 +620,4 @@ async def async_fetch_vehicle_images_service(call) -> None:
         from .metadata import async_fetch_and_store_vehicle_images
 
         _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
-        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, quota, session)
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, session)
