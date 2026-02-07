@@ -636,6 +636,7 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
+        await super().async_will_remove_from_hass()
 
     def _load_current_value(self) -> None:
         """Load current metadata status from coordinator."""
