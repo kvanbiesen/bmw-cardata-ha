@@ -38,7 +38,6 @@ from homeassistant.core import HomeAssistant
 from .api_parsing import extract_primary_vins, extract_telematic_payload, try_parse_json
 from .const import ALLOWED_VINS_KEY, API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
-from .quota import CardataQuotaError, QuotaManager
 from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import get_all_registered_vins, is_valid_vin, redact_vin, redact_vin_in_text
 
@@ -62,7 +61,6 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.debug("Starting bootstrap sequence for entry %s", entry.entry_id)
 
     try:
-        quota = runtime.quota_manager
         rate_limiter = runtime.rate_limit_tracker
 
         # Proactively check and refresh token only if expired or about to expire
@@ -110,7 +108,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
 
         vins, fetch_error = await async_fetch_primary_vins(
-            runtime.session, headers, entry.entry_id, quota, rate_limiter
+            runtime.session, headers, entry.entry_id, rate_limiter
         )
 
         if vins is None:
@@ -201,10 +199,10 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         # IMPORTANT: Fetch metadata FIRST
         # This populates coordinator.device_metadata so entities have complete device_info
-        await async_fetch_and_store_basic_data(hass, entry, headers, vins, quota, runtime.session)
+        await async_fetch_and_store_basic_data(hass, entry, headers, vins, runtime.session)
 
         _LOGGER.debug("Fetching vehicle images for entry %s", entry.entry_id)
-        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, quota, runtime.session)
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, runtime.session)
 
         # CRITICAL: Apply metadata to populate coordinator.names!
         # async_fetch_and_store_basic_data() populates device_metadata but NOT coordinator.names
@@ -222,7 +220,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         container_id = entry.data.get("hv_container_id")
         if container_id:
             created_entities = await async_seed_telematic_data(
-                runtime, entry.entry_id, headers, container_id, vins, quota, rate_limiter
+                runtime, entry.entry_id, headers, container_id, vins, rate_limiter
             )
         else:
             _LOGGER.debug(
@@ -262,7 +260,6 @@ async def async_fetch_primary_vins(
     session: aiohttp.ClientSession,
     headers: dict[str, str],
     entry_id: str,
-    quota: QuotaManager | None,
     rate_limiter: Any | None = None,
 ) -> tuple[list[str] | None, str | None]:
     """Fetch list of primary vehicle VINs from vehicle mappings.
@@ -273,18 +270,6 @@ async def async_fetch_primary_vins(
         - (None, reason) on failure
     """
     url = f"{API_BASE_URL}/customers/vehicles/mappings"
-
-    if quota:
-        try:
-            await quota.async_claim()
-        except CardataQuotaError as err:
-            reason = f"quota exceeded: {err}"
-            _LOGGER.warning(
-                "Bootstrap mapping request skipped for entry %s: %s",
-                entry_id,
-                err,
-            )
-            return None, reason
 
     response, error = await async_request_with_retry(
         session,
@@ -377,7 +362,6 @@ async def async_seed_telematic_data(
     headers: dict[str, str],
     container_id: str,
     vins: list[str],
-    quota: QuotaManager | None,
     rate_limiter: Any | None = None,
 ) -> bool:
     """Fetch initial telematic data for each VIN to seed descriptors."""
@@ -397,17 +381,6 @@ async def async_seed_telematic_data(
             continue
         if coordinator.data.get(vin):
             continue
-
-        if quota:
-            try:
-                await quota.async_claim()
-            except CardataQuotaError as err:
-                _LOGGER.warning(
-                    "Bootstrap telematic request skipped for %s: %s",
-                    redacted_vin,
-                    err,
-                )
-                break
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
 

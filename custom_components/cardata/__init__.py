@@ -63,7 +63,6 @@ from .coordinator import CardataCoordinator
 from .debug import set_debug_enabled
 from .device_flow import CardataAuthError
 from .metadata import async_restore_vehicle_images, async_restore_vehicle_metadata
-from .quota import QuotaManager
 from .runtime import CardataRuntimeData, cleanup_entry_lock
 from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
@@ -285,9 +284,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             redacted_names,
         )
 
-        # Set up quota manager
-        quota_manager = await QuotaManager.async_create(hass, entry.entry_id)
-
         # Set up container manager
         container_manager: CardataContainerManager | None = CardataContainerManager(
             session=session,
@@ -490,7 +486,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinator=coordinator,
             container_manager=container_manager,
             bootstrap_task=None,
-            quota_manager=quota_manager,
             telematic_task=None,
             reauth_in_progress=False,
             reauth_flow_id=None,
@@ -705,13 +700,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.warning("Telematic task did not cancel within timeout (5s). Proceeding with unload anyway.")
         except Exception as err:
             _LOGGER.error("Error stopping telematic task: %s", err)
-
-    # Close resources with error protection to ensure all cleanup happens
-    if data.quota_manager:
-        try:
-            await data.quota_manager.async_close()
-        except Exception as err:
-            _LOGGER.error("Error closing quota manager: %s", err)
 
     # Stop MQTT stream with timeout protection
     try:

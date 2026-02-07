@@ -73,7 +73,6 @@ from .const import (
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
-from .quota import QuotaManager
 from .runtime import CardataRuntimeData
 from .utils import redact_vin
 
@@ -452,7 +451,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
 
 
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
-    """Diagnostic sensor for connection, quota, and polling info."""
+    """Diagnostic sensor for connection and polling info."""
 
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -464,13 +463,11 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         stream_manager,
         entry_id: str,
         sensor_type: str,
-        quota_manager: QuotaManager | None,
     ) -> None:
         self._coordinator = coordinator
         self._stream = stream_manager
         self._entry_id = entry_id
         self._sensor_type = sensor_type
-        self._quota = quota_manager
         self._unsubscribe = None
 
         # Configure based on sensor type
@@ -507,24 +504,13 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
             attrs = dict(self._stream.debug_info)
             if self._coordinator.last_disconnect_reason:
                 attrs["last_disconnect_reason"] = self._coordinator.last_disconnect_reason
-            if self._quota:
-                attrs["api_quota_used"] = self._quota.used
-                attrs["api_quota_remaining"] = self._quota.remaining
-                if next_reset := self._quota.next_reset_iso:
-                    attrs["api_quota_next_reset"] = next_reset
             # Expose evicted descriptors count for diagnostics visibility
             if hasattr(self._coordinator, "_descriptors_evicted_count"):
                 attrs["evicted_descriptors_count"] = self._coordinator._descriptors_evicted_count
             return attrs
 
         if self._sensor_type == "last_telematic_api":
-            telematic_attrs: dict[str, Any] = {}
-            if self._quota:
-                telematic_attrs["api_quota_used"] = self._quota.used
-                telematic_attrs["api_quota_remaining"] = self._quota.remaining
-                if next_reset := self._quota.next_reset_iso:
-                    telematic_attrs["api_quota_next_reset"] = next_reset
-            return telematic_attrs
+            return {}
 
         return {}
 
@@ -858,7 +844,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 stream_manager,
                 entry.entry_id,
                 sensor_type,
-                runtime.quota_manager,
             )
         )
 

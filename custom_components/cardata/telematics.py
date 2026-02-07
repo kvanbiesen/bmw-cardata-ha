@@ -42,14 +42,10 @@ from .const import (
     API_BASE_URL,
     API_VERSION,
     DOMAIN,
-    REQUEST_LIMIT,
-    TELEMATIC_MIN_INTERVAL,
     TELEMATIC_POLL_INTERVAL,
-    TELEMATIC_RESERVED_CALLS,
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
-from .quota import CardataQuotaError
 from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text, redact_vin_payload
 
@@ -61,6 +57,12 @@ MAX_AUTH_FAILURES = 3
 REAUTH_CHECK_INTERVAL = 60.0  # seconds
 # Outer timeout for entire telematic fetch operation (allows for retries across VINs)
 TELEMATIC_FETCH_TIMEOUT = 300.0  # 5 minutes
+
+# If MQTT delivered data for a VIN within this window, skip the API poll
+# for that specific VIN.  The stream is working and will deliver post-trip
+# state on its own.  Each VIN is checked independently so a stale VIN in a
+# multi-car account still gets polled while fresh VINs are skipped.
+MQTT_FRESH_THRESHOLD = 300.0  # 5 minutes
 
 
 @dataclass
@@ -163,12 +165,12 @@ async def async_perform_telematic_fetch(
         "Accept": "application/json",
     }
     params = {"containerId": container_id}
-    quota = runtime.quota_manager
     rate_limiter = runtime.rate_limit_tracker
 
     any_success = False
     any_attempt = False
     auth_failure = False
+    all_skipped = True  # Track if we skipped all VINs due to fresh MQTT
 
     for vin in vins:
         redacted_vin = redact_vin(vin)
@@ -179,17 +181,20 @@ async def async_perform_telematic_fetch(
                 redacted_vin,
             )
             continue
-        if quota:
-            try:
-                await quota.async_claim()
-            except CardataQuotaError as err:
-                _LOGGER.warning(
-                    "Cardata fetch_telematic_data blocked for %s: %s",
-                    redacted_vin,
-                    err,
-                )
-                break  # Quota exhausted, stop trying
 
+        # Skip VINs with fresh MQTT data — stream is delivering updates.
+        # Only applies to scheduled polls (no vin_override), not service calls.
+        if not vin_override:
+            age = runtime.coordinator.seconds_since_last_mqtt(vin)
+            if age is not None and age < MQTT_FRESH_THRESHOLD:
+                _LOGGER.debug(
+                    "Skipping scheduled poll for VIN %s: MQTT fresh (%.0fs)",
+                    redacted_vin,
+                    age,
+                )
+                continue
+
+        all_skipped = False
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
         any_attempt = True
 
@@ -258,6 +263,11 @@ async def async_perform_telematic_fetch(
             await runtime.coordinator.async_handle_message({"vin": vin, "data": telematic_payload})
             any_success = True
 
+    # All VINs had fresh MQTT data — nothing to poll, not a failure
+    if all_skipped:
+        _LOGGER.debug("All VINs have fresh MQTT data, skipping scheduled poll")
+        return TelematicFetchResult(True)
+
     # Auth failure is fatal - signal reauth needed
     if auth_failure:
         _LOGGER.error("Cardata telematic fetch failed due to auth error - reauth may be required")
@@ -279,36 +289,6 @@ async def async_perform_telematic_fetch(
     return TelematicFetchResult(False)
 
 
-def _calculate_dynamic_interval(num_vins: int) -> int:
-    """Calculate poll interval based on number of VINs to stay within API quota.
-
-    Formula: interval = 24h / (available_polls / num_vins)
-    Where available_polls = REQUEST_LIMIT - TELEMATIC_RESERVED_CALLS
-
-    Examples:
-        1 car: 86400 / (30/1) = 2880 sec = 48 min
-        2 cars: 86400 / (30/2) = 5760 sec = 96 min
-        3 cars: 86400 / (30/3) = 8640 sec = 144 min
-    """
-    if num_vins <= 0:
-        return TELEMATIC_POLL_INTERVAL  # Fallback to default
-
-    available_polls = REQUEST_LIMIT - TELEMATIC_RESERVED_CALLS
-    if available_polls <= 0:
-        return TELEMATIC_POLL_INTERVAL
-
-    # Polls per day for this entry = available_polls / num_vins
-    polls_per_day = available_polls / num_vins
-    if polls_per_day <= 0:
-        return TELEMATIC_POLL_INTERVAL
-
-    # Interval in seconds = seconds_per_day / polls_per_day
-    interval = int(86400 / polls_per_day)
-
-    # Enforce minimum interval to prevent excessive polling
-    return max(interval, TELEMATIC_MIN_INTERVAL)
-
-
 async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     """Poll telematic data periodically with backoff on failures."""
 
@@ -317,15 +297,12 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     if runtime is None:
         return
 
-    # Start with default interval, will be recalculated once we know VIN count
     base_interval = TELEMATIC_POLL_INTERVAL
     max_backoff = max(base_interval * 6, base_interval)
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
     # Track last poll locally to prevent spin if config entry update fails
     last_poll_local: float = 0.0
-    # Track last known VIN count for dynamic interval calculation
-    last_vin_count = 0
 
     _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
@@ -345,25 +322,6 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     entry_id,
                 )
                 return
-
-            # Calculate dynamic interval based on number of VINs
-            # This ensures we stay within API quota regardless of car count
-            current_vin_count = len(runtime.coordinator.data) if runtime.coordinator else 0
-            if current_vin_count == 0:
-                # Fallback: check metadata for VINs
-                metadata = entry.data.get(VEHICLE_METADATA, {})
-                if isinstance(metadata, dict):
-                    current_vin_count = len(metadata)
-
-            if current_vin_count > 0 and current_vin_count != last_vin_count:
-                last_vin_count = current_vin_count
-                base_interval = _calculate_dynamic_interval(current_vin_count)
-                max_backoff = max(base_interval * 6, base_interval)
-                _LOGGER.info(
-                    "Telematic poll interval adjusted to %.1f minutes for %d vehicle(s)",
-                    base_interval / 60,
-                    current_vin_count,
-                )
 
             # Check if reauth is in progress or too many auth failures
             # Skip polling until reauth completes to avoid wasting quota
@@ -437,12 +395,29 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     if event_task in done:
                         trip_vins = runtime.get_trip_poll_vins()
                         if trip_vins:
+                            # Filter out VINs with fresh MQTT data — the stream
+                            # is already delivering updates for those.  Each VIN
+                            # is checked independently: in a multi-car account,
+                            # one car may have a healthy stream while another is stale.
+                            stale_vins = []
+                            for vin in trip_vins:
+                                age = runtime.coordinator.seconds_since_last_mqtt(vin)
+                                if age is not None and age < MQTT_FRESH_THRESHOLD:
+                                    _LOGGER.debug(
+                                        "Skipping event poll for VIN: MQTT data is fresh (%.0fs old)",
+                                        age,
+                                    )
+                                else:
+                                    stale_vins.append(vin)
+                            if not stale_vins:
+                                continue
+
                             _LOGGER.info(
                                 "Event triggered for %d VIN(s), triggering immediate API poll",
-                                len(trip_vins),
+                                len(stale_vins),
                             )
-                            # Poll only the VINs that just finished trips
-                            for vin in trip_vins:
+                            # Poll only the stale VINs that just finished trips
+                            for vin in stale_vins:
                                 # Re-fetch entry before each poll
                                 entry = hass.config_entries.async_get_entry(entry_id)
                                 if entry is None:

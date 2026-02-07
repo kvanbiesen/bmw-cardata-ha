@@ -249,19 +249,14 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 ## API Quota and MQTT Streaming
 
-BMW imposes a **50 calls/day** limit on the CarData API. This integration is designed to minimize API usage through event-driven polling:
+BMW imposes a **50 calls/day** limit on the CarData API. This integration does not enforce the limit client-side — BMW's own 429 response is respected via backoff. API usage is minimized through MQTT freshness gating:
 
 - **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages. Token refresh during MQTT reconnection is lock-free to avoid blocking the connection.
-- **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state.
-- **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor.
-- **Fallback polling**: The integration polls every 12 hours as a fallback in case MQTT stream fails or after Home Assistant restarts.
-- **Multi-VIN setups**: All vehicles share the same 50 call/day quota.
-
-### Quota Warnings
-
-- At 70% usage (28 calls): Warning logged
-- At 90% usage (36 calls): Critical warning logged
-- At 100% usage (40 calls): API calls blocked until quota resets at midnight UTC
+- **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state — but only if the MQTT stream hasn't delivered data for that VIN in the last 5 minutes. If the stream is healthy, it already provides the post-trip state.
+- **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor — same MQTT freshness check applies.
+- **Fallback polling**: The integration polls every 12 hours as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
+- **Multi-VIN setups**: All vehicles share the same 50 call/day limit.
+- **Rate limiting**: If BMW returns a 429 (rate limited) response, the integration backs off automatically with exponential delay.
 
 ## Requirements
 

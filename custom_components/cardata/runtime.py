@@ -37,7 +37,6 @@ import aiohttp
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .pending_manager import PendingManager
-from .quota import QuotaManager
 from .ratelimit import (
     ContainerRateLimiter,
     RateLimitTracker,
@@ -64,7 +63,6 @@ class CardataRuntimeData:
     coordinator: CardataCoordinator
     container_manager: CardataContainerManager | None
     bootstrap_task: asyncio.Task | None = None
-    quota_manager: QuotaManager | None = None
     telematic_task: asyncio.Task | None = None
     reauth_in_progress: bool = False
     reauth_flow_id: str | None = None

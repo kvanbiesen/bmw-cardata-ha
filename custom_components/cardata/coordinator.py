@@ -82,6 +82,8 @@ class CardataCoordinator:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # Cache last sent derived isMoving state to avoid duplicate updates
     _last_derived_is_moving: dict[str, bool | None] = field(default_factory=dict, init=False)
+    # Per-VIN timestamp of last MQTT message (unix time) for freshness gating
+    _last_vin_message_at: dict[str, float] = field(default_factory=dict, init=False)
 
     # Debouncing and pending update management
     _update_debounce_handle: asyncio.TimerHandle | None = field(default=None, init=False)
@@ -179,6 +181,13 @@ class CardataCoordinator:
             False if stationary for 2+ minutes or no data (default: parked)
         """
         return self._motion_detector.is_moving(vin)
+
+    def seconds_since_last_mqtt(self, vin: str) -> float | None:
+        """Seconds since last MQTT message for this VIN, or None if never received."""
+        last = self._last_vin_message_at.get(vin)
+        if last is None:
+            return None
+        return time.time() - last
 
     def get_derived_fuel_range(self, vin: str) -> float | None:
         """Get derived fuel/petrol range for hybrid vehicles (total - electric).
@@ -409,6 +418,7 @@ class CardataCoordinator:
         schedule_debounce = False
 
         self.last_message_at = datetime.now(UTC)
+        self._last_vin_message_at[vin] = time.time()
 
         # If we're receiving messages, we must be connected
         # Update status if it's not already "connected" to ensure diagnostic sensor shows correct state
@@ -605,13 +615,19 @@ class CardataCoordinator:
         if has_hv_battery:
             self._soc_predictor.set_vehicle_is_phev(vin, has_fuel_system)
 
-        # Track BMW-provided vehicle.isMoving state for derived sensor
-        # NOTE: We do NOT trigger API polls on isMoving transitions - that would
-        # spam the API in stop-and-go traffic. API polls only trigger on charging end.
+        # Detect BMW-provided vehicle.isMoving transitions (True -> False = trip ended)
+        # This triggers immediate API poll to capture post-trip battery state
         if "vehicle.isMoving" in data:
             is_moving_payload = data["vehicle.isMoving"]
             if isinstance(is_moving_payload, dict):
                 new_is_moving = normalize_boolean_value("vehicle.isMoving", is_moving_payload.get("value"))
+                # Check previous state (before this update)
+                last_bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
+                if last_bmw_moving is True and new_is_moving is False:
+                    # Trip ended - request immediate API poll
+                    runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
+                    if runtime is not None:
+                        runtime.request_trip_poll(vin)
                 # Update tracking for BMW-provided state
                 if new_is_moving is not None:
                     self._last_derived_is_moving[f"{vin}_bmw"] = new_is_moving
@@ -926,8 +942,13 @@ class CardataCoordinator:
                         )
                         self._last_derived_is_moving[vin] = current_derived
                         self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
-                        # NOTE: We do NOT trigger API polls on isMoving transitions - that would
-                        # spam the API in stop-and-go traffic. API polls only trigger on charging end.
+
+                        # Trip ended (moving -> stopped): request immediate API poll
+                        # to capture post-trip battery state
+                        if last_sent is True and current_derived is False:
+                            runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
+                            if runtime is not None:
+                                runtime.request_trip_poll(vin)
 
         # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1
@@ -968,6 +989,7 @@ class CardataCoordinator:
             # Collect all VINs from tracking dicts
             tracking_dicts: list[dict[str, Any]] = [
                 self._last_derived_is_moving,
+                self._last_vin_message_at,
             ]
 
             stale_vins: set[str] = set()
