@@ -733,8 +733,9 @@ class CardataStreamManager:
         previous_disconnect = self._last_disconnect
         self._last_disconnect = time.monotonic()
 
-        # Update connection state
-        if self._connection_state != ConnectionState.DISCONNECTING:
+        # Update connection state — skip if already FAILED (set by _handle_connect
+        # for rc=4/5) to prevent double-counting in circuit breaker
+        if self._connection_state not in (ConnectionState.DISCONNECTING, ConnectionState.FAILED):
             self._connection_state = ConnectionState.DISCONNECTED
             if rc != 0:
                 self._record_failure()
