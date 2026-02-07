@@ -320,7 +320,7 @@ class MotionDetector:
         else:
             self._charging_vins.discard(vin)
 
-    def is_moving(self, vin: str) -> bool:
+    def is_moving(self, vin: str) -> bool | None:
         """Determine if vehicle is currently moving.
 
         Philosophy: Default to NOT MOVING. Only return True with active proof.
@@ -330,11 +330,13 @@ class MotionDetector:
         1. Charging → False (can't move)
         2. GPS (primary) → 2 min window, IF confidence ≥ threshold (when enabled)
         3. When GPS stale → Maintain last GPS state + use mileage to confirm
-        4. Default → False (assume parked)
+        4. No GPS data → None (let caller fall back to BMW-provided isMoving)
+        5. Default → False (assume parked)
 
         Returns:
             True - Active proof of movement within last 2 minutes
-            False - No recent movement or no data (default: parked)
+            False - No recent movement (default: parked)
+            None - No GPS data available for this VIN
         """
         now = datetime.now(UTC)
 
@@ -450,7 +452,12 @@ class MotionDetector:
                 # If no baseline, no mileage increase, or mileage change before baseline, default to not moving
                 # (Don't use old mileage data from before GPS went stale)
 
-        # 4. DEFAULT: Not moving (safest assumption after restart/no data/everything stale)
+        # 4. No GPS data at all for this VIN — return None so the caller
+        # can fall back to BMW-provided vehicle.isMoving from MQTT.
+        if last_gps_update is None:
+            return None
+
+        # 5. DEFAULT: Not moving (safest assumption after GPS went stale with no mileage confirmation)
         return False
 
     def has_signaled_entity(self, vin: str) -> bool:
