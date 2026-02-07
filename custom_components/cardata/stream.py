@@ -403,6 +403,9 @@ class CardataStreamManager:
         if self._status_callback:
             await self._status_callback("connecting", None)
         try:
+            # Snapshot failure count so we can detect if _handle_connect already
+            # called _record_failure() for this attempt (avoids double-counting).
+            failure_count_before = self._failure_count
             # Use global lock to serialize MQTT connections across all config entries
             # This prevents multi-account setups from overwhelming BMW servers or
             # causing thread pool contention with simultaneous connection attempts
@@ -415,7 +418,9 @@ class CardataStreamManager:
             self._reconnect_backoff = 5
         except Exception:
             self._connection_state = ConnectionState.FAILED
-            self._record_failure()
+            # Only record if MQTT callback didn't already record this failure
+            if self._failure_count == failure_count_before:
+                self._record_failure()
             raise
 
     async def async_stop(self) -> None:
