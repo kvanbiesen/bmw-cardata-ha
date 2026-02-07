@@ -714,14 +714,14 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         if not client_id:
             return self.async_abort(reason="reauth_missing_client_id")
 
-        updated = dict(entry.data)
-        updated["client_id"] = client_id
         runtime = self._get_runtime()
         if runtime:
             runtime.reauth_in_progress = True
             runtime.reauth_pending = True
-        self.hass.config_entries.async_update_entry(entry, data=updated)
 
+        # Don't write client_id to entry.data here — async_step_tokens writes
+        # it atomically with the new tokens on success.  Writing it early would
+        # leave a mismatched client_id/tokens if the reauth flow fails.
         flow_result = await self.hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
