@@ -360,10 +360,16 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 if trip_event is not None:
                     sleep_task = asyncio.create_task(asyncio.sleep(wait))
                     event_task = asyncio.create_task(trip_event.wait())
-                    done, pending = await asyncio.wait(
-                        [sleep_task, event_task],
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
+                    try:
+                        done, pending = await asyncio.wait(
+                            [sleep_task, event_task],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    except asyncio.CancelledError:
+                        # Outer task cancelled (shutdown) — clean up sub-tasks
+                        sleep_task.cancel()
+                        event_task.cancel()
+                        raise
                     # Cancel the pending task
                     for task in pending:
                         task.cancel()
