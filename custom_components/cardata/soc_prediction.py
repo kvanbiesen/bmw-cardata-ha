@@ -539,6 +539,14 @@ class SOCPredictor:
                     current_predicted,
                 )
                 self._last_predicted_soc[vin] = soc
+                # Also reset the active session anchor so the monotonicity
+                # guard (max(predicted, session.last_predicted_soc)) doesn't
+                # immediately override the sync-down on the next prediction.
+                session = self._sessions.get(vin)
+                if session is not None:
+                    session.last_predicted_soc = soc
+                    session.anchor_soc = soc
+                    session.total_energy_kwh = 0.0
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
