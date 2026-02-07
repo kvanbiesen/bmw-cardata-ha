@@ -71,6 +71,7 @@ class CardataRuntimeData:
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
+    _handling_unauthorized: bool = False
     soc_store: Store | None = None
 
     # Rate limit protection (NEW!)
