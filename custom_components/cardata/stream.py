@@ -765,7 +765,6 @@ class CardataStreamManager:
                 self._schedule_retry(3)
                 return
             self._run_coro_safe(self._handle_unauthorized())
-            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
             if self._status_callback:
                 self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("unauthorized", reason)))
         else:
@@ -891,6 +890,11 @@ class CardataStreamManager:
             if self._unauthorized_retry_in_progress:
                 return
             self._unauthorized_retry_in_progress = True
+            # Bump backoff here (event loop) instead of _handle_disconnect
+            # (MQTT thread) to avoid a cross-thread read-modify-write race.
+            # Placed after the early-return guard so duplicate calls don't
+            # double-bump.
+            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
 
             try:
                 unauthorized_protection = None
