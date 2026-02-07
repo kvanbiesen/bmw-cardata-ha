@@ -615,7 +615,7 @@ async def async_fetch_vehicle_images_service(call) -> None:
     hass = call.hass
     domain_data = hass.data.get(DOMAIN, {})
 
-    for entry_id, runtime_data in domain_data.items():
+    for entry_id, runtime_data in list(domain_data.items()):
         if entry_id.startswith("_"):
             continue
 
