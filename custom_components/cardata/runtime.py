@@ -71,6 +71,7 @@ class CardataRuntimeData:
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
     reauth_pending: bool = False
+    _handling_unauthorized: bool = False
     soc_store: Store | None = None
 
     # Rate limit protection (NEW!)
@@ -186,15 +187,11 @@ class CardataRuntimeData:
             self._consecutive_session_failures,
         )
 
-        # Close old session
         old_session = self.session
-        if old_session and not old_session.closed:
-            try:
-                await old_session.close()
-            except Exception as err:
-                _LOGGER.debug("Error closing old session: %s", err)
 
-        # Create new session
+        # Create and assign new session BEFORE closing the old one.
+        # This ensures concurrent callers never see a closed session
+        # reference (old_session.close() yields to the event loop).
         self.session = aiohttp.ClientSession()
 
         # Update container manager's session reference
@@ -203,6 +200,13 @@ class CardataRuntimeData:
 
         # Reset failure counter
         self._consecutive_session_failures = 0
+
+        # Now close old session — concurrent callers already use the new one
+        if old_session and not old_session.closed:
+            try:
+                await old_session.close()
+            except Exception as err:
+                _LOGGER.debug("Error closing old session: %s", err)
 
         _LOGGER.info("Successfully recreated aiohttp session")
         return True

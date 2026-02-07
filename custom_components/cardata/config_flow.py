@@ -714,14 +714,14 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         if not client_id:
             return self.async_abort(reason="reauth_missing_client_id")
 
-        updated = dict(entry.data)
-        updated["client_id"] = client_id
         runtime = self._get_runtime()
         if runtime:
             runtime.reauth_in_progress = True
             runtime.reauth_pending = True
-        self.hass.config_entries.async_update_entry(entry, data=updated)
 
+        # Don't write client_id to entry.data here — async_step_tokens writes
+        # it atomically with the new tokens on success.  Writing it early would
+        # leave a mismatched client_id/tokens if the reauth flow fails.
         flow_result = await self.hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
@@ -741,23 +741,16 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             # User made their choice
             delete_entities = user_input.get("delete_entities", False)
 
-            # Store the choice in entry data so async_remove_entry can read it
-            entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-            if entry:
-                updated_data = dict(entry.data)
-                updated_data["_delete_entities_on_remove"] = delete_entities
-                self.hass.config_entries.async_update_entry(entry, data=updated_data)
-
-                if delete_entities:
-                    _LOGGER.info(
-                        "User chose to delete entities for entry %s",
-                        entry.entry_id,
-                    )
-                else:
-                    _LOGGER.debug(
-                        "User chose to keep entities for entry %s",
-                        entry.entry_id,
-                    )
+            if delete_entities:
+                _LOGGER.info(
+                    "User chose to delete entities for entry %s",
+                    self.context["entry_id"],
+                )
+            else:
+                _LOGGER.debug(
+                    "User chose to keep entities for entry %s",
+                    self.context["entry_id"],
+                )
 
             # Proceed with removal
             return self.async_abort(reason="user_remove_completed")

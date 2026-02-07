@@ -67,6 +67,7 @@ from .const import (
     LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    MIN_TELEMETRY_DESCRIPTORS,
     PREDICTED_SOC_DESCRIPTOR,
     WINDOW_DESCRIPTORS,
 )
@@ -327,6 +328,11 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             return
 
         if not self.enabled:
+            return
+
+        # Filter out "ghost" cars with minimal data (e.g., family sharing with limited access)
+        telemetry_data = self._coordinator.data.get(self._vin, {})
+        if len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
             return
 
         state = self._coordinator.get_state(vin, descriptor)
@@ -630,6 +636,7 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
+        await super().async_will_remove_from_hass()
 
     def _load_current_value(self) -> None:
         """Load current metadata status from coordinator."""

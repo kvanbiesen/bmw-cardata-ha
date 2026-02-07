@@ -209,8 +209,12 @@ async def _do_token_refresh(
     if not new_id_token:
         raise CardataAuthError("Token refresh response did not include id_token")
 
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        raise CardataAuthError("Token refresh response did not include access_token")
+
     token_updates = {
-        "access_token": token_data.get("access_token"),
+        "access_token": new_access_token,
         "refresh_token": token_data.get("refresh_token", refresh_token),
         "id_token": new_id_token,
         "expires_in": token_data.get("expires_in"),
@@ -267,96 +271,110 @@ async def handle_stream_error(
             )
             return
 
-        now = time.time()
-
-        if runtime.reauth_pending:
+        # Prevent concurrent handling: refresh_tokens_for_entry yields to
+        # the event loop, which could allow a second call to enter before
+        # reauth_in_progress is set. The flag is cleared in the finally block.
+        if runtime._handling_unauthorized:
             _LOGGER.debug(
-                "Reauth pending for entry %s after failed refresh; starting flow",
-                entry.entry_id,
-            )
-        elif now - runtime.last_refresh_attempt >= 30:
-            runtime.last_refresh_attempt = now
-            try:
-                _LOGGER.debug("Attempting token refresh after auth failure")
-
-                await refresh_tokens_for_entry(
-                    entry,
-                    runtime.session,
-                    runtime.stream,
-                    runtime.container_manager,
-                )
-
-                # Success! Reset the unauthorized flags
-                if runtime and runtime.reauth_in_progress:
-                    runtime.unauthorized_protection.reset()
-
-                runtime.reauth_in_progress = False
-                runtime.last_reauth_attempt = 0.0
-                runtime.reauth_pending = False
-                _LOGGER.info("BMW credentials refreshed successfully after auth failure")
-
-                # Reconnect MQTT with the new credentials
-                try:
-                    await runtime.stream.async_start()
-                except Exception as start_err:
-                    _LOGGER.warning("MQTT reconnect after credential refresh failed: %s", start_err)
-                return
-
-            except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
-                # Check if this is just a concurrent refresh attempt (not a real failure)
-                if ERR_TOKEN_REFRESH_IN_PROGRESS in str(err):
-                    _LOGGER.debug(
-                        "Token refresh skipped for entry %s: another refresh already in progress",
-                        entry.entry_id,
-                    )
-                    # Don't record as unauthorized attempt - the other refresh will handle it
-                    return
-                _LOGGER.warning(
-                    "Token refresh after unauthorized failed for entry %s: %s",
-                    entry.entry_id,
-                    err,
-                )
-                if runtime and runtime.unauthorized_protection:
-                    runtime.unauthorized_protection.record_attempt()
-                    _LOGGER.debug("Token refresh failed, attempt recorded")
-        else:
-            runtime.reauth_pending = True
-            _LOGGER.debug(
-                "Token refresh attempted recently for entry %s; will trigger reauth",
-                entry.entry_id,
-            )
-
-        if now - runtime.last_reauth_attempt < 30:
-            _LOGGER.debug(
-                "Recent reauth already attempted for entry %s; skipping new flow",
+                "Unauthorized handling already in progress for entry %s",
                 entry.entry_id,
             )
             return
+        runtime._handling_unauthorized = True
 
-        runtime.reauth_in_progress = True
-        runtime.last_reauth_attempt = now
-        runtime.reauth_pending = False
-        _LOGGER.warning("BMW stream unauthorized; starting reauth flow")
+        try:
+            now = time.time()
 
-        if runtime.reauth_flow_id:
-            with suppress(Exception):
-                await hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
-            runtime.reauth_flow_id = None
+            if runtime.reauth_pending:
+                _LOGGER.debug(
+                    "Reauth pending for entry %s after failed refresh; starting flow",
+                    entry.entry_id,
+                )
+            elif now - runtime.last_refresh_attempt >= 30:
+                runtime.last_refresh_attempt = now
+                try:
+                    _LOGGER.debug("Attempting token refresh after auth failure")
 
-        persistent_notification.async_create(
-            hass,
-            "Authorization failed for BMW CarData. Please reauthorize the integration.",
-            title="Bmw Cardata",
-            notification_id=notification_id,
-        )
+                    await refresh_tokens_for_entry(
+                        entry,
+                        runtime.session,
+                        runtime.stream,
+                        runtime.container_manager,
+                    )
 
-        flow_result = await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-            data={**entry.data, "entry_id": entry.entry_id},
-        )
-        if isinstance(flow_result, dict):
-            runtime.reauth_flow_id = flow_result.get("flow_id")
+                    # Success! Reset the unauthorized flags
+                    if runtime and runtime.reauth_in_progress:
+                        runtime.unauthorized_protection.reset()
+
+                    runtime.reauth_in_progress = False
+                    runtime.last_reauth_attempt = 0.0
+                    runtime.reauth_pending = False
+                    _LOGGER.info("BMW credentials refreshed successfully after auth failure")
+
+                    # Reconnect MQTT with the new credentials
+                    try:
+                        await runtime.stream.async_start()
+                    except Exception as start_err:
+                        _LOGGER.warning("MQTT reconnect after credential refresh failed: %s", start_err)
+                    return
+
+                except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
+                    # Check if this is just a concurrent refresh attempt (not a real failure)
+                    if ERR_TOKEN_REFRESH_IN_PROGRESS in str(err):
+                        _LOGGER.debug(
+                            "Token refresh skipped for entry %s: another refresh already in progress",
+                            entry.entry_id,
+                        )
+                        # Don't record as unauthorized attempt - the other refresh will handle it
+                        return
+                    _LOGGER.warning(
+                        "Token refresh after unauthorized failed for entry %s: %s",
+                        entry.entry_id,
+                        err,
+                    )
+                    if runtime and runtime.unauthorized_protection:
+                        runtime.unauthorized_protection.record_attempt()
+                        _LOGGER.debug("Token refresh failed, attempt recorded")
+            else:
+                runtime.reauth_pending = True
+                _LOGGER.debug(
+                    "Token refresh attempted recently for entry %s; will trigger reauth",
+                    entry.entry_id,
+                )
+
+            if now - runtime.last_reauth_attempt < 30:
+                _LOGGER.debug(
+                    "Recent reauth already attempted for entry %s; skipping new flow",
+                    entry.entry_id,
+                )
+                return
+
+            runtime.reauth_in_progress = True
+            runtime.last_reauth_attempt = now
+            runtime.reauth_pending = False
+            _LOGGER.warning("BMW stream unauthorized; starting reauth flow")
+
+            if runtime.reauth_flow_id:
+                with suppress(Exception):
+                    await hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
+                runtime.reauth_flow_id = None
+
+            persistent_notification.async_create(
+                hass,
+                "Authorization failed for BMW CarData. Please reauthorize the integration.",
+                title="Bmw Cardata",
+                notification_id=notification_id,
+            )
+
+            flow_result = await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+                data={**entry.data, "entry_id": entry.entry_id},
+            )
+            if isinstance(flow_result, dict):
+                runtime.reauth_flow_id = flow_result.get("flow_id")
+        finally:
+            runtime._handling_unauthorized = False
 
     elif reason == "recovered":
         if runtime.reauth_in_progress:

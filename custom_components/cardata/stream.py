@@ -403,6 +403,9 @@ class CardataStreamManager:
         if self._status_callback:
             await self._status_callback("connecting", None)
         try:
+            # Snapshot failure count so we can detect if _handle_connect already
+            # called _record_failure() for this attempt (avoids double-counting).
+            failure_count_before = self._failure_count
             # Use global lock to serialize MQTT connections across all config entries
             # This prevents multi-account setups from overwhelming BMW servers or
             # causing thread pool contention with simultaneous connection attempts
@@ -415,7 +418,9 @@ class CardataStreamManager:
             self._reconnect_backoff = 5
         except Exception:
             self._connection_state = ConnectionState.FAILED
-            self._record_failure()
+            # Only record if MQTT callback didn't already record this failure
+            if self._failure_count == failure_count_before:
+                self._record_failure()
             raise
 
     async def async_stop(self) -> None:
@@ -728,8 +733,9 @@ class CardataStreamManager:
         previous_disconnect = self._last_disconnect
         self._last_disconnect = time.monotonic()
 
-        # Update connection state
-        if self._connection_state != ConnectionState.DISCONNECTING:
+        # Update connection state — skip if already FAILED (set by _handle_connect
+        # for rc=4/5) to prevent double-counting in circuit breaker
+        if self._connection_state not in (ConnectionState.DISCONNECTING, ConnectionState.FAILED):
             self._connection_state = ConnectionState.DISCONNECTED
             if rc != 0:
                 self._record_failure()
@@ -760,7 +766,6 @@ class CardataStreamManager:
                 self._schedule_retry(3)
                 return
             self._run_coro_safe(self._handle_unauthorized())
-            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
             if self._status_callback:
                 self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("unauthorized", reason)))
         else:
@@ -770,6 +775,11 @@ class CardataStreamManager:
                 self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("disconnected", reason)))
 
     async def _async_reconnect(self) -> None:
+        # Bail out if stop was requested (coroutine may have been queued
+        # via _run_coro_safe before async_stop set the flag).
+        if self._intentional_disconnect:
+            return
+
         # Phase 1: Stop the current client (requires lock, but quick)
         try:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
@@ -789,6 +799,13 @@ class CardataStreamManager:
             await self._async_stop_locked()
         finally:
             self._connect_lock.release()
+
+        # _async_stop_locked sets _intentional_disconnect = True to suppress
+        # MQTT callbacks during teardown.  Reset it here so that an external
+        # async_stop() call during Phase 2/3 can re-set it and the post-sleep
+        # guard will detect it.  Safe because the old client is already gone
+        # (no more MQTT callbacks will check the flag).
+        self._intentional_disconnect = False
 
         # Phase 2: Token refresh (no lock needed - client is stopped)
         if self._entry_id:
@@ -824,6 +841,15 @@ class CardataStreamManager:
             wait_time = self._reconnect_backoff
 
         await asyncio.sleep(wait_time)
+
+        # Re-check after sleep — async_stop or entry unload may have occurred
+        if self._intentional_disconnect:
+            return
+        if self._entry_id:
+            from .const import DOMAIN
+
+            if self._entry_id not in self.hass.data.get(DOMAIN, {}):
+                return
 
         # Phase 4: Start the client (requires lock)
         try:
@@ -878,10 +904,19 @@ class CardataStreamManager:
             self._connect_lock.release()
 
     async def _handle_unauthorized(self) -> None:
+        blocked = False
+        block_reason = None
+        should_notify = False
+
         async with self._unauthorized_lock:
             if self._unauthorized_retry_in_progress:
                 return
             self._unauthorized_retry_in_progress = True
+            # Bump backoff here (event loop) instead of _handle_disconnect
+            # (MQTT thread) to avoid a cross-thread read-modify-write race.
+            # Placed after the early-return guard so duplicate calls don't
+            # double-bump.
+            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
 
             try:
                 unauthorized_protection = None
@@ -895,23 +930,25 @@ class CardataStreamManager:
                 if unauthorized_protection:
                     can_retry, block_reason = unauthorized_protection.can_retry()
                     if not can_retry:
-                        _LOGGER.error("BMW MQTT unauthorized retry blocked: %s", block_reason)
-                        await self.async_stop()
-                        if self._status_callback:
-                            await self._status_callback("unauthorized_blocked", block_reason)
-                        return
-                    # don't attempt to record here, do it after reconnect attempt
-                    # unauthorized_protection.record_attempt()
+                        blocked = True
 
-                # Update flags while holding the lock to prevent races
-                self._awaiting_new_credentials = True
-                should_notify = not self._reauth_notified
-                if should_notify:
-                    self._reauth_notified = True
+                if not blocked:
+                    # Update flags while holding the lock to prevent races
+                    self._awaiting_new_credentials = True
+                    should_notify = not self._reauth_notified
+                    if should_notify:
+                        self._reauth_notified = True
             finally:
                 self._unauthorized_retry_in_progress = False
 
-        # Perform callbacks outside the lock to avoid deadlocks
+        # Perform all callbacks outside the lock to avoid long lock holds
+        if blocked:
+            _LOGGER.error("BMW MQTT unauthorized retry blocked: %s", block_reason)
+            await self.async_stop()
+            if self._status_callback:
+                await self._status_callback("unauthorized_blocked", block_reason)
+            return
+
         if should_notify:
             await self._notify_error("unauthorized")
         else:

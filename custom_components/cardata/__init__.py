@@ -109,6 +109,14 @@ async def _async_cleanup_on_failure(
         # Stop coordinator watchdog if started
         await runtime.coordinator.async_stop_watchdog()
 
+        # Stop MQTT stream to prevent orphaned background thread
+        try:
+            await asyncio.wait_for(runtime.stream.async_stop(), timeout=10.0)
+        except TimeoutError:
+            _LOGGER.warning("MQTT stream stop timed out during cleanup")
+        except Exception as err:
+            _LOGGER.debug("Error stopping MQTT stream during cleanup: %s", err)
+
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
 
 
