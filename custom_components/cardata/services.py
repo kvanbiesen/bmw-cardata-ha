@@ -444,7 +444,10 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         "Accept": "application/json",
     }
 
-    session = runtime.session if getattr(runtime, "session", None) else aiohttp.ClientSession()
+    session = getattr(runtime, "session", None)
+    if not session or session.closed:
+        _LOGGER.error("clean_hv_containers: no active session for entry %s", entry.entry_id)
+        return
     request_timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
 
     # Helper: fetch list of containers
