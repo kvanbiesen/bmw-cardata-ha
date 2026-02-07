@@ -409,6 +409,9 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         if len(non_meta) == 1:
             entry_id, runtime = next(iter(non_meta.items()))
             entry = hass.config_entries.async_get_entry(entry_id)
+            if not entry:
+                _LOGGER.error("clean_hv_containers: config entry %s not found", entry_id)
+                return
         else:
             _LOGGER.error("clean_hv_containers: multiple entries configured; specify entry_id")
             return
