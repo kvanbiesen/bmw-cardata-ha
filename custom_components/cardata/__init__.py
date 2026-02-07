@@ -409,6 +409,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         # session recreation via async_recreate_session is respected
                         current_runtime = hass.data.get(DOMAIN, {}).get(entry_id)
                         current_session = current_runtime.session if current_runtime else session
+                        # Snapshot old token to detect actual refresh
+                        old_id_token = current_entry.data.get("id_token")
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
                             refresh_tokens_for_entry(current_entry, current_session, manager, container_manager),
@@ -425,6 +427,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         runtime = hass.data.get(DOMAIN, {}).get(entry_id)
                         if runtime:
                             runtime.record_session_success()
+
+                        # Check if token was actually refreshed
+                        refreshed_entry = hass.config_entries.async_get_entry(entry_id)
+                        if refreshed_entry and refreshed_entry.data.get("id_token") != old_id_token:
+                            # Proactively reconnect MQTT with fresh credentials.
+                            # This prevents BMW from disconnecting us when the old
+                            # token expires (~1h), eliminating the hourly disconnect
+                            # /reconnect cycle.
+                            try:
+                                _LOGGER.debug("Reconnecting MQTT with refreshed credentials")
+                                await manager.async_stop()
+                                await manager.async_start()
+                            except Exception as err:
+                                _LOGGER.warning("Proactive MQTT reconnect after token refresh failed: %s", err)
 
                     except CardataAuthError as err:
                         # Check if this is just a concurrent refresh attempt (not a real failure)
@@ -569,7 +585,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
 
         # Start coordinator watchdog
-        await coordinator.async_handle_connection_event("connecting")
         await coordinator.async_start_watchdog()
 
         # Restore vehicle images from disk before platform setup (only after bootstrap)
