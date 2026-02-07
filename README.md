@@ -272,6 +272,10 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - The CarData API is read-only; sending commands remains outside this integration.
 - **Premature Continue in auth flow: If you hit Continue before authorizing on BMW’s site, the device-code flow gets stuck. Cancel the flow and restart the integration (or Home Assistant) once you’ve completed the BMW login.**
 
+## Stale Issue Policy
+
+Issues that remain inactive for 1 week receive an automated reminder. A second reminder follows after 2 weeks, and a final warning after 3 weeks. Issues with no response after 4 weeks are automatically closed. Any comment from a non-bot user resets the cycle. Issues labeled `pinned` or `security` are exempt.
+
 ## License
 
 This project is licensed under the BSD 2-Clause License - see the [LICENSE](LICENSE.md) file for details.
