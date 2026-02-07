@@ -770,7 +770,7 @@ class CardataStreamManager:
                 self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("disconnected", reason)))
 
     async def _async_reconnect(self) -> None:
-        # Acquire lock with timeout to prevent indefinite blocking
+        # Phase 1: Stop the current client (requires lock, but quick)
         try:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
         except TimeoutError:
@@ -787,70 +787,93 @@ class CardataStreamManager:
                 return
 
             await self._async_stop_locked()
+        finally:
+            self._connect_lock.release()
 
-            if self._entry_id:
-                try:
-                    from .auth import refresh_tokens_for_entry
-                    from .const import DOMAIN
+        # Phase 2: Token refresh (no lock needed - client is stopped)
+        if self._entry_id:
+            try:
+                from .auth import refresh_tokens_for_entry
+                from .const import DOMAIN
 
-                    runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-                    if runtime:
-                        entry = self.hass.config_entries.async_get_entry(self._entry_id)
-                        if entry:
-                            # Check if tokens need refresh
-                            await refresh_tokens_for_entry(
-                                entry,
-                                runtime.session,
-                                self,
-                                runtime.container_manager,
-                            )
-                except Exception as err:
-                    _LOGGER.debug("Token check before reconnect: %s", err)
-                    # Continue anyway -token might still be valid
+                runtime = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+                if runtime:
+                    entry = self.hass.config_entries.async_get_entry(self._entry_id)
+                    if entry:
+                        # Check if tokens need refresh
+                        await refresh_tokens_for_entry(
+                            entry,
+                            runtime.session,
+                            self,
+                            runtime.container_manager,
+                        )
+            except Exception as err:
+                _LOGGER.debug("Token check before reconnect: %s", err)
+                # Continue anyway - token might still be valid
 
-            # Use extended backoff after many consecutive failures
-            if self._consecutive_reconnect_failures >= self._extended_backoff_threshold:
-                wait_time = self._extended_backoff
-                _LOGGER.warning(
-                    "Many consecutive MQTT failures (%d); using extended backoff of %.0f minutes",
+        # Phase 3: Backoff sleep (no lock needed)
+        # Use extended backoff after many consecutive failures
+        if self._consecutive_reconnect_failures >= self._extended_backoff_threshold:
+            wait_time = self._extended_backoff
+            _LOGGER.warning(
+                "Many consecutive MQTT failures (%d); using extended backoff of %.0f minutes",
+                self._consecutive_reconnect_failures,
+                wait_time / 60,
+            )
+        else:
+            wait_time = self._reconnect_backoff
+
+        await asyncio.sleep(wait_time)
+
+        # Phase 4: Start the client (requires lock)
+        try:
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+        except TimeoutError:
+            _LOGGER.debug("Connect lock held after backoff; another connection attempt in progress")
+            return
+
+        try:
+            # Check circuit breaker again after sleep
+            if self._check_circuit_breaker():
+                if debug_enabled():
+                    _LOGGER.debug("Skipping MQTT start due to open circuit breaker (after backoff)")
+                return
+
+            # Check if already connected (another reconnect might have succeeded during our sleep)
+            if self._connection_state == ConnectionState.CONNECTED:
+                if debug_enabled():
+                    _LOGGER.debug("Already connected after backoff sleep; skipping reconnect")
+                return
+
+            await self._async_start_locked()
+            # Success - reset counters
+            if self._consecutive_reconnect_failures > 0:
+                _LOGGER.info(
+                    "MQTT reconnected successfully after %d failed attempts (entry %s)",
                     self._consecutive_reconnect_failures,
-                    wait_time / 60,
+                    self._entry_id,
+                )
+            self._consecutive_reconnect_failures = 0
+            self._reconnect_backoff = 5
+        except Exception as err:
+            self._consecutive_reconnect_failures += 1
+            if self._consecutive_reconnect_failures <= 3:
+                _LOGGER.debug(
+                    "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
+                    self._consecutive_reconnect_failures,
+                    self._entry_id,
+                    err,
                 )
             else:
-                wait_time = self._reconnect_backoff
-
-            await asyncio.sleep(wait_time)
-            try:
-                await self._async_start_locked()
-            except Exception as err:
-                self._consecutive_reconnect_failures += 1
-                if self._consecutive_reconnect_failures <= 3:
-                    _LOGGER.debug(
-                        "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
-                        self._consecutive_reconnect_failures,
-                        self._entry_id,
-                        err,
-                    )
-                else:
-                    _LOGGER.warning(
-                        "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
-                        self._consecutive_reconnect_failures,
-                        self._entry_id,
-                        err,
-                    )
-                self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
-                # Schedule another reconnect attempt (will use extended backoff if threshold reached)
-                self._run_coro_safe(self._async_reconnect())
-            else:
-                # Success - reset counters
-                if self._consecutive_reconnect_failures > 0:
-                    _LOGGER.info(
-                        "MQTT reconnected successfully after %d failed attempts (entry %s)",
-                        self._consecutive_reconnect_failures,
-                        self._entry_id,
-                    )
-                self._consecutive_reconnect_failures = 0
-                self._reconnect_backoff = 5
+                _LOGGER.warning(
+                    "BMW MQTT reconnect failed (attempt %d, entry %s): %s",
+                    self._consecutive_reconnect_failures,
+                    self._entry_id,
+                    err,
+                )
+            self._reconnect_backoff = min(self._reconnect_backoff * 2, self._max_backoff)
+            # Schedule another reconnect attempt (will use extended backoff if threshold reached)
+            self._run_coro_safe(self._async_reconnect())
         finally:
             self._connect_lock.release()
 
