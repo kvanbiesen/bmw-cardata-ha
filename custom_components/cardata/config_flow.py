@@ -722,12 +722,21 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         # Don't write client_id to entry.data here — async_step_tokens writes
         # it atomically with the new tokens on success.  Writing it early would
         # leave a mismatched client_id/tokens if the reauth flow fails.
-        flow_result = await self.hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
-            data={"client_id": client_id, "entry_id": entry.entry_id},
-        )
+        try:
+            flow_result = await self.hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+                data={"client_id": client_id, "entry_id": entry.entry_id},
+            )
+        except Exception:
+            if runtime:
+                runtime.reauth_in_progress = False
+                runtime.reauth_flow_id = None
+            raise
         if flow_result["type"] == FlowResultType.ABORT:
+            if runtime:
+                runtime.reauth_in_progress = False
+                runtime.reauth_flow_id = None
             return self.async_abort(
                 reason=flow_result.get("reason", "reauth_failed"),
                 description_placeholders=flow_result.get("description_placeholders"),
