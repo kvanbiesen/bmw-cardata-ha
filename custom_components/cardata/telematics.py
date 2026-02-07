@@ -42,7 +42,10 @@ from .const import (
     API_BASE_URL,
     API_VERSION,
     DOMAIN,
+    REQUEST_LIMIT,
+    TELEMATIC_MIN_INTERVAL,
     TELEMATIC_POLL_INTERVAL,
+    TELEMATIC_RESERVED_CALLS,
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
@@ -276,6 +279,36 @@ async def async_perform_telematic_fetch(
     return TelematicFetchResult(False)
 
 
+def _calculate_dynamic_interval(num_vins: int) -> int:
+    """Calculate poll interval based on number of VINs to stay within API quota.
+
+    Formula: interval = 24h / (available_polls / num_vins)
+    Where available_polls = REQUEST_LIMIT - TELEMATIC_RESERVED_CALLS
+
+    Examples:
+        1 car: 86400 / (30/1) = 2880 sec = 48 min
+        2 cars: 86400 / (30/2) = 5760 sec = 96 min
+        3 cars: 86400 / (30/3) = 8640 sec = 144 min
+    """
+    if num_vins <= 0:
+        return TELEMATIC_POLL_INTERVAL  # Fallback to default
+
+    available_polls = REQUEST_LIMIT - TELEMATIC_RESERVED_CALLS
+    if available_polls <= 0:
+        return TELEMATIC_POLL_INTERVAL
+
+    # Polls per day for this entry = available_polls / num_vins
+    polls_per_day = available_polls / num_vins
+    if polls_per_day <= 0:
+        return TELEMATIC_POLL_INTERVAL
+
+    # Interval in seconds = seconds_per_day / polls_per_day
+    interval = int(86400 / polls_per_day)
+
+    # Enforce minimum interval to prevent excessive polling
+    return max(interval, TELEMATIC_MIN_INTERVAL)
+
+
 async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     """Poll telematic data periodically with backoff on failures."""
 
@@ -284,12 +317,15 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     if runtime is None:
         return
 
+    # Start with default interval, will be recalculated once we know VIN count
     base_interval = TELEMATIC_POLL_INTERVAL
     max_backoff = max(base_interval * 6, base_interval)
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
     # Track last poll locally to prevent spin if config entry update fails
     last_poll_local: float = 0.0
+    # Track last known VIN count for dynamic interval calculation
+    last_vin_count = 0
 
     _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
@@ -309,6 +345,25 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     entry_id,
                 )
                 return
+
+            # Calculate dynamic interval based on number of VINs
+            # This ensures we stay within API quota regardless of car count
+            current_vin_count = len(runtime.coordinator.data) if runtime.coordinator else 0
+            if current_vin_count == 0:
+                # Fallback: check metadata for VINs
+                metadata = entry.data.get(VEHICLE_METADATA, {})
+                if isinstance(metadata, dict):
+                    current_vin_count = len(metadata)
+
+            if current_vin_count > 0 and current_vin_count != last_vin_count:
+                last_vin_count = current_vin_count
+                base_interval = _calculate_dynamic_interval(current_vin_count)
+                max_backoff = max(base_interval * 6, base_interval)
+                _LOGGER.info(
+                    "Telematic poll interval adjusted to %.1f minutes for %d vehicle(s)",
+                    base_interval / 60,
+                    current_vin_count,
+                )
 
             # Check if reauth is in progress or too many auth failures
             # Skip polling until reauth completes to avoid wasting quota

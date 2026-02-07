@@ -77,8 +77,17 @@ REQUEST_WINDOW_SECONDS = 24 * 60 * 60
 # Quota thresholds for warnings (percentages of REQUEST_LIMIT)
 QUOTA_WARNING_THRESHOLD = 28  # Warn at 70% of REQUEST_LIMIT
 QUOTA_CRITICAL_THRESHOLD = 36  # Critical at 90% of REQUEST_LIMIT
-# How often to call the Telematic API in seconds (fallback only - primary updates via trip/charge-end events)
+
+# Telematic polling configuration
+# Reserve some API calls for charge-end events and overhead
+TELEMATIC_RESERVED_CALLS = 10
+# Available calls for regular polling = REQUEST_LIMIT - TELEMATIC_RESERVED_CALLS
+# Interval is calculated dynamically: 24h / (available_calls / num_vins)
+# Example: 2 cars -> 86400 / (30/2) = 5760 seconds = 96 minutes
+# Fallback interval if VIN count is unknown (12 hours, conservative)
 TELEMATIC_POLL_INTERVAL = 12 * 60 * 60
+# Minimum interval to prevent excessive polling (30 minutes)
+TELEMATIC_MIN_INTERVAL = 30 * 60
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
