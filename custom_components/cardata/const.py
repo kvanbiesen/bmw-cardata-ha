@@ -67,8 +67,8 @@ MQTT_KEEPALIVE = 30
 DEBUG_LOG = False
 DIAGNOSTIC_LOG_INTERVAL = 30  # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
-# How often to call the Telematic API in seconds (fallback only - primary updates via trip/charge-end events)
-TELEMATIC_POLL_INTERVAL = 12 * 60 * 60
+# Force telematics poll if no data (MQTT or telematics) received for this duration (seconds)
+DATA_STALE_THRESHOLD = 2 * 60 * 60  # 2 hours
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"

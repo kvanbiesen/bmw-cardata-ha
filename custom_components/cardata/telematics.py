@@ -41,8 +41,8 @@ from .api_parsing import extract_telematic_payload, try_parse_json
 from .const import (
     API_BASE_URL,
     API_VERSION,
+    DATA_STALE_THRESHOLD,
     DOMAIN,
-    TELEMATIC_POLL_INTERVAL,
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
@@ -297,14 +297,16 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     if runtime is None:
         return
 
-    base_interval = TELEMATIC_POLL_INTERVAL
-    max_backoff = max(base_interval * 6, base_interval)
+    # Use DATA_STALE_THRESHOLD as the base check interval
+    # We check for stale VINs every check_interval seconds
+    check_interval = min(DATA_STALE_THRESHOLD, 30 * 60)  # Check at most every 30 min
+    max_backoff = DATA_STALE_THRESHOLD * 2  # Max backoff on failures
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
-    # Track last poll locally to prevent spin if config entry update fails
-    last_poll_local: float = 0.0
+    # Track last check time to prevent spin
+    last_check_time: float = 0.0
 
-    _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
+    _LOGGER.debug("Starting telematic poll loop for entry %s (stale threshold: %.0f min)", entry_id, DATA_STALE_THRESHOLD / 60)
 
     try:
         while True:
@@ -347,14 +349,12 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     )
                 continue
 
-            # Use local timestamp for loop control, fall back to persisted on first run
-            if last_poll_local == 0.0:
-                last_poll_local = entry.data.get("last_telematic_poll", 0.0)
-
             now = time.time()
-            backoff_interval = base_interval if consecutive_failures == 0 else base_interval * (2**consecutive_failures)
-            interval = min(max_backoff, backoff_interval)
-            wait = interval - (now - last_poll_local)
+
+            # Calculate wait time until next check
+            backoff_multiplier = 2 ** consecutive_failures if consecutive_failures > 0 else 1
+            current_interval = min(check_interval * backoff_multiplier, max_backoff)
+            wait = current_interval - (now - last_check_time)
 
             # Always wait at least 1 second to prevent spin
             if wait > 0:
@@ -432,65 +432,92 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                                     _LOGGER.warning("Trip-end poll timed out for VIN")
                                 except Exception as err:
                                     _LOGGER.debug("Trip-end poll failed: %s", err)
-                            # Continue waiting for regular interval (don't reset last_poll_local)
+                            # Continue waiting for next check interval
                             continue
                     # Sleep completed or event fired with no VINs - loop back, poll will happen on next iteration
                 else:
                     await asyncio.sleep(wait)
                 continue
-            elif wait < -interval:
+            elif wait < -current_interval:
                 # Guard against clock skew or very stale timestamps
                 _LOGGER.debug(
-                    "Telematic poll timestamp very stale (wait=%.1f); resetting",
+                    "Telematic check timestamp very stale (wait=%.1f); resetting",
                     wait,
                 )
-                last_poll_local = now
 
-            # Time to poll - wrap with timeout to prevent indefinite hangs
-            try:
-                result = await asyncio.wait_for(
-                    async_perform_telematic_fetch(hass, entry, runtime),
-                    timeout=TELEMATIC_FETCH_TIMEOUT,
-                )
-            except TimeoutError:
-                _LOGGER.warning(
-                    "Telematic fetch timed out after %.0f seconds for entry %s",
-                    TELEMATIC_FETCH_TIMEOUT,
-                    entry_id,
-                )
-                result = TelematicFetchResult(False, "timeout")
+            # Time to check for stale VINs
             now = time.time()
-            # Always update local timestamp to prevent spin, regardless of persistence success
-            last_poll_local = now
+            last_check_time = now
 
-            # Re-fetch entry after async operation - it may have been removed
-            entry = hass.config_entries.async_get_entry(entry_id)
-            if entry is None:
-                _LOGGER.debug(
-                    "Entry %s removed during telematic fetch, stopping poll loop",
-                    entry_id,
-                )
-                return
+            # Find VINs with stale data (no MQTT/telematics in DATA_STALE_THRESHOLD)
+            all_vins = list(runtime.coordinator.data.keys())
+            stale_vins_to_poll = []
+            for vin in all_vins:
+                age = runtime.coordinator.seconds_since_last_mqtt(vin)
+                # VIN is stale if no data received, or data is older than threshold
+                if age is None or age >= DATA_STALE_THRESHOLD:
+                    stale_vins_to_poll.append(vin)
+                    if age is not None:
+                        _LOGGER.debug(
+                            "VIN has stale data (%.1f hours old), will poll",
+                            age / 3600,
+                        )
 
-            if result.status is True:
-                # Data fetched successfully
-                consecutive_failures = 0
-                consecutive_auth_failures = 0  # Reset auth failures on success
-                await async_update_last_telematic_poll(hass, entry, now)
-                _LOGGER.debug("Telematic poll succeeded for entry %s", entry_id)
+            if not stale_vins_to_poll:
+                # No stale VINs - all data is fresh, continue waiting
+                _LOGGER.debug("All %d VINs have fresh data, skipping poll", len(all_vins))
                 continue
 
-            # False or None: attempted but failed
+            _LOGGER.info(
+                "Found %d/%d VINs with stale data, polling...",
+                len(stale_vins_to_poll),
+                len(all_vins),
+            )
+
+            # Poll only stale VINs
+            any_success = False
+            any_auth_failure = False
+            result: TelematicFetchResult | None = None
+            for vin in stale_vins_to_poll:
+                # Re-fetch entry before each poll
+                entry = hass.config_entries.async_get_entry(entry_id)
+                if entry is None:
+                    _LOGGER.debug("Entry removed during stale VIN poll, stopping")
+                    return
+
+                try:
+                    result = await asyncio.wait_for(
+                        async_perform_telematic_fetch(hass, entry, runtime, vin_override=vin),
+                        timeout=TELEMATIC_FETCH_TIMEOUT,
+                    )
+                    if result.status is True:
+                        any_success = True
+                    elif result.reason in ("token_refresh_failed", "auth_error", "missing_access_token"):
+                        any_auth_failure = True
+                except TimeoutError:
+                    _LOGGER.warning("Telematic fetch timed out for stale VIN")
+                except Exception as err:
+                    _LOGGER.debug("Telematic fetch failed for stale VIN: %s", err)
+
+            now = time.time()
+
+            if any_success:
+                # At least one VIN succeeded
+                consecutive_failures = 0
+                consecutive_auth_failures = 0
+                await async_update_last_telematic_poll(hass, entry, now)
+                _LOGGER.debug("Stale VIN poll succeeded for entry %s", entry_id)
+                continue
+
+            # All failed
             consecutive_failures += 1
-            is_auth_failure = result.reason in ("token_refresh_failed", "auth_error", "missing_access_token")
-            if is_auth_failure:
+            if any_auth_failure:
                 consecutive_auth_failures += 1
 
-            backoff_interval = base_interval * (2**consecutive_failures)
-            next_interval = min(max_backoff, backoff_interval)
+            next_interval = min(check_interval * (2 ** consecutive_failures), max_backoff)
             await async_update_last_telematic_poll(hass, entry, now)
 
-            if result.status is None:
+            if result is not None and result.status is None:
                 _LOGGER.error(
                     "Telematic poll error for entry %s (reason=%s); backing off to %.1f minutes",
                     entry_id,
@@ -498,7 +525,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     next_interval / 60,
                 )
                 # Trigger reauth flow for auth-related failures
-                if is_auth_failure:
+                if any_auth_failure:
                     from .auth import handle_stream_error
 
                     # Re-fetch entry before reauth - may have been removed during backoff calc
