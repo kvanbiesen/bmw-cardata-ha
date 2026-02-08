@@ -258,6 +258,13 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         """Restore state and subscribe to updates."""
         await super().async_added_to_hass()
 
+        # Re-signal entity existence for virtual sensors (critical after restart)
+        # Without this, coordinator won't schedule updates during charging
+        if self._descriptor == PREDICTED_SOC_DESCRIPTOR:
+            self._coordinator._soc_predictor.signal_entity_created(self._vin)
+        elif self._descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
+            self._coordinator._fuel_range_signaled.add(self._vin)
+
         if getattr(self, "_attr_native_value", None) is None:
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
