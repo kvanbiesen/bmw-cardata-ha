@@ -149,12 +149,9 @@ async def test_user_flow_missing_access_token(hass):
             user_result["flow_id"], user_input={"confirmed": True}
         )
 
-        # Entry is created but access_token will be None
-        # This documents current behavior - entry is created with missing data
-        assert authorize_result["type"] == FlowResultType.CREATE_ENTRY
-        entry = authorize_result["result"]
-        assert entry.data["access_token"] is None
-        assert entry.data["refresh_token"] == "mock-refresh-token"
+        # Token validation rejects incomplete responses
+        assert authorize_result["type"] == FlowResultType.ABORT
+        assert authorize_result["reason"] == "auth_failed"
 
 
 @pytest.mark.asyncio
@@ -180,13 +177,9 @@ async def test_user_flow_empty_token_response(hass):
             user_result["flow_id"], user_input={"confirmed": True}
         )
 
-        # Entry is created but all token fields will be None
-        # This documents current behavior - entry is created with missing data
-        assert authorize_result["type"] == FlowResultType.CREATE_ENTRY
-        entry = authorize_result["result"]
-        assert entry.data["access_token"] is None
-        assert entry.data["refresh_token"] is None
-        assert entry.data["id_token"] is None
+        # Token validation rejects empty responses
+        assert authorize_result["type"] == FlowResultType.ABORT
+        assert authorize_result["reason"] == "auth_failed"
 
 
 @pytest.mark.asyncio

@@ -202,18 +202,10 @@ class CardataImage(CardataEntity, ImageEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if the vehicle image file exists on disk."""
+        """Return True if a vehicle image path is registered in metadata.
+
+        Avoids blocking I/O (Path.exists/stat) on the event loop.
+        The image() method already handles missing files gracefully.
+        """
         metadata = self._coordinator.device_metadata.get(self._vin, {})
-        image_path_str = metadata.get("vehicle_image_path")
-
-        if image_path_str:
-            from pathlib import Path
-
-            try:
-                image_path = Path(image_path_str)
-                if image_path.exists() and image_path.stat().st_size > 0:
-                    return True
-            except Exception:
-                pass
-
-        return False
+        return bool(metadata.get("vehicle_image_path"))

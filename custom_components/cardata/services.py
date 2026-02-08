@@ -226,7 +226,7 @@ async def async_handle_fetch_mappings(call: ServiceCall) -> None:
             except json.JSONDecodeError:
                 payload = text
             _LOGGER.info("Cardata vehicle mappings: %s", redact_vin_payload(payload))
-    except aiohttp.ClientError as err:
+    except (aiohttp.ClientError, TimeoutError) as err:
         _LOGGER.error(
             "Cardata fetch_vehicle_mappings: network error: %s",
             redact_sensitive_data(str(err)),
@@ -331,7 +331,7 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
                         hw_version=metadata.get("hw_version"),
                         serial_number=metadata.get("serial_number"),
                     )
-    except aiohttp.ClientError as err:
+    except (aiohttp.ClientError, TimeoutError) as err:
         _LOGGER.error(
             "Cardata fetch_basic_data: network error for %s: %s",
             redacted_vin,
@@ -409,6 +409,9 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         if len(non_meta) == 1:
             entry_id, runtime = next(iter(non_meta.items()))
             entry = hass.config_entries.async_get_entry(entry_id)
+            if not entry:
+                _LOGGER.error("clean_hv_containers: config entry %s not found", entry_id)
+                return
         else:
             _LOGGER.error("clean_hv_containers: multiple entries configured; specify entry_id")
             return

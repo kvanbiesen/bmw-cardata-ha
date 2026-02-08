@@ -250,6 +250,12 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             raise RuntimeError("Token data must be set before tokens step")
         token_data = self._token_data
 
+        # Validate critical tokens are present and non-empty
+        for key in ("access_token", "refresh_token", "id_token"):
+            if not token_data.get(key):
+                _LOGGER.error("Token data missing required field: %s", key)
+                return self.async_abort(reason="auth_failed")
+
         entry_data = {
             "client_id": self._client_id,
             "access_token": token_data.get("access_token"),
@@ -722,12 +728,21 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         # Don't write client_id to entry.data here — async_step_tokens writes
         # it atomically with the new tokens on success.  Writing it early would
         # leave a mismatched client_id/tokens if the reauth flow fails.
-        flow_result = await self.hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
-            data={"client_id": client_id, "entry_id": entry.entry_id},
-        )
+        try:
+            flow_result = await self.hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+                data={"client_id": client_id, "entry_id": entry.entry_id},
+            )
+        except Exception:
+            if runtime:
+                runtime.reauth_in_progress = False
+                runtime.reauth_flow_id = None
+            raise
         if flow_result["type"] == FlowResultType.ABORT:
+            if runtime:
+                runtime.reauth_in_progress = False
+                runtime.reauth_flow_id = None
             return self.async_abort(
                 reason=flow_result.get("reason", "reauth_failed"),
                 description_placeholders=flow_result.get("description_placeholders"),
