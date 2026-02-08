@@ -954,7 +954,7 @@ class CardataStreamManager:
         else:
             await self.async_stop()
         if self._status_callback:
-            await self._status_callback("unauthorized", "MQTT rc=5")
+            await self._status_callback("unauthorized", "MQTT authentication failed")
 
     async def _notify_error(self, reason: str) -> None:
         await self.async_stop()
