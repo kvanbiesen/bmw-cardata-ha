@@ -88,6 +88,11 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
         """Restore state and subscribe to updates."""
         await super().async_added_to_hass()
 
+        # Re-signal entity existence for virtual sensors (critical after restart)
+        # Without this, coordinator won't schedule updates for derived motion state
+        if self._descriptor == "vehicle.isMoving":
+            self._coordinator._motion_detector.signal_entity_created(self._vin)
+
         # Track if we restored state (to ensure fresh data updates it)
         restored_state = False
 
