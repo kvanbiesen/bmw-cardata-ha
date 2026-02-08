@@ -486,7 +486,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             if is_auth_failure:
                 consecutive_auth_failures += 1
 
-            backoff_interval = base_interval if consecutive_failures == 0 else base_interval * (2**consecutive_failures)
+            backoff_interval = base_interval * (2**consecutive_failures)
             next_interval = min(max_backoff, backoff_interval)
             await async_update_last_telematic_poll(hass, entry, now)
 
