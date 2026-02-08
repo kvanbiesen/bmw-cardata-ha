@@ -140,6 +140,7 @@ async def refresh_tokens_for_entry(
     session: aiohttp.ClientSession,
     manager: CardataStreamManager,
     container_manager: CardataContainerManager | None = None,
+    buffer_seconds: int = TOKEN_EXPIRY_BUFFER_SECONDS,
 ) -> None:
     """Refresh tokens and update entry data.
 
@@ -166,7 +167,7 @@ async def refresh_tokens_for_entry(
         # Lock is now acquired - use try/finally immediately to ensure release
         try:
             # double check if token still needs refesh
-            expired, seconds_left = is_token_expired(entry, TOKEN_EXPIRY_BUFFER_SECONDS)
+            expired, seconds_left = is_token_expired(entry, buffer_seconds)
             if not expired:
                 _LOGGER.debug("Token was refreshed by another caller; skipping (valid for %s seconds)", seconds_left)
                 return
