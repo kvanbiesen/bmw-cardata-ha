@@ -413,7 +413,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         old_id_token = current_entry.data.get("id_token")
                         # Timeout prevents hanging indefinitely on network issues
                         await asyncio.wait_for(
-                            refresh_tokens_for_entry(current_entry, current_session, manager, container_manager),
+                            refresh_tokens_for_entry(
+                                current_entry,
+                                current_session,
+                                manager,
+                                container_manager,
+                                buffer_seconds=DEFAULT_REFRESH_INTERVAL,
+                            ),
                             timeout=60.0,
                         )
                         # Success - reset failure counters
