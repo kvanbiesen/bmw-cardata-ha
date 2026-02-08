@@ -633,20 +633,16 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
             self._attr_native_value = "unavailable"
 
     def _handle_metadata_update(self, vin: str) -> None:
-        """Handle metadata updates with smart filtering."""
+        """Handle metadata updates.
+
+        Always push to HA since metadata signals are infrequent (bootstrap/reconnect)
+        and the extra_state_attributes (vehicle details) may have changed even when
+        native_value ("available"/"unavailable") stays the same.
+        """
         if vin != self._vin:
             return
 
-        # Get new value
-        old_value = self._attr_native_value
         self._load_current_value()
-        new_value = self._attr_native_value
-
-        # SMART FILTERING: Only update if changed
-        if old_value == new_value:
-            return  # Skip HA update - no change
-
-        # Value changed - update HA!
         self.schedule_update_ha_state()
 
     @property
