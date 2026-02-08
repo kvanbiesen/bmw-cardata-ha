@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW Cardata",
+        "description": "Introduce tu ID de cliente BMW CarData."
+      },
+      "authorize": {
+        "title": "Autorizar BMW CarData",
+        "description": "Abre {verification_url} e introduce el código de usuario {user_code} si se solicita. Una vez que hayas aprobado el dispositivo, haz clic en Enviar. Si la aprobación ya se completó, haz clic en Enviar de nuevo para continuar."
+      },
+      "blocked": {
+        "title": "Bootstrap deshabilitado por límite de velocidad de la API",
+        "description": "La integración alcanzó previamente el límite diario de la API de BMW y el bootstrap automático (creación de contenedores y mapeo) ha sido temporalmente deshabilitado para {entry_title} hasta {until}. Puedes esperar hasta ese momento y volver a intentarlo, o borrar la marca a continuación para reintentar inmediatamente (podrías alcanzar el límite de velocidad de nuevo)."
+      },
+      "cleared": {
+        "title": "Reintento de bootstrap programado",
+        "description": "Has borrado la marca de deshabilitación temporal para {entry_title}. La integración intentará el bootstrap de nuevo. Si se alcanza nuevamente el límite de la API de BMW, la integración deshabilitará el bootstrap hasta la hora de restablecimiento. Alternativamente, usa el servicio de desarrollador `cardata.clean_hv_containers` para listar/eliminar contenedores antiguos (ten en cuenta los límites de la API)."
+      },
+      "blocked_fallback": {
+        "description": "El bootstrap automático está deshabilitado hasta {until}. Borra la marca para reintentar ahora, o cancela e inténtalo de nuevo después del restablecimiento."
+      }
+    },
+    "error": {
+      "authorization_failed": "La autorización de BMW no se completó. Esto generalmente significa que hiciste clic en \"Denegar\", cerraste la página antes de aprobar, o la solicitud expiró. Detalles del error: {error}. Por favor, elimina la integración e intenta añadirla de nuevo, asegurándote de hacer clic en \"Aprobar\" cuando BMW solicite permiso.",
+      "device_code_failed": "BMW rechazó la solicitud de autorización del dispositivo ({error}). Verifica que el ID de cliente sea válido e inténtalo de nuevo."
+    },
+    "abort": {
+      "auth_failed": "La respuesta de autorización de BMW estaba incompleta (faltan tokens). Inténtalo de nuevo.",
+      "reauth_device_code_failed": "BMW rechazó la solicitud de autorización del dispositivo ({error}). Actualiza el ID de cliente en Configurar > Reiniciar autorización del dispositivo, o elimina y vuelve a añadir la integración.",
+      "reauth_missing_client_id": "Falta el ID de cliente para esta entrada de integración. Elimina y vuelve a añadir la integración para autorizarte de nuevo.",
+      "reauth_failed": "No se pudo iniciar la reautorización. Inténtalo de nuevo desde las opciones de la integración."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Acciones manuales",
+        "description": "Selecciona la acción que deseas ejecutar. Actualizar tokens solo intenta renovar los tokens sin reautorización. Te sugerimos reiniciar HA después si tienes problemas."
+      }
+    },
+    "error": {
+      "refresh_failed": "Error al actualizar tokens: {error}",
+      "runtime_missing": "El entorno de ejecución de la integración no está listo. Inténtalo de nuevo después de que se complete la configuración.",
+      "no_vins": "Aún no se conocen VINs. Espera a que el stream descubra un vehículo o actívalo manualmente una vez.",
+      "invalid_int": "Introduce un número entero positivo",
+      "invalid_client_id": "Introduce el ID de cliente BMW CarData."
+    },
+    "abort": {
+      "auth_failed": "La respuesta de autorización de BMW estaba incompleta (faltan tokens). Inténtalo de nuevo.",
+      "reauth_started": "Autorización reiniciada. Completa el nuevo flujo de inicio de sesión desde la notificación.",
+      "reauth_device_code_failed": "BMW rechazó la solicitud de autorización del dispositivo ({error}). Actualiza el ID de cliente en las opciones de la integración e inténtalo de nuevo.",
+      "reauth_missing_client_id": "Falta el ID de cliente para esta entrada de integración. Elimina y vuelve a añadir la integración para autorizarte de nuevo.",
+      "reauth_failed": "No se pudo iniciar la reautorización. Inténtalo de nuevo desde las opciones de la integración."
+    }
+  }
+}

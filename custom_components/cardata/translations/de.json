@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW Cardata",
+        "description": "Geben Sie Ihre BMW CarData Client-ID ein."
+      },
+      "authorize": {
+        "title": "BMW CarData autorisieren",
+        "description": "Öffnen Sie {verification_url} und geben Sie den Benutzercode {user_code} ein, falls danach gefragt wird. Sobald Sie das Gerät genehmigt haben, klicken Sie auf Absenden. Falls die Genehmigung bereits abgeschlossen wurde, klicken Sie erneut auf Absenden, um fortzufahren."
+      },
+      "blocked": {
+        "title": "Bootstrap aufgrund des API-Ratenlimits deaktiviert",
+        "description": "Die Integration hat zuvor das tägliche BMW-API-Ratenlimit erreicht und der automatische Bootstrap (Container-Erstellung und Mapping) wurde für {entry_title} vorübergehend bis {until} deaktiviert. Sie können entweder bis zu diesem Zeitpunkt warten und es erneut versuchen, oder das Flag unten löschen, um es sofort erneut zu versuchen (möglicherweise wird das Ratenlimit erneut erreicht)."
+      },
+      "cleared": {
+        "title": "Bootstrap-Wiederholung geplant",
+        "description": "Sie haben das temporäre Deaktivierungs-Flag für {entry_title} gelöscht. Die Integration wird den Bootstrap erneut versuchen. Wenn das BMW-API-Ratenlimit erneut erreicht wird, wird die Integration den Bootstrap bis zur Rücksetzzeit wieder deaktivieren. Alternativ können Sie den Entwicklerdienst `cardata.clean_hv_containers` verwenden, um alte Container aufzulisten/zu löschen (achten Sie auf API-Ratenlimits)."
+      },
+      "blocked_fallback": {
+        "description": "Der automatische Bootstrap ist bis {until} deaktiviert. Löschen Sie das Flag, um es jetzt erneut zu versuchen, oder brechen Sie ab und versuchen Sie es nach dem Zurücksetzen erneut."
+      }
+    },
+    "error": {
+      "authorization_failed": "Die BMW-Autorisierung wurde nicht abgeschlossen. Dies bedeutet normalerweise, dass Sie auf \"Ablehnen\" geklickt, die Seite vor der Genehmigung geschlossen oder die Anfrage eine Zeitüberschreitung hatte. Fehlerdetails: {error}. Bitte entfernen Sie die Integration und versuchen Sie, sie erneut hinzuzufügen. Stellen Sie sicher, dass Sie auf \"Genehmigen\" klicken, wenn BMW um Erlaubnis bittet.",
+      "device_code_failed": "BMW hat die Geräteautorisierungsanfrage abgelehnt ({error}). Überprüfen Sie, ob die Client-ID gültig ist, und versuchen Sie es erneut."
+    },
+    "abort": {
+      "auth_failed": "Die BMW-Autorisierungsantwort war unvollständig (fehlende Token). Bitte versuchen Sie es erneut.",
+      "reauth_device_code_failed": "BMW hat die Geräteautorisierungsanfrage abgelehnt ({error}). Aktualisieren Sie die Client-ID unter Konfigurieren > Geräteautorisierung erneut starten, oder entfernen Sie die Integration und fügen Sie sie erneut hinzu.",
+      "reauth_missing_client_id": "Die Client-ID fehlt für diesen Integrationseintrag. Entfernen Sie die Integration und fügen Sie sie erneut hinzu, um sich erneut zu autorisieren.",
+      "reauth_failed": "Die erneute Autorisierung konnte nicht gestartet werden. Versuchen Sie es erneut über die Integrationsoptionen."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manuelle Aktionen",
+        "description": "Wählen Sie die Aktion aus, die Sie ausführen möchten. Token aktualisieren versucht nur, die Token ohne erneute Autorisierung zu erneuern. Wir empfehlen, HA danach neu zu starten, wenn Sie Probleme haben."
+      }
+    },
+    "error": {
+      "refresh_failed": "Token-Aktualisierung fehlgeschlagen: {error}",
+      "runtime_missing": "Die Integrationslaufzeit ist nicht bereit. Versuchen Sie es erneut, nachdem die Einrichtung abgeschlossen ist.",
+      "no_vins": "Es sind noch keine VINs bekannt. Warten Sie, bis der Stream ein Fahrzeug erkennt, oder lösen Sie es einmal manuell aus.",
+      "invalid_int": "Geben Sie eine positive Ganzzahl ein",
+      "invalid_client_id": "Geben Sie die BMW CarData Client-ID ein."
+    },
+    "abort": {
+      "auth_failed": "Die BMW-Autorisierungsantwort war unvollständig (fehlende Token). Bitte versuchen Sie es erneut.",
+      "reauth_started": "Autorisierung neu gestartet. Schließen Sie den neuen Anmeldevorgang über die Benachrichtigung ab.",
+      "reauth_device_code_failed": "BMW hat die Geräteautorisierungsanfrage abgelehnt ({error}). Aktualisieren Sie die Client-ID in den Integrationsoptionen und versuchen Sie es erneut.",
+      "reauth_missing_client_id": "Die Client-ID fehlt für diesen Integrationseintrag. Entfernen Sie die Integration und fügen Sie sie erneut hinzu, um sich erneut zu autorisieren.",
+      "reauth_failed": "Die erneute Autorisierung konnte nicht gestartet werden. Versuchen Sie es erneut über die Integrationsoptionen."
+    }
+  }
+}

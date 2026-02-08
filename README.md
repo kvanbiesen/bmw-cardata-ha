@@ -266,6 +266,20 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - TLS 1.3 capable SSL library: OpenSSL 1.1.1+, LibreSSL 3.2.0+, or equivalent (BMW's MQTT server requires TLS 1.3).
 - Familiarity with BMW's CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
+## Translations
+
+The setup wizard, error messages, and options menu are translated into the following languages:
+
+- English (en)
+- German (de)
+- French (fr)
+- Italian (it)
+- Dutch (nl)
+- Spanish (es)
+- Portuguese (pt)
+
+Home Assistant automatically selects the translation matching your configured language. Entity names are not translated as they use BMW descriptor names with values and units.
+
 ## Known Limitations
 
 - Only one BMW stream per GCID: make sure no other clients are connected simultaneously.

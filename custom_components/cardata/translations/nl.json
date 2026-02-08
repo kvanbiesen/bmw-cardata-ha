@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW Cardata",
+        "description": "Voer uw BMW CarData client-ID in."
+      },
+      "authorize": {
+        "title": "BMW CarData autoriseren",
+        "description": "Open {verification_url} en voer de gebruikerscode {user_code} in als daarom wordt gevraagd. Zodra u het apparaat heeft goedgekeurd, klikt u op Verzenden. Als de goedkeuring al is voltooid, klikt u nogmaals op Verzenden om door te gaan."
+      },
+      "blocked": {
+        "title": "Bootstrap uitgeschakeld vanwege API-snelheidslimiet",
+        "description": "De integratie heeft eerder de dagelijkse BMW API-snelheidslimiet bereikt en de automatische bootstrap (container aanmaken en mapping) is tijdelijk uitgeschakeld voor {entry_title} tot {until}. U kunt wachten tot dat moment en het opnieuw proberen, of de vlag hieronder wissen om het direct opnieuw te proberen (u kunt de snelheidslimiet opnieuw bereiken)."
+      },
+      "cleared": {
+        "title": "Bootstrap-herpoging gepland",
+        "description": "U heeft de tijdelijke uitschakel-vlag voor {entry_title} gewist. De integratie zal opnieuw proberen te bootstrappen. Als de BMW API-snelheidslimiet opnieuw wordt bereikt, zal de integratie de bootstrap weer uitschakelen tot de resettijd. U kunt ook de ontwikkelaarservice `cardata.clean_hv_containers` gebruiken om oude containers te bekijken/verwijderen (let op API-snelheidslimieten)."
+      },
+      "blocked_fallback": {
+        "description": "Automatische bootstrap is uitgeschakeld tot {until}. Wis de vlag om het nu opnieuw te proberen, of annuleer en probeer het opnieuw na de reset."
+      }
+    },
+    "error": {
+      "authorization_failed": "BMW-autorisatie is niet voltooid. Dit betekent meestal dat u op 'Weigeren' heeft geklikt, de pagina heeft gesloten voordat u goedkeurde, of de aanvraag is verlopen. Foutdetails: {error}. Verwijder de integratie en probeer deze opnieuw toe te voegen. Zorg ervoor dat u op 'Goedkeuren' klikt wanneer BMW om toestemming vraagt.",
+      "device_code_failed": "BMW heeft de apparaatautorisatieaanvraag afgewezen ({error}). Controleer of de client-ID geldig is en probeer het opnieuw."
+    },
+    "abort": {
+      "auth_failed": "Het BMW-autorisatieantwoord was onvolledig (ontbrekende tokens). Probeer het opnieuw.",
+      "reauth_device_code_failed": "BMW heeft de apparaatautorisatieaanvraag afgewezen ({error}). Werk de client-ID bij onder Configureren > Apparaatautorisatie opnieuw starten, of verwijder de integratie en voeg deze opnieuw toe.",
+      "reauth_missing_client_id": "Client-ID ontbreekt voor deze integratie-invoer. Verwijder de integratie en voeg deze opnieuw toe om opnieuw te autoriseren.",
+      "reauth_failed": "Herautorisatie kon niet worden gestart. Probeer het opnieuw vanuit de integratieopties."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Handmatige acties",
+        "description": "Selecteer de actie die u wilt uitvoeren. Tokens vernieuwen probeert alleen de tokens te vernieuwen zonder herautorisatie. We raden aan HA daarna opnieuw te starten als u problemen ondervindt."
+      }
+    },
+    "error": {
+      "refresh_failed": "Token vernieuwen mislukt: {error}",
+      "runtime_missing": "De integratie-runtime is niet gereed. Probeer het opnieuw nadat de installatie is voltooid.",
+      "no_vins": "Er zijn nog geen VIN's bekend. Wacht tot de stream een voertuig ontdekt of activeer het eenmalig handmatig.",
+      "invalid_int": "Voer een positief geheel getal in",
+      "invalid_client_id": "Voer de BMW CarData client-ID in."
+    },
+    "abort": {
+      "auth_failed": "Het BMW-autorisatieantwoord was onvolledig (ontbrekende tokens). Probeer het opnieuw.",
+      "reauth_started": "Autorisatie opnieuw gestart. Voltooi de nieuwe aanmeldprocedure vanuit de melding.",
+      "reauth_device_code_failed": "BMW heeft de apparaatautorisatieaanvraag afgewezen ({error}). Werk de client-ID bij in de integratieopties en probeer het opnieuw.",
+      "reauth_missing_client_id": "Client-ID ontbreekt voor deze integratie-invoer. Verwijder de integratie en voeg deze opnieuw toe om opnieuw te autoriseren.",
+      "reauth_failed": "Herautorisatie kon niet worden gestart. Probeer het opnieuw vanuit de integratieopties."
+    }
+  }
+}
