@@ -250,6 +250,12 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             raise RuntimeError("Token data must be set before tokens step")
         token_data = self._token_data
 
+        # Validate critical tokens are present and non-empty
+        for key in ("access_token", "refresh_token", "id_token"):
+            if not token_data.get(key):
+                _LOGGER.error("Token data missing required field: %s", key)
+                return self.async_abort(reason="auth_failed")
+
         entry_data = {
             "client_id": self._client_id,
             "access_token": token_data.get("access_token"),
