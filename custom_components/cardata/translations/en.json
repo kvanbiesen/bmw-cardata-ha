@@ -26,6 +26,7 @@
       "device_code_failed": "BMW rejected the device authorization request ({error}). Check that the client ID is valid and try again."
     },
     "abort": {
+      "auth_failed": "BMW authorization response was incomplete (missing tokens). Please try again.",
       "reauth_device_code_failed": "BMW rejected the device authorization request ({error}). Update the client ID under Configure > Start device authorization again, or remove and re-add the integration.",
       "reauth_missing_client_id": "Client ID is missing for this integration entry. Remove and re-add the integration to authorize again.",
       "reauth_failed": "Reauthorization could not be started. Try again from the integration options."
@@ -46,6 +47,7 @@
       "invalid_client_id": "Enter the BMW CarData client ID."
     },
     "abort": {
+      "auth_failed": "BMW authorization response was incomplete (missing tokens). Please try again.",
       "reauth_started": "Authorization restarted. Complete the new login flow from the notification.",
       "reauth_device_code_failed": "BMW rejected the device authorization request ({error}). Update the client ID in the integration options and try again.",
       "reauth_missing_client_id": "Client ID is missing for this integration entry. Remove and re-add the integration to authorize again.",
