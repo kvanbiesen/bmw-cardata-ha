@@ -306,7 +306,9 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     # Track last check time to prevent spin
     last_check_time: float = 0.0
 
-    _LOGGER.debug("Starting telematic poll loop for entry %s (stale threshold: %.0f min)", entry_id, DATA_STALE_THRESHOLD / 60)
+    _LOGGER.debug(
+        "Starting telematic poll loop for entry %s (stale threshold: %.0f min)", entry_id, DATA_STALE_THRESHOLD / 60
+    )
 
     try:
         while True:
@@ -352,7 +354,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             now = time.time()
 
             # Calculate wait time until next check
-            backoff_multiplier = 2 ** consecutive_failures if consecutive_failures > 0 else 1
+            backoff_multiplier = 2**consecutive_failures if consecutive_failures > 0 else 1
             current_interval = min(check_interval * backoff_multiplier, max_backoff)
             wait = current_interval - (now - last_check_time)
 
@@ -514,7 +516,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             if any_auth_failure:
                 consecutive_auth_failures += 1
 
-            next_interval = min(check_interval * (2 ** consecutive_failures), max_backoff)
+            next_interval = min(check_interval * (2**consecutive_failures), max_backoff)
             await async_update_last_telematic_poll(hass, entry, now)
 
             if result is not None and result.status is None:
