@@ -405,10 +405,6 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
-        # Predicted SOC sensor - battery charging icon
-        if self.descriptor == PREDICTED_SOC_DESCRIPTOR:
-            return "mdi:battery-charging"
-
         if self.descriptor and self.descriptor == "vehicle.cabin.door.status":
             value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "unlocked" in value:
