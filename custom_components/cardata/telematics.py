@@ -354,8 +354,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # This keeps API usage around 24 calls/day regardless of car count
             # Only count "real" VINs with sufficient telemetry data (not ghost/shared VINs)
             real_vins = [
-                vin for vin, data in runtime.coordinator.data.items()
-                if len(data) >= MIN_TELEMETRY_DESCRIPTORS
+                vin for vin, data in runtime.coordinator.data.items() if len(data) >= MIN_TELEMETRY_DESCRIPTORS
             ]
             num_vins = max(1, len(real_vins))
             stale_threshold = STALE_THRESHOLD_PER_VIN * num_vins
