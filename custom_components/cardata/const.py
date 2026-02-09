@@ -70,8 +70,9 @@ MQTT_KEEPALIVE = 30
 DEBUG_LOG = False
 DIAGNOSTIC_LOG_INTERVAL = 30  # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
-# Force telematics poll if no data (MQTT or telematics) received for this duration (seconds)
-DATA_STALE_THRESHOLD = 2 * 60 * 60  # 2 hours
+# Staleness threshold per VIN - scales with number of cars to stay within API quota
+# 1 car = 1h, 2 cars = 2h, etc. → worst case ~24 API calls/day regardless of car count
+STALE_THRESHOLD_PER_VIN = 60 * 60  # 1 hour per VIN
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"

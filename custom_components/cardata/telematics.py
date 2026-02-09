@@ -41,8 +41,9 @@ from .api_parsing import extract_telematic_payload, try_parse_json
 from .const import (
     API_BASE_URL,
     API_VERSION,
-    DATA_STALE_THRESHOLD,
     DOMAIN,
+    MIN_TELEMETRY_DESCRIPTORS,
+    STALE_THRESHOLD_PER_VIN,
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
@@ -297,18 +298,14 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     if runtime is None:
         return
 
-    # Use DATA_STALE_THRESHOLD as the base check interval
-    # We check for stale VINs every check_interval seconds
-    check_interval = min(DATA_STALE_THRESHOLD, 30 * 60)  # Check at most every 30 min
-    max_backoff = DATA_STALE_THRESHOLD * 2  # Max backoff on failures
+    # Staleness threshold scales with VIN count: 1 car = 1h, 2 cars = 2h, etc.
+    # This keeps worst-case API usage around 24 calls/day regardless of car count
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
     # Track last check time to prevent spin
     last_check_time: float = 0.0
 
-    _LOGGER.debug(
-        "Starting telematic poll loop for entry %s (stale threshold: %.0f min)", entry_id, DATA_STALE_THRESHOLD / 60
-    )
+    _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
     try:
         while True:
@@ -352,6 +349,17 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 continue
 
             now = time.time()
+
+            # Calculate stale threshold based on VIN count (1h per VIN)
+            # This keeps API usage around 24 calls/day regardless of car count
+            # Only count "real" VINs with sufficient telemetry data (not ghost/shared VINs)
+            real_vins = [
+                vin for vin, data in runtime.coordinator.data.items() if len(data) >= MIN_TELEMETRY_DESCRIPTORS
+            ]
+            num_vins = max(1, len(real_vins))
+            stale_threshold = STALE_THRESHOLD_PER_VIN * num_vins
+            check_interval = min(stale_threshold, 30 * 60)  # Check at most every 30 min
+            max_backoff = stale_threshold * 2
 
             # Calculate wait time until next check
             backoff_multiplier = 2**consecutive_failures if consecutive_failures > 0 else 1
@@ -451,29 +459,30 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             now = time.time()
             last_check_time = now
 
-            # Find VINs with stale data (no MQTT/telematics in DATA_STALE_THRESHOLD)
-            all_vins = list(runtime.coordinator.data.keys())
+            # Find VINs with stale data (no MQTT/telematics in stale_threshold)
+            # Only check "real" VINs with sufficient telemetry data (not ghost/shared VINs)
             stale_vins_to_poll = []
-            for vin in all_vins:
+            for vin in real_vins:
                 age = runtime.coordinator.seconds_since_last_mqtt(vin)
                 # VIN is stale if no data received, or data is older than threshold
-                if age is None or age >= DATA_STALE_THRESHOLD:
+                if age is None or age >= stale_threshold:
                     stale_vins_to_poll.append(vin)
                     if age is not None:
                         _LOGGER.debug(
-                            "VIN has stale data (%.1f hours old), will poll",
+                            "VIN has stale data (%.1f hours old, threshold: %.1f hours), will poll",
                             age / 3600,
+                            stale_threshold / 3600,
                         )
 
             if not stale_vins_to_poll:
                 # No stale VINs - all data is fresh, continue waiting
-                _LOGGER.debug("All %d VINs have fresh data, skipping poll", len(all_vins))
+                _LOGGER.debug("All %d VINs have fresh data, skipping poll", num_vins)
                 continue
 
             _LOGGER.info(
                 "Found %d/%d VINs with stale data, polling...",
                 len(stale_vins_to_poll),
-                len(all_vins),
+                num_vins,
             )
 
             # Poll only stale VINs

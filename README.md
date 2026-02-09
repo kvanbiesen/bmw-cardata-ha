@@ -349,6 +349,14 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - TLS 1.3 capable SSL library: OpenSSL 1.1.1+, LibreSSL 3.2.0+, or equivalent (BMW's MQTT server requires TLS 1.3).
 - Familiarity with BMW's CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
+## !! Recommended setup with people on multiple bmw's (not required, its working as iss but you limiting yourself in accuracy since the harcode 50 limites a day !!
+- Car 1 -> email_1
+- Car 2 -> mail_2
+- .....
+- Use those seperate accounts in the the integration
+- Use mail_x+1 with has all the cars merged for the bmmw app
+- As said, not needed but then you live with outdated data (Hour x amount of cars on single account).
+
 ## Translations
 
 The setup wizard, error messages, and options menu are translated into the following languages:
