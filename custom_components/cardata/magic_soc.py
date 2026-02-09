@@ -375,6 +375,7 @@ class MagicSOCPredictor:
         """End a driving session and attempt to learn consumption."""
         session = self._driving_sessions.pop(vin, None)
         if session is None:
+            _LOGGER.debug("Magic SOC: end_driving_session for %s but no active session", redact_vin(vin))
             return
 
         # Save last prediction for continuity across isMoving flapping
@@ -454,6 +455,12 @@ class MagicSOCPredictor:
         self._last_reported_mileage[vin] = mileage
         if prev is not None and mileage > prev:
             return True
+        if prev is None:
+            _LOGGER.debug(
+                "Magic SOC: First mileage for %s (%.1f km) — no prior value to compare",
+                redact_vin(vin),
+                mileage,
+            )
         return False
 
     def update_driving_gps(self, vin: str, lat: float, lon: float) -> None:
