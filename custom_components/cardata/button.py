@@ -36,8 +36,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 
-from .const import DOMAIN
+from .const import DOMAIN, MAGIC_SOC_DESCRIPTOR
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -81,21 +82,47 @@ async def async_setup_entry(
                     entry_id=entry.entry_id,
                 )
             )
-            # Consumption reset button for BEV only (PHEV uses passthrough), requires Magic SOC enabled
-            if not coordinator._magic_soc.is_phev(vin) and coordinator.enable_magic_soc:
-                entities.append(
-                    ResetConsumptionLearningButton(
-                        coordinator=coordinator,
-                        vin=vin,
-                        vehicle_name=vehicle_name,
-                        entry_id=entry.entry_id,
-                    )
-                )
             _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, redact_vin(vin))
 
     if entities:
         async_add_entities(entities)
         _LOGGER.debug("Added %d button entities", len(entities))
+
+    # Track consumption reset buttons created to prevent duplicates
+    consumption_reset_created: set[str] = set()
+
+    def create_consumption_reset_button(vin: str) -> None:
+        """Create Reset Magic Learning button for a VIN (called when Magic SOC sensor is created)."""
+        if vin in consumption_reset_created:
+            return
+        consumption_reset_created.add(vin)
+        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+        async_add_entities(
+            [
+                ResetConsumptionLearningButton(
+                    coordinator=coordinator,
+                    vin=vin,
+                    vehicle_name=vehicle_name,
+                    entry_id=entry.entry_id,
+                )
+            ]
+        )
+        _LOGGER.debug("Created consumption reset button for %s (%s)", vehicle_name, redact_vin(vin))
+
+    # Restore consumption reset buttons for VINs that already have a Magic SOC sensor
+    # in the entity registry (restart case — sensor was restored by sensor.py)
+    entity_registry = async_get(hass)
+    for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if (
+            entity_entry.domain == "sensor"
+            and entity_entry.unique_id
+            and entity_entry.unique_id.endswith(f"_{MAGIC_SOC_DESCRIPTOR}")
+        ):
+            vin = entity_entry.unique_id.split("_", 1)[0]
+            create_consumption_reset_button(vin)
+
+    # Register callback for dynamic creation (bootstrap + MQTT-driven Magic SOC sensor creation)
+    coordinator._create_consumption_reset_callback = create_consumption_reset_button
 
 
 class ResetACLearningButton(ButtonEntity):

@@ -123,6 +123,9 @@ class CardataCoordinator:
     # Callback set by sensor.py to create virtual sensors after platform setup
     _create_sensor_callback: Callable[[str, str], None] | None = field(default=None, init=False, repr=False)
 
+    # Callback set by button.py to create consumption reset button when Magic SOC sensor is created
+    _create_consumption_reset_callback: Callable[[str], None] | None = field(default=None, init=False, repr=False)
+
     # Track VINs that have had fuel range sensor created (hybrid vehicles only)
     _fuel_range_signaled: set[str] = field(default_factory=set, init=False)
 
@@ -971,6 +974,8 @@ class CardataCoordinator:
         for vin, sensor_descriptors in snapshot.new_sensors.items():
             for descriptor in sensor_descriptors:
                 self._safe_dispatcher_send(self.signal_new_sensor, vin, descriptor)
+                if descriptor == MAGIC_SOC_DESCRIPTOR and self._create_consumption_reset_callback:
+                    self._create_consumption_reset_callback(vin)
 
         for vin, binary_descriptors in snapshot.new_binary.items():
             for descriptor in binary_descriptors:

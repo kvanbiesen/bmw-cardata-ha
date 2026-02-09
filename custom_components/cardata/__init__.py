@@ -650,6 +650,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 is_phev = has_fuel and not coordinator._is_metadata_bev(vin)
                 if has_battery and not is_phev and MAGIC_SOC_DESCRIPTOR not in vehicle_state:
                     coordinator._create_sensor_callback(vin, MAGIC_SOC_DESCRIPTOR)
+                    if coordinator._create_consumption_reset_callback:
+                        coordinator._create_consumption_reset_callback(vin)
                     _LOGGER.info("Magic SOC entity created for VIN %s", redact_vin(vin))
 
         # Start telematic polling loop
