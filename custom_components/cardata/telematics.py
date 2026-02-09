@@ -42,6 +42,7 @@ from .const import (
     API_BASE_URL,
     API_VERSION,
     DOMAIN,
+    MIN_TELEMETRY_DESCRIPTORS,
     STALE_THRESHOLD_PER_VIN,
     VEHICLE_METADATA,
 )
@@ -351,7 +352,12 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             # Calculate stale threshold based on VIN count (1h per VIN)
             # This keeps API usage around 24 calls/day regardless of car count
-            num_vins = max(1, len(runtime.coordinator.data))
+            # Only count "real" VINs with sufficient telemetry data (not ghost/shared VINs)
+            real_vins = [
+                vin for vin, data in runtime.coordinator.data.items()
+                if len(data) >= MIN_TELEMETRY_DESCRIPTORS
+            ]
+            num_vins = max(1, len(real_vins))
             stale_threshold = STALE_THRESHOLD_PER_VIN * num_vins
             check_interval = min(stale_threshold, 30 * 60)  # Check at most every 30 min
             max_backoff = stale_threshold * 2
@@ -455,9 +461,9 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             last_check_time = now
 
             # Find VINs with stale data (no MQTT/telematics in stale_threshold)
-            all_vins = list(runtime.coordinator.data.keys())
+            # Only check "real" VINs with sufficient telemetry data (not ghost/shared VINs)
             stale_vins_to_poll = []
-            for vin in all_vins:
+            for vin in real_vins:
                 age = runtime.coordinator.seconds_since_last_mqtt(vin)
                 # VIN is stale if no data received, or data is older than threshold
                 if age is None or age >= stale_threshold:
@@ -471,13 +477,13 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             if not stale_vins_to_poll:
                 # No stale VINs - all data is fresh, continue waiting
-                _LOGGER.debug("All %d VINs have fresh data, skipping poll", len(all_vins))
+                _LOGGER.debug("All %d VINs have fresh data, skipping poll", num_vins)
                 continue
 
             _LOGGER.info(
                 "Found %d/%d VINs with stale data, polling...",
                 len(stale_vins_to_poll),
-                len(all_vins),
+                num_vins,
             )
 
             # Poll only stale VINs
