@@ -36,7 +36,7 @@ class LearnedConsumption:
 
     kwh_per_km: float = DEFAULT_CONSUMPTION_KWH_PER_KM
     trip_count: int = 0
-    monthly: dict[int, dict[str, float]] = field(default_factory=dict)
+    monthly: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
