@@ -217,6 +217,9 @@ class CardataCoordinator:
         """Check if vehicle metadata identifies this as a BEV (not PHEV/ICE).
 
         Uses driveTrain and propulsionType from BMW basicData API.
+        Falls back to matching modelName/series against known BEV models
+        from DEFAULT_CONSUMPTION_BY_MODEL (e.g. i4 eDrive40 sends erroneous
+        fuel descriptors but is a pure BEV).
         Returns False (unknown) if metadata is not available.
         """
         metadata = self.device_metadata.get(vin)
@@ -227,7 +230,14 @@ class CardataCoordinator:
         propulsion = str(raw.get("propulsionType", "")).upper()
         # BMW uses "BEV" or "ELECTRIC" for pure electric vehicles
         bev_keywords = ("BEV", "ELECTRIC")
-        return any(kw in drive_train or kw in propulsion for kw in bev_keywords)
+        if any(kw in drive_train or kw in propulsion for kw in bev_keywords):
+            return True
+        # Fallback: check if model matches a known BEV from consumption defaults
+        model_name = raw.get("modelName") or raw.get("series") or ""
+        for prefix in sorted(DEFAULT_CONSUMPTION_BY_MODEL, key=len, reverse=True):
+            if model_name.startswith(prefix):
+                return True
+        return False
 
     def get_derived_fuel_range(self, vin: str) -> float | None:
         """Get derived fuel/petrol range for hybrid vehicles (total - electric).
@@ -852,6 +862,7 @@ class CardataCoordinator:
         if has_hv_battery:
             is_phev = has_fuel_system and not self._is_metadata_bev(vin)
             self._soc_predictor.set_vehicle_is_phev(vin, is_phev)
+            self._magic_soc.set_vehicle_is_phev(vin, is_phev)
 
             # Magic SOC: only create for BEV (not PHEV) when enabled
             if not is_phev and self.enable_magic_soc and MAGIC_SOC_DESCRIPTOR not in vehicle_state:
