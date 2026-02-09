@@ -844,8 +844,21 @@ class SOCPredictor:
                 return bmw_soc
             return self._last_predicted_soc.get(vin)
 
-        # No energy accumulated yet - hold at last prediction
+        # No energy accumulated yet - check if BMW SOC is higher and re-anchor
         if session.total_energy_kwh == 0:
+            # If BMW SOC is available and higher, re-anchor to follow it
+            # This handles cases where power data isn't streaming
+            if bmw_soc is not None and bmw_soc > session.last_predicted_soc:
+                _LOGGER.debug(
+                    "SOC: Re-anchoring for %s: BMW SOC %.1f%% > predicted %.1f%% (no power data)",
+                    redact_vin(vin),
+                    bmw_soc,
+                    session.last_predicted_soc,
+                )
+                session.anchor_soc = bmw_soc
+                session.last_predicted_soc = bmw_soc
+                self._last_predicted_soc[vin] = bmw_soc
+                return bmw_soc
             return session.last_predicted_soc
 
         # Guard against invalid capacity (corrupted storage)
