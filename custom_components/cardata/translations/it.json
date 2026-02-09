@@ -37,6 +37,12 @@
       "init": {
         "title": "Azioni manuali",
         "description": "Seleziona l'azione che vuoi eseguire. Aggiorna token tenta semplicemente di rinnovare i token senza riautorizzazione. Ti consigliamo di riavviare HA dopo se riscontri problemi."
+      },
+      "action_settings": {
+        "title": "Impostazioni",
+        "data": {
+          "enable_magic_soc": "Abilita Magic SOC (previsione consumo in guida)"
+        }
       }
     },
     "error": {

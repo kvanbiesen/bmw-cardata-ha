@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
@@ -118,10 +119,21 @@ async def async_setup_entry(
     def ensure_entity(vin: str) -> None:
         """Create an image entity for the VIN if image bytes are available."""
         if vin in entities:
-            entities[vin].async_write_ha_state()
+            entity = entities[vin]
+            metadata = coordinator.device_metadata.get(vin, {})
+            image_path_str = metadata.get("vehicle_image_path")
+            if image_path_str:
+                try:
+                    from pathlib import Path
+
+                    mtime = Path(image_path_str).stat().st_mtime
+                    entity._attr_image_last_updated = datetime.fromtimestamp(mtime, tz=UTC)
+                except OSError:
+                    pass
+            entity.async_write_ha_state()
             return
 
-        metadata = coordinator.device_metadata.get(vin)
+        metadata = coordinator.device_metadata.get(vin, {})
         if not metadata:
             _LOGGER.debug("No metadata for VIN %s, skipping image entity", redact_vin(vin))
             return
@@ -171,6 +183,17 @@ class CardataImage(CardataEntity, ImageEntity):
 
         self._base_name = "Vehicle Image"
         self._update_name(write_state=False)
+
+        metadata = coordinator.device_metadata.get(vin, {})
+        image_path_str = metadata.get("vehicle_image_path")
+        if image_path_str:
+            try:
+                from pathlib import Path
+
+                mtime = Path(image_path_str).stat().st_mtime
+                self._attr_image_last_updated = datetime.fromtimestamp(mtime, tz=UTC)
+            except OSError:
+                pass
 
     def image(self) -> bytes | None:
         """Return bytes of image - loads from disk on demand."""

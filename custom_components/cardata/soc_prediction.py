@@ -253,8 +253,8 @@ class SOCPredictor:
         """
         return {vin: eff.to_dict() for vin, eff in self._learned_efficiency.items()}
 
-    def get_all_session_data(self) -> dict[str, Any]:
-        """Get all session data for v2 persistence.
+    def get_session_data(self) -> dict[str, Any]:
+        """Get charging session data for persistence.
 
         Returns:
             Dictionary with learned_efficiency, pending_sessions, active_sessions,
@@ -269,14 +269,13 @@ class SOCPredictor:
         }
 
     def load_session_data(self, data: dict[str, Any]) -> None:
-        """Load session data from storage (v1 or v2 format).
+        """Load charging session data from storage (v1 or v2 format).
 
         v1 format: flat dict mapping VIN to learned efficiency data.
         v2 format: dict with learned_efficiency, pending_sessions, active_sessions,
         and charging_status keys.
 
-        Args:
-            data: Stored data dictionary
+        Ignores keys it doesn't own (driving keys handled by MagicSOCPredictor).
         """
         if "learned_efficiency" not in data:
             # v1 migration: entire dict is learned efficiency

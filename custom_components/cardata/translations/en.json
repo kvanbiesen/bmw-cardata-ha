@@ -37,6 +37,12 @@
       "init": {
         "title": "Manual actions",
         "description": "Select the action you want to run. Refresh tokens tries to just refresh the tokens without reauth. We suggest restarting HA after that if you have problems."
+      },
+      "action_settings": {
+        "title": "Settings",
+        "data": {
+          "enable_magic_soc": "Enable Magic SOC (driving consumption prediction)"
+        }
       }
     },
     "error": {

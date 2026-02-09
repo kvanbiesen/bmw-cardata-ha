@@ -37,6 +37,12 @@
       "init": {
         "title": "Manuelle Aktionen",
         "description": "Wählen Sie die Aktion aus, die Sie ausführen möchten. Token aktualisieren versucht nur, die Token ohne erneute Autorisierung zu erneuern. Wir empfehlen, HA danach neu zu starten, wenn Sie Probleme haben."
+      },
+      "action_settings": {
+        "title": "Einstellungen",
+        "data": {
+          "enable_magic_soc": "Magic SOC aktivieren (Fahrverbrauchsvorhersage)"
+        }
       }
     },
     "error": {

@@ -452,9 +452,13 @@ class MotionDetector:
                 # If no baseline, no mileage increase, or mileage change before baseline, default to not moving
                 # (Don't use old mileage data from before GPS went stale)
 
-        # 4. No GPS data at all for this VIN — return None so the caller
-        # can fall back to BMW-provided vehicle.isMoving from MQTT.
+        # 4. No GPS data at all for this VIN — use mileage if available,
+        # otherwise return None so the caller falls back to BMW-provided vehicle.isMoving.
         if last_gps_update is None:
+            if last_mileage_change is not None:
+                elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
+                if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
+                    return True
             return None
 
         # 5. DEFAULT: Not moving (safest assumption after GPS went stale with no mileage confirmation)

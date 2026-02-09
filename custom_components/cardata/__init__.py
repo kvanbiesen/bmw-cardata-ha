@@ -51,9 +51,11 @@ from .const import (
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
     ERR_TOKEN_REFRESH_IN_PROGRESS,
+    MAGIC_SOC_DESCRIPTOR,
     MQTT_KEEPALIVE,
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
+    OPTION_ENABLE_MAGIC_SOC,
     OPTION_MQTT_KEEPALIVE,
     SOC_LEARNING_STORAGE_KEY,
     SOC_LEARNING_STORAGE_VERSION,
@@ -119,6 +121,20 @@ async def _async_cleanup_on_failure(
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
 
 
+def _make_options_listener(initial_options: dict):
+    """Create an update listener that reloads only when options change."""
+    prev_options = dict(initial_options)
+
+    async def _listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+        nonlocal prev_options
+        current = dict(entry.options) if entry.options else {}
+        if current != prev_options:
+            prev_options = current
+            await hass.config_entries.async_reload(entry.entry_id)
+
+    return _listener
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up CarData from a config entry."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -168,6 +184,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Set up coordinator
         coordinator = CardataCoordinator(hass=hass, entry_id=entry.entry_id)
         coordinator.diagnostic_interval = diagnostic_interval
+        coordinator.enable_magic_soc = bool(options.get(OPTION_ENABLE_MAGIC_SOC, False))
 
         # Store session start time for ghost cleanup
         # This prevents removing devices that existed before this HA restart
@@ -185,6 +202,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             stored_learning = await soc_learning_store.async_load()
             if stored_learning and isinstance(stored_learning, dict):
                 coordinator._soc_predictor.load_session_data(stored_learning)
+                coordinator._magic_soc.load_session_data(stored_learning)
         except Exception as err:
             _LOGGER.warning("Failed to load SOC learning data: %s", err)
 
@@ -192,7 +210,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def _save_learning_data() -> None:
             """Save SOC session data to storage."""
             try:
-                data_to_save = coordinator._soc_predictor.get_all_session_data()
+                data_to_save = {
+                    **coordinator._soc_predictor.get_session_data(),
+                    **coordinator._magic_soc.get_session_data(),
+                }
                 await soc_learning_store.async_save(data_to_save)
                 _LOGGER.debug("Saved SOC session data")
             except Exception as err:
@@ -203,6 +224,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.async_create_task(_save_learning_data())
 
         coordinator._soc_predictor.set_learning_callback(_trigger_save)
+        coordinator._magic_soc.set_learning_callback(_trigger_save)
 
         # Restore stored vehicle metadata
         last_poll_ts = data.get("last_telematic_poll")
@@ -615,6 +637,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # If not (timeout), entities will be created with VINs temporarily and updated later
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+        # Create Magic SOC entities for eligible BEV VINs
+        # Must run AFTER platform setup so coordinator.data is populated (entity restore)
+        # and the sensor platform's ensure_entity callback is registered
+        if coordinator.enable_magic_soc and coordinator._create_sensor_callback:
+            for vin, vehicle_state in list(coordinator.data.items()):
+                has_battery = "vehicle.drivetrain.batteryManagement.header" in vehicle_state
+                has_fuel = (
+                    "vehicle.drivetrain.fuelSystem.remainingFuel" in vehicle_state
+                    or "vehicle.drivetrain.fuelSystem.level" in vehicle_state
+                )
+                is_phev = has_fuel and not coordinator._is_metadata_bev(vin)
+                if has_battery and not is_phev and MAGIC_SOC_DESCRIPTOR not in vehicle_state:
+                    coordinator._create_sensor_callback(vin, MAGIC_SOC_DESCRIPTOR)
+                    if coordinator._create_consumption_reset_callback:
+                        coordinator._create_consumption_reset_callback(vin)
+                    _LOGGER.info("Magic SOC entity created for VIN %s", redact_vin(vin))
+
         # Start telematic polling loop
         runtime_data.telematic_task = hass.loop.create_task(async_telematic_poll_loop(hass, entry.entry_id))
 
@@ -646,7 +685,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _delayed_cleanup(),
             name=f"{DOMAIN}_ghost_cleanup_{entry.entry_id}",
         )
-        entry.async_on_unload(lambda: cleanup_task.cancel() if not cleanup_task.done() else None)
+
+        def _cancel_cleanup() -> None:
+            if not cleanup_task.done():
+                cleanup_task.cancel()
+
+        entry.async_on_unload(_cancel_cleanup)
+
+        # Reload integration when options change (Magic SOC toggle, debug, keepalive, etc.)
+        entry.async_on_unload(entry.add_update_listener(_make_options_listener(options)))
 
         setup_succeeded = True
         return True
@@ -686,7 +733,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Save SOC session data before shutdown
     if data.soc_store is not None:
         try:
-            session_data = data.coordinator._soc_predictor.get_all_session_data()
+            session_data = {
+                **data.coordinator._soc_predictor.get_session_data(),
+                **data.coordinator._magic_soc.get_session_data(),
+            }
             await data.soc_store.async_save(session_data)
         except Exception as err:
             _LOGGER.warning("Failed to save SOC session data on shutdown: %s", err)
