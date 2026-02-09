@@ -83,6 +83,8 @@ class CardataCoordinator:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # Cache last sent derived isMoving state to avoid duplicate updates
     _last_derived_is_moving: dict[str, bool | None] = field(default_factory=dict, init=False)
+    # Cache last sent predicted SOC to avoid redundant dispatches during periodic updates
+    _last_predicted_soc_sent: dict[str, float] = field(default_factory=dict, init=False)
     # Per-VIN timestamp of last MQTT message (unix time) for freshness gating
     _last_vin_message_at: dict[str, float] = field(default_factory=dict, init=False)
 
@@ -313,6 +315,9 @@ class CardataCoordinator:
             current_soc = self._soc_predictor._last_predicted_soc.get(vin)
         if current_soc is not None:
             self._soc_predictor.end_session(vin, current_soc, target_soc)
+
+        # Clear cached SOC value when charging ends
+        self._last_predicted_soc_sent.pop(vin, None)
 
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
@@ -773,11 +778,11 @@ class CardataCoordinator:
             # Access nested dict directly - no intermediate copy needed since
             # we only need one descriptor. This minimizes the race window.
             vehicle_data = self.data.get(vin)
-            if vehicle_data is None:
+            if not vehicle_data:
                 return None
 
             state = vehicle_data.get(descriptor)
-            if state is None:
+            if not state:
                 return None
 
             # Return a defensive copy. Access all attributes in one expression
@@ -952,6 +957,29 @@ class CardataCoordinator:
                             if runtime is not None:
                                 runtime.request_trip_poll(vin)
 
+        # Periodic predicted SOC recalculation during charging
+        schedule_soc_debounce = False
+        for vin in self._soc_predictor.get_tracked_vins():
+            if self._soc_predictor.is_charging(vin) and self._soc_predictor.has_signaled_entity(vin):
+                # Recalculate SOC (time-based accumulation happens in get_predicted_soc)
+                current_estimate = self._soc_predictor.get_predicted_soc(vin)
+                if current_estimate is not None:
+                    last_soc_sent = self._last_predicted_soc_sent.get(vin)
+                    if current_estimate != last_soc_sent:
+                        self._last_predicted_soc_sent[vin] = current_estimate
+                        if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                            schedule_soc_debounce = True
+                        if debug_enabled():
+                            _LOGGER.debug(
+                                "Periodic SOC update for %s: %.1f%% (was: %s)",
+                                redact_vin(vin),
+                                current_estimate,
+                                f"{last_soc_sent:.1f}%" if last_soc_sent else "None",
+                            )
+
+        if schedule_soc_debounce:
+            await self._async_schedule_debounced_update()
+
         # Periodically cleanup stale VIN tracking data and old descriptors
         self._cleanup_counter += 1
         if self._cleanup_counter >= self._CLEANUP_INTERVAL:
@@ -992,6 +1020,7 @@ class CardataCoordinator:
             tracking_dicts: list[dict[str, Any]] = [
                 self._last_derived_is_moving,
                 self._last_vin_message_at,
+                self._last_predicted_soc_sent,
             ]
 
             stale_vins: set[str] = set()
