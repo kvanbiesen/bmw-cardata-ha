@@ -81,6 +81,16 @@ async def async_setup_entry(
                     entry_id=entry.entry_id,
                 )
             )
+            # Consumption reset button for BEV only (PHEV uses passthrough), requires Magic SOC enabled
+            if not coordinator._magic_soc.is_phev(vin) and coordinator.enable_magic_soc:
+                entities.append(
+                    ResetConsumptionLearningButton(
+                        coordinator=coordinator,
+                        vin=vin,
+                        vehicle_name=vehicle_name,
+                        entry_id=entry.entry_id,
+                    )
+                )
             _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, redact_vin(vin))
 
     if entities:
@@ -148,3 +158,34 @@ class ResetDCLearningButton(ButtonEntity):
         """Handle button press."""
         _LOGGER.info("Resetting DC learning for VIN %s", redact_vin(self._vin))
         self._coordinator._soc_predictor.reset_learned_efficiency(self._vin, "DC")
+
+
+class ResetConsumptionLearningButton(ButtonEntity):
+    """Button to reset driving consumption learning."""
+
+    _attr_icon = "mdi:refresh"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: CardataCoordinator,
+        vin: str,
+        vehicle_name: str,
+        entry_id: str,
+    ) -> None:
+        """Initialize the button."""
+        self._coordinator = coordinator
+        self._vin = vin
+        self._attr_unique_id = f"{vin}_reset_consumption_learning"
+        self._attr_name = "Reset Magic Learning"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, vin)},
+            name=vehicle_name,
+        )
+        self._entry_id = entry_id
+
+    async def async_press(self) -> None:
+        """Handle button press."""
+        _LOGGER.info("Resetting consumption learning for VIN %s", redact_vin(self._vin))
+        self._coordinator._magic_soc.reset_learned_consumption(self._vin)

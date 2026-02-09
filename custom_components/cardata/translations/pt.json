@@ -37,6 +37,12 @@
       "init": {
         "title": "Ações manuais",
         "description": "Selecione a ação que pretende executar. Atualizar tokens tenta apenas renovar os tokens sem reautorização. Sugerimos reiniciar o HA depois se tiver problemas."
+      },
+      "action_settings": {
+        "title": "Definições",
+        "data": {
+          "enable_magic_soc": "Ativar Magic SOC (previsão de consumo em condução)"
+        }
       }
     },
     "error": {

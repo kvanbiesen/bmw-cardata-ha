@@ -37,6 +37,12 @@
       "init": {
         "title": "Actions manuelles",
         "description": "Sélectionnez l'action que vous souhaitez exécuter. Rafraîchir les jetons tente simplement de renouveler les jetons sans réautorisation. Nous vous suggérons de redémarrer HA après cela si vous rencontrez des problèmes."
+      },
+      "action_settings": {
+        "title": "Paramètres",
+        "data": {
+          "enable_magic_soc": "Activer Magic SOC (prédiction de consommation en conduite)"
+        }
       }
     },
     "error": {

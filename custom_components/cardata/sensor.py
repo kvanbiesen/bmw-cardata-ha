@@ -67,6 +67,7 @@ from .const import (
     LOCATION_HEADING_DESCRIPTOR,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    MAGIC_SOC_DESCRIPTOR,
     MIN_TELEMETRY_DESCRIPTORS,
     PREDICTED_SOC_DESCRIPTOR,
     WINDOW_DESCRIPTORS,
@@ -151,6 +152,10 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
 
         # Predicted SOC is always a battery sensor
         if descriptor == PREDICTED_SOC_DESCRIPTOR:
+            return SensorDeviceClass.BATTERY
+
+        # Magic SOC is always a battery sensor
+        if descriptor == MAGIC_SOC_DESCRIPTOR:
             return SensorDeviceClass.BATTERY
 
         # Special case: 'm' can be meters OR minutes depending on context
@@ -259,9 +264,11 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         await super().async_added_to_hass()
 
         # Re-signal entity existence for virtual sensors (critical after restart)
-        # Without this, coordinator won't schedule updates during charging
+        # Without this, coordinator won't schedule updates during charging/driving
         if self._descriptor == PREDICTED_SOC_DESCRIPTOR:
             self._coordinator._soc_predictor.signal_entity_created(self._vin)
+        elif self._descriptor == MAGIC_SOC_DESCRIPTOR:
+            self._coordinator._magic_soc.signal_magic_soc_entity_created(self._vin)
         elif self._descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
             self._coordinator._fuel_range_signaled.add(self._vin)
 
@@ -387,6 +394,10 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if self._descriptor == PREDICTED_SOC_DESCRIPTOR:
             return SensorStateClass.MEASUREMENT
 
+        # Special case: magic SOC
+        if self._descriptor == MAGIC_SOC_DESCRIPTOR:
+            return SensorStateClass.MEASUREMENT
+
         # Check unit of measurement
         unit = getattr(self, "_attr_native_unit_of_measurement", None)
 
@@ -412,6 +423,10 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
     @property
     def icon(self) -> str | None:
         """Return dynamic icon based on state."""
+        # Magic SOC sensor
+        if self.descriptor == MAGIC_SOC_DESCRIPTOR:
+            return "mdi:battery"
+
         if self.descriptor and self.descriptor == "vehicle.cabin.door.status":
             value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "unlocked" in value:
@@ -451,6 +466,14 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
 
         return attrs
     '''
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes, with Magic SOC prediction info."""
+        attrs = super().extra_state_attributes or {}
+        if self._descriptor == MAGIC_SOC_DESCRIPTOR:
+            attrs.update(self._coordinator.get_magic_soc_attributes(self._vin))
+        return attrs
 
 
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
@@ -724,6 +747,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         # This is critical after restart when tracking sets are empty but entities are restored
         if descriptor == PREDICTED_SOC_DESCRIPTOR:
             coordinator._soc_predictor.signal_entity_created(vin)
+        elif descriptor == MAGIC_SOC_DESCRIPTOR:
+            coordinator._magic_soc.signal_magic_soc_entity_created(vin)
         elif descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
             coordinator._fuel_range_signaled.add(vin)
 
@@ -752,6 +777,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ensure_entity(vin, descriptor, from_signal=True)
 
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor))
+
+    # Expose ensure_entity so __init__.py can create virtual sensors after platform setup
+    coordinator._create_sensor_callback = lambda vin, descriptor: ensure_entity(vin, descriptor, from_signal=True)
 
     # also subscribe to updates
 
