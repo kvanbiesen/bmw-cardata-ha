@@ -41,14 +41,17 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
+    DEFAULT_CONSUMPTION_BY_MODEL,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
+    MAGIC_SOC_DESCRIPTOR,
     PREDICTED_SOC_DESCRIPTOR,
 )
 from .debug import debug_enabled
 from .descriptor_state import DescriptorState
+from .magic_soc import MagicSOCPredictor
 from .message_utils import (
     normalize_boolean_value,
     sanitize_timestamp_string,
@@ -110,6 +113,18 @@ class CardataCoordinator:
 
     # SOC prediction during charging
     _soc_predictor: SOCPredictor = field(default_factory=SOCPredictor, init=False)
+
+    # Magic SOC: driving consumption prediction
+    _magic_soc: MagicSOCPredictor = field(default_factory=MagicSOCPredictor, init=False)
+
+    # Whether Magic SOC sensor creation is enabled (off by default)
+    enable_magic_soc: bool = field(default=False, init=False)
+
+    # Callback set by sensor.py to create virtual sensors after platform setup
+    _create_sensor_callback: Callable[[str, str], None] | None = field(default=None, init=False, repr=False)
+
+    # Callback set by button.py to create consumption reset button when Magic SOC sensor is created
+    _create_consumption_reset_callback: Callable[[str], None] | None = field(default=None, init=False, repr=False)
 
     # Track VINs that have had fuel range sensor created (hybrid vehicles only)
     _fuel_range_signaled: set[str] = field(default_factory=set, init=False)
@@ -174,7 +189,15 @@ class CardataCoordinator:
 
     def _update_location_tracking(self, vin: str, lat: float, lon: float) -> bool:
         """Update location tracking and return True if position changed significantly (>50m)."""
-        return self._motion_detector.update_location(vin, lat, lon)
+        result = self._motion_detector.update_location(vin, lat, lon)
+        self._magic_soc.update_driving_gps(vin, lat, lon)
+        # Signal magic_soc update when GPS distance advances during driving
+        # This ensures the sensor updates even when travelledDistance isn't arriving
+        session = self._magic_soc._driving_sessions.get(vin)
+        if session is not None and session.gps_distance_km > 0:
+            if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
+        return result
 
     def get_derived_is_moving(self, vin: str) -> bool | None:
         """Get derived motion state from GPS position tracking.
@@ -192,6 +215,32 @@ class CardataCoordinator:
         if last is None:
             return None
         return time.time() - last
+
+    def _is_metadata_bev(self, vin: str) -> bool:
+        """Check if vehicle metadata identifies this as a BEV (not PHEV/ICE).
+
+        Uses driveTrain and propulsionType from BMW basicData API.
+        Falls back to matching modelName/series against known BEV models
+        from DEFAULT_CONSUMPTION_BY_MODEL (e.g. i4 eDrive40 sends erroneous
+        fuel descriptors but is a pure BEV).
+        Returns False (unknown) if metadata is not available.
+        """
+        metadata = self.device_metadata.get(vin)
+        if not metadata:
+            return False
+        raw = metadata.get("raw_data", {})
+        drive_train = str(raw.get("driveTrain", "")).upper()
+        propulsion = str(raw.get("propulsionType", "")).upper()
+        # BMW uses "BEV" or "ELECTRIC" for pure electric vehicles
+        bev_keywords = ("BEV", "ELECTRIC")
+        if any(kw in drive_train or kw in propulsion for kw in bev_keywords):
+            return True
+        # Fallback: check if model matches a known BEV from consumption defaults
+        model_name = raw.get("modelName") or raw.get("series") or ""
+        for prefix in sorted(DEFAULT_CONSUMPTION_BY_MODEL, key=len, reverse=True):
+            if model_name.startswith(prefix):
+                return True
+        return False
 
     def get_derived_fuel_range(self, vin: str) -> float | None:
         """Get derived fuel/petrol range for hybrid vehicles (total - electric).
@@ -285,6 +334,7 @@ class CardataCoordinator:
             if "DC" in method_str:
                 charging_method = "DC"
 
+        self._magic_soc.update_battery_capacity(vin, capacity_kwh)
         self._soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method)
 
     def _end_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
@@ -318,6 +368,153 @@ class CardataCoordinator:
 
         # Clear cached SOC value when charging ends
         self._last_predicted_soc_sent.pop(vin, None)
+
+    def get_magic_soc_attributes(self, vin: str) -> dict[str, Any]:
+        """Get extra state attributes for the Magic SOC sensor."""
+        attrs = self._magic_soc.get_magic_soc_attributes(vin)
+        if self._soc_predictor.is_charging(vin):
+            attrs["prediction_mode"] = "charging"
+        return attrs
+
+    def get_magic_soc(self, vin: str) -> float | None:
+        """Get Magic SOC prediction for driving and charging.
+
+        During charging, delegates to SOCPredictor (energy-based).
+        During driving, delegates to MagicSOCPredictor (distance-based).
+        Otherwise, passes through BMW SOC.
+
+        Returns:
+            Predicted or actual SOC percentage, or None if no data
+        """
+        vehicle_data = self.data.get(vin)
+        if not vehicle_data:
+            return None
+
+        # Get current BMW SOC
+        soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+        bmw_soc = None
+        if soc_state and soc_state.value is not None:
+            try:
+                bmw_soc = float(soc_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        # During charging: use predicted SOC (energy-based prediction)
+        if self._soc_predictor.is_charging(vin):
+            return self._soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
+
+        # Not charging: use driving prediction or passthrough
+        mileage_state = vehicle_data.get("vehicle.vehicle.travelledDistance")
+        mileage = None
+        if mileage_state and mileage_state.value is not None:
+            try:
+                mileage = float(mileage_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        return self._magic_soc.get_magic_soc(vin=vin, bmw_soc=bmw_soc, mileage=mileage)
+
+    def _anchor_driving_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
+        """Anchor a driving session when trip starts.
+
+        Must be called while holding _lock.
+        Falls back to cached SOC/capacity when descriptors have been evicted.
+        """
+        # Skip PHEV (hybrid powertrain makes distance-to-SOC unreliable)
+        if self._magic_soc.is_phev(vin):
+            _LOGGER.debug("Magic SOC: Skipping anchor for %s (PHEV)", redact_vin(vin))
+            return
+
+        # Get current SOC (prefer live descriptor, fallback to cached)
+        soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+        current_soc: float | None = None
+        if soc_state and soc_state.value is not None:
+            try:
+                current_soc = float(soc_state.value)
+            except (TypeError, ValueError):
+                pass
+        if current_soc is None:
+            current_soc = self._magic_soc.get_last_known_soc(vin)
+            if current_soc is None:
+                _LOGGER.debug("Magic SOC: Cannot anchor %s — no SOC available (live or cached)", redact_vin(vin))
+                return
+            _LOGGER.debug(
+                "Magic SOC: Using cached SOC %.1f%% for %s (descriptor unavailable)",
+                current_soc,
+                redact_vin(vin),
+            )
+
+        # Get current mileage (no fallback — must be live)
+        mileage_state = vehicle_state.get("vehicle.vehicle.travelledDistance")
+        if not mileage_state or mileage_state.value is None:
+            _LOGGER.debug("Magic SOC: Cannot anchor %s — no mileage in vehicle_state", redact_vin(vin))
+            return
+        try:
+            current_mileage = float(mileage_state.value)
+        except (TypeError, ValueError):
+            return
+
+        # Get battery capacity (prefer live descriptor, fallback to cached)
+        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
+        if not capacity_state or capacity_state.value is None:
+            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+        capacity_kwh: float | None = None
+        if capacity_state and capacity_state.value is not None:
+            try:
+                capacity_kwh = float(capacity_state.value)
+            except (TypeError, ValueError):
+                pass
+        if capacity_kwh is not None and capacity_kwh > 0:
+            self._magic_soc.update_battery_capacity(vin, capacity_kwh)
+        else:
+            capacity_kwh = self._magic_soc.get_last_known_capacity(vin)
+            if capacity_kwh is None or capacity_kwh <= 0:
+                _LOGGER.debug("Magic SOC: Cannot anchor %s — no capacity available (live or cached)", redact_vin(vin))
+                return
+            _LOGGER.debug(
+                "Magic SOC: Using cached capacity %.1f kWh for %s (descriptor unavailable)",
+                capacity_kwh,
+                redact_vin(vin),
+            )
+
+        self._magic_soc.anchor_driving_session(vin, current_soc, current_mileage, capacity_kwh)
+
+    def _anchor_driving_session_from_state(self, vin: str) -> None:
+        """Anchor driving session from stored vehicle state."""
+        vehicle_state = self.data.get(vin)
+        if vehicle_state:
+            self._anchor_driving_session(vin, vehicle_state)
+
+    def _end_driving_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
+        """End a driving session when trip ends.
+
+        Must be called while holding _lock.
+        """
+        # Get end SOC
+        soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+        end_soc = None
+        if soc_state and soc_state.value is not None:
+            try:
+                end_soc = float(soc_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        # Get end mileage
+        mileage_state = vehicle_state.get("vehicle.vehicle.travelledDistance")
+        end_mileage = None
+        if mileage_state and mileage_state.value is not None:
+            try:
+                end_mileage = float(mileage_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        self._magic_soc.end_driving_session(vin, end_soc, end_mileage)
+
+    def _end_driving_session_from_state(self, vin: str) -> None:
+        """End driving session from stored vehicle state."""
+        vehicle_state = self.data.get(vin)
+        if vehicle_state:
+            self._end_driving_session(vin, vehicle_state)
 
     def _safe_dispatcher_send(self, signal: str, *args: Any) -> None:
         """Send dispatcher signal with exception protection.
@@ -544,6 +741,8 @@ class CardataCoordinator:
                     if self._soc_predictor.is_charging(vin):
                         # Charging started - try to anchor session
                         self._anchor_soc_session(vin, vehicle_state)
+                        # End any active driving session (can't drive and charge)
+                        self._magic_soc.cancel_driving_session(vin)
                     elif was_charging:
                         # Charging stopped - end session for learning
                         self._end_soc_session(vin, vehicle_state)
@@ -554,6 +753,10 @@ class CardataCoordinator:
                             _LOGGER.debug(
                                 "Charging ended for VIN %s, requesting API poll for SOC verification", redact_vin(vin)
                             )
+                    # Signal Magic SOC on charging mode transition
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                            schedule_debounce = True
 
             # Track charging method for efficiency selection
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.method":
@@ -585,20 +788,75 @@ class CardataCoordinator:
                     except (TypeError, ValueError):
                         pass
                 self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
-                # Trigger predicted_soc sensor update during charging
+                # Trigger predicted_soc and magic_soc sensor updates during charging
                 if self._soc_predictor.is_charging(vin):
                     if self._soc_predictor.has_signaled_entity(vin):
                         if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                            schedule_debounce = True
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                             schedule_debounce = True
 
             # Update BMW SOC tracking
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
                 if value is not None:
                     try:
-                        self._soc_predictor.update_bmw_soc(vin, float(value))
+                        soc_val = float(value)
+                        self._soc_predictor.update_bmw_soc(vin, soc_val)
+                        self._magic_soc.update_bmw_soc(vin, soc_val)
                         # Trigger predicted_soc sensor update if it exists
                         if self._soc_predictor.has_signaled_entity(vin):
                             if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                        # Re-anchor driving session if BMW sends fresh SOC during driving
+                        if vin in self._magic_soc._driving_sessions:
+                            mileage_state = vehicle_state.get("vehicle.vehicle.travelledDistance")
+                            if mileage_state and mileage_state.value is not None:
+                                try:
+                                    current_mileage = float(mileage_state.value)
+                                    self._magic_soc.reanchor_driving_session(vin, soc_val, current_mileage)
+                                except (TypeError, ValueError):
+                                    pass
+                        else:
+                            # Retry: SOC was missing when isMoving fired → anchor failed
+                            bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
+                            gps_moving = self.get_derived_is_moving(vin)
+                            if bmw_moving is True or gps_moving is True:
+                                self._anchor_driving_session(vin, vehicle_state)
+                        # Signal magic_soc update on BMW SOC change
+                        if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                            if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                    except (TypeError, ValueError):
+                        pass
+
+            # Wire avgAuxPower to Magic SOC for auxiliary energy tracking
+            elif descriptor == "vehicle.vehicle.avgAuxPower":
+                if value is not None:
+                    try:
+                        aux_w = float(value)
+                        self._magic_soc.update_aux_power(vin, aux_w / 1000.0)
+                    except (TypeError, ValueError):
+                        pass
+
+            # Wire travelledDistance to motion detector and driving prediction
+            elif descriptor == "vehicle.vehicle.travelledDistance":
+                if value is not None:
+                    try:
+                        mileage = float(value)
+                        self._motion_detector.update_mileage(vin, mileage)
+                        needs_anchor = self._magic_soc.update_driving_mileage(vin, mileage)
+                        if needs_anchor:
+                            self._anchor_driving_session(vin, vehicle_state)
+                        elif vin not in self._magic_soc._driving_sessions:
+                            # Retry: isMoving fired before mileage arrived → anchor failed
+                            bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
+                            gps_moving = self.get_derived_is_moving(vin)
+                            if bmw_moving is True or gps_moving is True:
+                                self._anchor_driving_session(vin, vehicle_state)
+                        # Signal magic_soc update on mileage change
+                        if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                            if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                                 schedule_debounce = True
                     except (TypeError, ValueError):
                         pass
@@ -611,16 +869,24 @@ class CardataCoordinator:
                 # Sensor doesn't exist yet - signal creation
                 if self._pending_manager.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
                     schedule_debounce = True
-
         # Detect PHEV: has both HV battery and fuel system
         # PHEVs need special handling for SOC prediction (hybrid system can deplete battery)
+        # Note: Some BEVs (e.g. i4 eDrive40) send fuel system descriptors erroneously.
+        # Use metadata driveTrain/propulsionType as authoritative override when available.
         has_hv_battery = "vehicle.drivetrain.batteryManagement.header" in vehicle_state
         has_fuel_system = (
             "vehicle.drivetrain.fuelSystem.remainingFuel" in vehicle_state
             or "vehicle.drivetrain.fuelSystem.level" in vehicle_state
         )
         if has_hv_battery:
-            self._soc_predictor.set_vehicle_is_phev(vin, has_fuel_system)
+            is_phev = has_fuel_system and not self._is_metadata_bev(vin)
+            self._soc_predictor.set_vehicle_is_phev(vin, is_phev)
+            self._magic_soc.set_vehicle_is_phev(vin, is_phev)
+
+            # Magic SOC: only create for BEV (not PHEV) when enabled
+            if not is_phev and self.enable_magic_soc and MAGIC_SOC_DESCRIPTOR not in vehicle_state:
+                if self._pending_manager.add_new_sensor(vin, MAGIC_SOC_DESCRIPTOR):
+                    schedule_debounce = True
 
         # Detect BMW-provided vehicle.isMoving transitions (True -> False = trip ended)
         # This triggers immediate API poll to capture post-trip battery state
@@ -635,6 +901,11 @@ class CardataCoordinator:
                     runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
                     if runtime is not None:
                         runtime.request_trip_poll(vin)
+                    # End driving session for consumption learning
+                    self._end_driving_session(vin, vehicle_state)
+                elif last_bmw_moving is not True and new_is_moving is True:
+                    # Trip started - anchor driving session
+                    self._anchor_driving_session(vin, vehicle_state)
                 # Update tracking for BMW-provided state
                 if new_is_moving is not None:
                     self._last_derived_is_moving[f"{vin}_bmw"] = new_is_moving
@@ -719,6 +990,8 @@ class CardataCoordinator:
         for vin, sensor_descriptors in snapshot.new_sensors.items():
             for descriptor in sensor_descriptors:
                 self._safe_dispatcher_send(self.signal_new_sensor, vin, descriptor)
+                if descriptor == MAGIC_SOC_DESCRIPTOR and self._create_consumption_reset_callback:
+                    self._create_consumption_reset_callback(vin)
 
         for vin, binary_descriptors in snapshot.new_binary.items():
             for descriptor in binary_descriptors:
@@ -751,6 +1024,13 @@ class CardataCoordinator:
                 predicted_soc = self.get_predicted_soc(vin)
                 if predicted_soc is not None:
                     return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
+                return None
+
+            # Magic SOC is ALWAYS calculated dynamically
+            if descriptor == MAGIC_SOC_DESCRIPTOR:
+                magic_soc = self.get_magic_soc(vin)
+                if magic_soc is not None:
+                    return DescriptorState(value=magic_soc, unit="%", timestamp=None)
                 return None
 
             # Derived fuel range is ALWAYS calculated dynamically - check BEFORE stored state
@@ -804,6 +1084,13 @@ class CardataCoordinator:
                 predicted_soc = self.get_predicted_soc(vin)
                 if predicted_soc is not None:
                     return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
+                return None
+
+            # Magic SOC is ALWAYS calculated dynamically
+            if descriptor == MAGIC_SOC_DESCRIPTOR:
+                magic_soc = self.get_magic_soc(vin)
+                if magic_soc is not None:
+                    return DescriptorState(value=magic_soc, unit="%", timestamp=None)
                 return None
 
             # Derived fuel range is ALWAYS calculated dynamically
@@ -956,6 +1243,11 @@ class CardataCoordinator:
                             runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
                             if runtime is not None:
                                 runtime.request_trip_poll(vin)
+                            self._end_driving_session_from_state(vin)
+
+                        # Trip started (stopped -> moving): anchor driving session
+                        if last_sent is not True and current_derived is True:
+                            self._anchor_driving_session_from_state(vin)
 
         # Periodic predicted SOC recalculation during charging
         schedule_soc_debounce = False
@@ -1035,8 +1327,9 @@ class CardataCoordinator:
             # Also check motion detector for stale VINs
             stale_vins.update(vin for vin in self._motion_detector.get_tracked_vins() if vin not in valid_vins)
 
-            # Also check SOC predictor for stale VINs
+            # Also check SOC predictor and Magic SOC for stale VINs
             stale_vins.update(vin for vin in self._soc_predictor.get_tracked_vins() if vin not in valid_vins)
+            stale_vins.update(vin for vin in self._magic_soc.get_tracked_vins() if vin not in valid_vins)
 
             if stale_vins:
                 for vin in stale_vins:
@@ -1044,8 +1337,9 @@ class CardataCoordinator:
                         d.pop(vin, None)
                     # Cleanup motion detector for stale VINs
                     self._motion_detector.cleanup_vin(vin)
-                    # Cleanup SOC predictor for stale VINs
+                    # Cleanup SOC predictor and Magic SOC for stale VINs
                     self._soc_predictor.cleanup_vin(vin)
+                    self._magic_soc.cleanup_vin(vin)
                     # Also clean up pending manager
                     self._pending_manager.remove_vin(vin)
                 _LOGGER.debug(
@@ -1198,6 +1492,22 @@ class CardataCoordinator:
                 vin,
                 new_name,
             )
+
+        # Set model-based default consumption for Magic SOC
+        raw_data = metadata.get("raw_data", {})
+        model_name = raw_data.get("modelName") or raw_data.get("series") or ""
+        # Match longest prefix first to avoid "iX" matching "iX1"
+        for prefix in sorted(DEFAULT_CONSUMPTION_BY_MODEL, key=len, reverse=True):
+            if model_name.startswith(prefix):
+                self._magic_soc.set_default_consumption(vin, DEFAULT_CONSUMPTION_BY_MODEL[prefix])
+                _LOGGER.debug(
+                    "Magic SOC: Set default consumption for %s (%s) to %.2f kWh/km",
+                    redact_vin(vin),
+                    prefix,
+                    DEFAULT_CONSUMPTION_BY_MODEL[prefix],
+                )
+                break
+
         # Signal metadata update so sensors can refresh
         self._safe_dispatcher_send(self.signal_metadata, vin)
         return metadata

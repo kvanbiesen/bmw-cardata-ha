@@ -37,6 +37,12 @@
       "init": {
         "title": "Handmatige acties",
         "description": "Selecteer de actie die u wilt uitvoeren. Tokens vernieuwen probeert alleen de tokens te vernieuwen zonder opnieuw goed te keuren. We raden aan HA daarna opnieuw te starten als u problemen ondervindt."
+      },
+      "action_settings": {
+        "title": "Instellingen",
+        "data": {
+          "enable_magic_soc": "Magic SOC inschakelen (rijverbruiksvoorspelling)"
+        }
       }
     },
     "error": {

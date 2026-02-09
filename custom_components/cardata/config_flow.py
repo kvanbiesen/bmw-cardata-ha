@@ -42,7 +42,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
-from .const import DOMAIN
+from .const import DOMAIN, OPTION_ENABLE_MAGIC_SOC
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
@@ -354,8 +354,43 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 "action_fetch_telematic": "Get telematics data (API)",
                 "action_reset_container": "Reset telemetry container",
                 "action_cleanup_entities": "Clean up orphaned entities",
+                "action_settings": "Settings",
             },
         )
+
+    async def async_step_action_settings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        if user_input is not None:
+            # If Magic SOC is being disabled, remove its entities from the registry
+            was_enabled = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
+            now_enabled = user_input[OPTION_ENABLE_MAGIC_SOC]
+            if was_enabled and not now_enabled:
+                from homeassistant.helpers import entity_registry as er
+
+                entity_reg = er.async_get(self.hass)
+                for entity in er.async_entries_for_config_entry(entity_reg, self._config_entry.entry_id):
+                    if entity.unique_id and (
+                        entity.unique_id.endswith("_vehicle.magic_soc")
+                        or entity.unique_id.endswith("_reset_consumption_learning")
+                    ):
+                        _LOGGER.info("Removing Magic SOC entity %s", entity.entity_id)
+                        entity_reg.async_remove(entity.entity_id)
+
+            options = dict(self._config_entry.options)
+            options[OPTION_ENABLE_MAGIC_SOC] = user_input[OPTION_ENABLE_MAGIC_SOC]
+            return self.async_create_entry(title="", data=options)
+        current = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
+        return self.async_show_form(
+            step_id="action_settings",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(OPTION_ENABLE_MAGIC_SOC, default=current): bool,
+                }
+            ),
+        )
+
+    def _finish(self) -> FlowResult:
+        """Finish the options flow preserving existing options."""
+        return self.async_create_entry(title="", data=dict(self._config_entry.options))
 
     def _confirm_schema(self) -> vol.Schema:
         return vol.Schema({vol.Required("confirm", default=False): bool})
@@ -397,7 +432,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 errors={"base": "refresh_failed"},
                 placeholders={"error": _sanitize_error_for_user(err)},
             )
-        return self.async_create_entry(title="", data={})
+        return self._finish()
 
     async def async_step_action_reauth(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         current_client_id = self._reauth_client_id or self._config_entry.data.get("client_id") or ""
@@ -450,7 +485,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             {"entry_id": self._config_entry.entry_id},
             blocking=True,
         )
-        return self.async_create_entry(title="", data={})
+        return self._finish()
 
     def _collect_vins(self) -> list[str]:
         from custom_components.cardata.const import VEHICLE_METADATA
@@ -495,7 +530,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 {"entry_id": self._config_entry.entry_id, "vin": vin},
                 blocking=True,
             )
-        return self.async_create_entry(title="", data={})
+        return self._finish()
 
     async def async_step_action_fetch_telematic(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         from custom_components.cardata.const import DOMAIN
@@ -519,7 +554,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             {"entry_id": self._config_entry.entry_id},
             blocking=True,
         )
-        return self.async_create_entry(title="", data={})
+        return self._finish()
 
     async def async_step_action_reset_container(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         from custom_components.cardata.container import CardataContainerError
@@ -596,7 +631,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
         persistent_notification.async_dismiss(self.hass, notification_id)
 
-        return self.async_create_entry(title="", data={})
+        return self._finish()
 
     async def async_step_action_cleanup_entities(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Clean up orphaned entities for this integration.

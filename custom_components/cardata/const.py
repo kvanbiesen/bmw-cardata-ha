@@ -53,6 +53,9 @@ BATTERY_DESCRIPTORS = {
 # Predicted SOC sensor (calculated during charging)
 PREDICTED_SOC_DESCRIPTOR = "vehicle.predicted_soc"
 
+# Magic SOC sensor (driving consumption prediction)
+MAGIC_SOC_DESCRIPTOR = "vehicle.magic_soc"
+
 DEFAULT_SCOPE = "authenticate_user openid cardata:api:read cardata:streaming:read"
 DEVICE_CODE_URL = "https://customer.bmwgroup.com/gcdm/oauth/device/code"
 TOKEN_URL = "https://customer.bmwgroup.com/gcdm/oauth/token"
@@ -75,6 +78,7 @@ VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
 OPTION_DIAGNOSTIC_INTERVAL = "diagnostic_log_interval"
+OPTION_ENABLE_MAGIC_SOC = "enable_magic_soc"
 
 # Error message constants (for consistent error detection)
 ERR_TOKEN_REFRESH_IN_PROGRESS = "Token refresh already in progress"
@@ -143,6 +147,53 @@ SOC_LEARNING_STORAGE_KEY = "cardata.soc_learning"
 SOC_LEARNING_STORAGE_VERSION = 2
 # Maximum gap between energy readings before skipping integration (seconds)
 MAX_ENERGY_GAP_SECONDS = 600
+
+# Driving consumption learning parameters
+DEFAULT_CONSUMPTION_KWH_PER_KM = 0.21  # BMW BEV fleet average
+MIN_VALID_CONSUMPTION = 0.10
+MAX_VALID_CONSUMPTION = 0.40
+MIN_LEARNING_TRIP_DISTANCE_KM = 5.0
+MIN_LEARNING_SOC_DROP = 2.0
+DRIVING_SOC_CONTINUITY_SECONDS = 300  # 5 min window for isMoving flap tolerance
+DRIVING_SESSION_MAX_AGE_SECONDS = 4 * 60 * 60  # 4 hours
+GPS_MAX_STEP_DISTANCE_M = 2000  # Max single GPS step (m) — reject jumps after tunnel/lost signal
+AUX_EXTRAPOLATION_MAX_SECONDS = 600  # Stop extrapolating aux power after 10 min without update
+MAX_AUX_POWER_KW = 10.0  # Sanity cap: reject aux power readings above this (bogus data)
+REFERENCE_LEARNING_TRIP_KM = 30.0  # Reference distance for weighting learning: short trips contribute less
+
+# Model-to-consumption mapping (kWh/km, real-world averages)
+# Keys matched by prefix against modelName/series, longest match first
+DEFAULT_CONSUMPTION_BY_MODEL: dict[str, float] = {
+    # iX1 family (WLTP ~15.4-18.1)
+    "iX1 xDrive30": 0.18,
+    "iX1": 0.17,
+    # iX2 family (WLTP ~15.6-17.7)
+    "iX2 xDrive30": 0.18,
+    "iX2": 0.17,
+    # iX3 (old G08: WLTP ~18.5-18.9)
+    "iX3": 0.20,
+    # iX family (WLTP ~19.3-24.7)
+    "iX M60": 0.24,
+    "iX xDrive60": 0.21,
+    "iX xDrive50": 0.22,
+    "iX xDrive40": 0.22,
+    "iX": 0.22,
+    # i4 family (WLTP ~15.1-22.5)
+    "i4 M50": 0.21,
+    "i4 eDrive40": 0.18,
+    "i4 eDrive35": 0.17,
+    "i4": 0.18,
+    # i5 family (WLTP ~15.1-20.6)
+    "i5 M60": 0.20,
+    "i5 eDrive40": 0.18,
+    "i5 xDrive40": 0.18,
+    "i5": 0.18,
+    # i7 family (WLTP ~18.4-23.8)
+    "i7 M70": 0.23,
+    "i7 xDrive60": 0.21,
+    "i7 eDrive50": 0.20,
+    "i7": 0.21,
+}
 
 # Key for storing deduplicated allowed VINs in entry data
 ALLOWED_VINS_KEY = "allowed_vins"
