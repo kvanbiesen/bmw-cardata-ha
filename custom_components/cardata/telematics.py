@@ -356,10 +356,30 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             real_vins = [
                 vin for vin, data in runtime.coordinator.data.items() if len(data) >= MIN_TELEMETRY_DESCRIPTORS
             ]
+
+            # Fallback: if coordinator.data is empty but we have allowed_vins, use those
+            # This handles the case where HA restarted and MQTT hasn't delivered data yet
+            if not real_vins and runtime.coordinator._allowed_vins:
+                real_vins = list(runtime.coordinator._allowed_vins)
+                _LOGGER.debug(
+                    "No VINs in coordinator data, falling back to %d allowed VINs",
+                    len(real_vins),
+                )
+
             num_vins = max(1, len(real_vins))
             stale_threshold = STALE_THRESHOLD_PER_VIN * num_vins
             check_interval = min(stale_threshold, 30 * 60)  # Check at most every 30 min
             max_backoff = stale_threshold * 2
+
+            # Debug: Log VIN counts and data state
+            total_vins = len(runtime.coordinator.data)
+            if total_vins != len(real_vins) and total_vins > 0:
+                _LOGGER.debug(
+                    "Telematic poll: %d total VINs in coordinator, %d real VINs (>=%d descriptors)",
+                    total_vins,
+                    len(real_vins),
+                    MIN_TELEMETRY_DESCRIPTORS,
+                )
 
             # Calculate wait time until next check
             backoff_multiplier = 2**consecutive_failures if consecutive_failures > 0 else 1
@@ -476,7 +496,14 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             if not stale_vins_to_poll:
                 # No stale VINs - all data is fresh, continue waiting
-                _LOGGER.debug("All %d VINs have fresh data, skipping poll", num_vins)
+                if len(real_vins) == 0:
+                    _LOGGER.debug(
+                        "No real VINs to poll (coordinator has %d VINs, none with >=%d descriptors)",
+                        len(runtime.coordinator.data),
+                        MIN_TELEMETRY_DESCRIPTORS,
+                    )
+                else:
+                    _LOGGER.debug("All %d real VINs have fresh data, skipping poll", len(real_vins))
                 continue
 
             _LOGGER.info(
