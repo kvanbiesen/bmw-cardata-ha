@@ -359,8 +359,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             # Fallback: if coordinator.data is empty but we have allowed_vins, use those
             # This handles the case where HA restarted and MQTT hasn't delivered data yet
-            if not real_vins and runtime.coordinator.allowed_vins:
-                real_vins = list(runtime.coordinator.allowed_vins)
+            if not real_vins and runtime.coordinator._allowed_vins:
+                real_vins = list(runtime.coordinator._allowed_vins)
                 _LOGGER.debug(
                     "No VINs in coordinator data, falling back to %d allowed VINs",
                     len(real_vins),
