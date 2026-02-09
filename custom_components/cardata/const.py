@@ -164,20 +164,35 @@ REFERENCE_LEARNING_TRIP_KM = 30.0  # Reference distance for weighting learning: 
 # Model-to-consumption mapping (kWh/km, real-world averages)
 # Keys matched by prefix against modelName/series, longest match first
 DEFAULT_CONSUMPTION_BY_MODEL: dict[str, float] = {
+    # iX1 family (WLTP ~15.4-18.1)
+    "iX1 xDrive30": 0.18,
     "iX1": 0.17,
+    # iX2 family (WLTP ~15.6-17.7)
+    "iX2 xDrive30": 0.18,
     "iX2": 0.17,
+    # iX3 (old G08: WLTP ~18.5-18.9)
     "iX3": 0.20,
-    "iX M60": 0.26,
-    "iX xDrive50": 0.24,
+    # iX family (WLTP ~19.3-24.7)
+    "iX M60": 0.24,
+    "iX xDrive60": 0.21,
+    "iX xDrive50": 0.22,
     "iX xDrive40": 0.22,
-    "iX": 0.23,
+    "iX": 0.22,
+    # i4 family (WLTP ~15.1-22.5)
     "i4 M50": 0.21,
-    "i4": 0.19,
-    "i5 M60": 0.22,
-    "i5": 0.20,
-    "i7 M70": 0.26,
-    "i7 xDrive60": 0.25,
-    "i7": 0.24,
+    "i4 eDrive40": 0.18,
+    "i4 eDrive35": 0.17,
+    "i4": 0.18,
+    # i5 family (WLTP ~15.1-20.6)
+    "i5 M60": 0.20,
+    "i5 eDrive40": 0.18,
+    "i5 xDrive40": 0.18,
+    "i5": 0.18,
+    # i7 family (WLTP ~18.4-23.8)
+    "i7 M70": 0.23,
+    "i7 xDrive60": 0.21,
+    "i7 eDrive50": 0.20,
+    "i7": 0.21,
 }
 
 # Key for storing deduplicated allowed VINs in entry data
