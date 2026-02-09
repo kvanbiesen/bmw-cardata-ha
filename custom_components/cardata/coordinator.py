@@ -422,6 +422,7 @@ class CardataCoordinator:
         """
         # Skip PHEV (hybrid powertrain makes distance-to-SOC unreliable)
         if self._magic_soc.is_phev(vin):
+            _LOGGER.debug("Magic SOC: Skipping anchor for %s (PHEV)", redact_vin(vin))
             return
 
         # Get current SOC (prefer live descriptor, fallback to cached)
@@ -435,6 +436,7 @@ class CardataCoordinator:
         if current_soc is None:
             current_soc = self._magic_soc.get_last_known_soc(vin)
             if current_soc is None:
+                _LOGGER.debug("Magic SOC: Cannot anchor %s — no SOC available (live or cached)", redact_vin(vin))
                 return
             _LOGGER.debug(
                 "Magic SOC: Using cached SOC %.1f%% for %s (descriptor unavailable)",
@@ -445,6 +447,7 @@ class CardataCoordinator:
         # Get current mileage (no fallback — must be live)
         mileage_state = vehicle_state.get("vehicle.vehicle.travelledDistance")
         if not mileage_state or mileage_state.value is None:
+            _LOGGER.debug("Magic SOC: Cannot anchor %s — no mileage in vehicle_state", redact_vin(vin))
             return
         try:
             current_mileage = float(mileage_state.value)
@@ -466,6 +469,7 @@ class CardataCoordinator:
         else:
             capacity_kwh = self._magic_soc.get_last_known_capacity(vin)
             if capacity_kwh is None or capacity_kwh <= 0:
+                _LOGGER.debug("Magic SOC: Cannot anchor %s — no capacity available (live or cached)", redact_vin(vin))
                 return
             _LOGGER.debug(
                 "Magic SOC: Using cached capacity %.1f kWh for %s (descriptor unavailable)",
@@ -813,6 +817,12 @@ class CardataCoordinator:
                                     self._magic_soc.reanchor_driving_session(vin, soc_val, current_mileage)
                                 except (TypeError, ValueError):
                                     pass
+                        else:
+                            # Retry: SOC was missing when isMoving fired → anchor failed
+                            bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
+                            gps_moving = self.get_derived_is_moving(vin)
+                            if bmw_moving is True or gps_moving is True:
+                                self._anchor_driving_session(vin, vehicle_state)
                         # Signal magic_soc update on BMW SOC change
                         if self._magic_soc.has_signaled_magic_soc_entity(vin):
                             if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
@@ -838,6 +848,12 @@ class CardataCoordinator:
                         needs_anchor = self._magic_soc.update_driving_mileage(vin, mileage)
                         if needs_anchor:
                             self._anchor_driving_session(vin, vehicle_state)
+                        elif vin not in self._magic_soc._driving_sessions:
+                            # Retry: isMoving fired before mileage arrived → anchor failed
+                            bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
+                            gps_moving = self.get_derived_is_moving(vin)
+                            if bmw_moving is True or gps_moving is True:
+                                self._anchor_driving_session(vin, vehicle_state)
                         # Signal magic_soc update on mileage change
                         if self._magic_soc.has_signaled_magic_soc_entity(vin):
                             if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):

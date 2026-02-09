@@ -212,6 +212,7 @@ class MagicSOCPredictor:
             "last_known_capacity": dict(self._last_known_capacity),
             "last_soc_timestamp": dict(self._last_soc_timestamp),
             "last_magic_soc": dict(self._last_magic_soc),
+            "last_reported_mileage": dict(self._last_reported_mileage),
         }
 
     def load_session_data(self, data: dict[str, Any]) -> None:
@@ -248,6 +249,7 @@ class MagicSOCPredictor:
             ("last_known_capacity", self._last_known_capacity),
             ("last_soc_timestamp", self._last_soc_timestamp),
             ("last_magic_soc", self._last_magic_soc),
+            ("last_reported_mileage", self._last_reported_mileage),
         ]:
             raw = data.get(key) or {}
             for vin, val in raw.items():
