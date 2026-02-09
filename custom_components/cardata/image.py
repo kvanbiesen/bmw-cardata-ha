@@ -133,7 +133,7 @@ async def async_setup_entry(
             entity.async_write_ha_state()
             return
 
-        metadata = coordinator.device_metadata.get(vin)
+        metadata = coordinator.device_metadata.get(vin, {})
         if not metadata:
             _LOGGER.debug("No metadata for VIN %s, skipping image entity", redact_vin(vin))
             return
