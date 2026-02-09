@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .const import (
@@ -36,21 +36,34 @@ class LearnedConsumption:
 
     kwh_per_km: float = DEFAULT_CONSUMPTION_KWH_PER_KM
     trip_count: int = 0
+    monthly: dict[int, dict[str, float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
-        return {
+        d: dict[str, Any] = {
             "kwh_per_km": self.kwh_per_km,
             "trip_count": self.trip_count,
         }
+        if self.monthly:
+            d["monthly"] = {str(k): v for k, v in self.monthly.items()}
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LearnedConsumption:
         """Create from dictionary."""
-        return cls(
+        obj = cls(
             kwh_per_km=data.get("kwh_per_km", DEFAULT_CONSUMPTION_KWH_PER_KM),
             trip_count=data.get("trip_count", 0),
         )
+        monthly_raw = data.get("monthly", {})
+        for k, v in monthly_raw.items():
+            try:
+                month = int(k)
+                if 1 <= month <= 12 and isinstance(v, dict):
+                    obj.monthly[month] = v
+            except (TypeError, ValueError):
+                pass
+        return obj
 
 
 @dataclass
@@ -589,6 +602,11 @@ class MagicSOCPredictor:
             attrs["learned_consumption_kwh_km"] = round(learned.kwh_per_km, 3)
             attrs["trip_count"] = learned.trip_count
             attrs["learning_rate"] = round(max(LEARNING_RATE, 1.0 / (learned.trip_count + 1)), 2)
+            month = time.localtime().tm_mon
+            bucket = learned.monthly.get(month)
+            if bucket and bucket.get("trip_count", 0) > 0:
+                attrs["monthly_consumption_kwh_km"] = round(bucket["kwh_per_km"], 3)
+                attrs["monthly_trip_count"] = bucket["trip_count"]
         default = self._default_consumption.get(vin, DEFAULT_CONSUMPTION_KWH_PER_KM)
         attrs["default_consumption_kwh_km"] = default
 
@@ -624,10 +642,14 @@ class MagicSOCPredictor:
     def _get_consumption(self, vin: str) -> float:
         """Get consumption rate for prediction.
 
-        Lookup chain: learned (if trips > 0) -> model default -> global default.
+        Lookup chain: monthly bucket -> learned global -> model default -> global default.
         """
         learned = self._learned_consumption.get(vin)
         if learned and learned.trip_count > 0:
+            month = time.localtime().tm_mon
+            bucket = learned.monthly.get(month)
+            if bucket and bucket.get("trip_count", 0) > 0:
+                return bucket["kwh_per_km"]
             return learned.kwh_per_km
         return self._default_consumption.get(vin, DEFAULT_CONSUMPTION_KWH_PER_KM)
 
@@ -648,6 +670,19 @@ class MagicSOCPredictor:
         old = learned.kwh_per_km
         learned.kwh_per_km = old * (1 - rate) + measured * rate
         learned.trip_count += 1
+
+        # Monthly bucket EMA
+        month = time.localtime().tm_mon
+        bucket = learned.monthly.get(month)
+        if bucket is None:
+            bucket = {"kwh_per_km": learned.kwh_per_km, "trip_count": 0}
+            learned.monthly[month] = bucket
+        monthly_rate = max(LEARNING_RATE, 1.0 / (bucket["trip_count"] + 1))
+        if distance_km > 0:
+            monthly_rate *= min(distance_km / REFERENCE_LEARNING_TRIP_KM, 1.0)
+        bucket["kwh_per_km"] = bucket["kwh_per_km"] * (1 - monthly_rate) + measured * monthly_rate
+        bucket["trip_count"] += 1
+
         _LOGGER.info(
             "Magic SOC: Learned consumption for %s: %.3f -> %.3f kWh/km (trip %d, measured %.3f, rate %.2f)",
             redact_vin(vin),
