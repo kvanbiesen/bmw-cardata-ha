@@ -888,10 +888,9 @@ class SOCPredictor:
                 return result
             return current_pred
 
-        # No energy accumulated yet - check if BMW SOC is higher and re-anchor
-        if session.total_energy_kwh == 0:
-            # If BMW SOC is available and higher, re-anchor to follow it
-            # This handles cases where power data isn't streaming
+        # No energy accumulated and no power data to extrapolate from —
+        # check if BMW SOC is higher and re-anchor to follow it.
+        if session.total_energy_kwh == 0 and (session.last_power_kw <= 0 or session.last_energy_update is None):
             if bmw_soc is not None and bmw_soc > session.last_predicted_soc:
                 _LOGGER.debug(
                     "SOC: Re-anchoring for %s: BMW SOC %.1f%% > predicted %.1f%% (no power data)",
