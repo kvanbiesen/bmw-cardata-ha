@@ -305,8 +305,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     # Skip immediate poll on restart if last poll was recent (saves quota)
     last_poll_at = runtime.coordinator.last_telematic_api_at
     if last_poll_at is not None:
-        age = (datetime.now(UTC) - last_poll_at).total_seconds()
-        last_check_time = time.time() - age
+        poll_age = (datetime.now(UTC) - last_poll_at).total_seconds()
+        last_check_time = time.time() - poll_age
     else:
         last_check_time = 0.0
 
