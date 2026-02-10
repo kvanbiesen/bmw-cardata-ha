@@ -330,7 +330,11 @@ class CardataCoordinator:
                 except (TypeError, ValueError):
                     pass
 
-        return self._soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
+        # Get prediction and round to 1 decimal place to avoid floating-point errors
+        predicted = self._soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
+        if predicted is not None:
+            return round(predicted, 1)
+        return None
 
     def _anchor_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
         """Anchor SOC prediction session when charging starts.
@@ -917,6 +921,38 @@ class CardataCoordinator:
                         if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                             schedule_debounce = True
 
+            # Calculate AC power from current and voltage for PHEVs without direct power streaming
+            elif descriptor in (
+                "vehicle.drivetrain.electricEngine.charging.acAmpere",
+                "vehicle.drivetrain.electricEngine.charging.acVoltage",
+            ):
+                if self._soc_predictor.is_charging(vin):
+                    voltage = _descriptor_float(
+                        vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage")
+                    )
+                    current = _descriptor_float(
+                        vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere")
+                    )
+                    phases = _descriptor_float(
+                        vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber")
+                    )
+                    aux_kw = 0.0
+                    aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+                    if aux_state and aux_state.value is not None:
+                        try:
+                            aux_kw = float(aux_state.value) / 1000.0
+                        except (TypeError, ValueError):
+                            pass
+
+                    # Delegate to predictor
+                    if self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw):
+                        if self._soc_predictor.has_signaled_entity(vin):
+                            if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                        if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                            if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+
             # Update BMW SOC tracking
             elif descriptor == "vehicle.drivetrain.batteryManagement.header":
                 if value is not None:
@@ -1319,6 +1355,57 @@ class CardataCoordinator:
             self.last_disconnect_reason = reason
         elif status == "connected":
             self.last_disconnect_reason = None
+
+            # On reconnection, check if any vehicles need session restoration
+            async with self._lock:
+                for vin in self._soc_predictor.get_tracked_vins():
+                    vehicle_state = self.data.get(vin)
+                    if not vehicle_state:
+                        continue
+
+                    # Check charging status from restored/stored state
+                    status_state = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.status")
+                    if status_state and status_state.value:
+                        status_val = str(status_state.value)
+                        # Update charging tracking from stored state
+                        self._soc_predictor.update_charging_status(vin, status_val)
+
+                        # If charging but no active session, try to anchor
+                        if self._soc_predictor.is_charging(vin) and not self._soc_predictor.has_active_session(vin):
+                            _LOGGER.info(
+                                "Reconnection: restoring charging session for %s (status: %s)",
+                                redact_vin(vin),
+                                status_val,
+                            )
+                            self._anchor_soc_session(vin, vehicle_state)
+
+                            # Restore AC charging data from stored state for periodic updates
+                            voltage = _descriptor_float(
+                                vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage")
+                            )
+                            current = _descriptor_float(
+                                vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere")
+                            )
+                            phases = _descriptor_float(
+                                vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber")
+                            )
+
+                            if voltage and current:
+                                aux_kw = 0.0
+                                aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+                                if aux_state and aux_state.value is not None:
+                                    try:
+                                        aux_kw = float(aux_state.value) / 1000.0
+                                    except (TypeError, ValueError):
+                                        pass
+
+                                self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
+                                _LOGGER.info(
+                                    "Reconnection: restored AC charging data for %s (%.1fV × %.1fA)",
+                                    redact_vin(vin),
+                                    voltage,
+                                    current,
+                                )
         await self._async_log_diagnostics()
 
     async def async_start_watchdog(self) -> None:
@@ -1408,10 +1495,20 @@ class CardataCoordinator:
                             if self._magic_soc.has_signaled_magic_soc_entity(vin):
                                 self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
+        # Periodic AC energy accumulation first (so dispatch block reads fresh values)
+        schedule_soc_debounce = False
+        updated_vins = self._soc_predictor.periodic_update_all()
+        for vin in updated_vins:
+            if self._soc_predictor.has_signaled_entity(vin):
+                if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                    schedule_soc_debounce = True
+            if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                    schedule_soc_debounce = True
+
         # Periodic predicted SOC recalculation during charging
         # Uses coordinator's get_predicted_soc() which fetches BMW SOC from stored state
         # This enables re-anchoring when BMW SOC > predicted (for cars without power streaming)
-        schedule_soc_debounce = False
         for vin in self._soc_predictor.get_tracked_vins():
             if self._soc_predictor.is_charging(vin) and self._soc_predictor.has_signaled_entity(vin):
                 # Recalculate SOC - must use coordinator method to pass BMW SOC for re-anchoring

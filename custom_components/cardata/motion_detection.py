@@ -231,11 +231,15 @@ class MotionDetector:
                     )
                     if all_within_park:
                         # Vehicle has stopped - exit driving mode
+                        # Backdate last movement to when the car first entered the park zone
+                        # (oldest of the 3 confirming readings) for accurate timing
+                        first_park_time = park_readings[-3][2]
                         _LOGGER.debug(
                             "Motion: %s stopped (3 readings within park radius) - NOW PARKED",
                             redact_vin(vin),
                         )
                         self._is_driving[vin] = False
+                        self._last_location_change[vin] = first_park_time
                         self._park_anchor[vin] = self._calculate_centroid(park_readings)
                         return False
             else:
@@ -405,6 +409,19 @@ class MotionDetector:
                 # GPS is active - clear mileage baseline if it was set
                 self._mileage_baseline_when_gps_stale.pop(vin, None)
 
+                # In confirmed driving mode (escaped park zone) and GPS still active:
+                # trust the driving state. BMW GPS arrives in bursts every 2-3 min,
+                # and the short movement window causes mid-trip flapping.
+                # Driving mode exits via update_location() when 3 consecutive
+                # readings land within park radius (hysteresis).
+                if self._is_driving.get(vin, False):
+                    _LOGGER.debug(
+                        "Motion: %s in driving mode, GPS active (%.1f min old) - MOVING",
+                        redact_vin(vin),
+                        gps_age,
+                    )
+                    return True
+
                 # Check GPS confidence if tracking enabled
                 if self.ENABLE_CONFIDENCE_TRACKING:
                     confidence = self._gps_confidence.get(vin, 0.0)
@@ -458,6 +475,26 @@ class MotionDetector:
         if last_gps_update is not None:
             gps_age = (now - last_gps_update).total_seconds() / 60.0
             if gps_age > self.GPS_UPDATE_STALE_MINUTES:
+                # In driving mode: check mileage FIRST before dropping to NOT MOVING
+                # GPS may be temporarily unavailable (tunnel, poor signal) while still driving
+                if self._is_driving.get(vin, False):
+                    if last_mileage_change is not None:
+                        elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
+                        if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
+                            _LOGGER.debug(
+                                "Motion: %s driving mode + GPS stale, mileage confirms movement (%.1f min ago) - MOVING",
+                                redact_vin(vin),
+                                elapsed_mileage,
+                            )
+                            return True
+                    # No mileage confirmation - exit driving mode, fall through to normal stale logic
+                    _LOGGER.debug(
+                        "Motion: %s driving mode but GPS stale (%.1f min) and no mileage - exiting driving mode",
+                        redact_vin(vin),
+                        gps_age,
+                    )
+                    self._is_driving[vin] = False
+
                 # Determine what last GPS state was AT THE TIME GPS WENT STALE
                 if last_gps_change is None:
                     last_gps_was_moving = False  # Never moved according to GPS
