@@ -1077,6 +1077,8 @@ class SOCPredictor:
             session.last_current = current
         if phases is not None:
             session.phases = int(phases)
+        if aux_power_kw is not None:
+            session.last_aux_power = aux_power_kw
 
         # Calculate power if we have both voltage and current
         if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:

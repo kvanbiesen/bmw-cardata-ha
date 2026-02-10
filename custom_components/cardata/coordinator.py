@@ -1413,10 +1413,20 @@ class CardataCoordinator:
                             if self._magic_soc.has_signaled_magic_soc_entity(vin):
                                 self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
+        # Periodic AC energy accumulation first (so dispatch block reads fresh values)
+        schedule_soc_debounce = False
+        updated_vins = self._soc_predictor.periodic_update_all()
+        for vin in updated_vins:
+            if self._soc_predictor.has_signaled_entity(vin):
+                if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                    schedule_soc_debounce = True
+            if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                    schedule_soc_debounce = True
+
         # Periodic predicted SOC recalculation during charging
         # Uses coordinator's get_predicted_soc() which fetches BMW SOC from stored state
         # This enables re-anchoring when BMW SOC > predicted (for cars without power streaming)
-        schedule_soc_debounce = False
         for vin in self._soc_predictor.get_tracked_vins():
             if self._soc_predictor.is_charging(vin) and self._soc_predictor.has_signaled_entity(vin):
                 # Recalculate SOC - must use coordinator method to pass BMW SOC for re-anchoring
@@ -1434,15 +1444,6 @@ class CardataCoordinator:
                                 current_estimate,
                                 f"{last_soc_sent:.1f}%" if last_soc_sent else "None",
                             )
-        # Periodic SOC prediction updates during charging
-        updated_vins = self._soc_predictor.periodic_update_all()
-        for vin in updated_vins:
-            if self._soc_predictor.has_signaled_entity(vin):
-                if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
-                    schedule_soc_debounce = True
-            if self._magic_soc.has_signaled_magic_soc_entity(vin):
-                if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
-                    schedule_soc_debounce = True
 
         if schedule_soc_debounce:
             await self._async_schedule_debounced_update()
