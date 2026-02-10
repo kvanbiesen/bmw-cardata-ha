@@ -64,6 +64,10 @@ class MotionDetector:
         # VIN -> datetime of last significant position change (escaped park zone)
         self._last_location_change: dict[str, datetime] = {}
 
+        # VIN -> bool: True when actively driving (escaped park zone, not yet re-parked)
+        # While driving, every GPS update refreshes last_location_change
+        self._is_driving: dict[str, bool] = {}
+
         # VIN -> datetime of last GPS update (any update, even if position unchanged)
         self._last_gps_update: dict[str, datetime] = {}
 
@@ -201,6 +205,49 @@ class MotionDetector:
             self.ESCAPE_RADIUS_M,
         )
 
+        # Check if we're in active driving mode
+        is_driving = self._is_driving.get(vin, False)
+
+        if is_driving:
+            # Already driving - update movement timestamp on every GPS update
+            self._last_location_change[vin] = now
+
+            # Check if we've come to a stop (within park radius of anchor)
+            if distance_from_anchor <= self.PARK_RADIUS_M:
+                # Accumulate parked readings
+                park_readings = self._park_readings.get(vin, [])
+                park_readings.append((lat, lon, now))
+                if len(park_readings) > self.MAX_PARK_READINGS:
+                    park_readings = park_readings[-self.MAX_PARK_READINGS :]
+                self._park_readings[vin] = park_readings
+
+                # Check if we've been stationary for enough readings to confirm parked
+                # Need at least 3 readings within park radius to confirm stop
+                if len(park_readings) >= 3:
+                    # Check if ALL recent readings are within park radius
+                    all_within_park = all(
+                        self._calculate_distance(park_anchor[0], park_anchor[1], r[0], r[1])
+                        <= self.PARK_RADIUS_M
+                        for r in park_readings[-3:]
+                    )
+                    if all_within_park:
+                        # Vehicle has stopped - exit driving mode
+                        _LOGGER.debug(
+                            "Motion: %s stopped (3 readings within park radius) - NOW PARKED",
+                            redact_vin(vin),
+                        )
+                        self._is_driving[vin] = False
+                        self._park_anchor[vin] = self._calculate_centroid(park_readings)
+                        return False
+            else:
+                # Still moving - update park anchor to follow the vehicle
+                self._park_anchor[vin] = (lat, lon)
+                self._park_readings[vin] = [(lat, lon, now)]
+
+            # Still driving
+            return True
+
+        # Not in driving mode - check for park zone escape
         if distance_from_anchor <= self.PARK_RADIUS_M:
             # Within park radius - GPS jitter while parked
             # Add to park readings for centroid calculation
@@ -243,13 +290,14 @@ class MotionDetector:
 
         else:
             # Beyond escape radius - vehicle is definitely moving!
-            # Clear parking zone and establish movement
+            # Enter driving mode - will update last_location_change on every GPS update
             _LOGGER.debug(
-                "Motion: %s escaped park zone (%.1fm > %.0fm) - NOW MOVING",
+                "Motion: %s escaped park zone (%.1fm > %.0fm) - NOW DRIVING",
                 redact_vin(vin),
                 distance_from_anchor,
                 self.ESCAPE_RADIUS_M,
             )
+            self._is_driving[vin] = True
             self._park_anchor[vin] = (lat, lon)
             self._park_readings[vin] = [(lat, lon, now)]
             self._last_location_change[vin] = now
@@ -478,6 +526,7 @@ class MotionDetector:
         self._park_anchor.pop(vin, None)
         self._park_readings.pop(vin, None)
         self._last_location_change.pop(vin, None)
+        self._is_driving.pop(vin, None)
         self._last_gps_update.pop(vin, None)
         self._mileage_baseline_when_gps_stale.pop(vin, None)
         self._last_mileage.pop(vin, None)
