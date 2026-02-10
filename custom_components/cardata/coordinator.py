@@ -312,14 +312,23 @@ class CardataCoordinator:
         if not vehicle_data:
             return None
 
-        # Get current BMW SOC
-        soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+        # Get current BMW SOC — prefer charging.level during charging
+        # (fresher than header which lags during active charging)
         bmw_soc = None
-        if soc_state and soc_state.value is not None:
-            try:
-                bmw_soc = float(soc_state.value)
-            except (TypeError, ValueError):
-                pass
+        if self._soc_predictor.is_charging(vin):
+            cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
+            if cl and cl.value is not None:
+                try:
+                    bmw_soc = float(cl.value)
+                except (TypeError, ValueError):
+                    pass
+        if bmw_soc is None:
+            soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+            if soc_state and soc_state.value is not None:
+                try:
+                    bmw_soc = float(soc_state.value)
+                except (TypeError, ValueError):
+                    pass
 
         return self._soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
 
@@ -329,14 +338,22 @@ class CardataCoordinator:
         Must be called while holding _lock.
         Uses fallbacks if live data is missing (restored sensor values, last known values).
         """
-        # Get current SOC - try vehicle_state first, then fallback to last predicted
+        # Get current SOC - prefer charging.level (fresher during active charging),
+        # fall back to batteryManagement.header, then last predicted
         current_soc: float | None = None
-        soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
-        if soc_state and soc_state.value is not None:
+        charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
+        if charging_level and charging_level.value is not None:
             try:
-                current_soc = float(soc_state.value)
+                current_soc = float(charging_level.value)
             except (TypeError, ValueError):
                 pass
+        if current_soc is None:
+            soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+            if soc_state and soc_state.value is not None:
+                try:
+                    current_soc = float(soc_state.value)
+                except (TypeError, ValueError):
+                    pass
 
         # Fallback: use last predicted SOC if available
         if current_soc is None:
@@ -469,17 +486,27 @@ class CardataCoordinator:
         if not vehicle_data:
             return None
 
-        # Get current BMW SOC
-        soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+        # Get current BMW SOC — prefer charging.level during charging
+        # (fresher than header which lags during active charging)
         bmw_soc = None
-        if soc_state and soc_state.value is not None:
-            try:
-                bmw_soc = float(soc_state.value)
-            except (TypeError, ValueError):
-                pass
+        is_charging = self._soc_predictor.is_charging(vin)
+        if is_charging:
+            cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
+            if cl and cl.value is not None:
+                try:
+                    bmw_soc = float(cl.value)
+                except (TypeError, ValueError):
+                    pass
+        if bmw_soc is None:
+            soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+            if soc_state and soc_state.value is not None:
+                try:
+                    bmw_soc = float(soc_state.value)
+                except (TypeError, ValueError):
+                    pass
 
         # During charging: use predicted SOC (energy-based prediction)
-        if self._soc_predictor.is_charging(vin):
+        if is_charging:
             return self._soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
 
         # Not charging: use driving prediction or passthrough
