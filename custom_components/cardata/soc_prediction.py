@@ -103,6 +103,12 @@ class ChargingSession:
     last_energy_update: float | None = None  # Timestamp of last energy accumulation
     restored: bool = False  # True when loaded from storage (energy data incomplete)
 
+    # AC charging state (for vehicles without direct power streaming)
+    last_voltage: float | None = None
+    last_current: float | None = None
+    last_aux_power: float | None = None
+    phases: int = 1
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
         return {
@@ -115,6 +121,10 @@ class ChargingSession:
             "total_energy_kwh": self.total_energy_kwh,
             "last_power_kw": self.last_power_kw,
             "last_energy_update": self.last_energy_update,
+            "last_voltage": self.last_voltage,
+            "last_current": self.last_current,
+            "last_aux_power": self.last_aux_power,
+            "phases": self.phases,
         }
 
     @classmethod
@@ -131,6 +141,10 @@ class ChargingSession:
             last_power_kw=data.get("last_power_kw", 0.0),
             last_energy_update=data.get("last_energy_update"),
             restored=True,
+            last_voltage=data.get("last_voltage"),
+            last_current=data.get("last_current"),
+            last_aux_power=data.get("last_aux_power"),
+            phases=data.get("phases", 1),
         )
 
     def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
@@ -506,6 +520,16 @@ class SOCPredictor:
             # Accumulate net energy if power provided
             if power_kw is not None and power_kw >= 0:
                 session.accumulate_energy(power_kw, aux_power_kw, time.time())
+
+                # Log every power update with current state
+                _LOGGER.debug(
+                    "Power update for %s: %.2f kW (aux: %.2f kW) - total energy: %.3f kWh, predicted SOC: %.1f%%",
+                    redact_vin(vin),
+                    power_kw,
+                    aux_power_kw,
+                    session.total_energy_kwh,
+                    session.last_predicted_soc
+                )
 
     def update_bmw_soc(self, vin: str, soc: float, timestamp: datetime | None = None) -> None:
         """Record BMW SOC update for staleness tracking.
@@ -1028,3 +1052,76 @@ class SOCPredictor:
             | set(self._pending_sessions.keys())
             | set(self._is_phev.keys())
         )
+
+    def update_ac_charging_data(
+        self,
+        vin: str,
+        voltage: float | None = None,
+        current: float | None = None,
+        phases: float | None = None,
+        aux_power_kw: float | None = None
+    ) -> bool:
+        """Update AC charging data and calculate power if voltage+current available.
+
+        Returns:
+            True if power was calculated and energy accumulation occurred
+        """
+        session = self._sessions.get(vin)
+        if not session:
+            return False
+
+        # Store latest values
+        if voltage is not None:
+            session.last_voltage = voltage
+        if current is not None:
+            session.last_current = current
+        if phases is not None:
+            session.phases = int(phases)
+
+        # Calculate power if we have both voltage and current
+        if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:
+            power_kw = (session.last_voltage * session.last_current) / 1000.0
+
+            # Apply phase multiplier for 3-phase charging
+            if session.phases and session.phases > 1:
+                power_kw *= 1.732  # √3
+            _LOGGER.debug(
+                "Calculated AC power for %s: %.2f kW (%.1fV × %.1fA, %d phases)",
+                redact_vin(vin),
+                power_kw,
+                session.last_voltage,
+                session.last_current,
+                session.phases
+            )
+            # Update power reading (accumulates energy)
+            self.update_power_reading(vin, power_kw, aux_power_kw or 0.0)
+            return True
+
+        return False
+
+    def periodic_update_all(self) -> list[str]:
+        """Periodic update for all charging sessions (called every 60s).
+
+        Recalculates power from last known AC voltage/current and accumulates energy.
+
+        Returns:
+            List of VINs that had their prediction updated
+        """
+        updated_vins = []
+
+        for vin, session in list(self._sessions.items()):
+            if not session or session.charging_method == "DC":
+                continue  # DC uses direct power descriptor
+
+            # Recalculate AC power from last known values
+            if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:
+                power_kw = (session.last_voltage * session.last_current) / 1000.0
+
+                if session.phases and session.phases > 1:
+                    power_kw *= 1.732
+
+                # Accumulate energy based on time elapsed
+                self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_power or 0.0)
+                updated_vins.append(vin)
+
+        return updated_vins
