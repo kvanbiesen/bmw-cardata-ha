@@ -101,6 +101,8 @@ class CardataCoordinator:
     _last_predicted_soc_sent: dict[str, float] = field(default_factory=dict, init=False)
     # Per-VIN timestamp of last MQTT message (unix time) for freshness gating
     _last_vin_message_at: dict[str, float] = field(default_factory=dict, init=False)
+    # Per-VIN timestamp of last successful telematic API poll (unix time)
+    _last_poll_at: dict[str, float] = field(default_factory=dict, init=False)
 
     # Debouncing and pending update management
     _update_debounce_handle: Callable[[], None] | None = field(default=None, init=False)
@@ -226,6 +228,17 @@ class CardataCoordinator:
         if last is None:
             return None
         return time.time() - last
+
+    def seconds_since_last_poll(self, vin: str) -> float | None:
+        """Seconds since last telematic API poll for this VIN, or None if never polled."""
+        last = self._last_poll_at.get(vin)
+        if last is None:
+            return None
+        return time.time() - last
+
+    def record_telematic_poll(self, vin: str) -> None:
+        """Record that a telematic API poll succeeded for this VIN."""
+        self._last_poll_at[vin] = time.time()
 
     def _is_metadata_bev(self, vin: str) -> bool:
         """Check if vehicle metadata identifies this as a BEV (not PHEV/ICE).
@@ -1391,6 +1404,7 @@ class CardataCoordinator:
             tracking_dicts: list[dict[str, Any]] = [
                 self._last_derived_is_moving,
                 self._last_vin_message_at,
+                self._last_poll_at,
                 self._last_predicted_soc_sent,
             ]
 

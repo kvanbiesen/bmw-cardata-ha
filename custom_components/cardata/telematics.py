@@ -262,6 +262,7 @@ async def async_perform_telematic_fetch(
 
         if isinstance(telematic_payload, dict):
             await runtime.coordinator.async_handle_message({"vin": vin, "data": telematic_payload})
+            runtime.coordinator.record_telematic_poll(vin)
             any_success = True
 
     # All VINs had fresh MQTT data — nothing to poll, not a failure
@@ -472,13 +473,13 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # Only check "real" VINs with sufficient telemetry data (not ghost/shared VINs)
             stale_vins_to_poll = []
             for vin in real_vins:
-                age = runtime.coordinator.seconds_since_last_mqtt(vin)
-                # VIN is stale if no data received, or data is older than threshold
+                age = runtime.coordinator.seconds_since_last_poll(vin)
+                # VIN is stale if never polled, or last poll is older than threshold
                 if age is None or age >= stale_threshold:
                     stale_vins_to_poll.append(vin)
                     if age is not None:
                         _LOGGER.debug(
-                            "VIN has stale data (%.1f hours old, threshold: %.1f hours), will poll",
+                            "VIN has stale poll data (%.1f hours since last poll, threshold: %.1f hours), will poll",
                             age / 3600,
                             stale_threshold / 3600,
                         )
@@ -492,7 +493,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                         MIN_TELEMETRY_DESCRIPTORS,
                     )
                 else:
-                    _LOGGER.debug("All %d real VINs have fresh data, skipping poll", len(real_vins))
+                    _LOGGER.debug("All %d real VINs were polled recently, skipping", len(real_vins))
                 continue
 
             _LOGGER.info(
