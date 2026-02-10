@@ -314,23 +314,63 @@ class CardataCoordinator:
         """Anchor SOC prediction session when charging starts.
 
         Must be called while holding _lock.
+        Uses fallbacks if live data is missing (restored sensor values, last known values).
         """
-        # Get current SOC
+        # Get current SOC - try vehicle_state first, then fallback to last predicted
+        current_soc: float | None = None
         soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
-        if not soc_state or soc_state.value is None:
-            return
-        try:
-            current_soc = float(soc_state.value)
-        except (TypeError, ValueError):
+        if soc_state and soc_state.value is not None:
+            try:
+                current_soc = float(soc_state.value)
+            except (TypeError, ValueError):
+                pass
+
+        # Fallback: use last predicted SOC if available
+        if current_soc is None:
+            current_soc = self._soc_predictor._last_predicted_soc.get(vin)
+            if current_soc is not None:
+                _LOGGER.debug(
+                    "Anchor fallback for %s: using last predicted SOC %.1f%%",
+                    redact_vin(vin),
+                    current_soc,
+                )
+
+        if current_soc is None:
+            _LOGGER.debug("Cannot anchor session for %s: no SOC data available", redact_vin(vin))
             return
 
-        # Get battery capacity (prefer batterySizeMax, fallback to maxEnergy)
+        # Get battery capacity (prefer batterySizeMax, fallback to maxEnergy, then metadata)
+        capacity_kwh: float | None = None
         capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
         capacity_kwh = _descriptor_float(capacity_state)
         if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
             capacity_kwh = _descriptor_float(capacity_state)
+
+        # Fallback chain for capacity:
+        # 1. Existing session (if any)
+        # 2. Last known capacity (stored from previous sessions)
         if capacity_kwh is None or capacity_kwh <= 0:
+            existing_session = self._soc_predictor._sessions.get(vin)
+            if existing_session and existing_session.battery_capacity_kwh > 0:
+                capacity_kwh = existing_session.battery_capacity_kwh
+                _LOGGER.debug(
+                    "Anchor fallback for %s: using existing session capacity %.1f kWh",
+                    redact_vin(vin),
+                    capacity_kwh,
+                )
+
+        if capacity_kwh is None or capacity_kwh <= 0:
+            capacity_kwh = self._soc_predictor.get_last_known_capacity(vin)
+            if capacity_kwh is not None and capacity_kwh > 0:
+                _LOGGER.debug(
+                    "Anchor fallback for %s: using last known capacity %.1f kWh",
+                    redact_vin(vin),
+                    capacity_kwh,
+                )
+
+        if capacity_kwh is None or capacity_kwh <= 0:
+            _LOGGER.debug("Cannot anchor session for %s: no capacity data available", redact_vin(vin))
             return
 
         # Get charging method if available
@@ -818,6 +858,14 @@ class CardataCoordinator:
                         soc_val = float(value)
                         self._soc_predictor.update_bmw_soc(vin, soc_val)
                         self._magic_soc.update_bmw_soc(vin, soc_val)
+                        # If charging but no session anchored, try to anchor now
+                        # This handles cases where charging status arrived before SOC data
+                        if self._soc_predictor.is_charging(vin) and not self._soc_predictor.has_active_session(vin):
+                            _LOGGER.debug(
+                                "Late anchor attempt for %s (SOC arrived after charging started)",
+                                redact_vin(vin),
+                            )
+                            self._anchor_soc_session(vin, vehicle_state)
                         # Trigger predicted_soc sensor update if it exists
                         if self._soc_predictor.has_signaled_entity(vin):
                             if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
@@ -1264,11 +1312,13 @@ class CardataCoordinator:
                             self._anchor_driving_session_from_state(vin)
 
         # Periodic predicted SOC recalculation during charging
+        # Uses coordinator's get_predicted_soc() which fetches BMW SOC from stored state
+        # This enables re-anchoring when BMW SOC > predicted (for cars without power streaming)
         schedule_soc_debounce = False
         for vin in self._soc_predictor.get_tracked_vins():
             if self._soc_predictor.is_charging(vin) and self._soc_predictor.has_signaled_entity(vin):
-                # Recalculate SOC (time-based accumulation happens in get_predicted_soc)
-                current_estimate = self._soc_predictor.get_predicted_soc(vin)
+                # Recalculate SOC - must use coordinator method to pass BMW SOC for re-anchoring
+                current_estimate = self.get_predicted_soc(vin)
                 if current_estimate is not None:
                     last_soc_sent = self._last_predicted_soc_sent.get(vin)
                     if current_estimate != last_soc_sent:

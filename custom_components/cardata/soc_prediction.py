@@ -223,6 +223,10 @@ class SOCPredictor:
         # PHEVs need special handling: sync predicted SOC down when actual is lower
         self._is_phev: dict[str, bool] = {}
 
+        # VIN -> last known battery capacity (kWh) for fallback when MQTT hasn't delivered yet
+        # Battery capacity rarely changes, so we can reuse the last known value
+        self._last_known_capacity: dict[str, float] = {}
+
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
 
@@ -252,13 +256,16 @@ class SOCPredictor:
     def get_session_data(self) -> dict[str, Any]:
         """Get charging session data for persistence.
 
-        Returns disjoint keys from MagicSOCPredictor.get_session_data().
+        Returns:
+            Dictionary with learned_efficiency, pending_sessions, active_sessions,
+            charging_status, and battery_capacities sections.
         """
         return {
             "learned_efficiency": {vin: eff.to_dict() for vin, eff in self._learned_efficiency.items()},
             "pending_sessions": {vin: ps.to_dict() for vin, ps in self._pending_sessions.items()},
             "active_sessions": {vin: s.to_dict() for vin, s in self._sessions.items()},
             "charging_status": {vin: v for vin, v in self._is_charging.items() if v},
+            "battery_capacities": dict(self._last_known_capacity),
         }
 
     def load_session_data(self, data: dict[str, Any]) -> None:
@@ -297,6 +304,9 @@ class SOCPredictor:
                 session = ChargingSession.from_dict(s_data)
                 self._sessions[vin] = session
                 self._last_predicted_soc[vin] = session.last_predicted_soc
+                # Also restore capacity for fallback
+                if session.battery_capacity_kwh > 0:
+                    self._last_known_capacity[vin] = session.battery_capacity_kwh
             except Exception as err:
                 _LOGGER.warning("SOC: Failed to load active session for %s: %s", redact_vin(vin), err)
 
@@ -307,12 +317,21 @@ class SOCPredictor:
             except Exception as err:
                 _LOGGER.warning("SOC: Failed to load charging status for %s: %s", redact_vin(vin), err)
 
+        capacities = data.get("battery_capacities") or {}
+        for vin, capacity in capacities.items():
+            try:
+                if capacity and float(capacity) > 0:
+                    self._last_known_capacity[vin] = float(capacity)
+            except (TypeError, ValueError) as err:
+                _LOGGER.warning("SOC: Failed to load battery capacity for %s: %s", redact_vin(vin), err)
+
         _LOGGER.debug(
-            "Loaded SOC charging data: %d learned, %d pending, %d active, %d charging",
+            "Loaded v2 SOC data: %d learned, %d pending, %d active, %d charging, %d capacities",
             len(self._learned_efficiency),
             len(self._pending_sessions),
             len(self._sessions),
             sum(1 for v in self._is_charging.values() if v),
+            len(self._last_known_capacity),
         )
 
     def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
@@ -458,6 +477,9 @@ class SOCPredictor:
             last_energy_update=None,
         )
 
+        # Store capacity for future fallback (battery capacity rarely changes)
+        self._last_known_capacity[vin] = battery_capacity_kwh
+
         _LOGGER.debug(
             "SOC: Anchored session for %s at %.1f%% (capacity=%.1f kWh, method=%s)",
             redact_vin(vin),
@@ -547,8 +569,29 @@ class SOCPredictor:
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
-        elif not is_charging:
-            # BEV or unknown: only sync when not charging
+            else:
+                # Charging: if BMW SOC is higher than prediction, sync up
+                # This handles telematic poll updates during charging
+                if soc > current_predicted:
+                    _LOGGER.debug(
+                        "SOC: PHEV %s charging, BMW SOC %.1f%% > predicted %.1f%%, syncing up",
+                        redact_vin(vin),
+                        soc,
+                        current_predicted,
+                    )
+                    self._last_predicted_soc[vin] = soc
+        elif is_charging:
+            # BEV charging: only sync up (never down during charge)
+            if current_predicted is None or soc > current_predicted:
+                _LOGGER.debug(
+                    "SOC: BEV %s charging, BMW SOC %.1f%% > predicted %s, syncing up",
+                    redact_vin(vin),
+                    soc,
+                    f"{current_predicted:.1f}%" if current_predicted else "none",
+                )
+                self._last_predicted_soc[vin] = soc
+        else:
+            # BEV not charging: snap to actual BMW SOC
             self._last_predicted_soc[vin] = soc
 
         # Try to finalize pending session if one exists
@@ -839,10 +882,21 @@ class SOCPredictor:
         # Charging - calculate prediction
         session = self._sessions.get(vin)
         if session is None:
-            # Charging but no session anchored yet - need SOC and capacity first
+            # Charging but no session anchored (no capacity data yet)
+            # Follow BMW SOC directly, only going up (monotonicity during charging)
+            current_pred = self._last_predicted_soc.get(vin)
             if bmw_soc is not None:
-                return bmw_soc
-            return self._last_predicted_soc.get(vin)
+                # Take the higher of BMW SOC and current prediction
+                result = max(bmw_soc, current_pred) if current_pred is not None else bmw_soc
+                if current_pred is None or result > current_pred:
+                    self._last_predicted_soc[vin] = result
+                    _LOGGER.debug(
+                        "SOC: No session for %s, following BMW SOC %.1f%%",
+                        redact_vin(vin),
+                        result,
+                    )
+                return result
+            return current_pred
 
         # No energy accumulated yet - check if BMW SOC is higher and re-anchor
         if session.total_energy_kwh == 0:
@@ -964,6 +1018,20 @@ class SOCPredictor:
         """
         self._entity_signaled.add(vin)
 
+    def get_last_known_capacity(self, vin: str) -> float | None:
+        """Get last known battery capacity for a VIN.
+
+        Battery capacity rarely changes, so this can be used as fallback
+        when MQTT hasn't delivered capacity data yet.
+
+        Args:
+            vin: Vehicle identification number
+
+        Returns:
+            Battery capacity in kWh, or None if not known
+        """
+        return self._last_known_capacity.get(vin)
+
     def cleanup_vin(self, vin: str) -> None:
         """Remove all tracking data for a VIN.
 
@@ -977,6 +1045,7 @@ class SOCPredictor:
         self._entity_signaled.discard(vin)
         self._pending_sessions.pop(vin, None)
         self._is_phev.pop(vin, None)
+        self._last_known_capacity.pop(vin, None)
         # Note: We don't remove learned efficiency - that's persistent data
 
     def get_tracked_vins(self) -> set[str]:
