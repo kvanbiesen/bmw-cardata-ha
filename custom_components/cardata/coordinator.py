@@ -69,6 +69,16 @@ _LOGGER = logging.getLogger(__name__)
 _AC_PHASE_PATTERN = re.compile(r"(\d{1,2})")
 
 
+def _descriptor_float(state: DescriptorState | None) -> float | None:
+    """Extract a float from a descriptor state, returning None on failure."""
+    if state is None or state.value is None:
+        return None
+    try:
+        return float(state.value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class CardataCoordinator:
     hass: HomeAssistant
@@ -316,15 +326,11 @@ class CardataCoordinator:
 
         # Get battery capacity (prefer batterySizeMax, fallback to maxEnergy)
         capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-        if not capacity_state or capacity_state.value is None:
+        capacity_kwh = _descriptor_float(capacity_state)
+        if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
-        if not capacity_state or capacity_state.value is None:
-            return
-        try:
-            capacity_kwh = float(capacity_state.value)
-        except (TypeError, ValueError):
-            return
-        if capacity_kwh <= 0:
+            capacity_kwh = _descriptor_float(capacity_state)
+        if capacity_kwh is None or capacity_kwh <= 0:
             return
 
         # Get charging method if available
@@ -457,14 +463,10 @@ class CardataCoordinator:
 
         # Get battery capacity (prefer live descriptor, fallback to cached)
         capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-        if not capacity_state or capacity_state.value is None:
+        capacity_kwh = _descriptor_float(capacity_state)
+        if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
-        capacity_kwh: float | None = None
-        if capacity_state and capacity_state.value is not None:
-            try:
-                capacity_kwh = float(capacity_state.value)
-            except (TypeError, ValueError):
-                pass
+            capacity_kwh = _descriptor_float(capacity_state)
         if capacity_kwh is not None and capacity_kwh > 0:
             self._magic_soc.update_battery_capacity(vin, capacity_kwh)
         else:
