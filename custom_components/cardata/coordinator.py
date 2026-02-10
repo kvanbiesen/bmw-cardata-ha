@@ -359,15 +359,6 @@ class CardataCoordinator:
                 )
 
         if capacity_kwh is None or capacity_kwh <= 0:
-            capacity_kwh = self._magic_soc.get_last_known_capacity(vin)
-            if capacity_kwh is not None and capacity_kwh > 0:
-                _LOGGER.debug(
-                    "Anchor fallback for %s: using last known capacity %.1f kWh",
-                    redact_vin(vin),
-                    capacity_kwh,
-                )
-
-        if capacity_kwh is None or capacity_kwh <= 0:
             _LOGGER.debug("Cannot anchor session for %s: no capacity data available", redact_vin(vin))
             return
 
