@@ -383,8 +383,17 @@ class CardataCoordinator:
             if "DC" in method_str:
                 charging_method = "DC"
 
+        # Get charge target SOC if available
+        target_soc: float | None = None
+        target_state = vehicle_state.get("vehicle.powertrain.electric.battery.stateOfCharge.target")
+        if target_state and target_state.value is not None:
+            try:
+                target_soc = float(target_state.value)
+            except (TypeError, ValueError):
+                pass
+
         self._magic_soc.update_battery_capacity(vin, capacity_kwh)
-        self._soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method)
+        self._soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method, target_soc=target_soc)
 
     def _end_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
         """End SOC prediction session when charging stops.

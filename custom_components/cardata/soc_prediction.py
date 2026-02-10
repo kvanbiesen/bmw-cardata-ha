@@ -100,7 +100,9 @@ class ChargingSession:
     # Energy tracking for learning
     total_energy_kwh: float = 0.0  # Accumulated energy input
     last_power_kw: float = 0.0  # Last power reading for trapezoidal integration
+    last_aux_kw: float = 0.0  # Last auxiliary power for extrapolation
     last_energy_update: float | None = None  # Timestamp of last energy accumulation
+    target_soc: float | None = None  # Charge target from BMW (e.g. 80%)
     restored: bool = False  # True when loaded from storage (energy data incomplete)
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,7 +116,9 @@ class ChargingSession:
             "charging_method": self.charging_method,
             "total_energy_kwh": self.total_energy_kwh,
             "last_power_kw": self.last_power_kw,
+            "last_aux_kw": self.last_aux_kw,
             "last_energy_update": self.last_energy_update,
+            "target_soc": self.target_soc,
         }
 
     @classmethod
@@ -129,7 +133,9 @@ class ChargingSession:
             charging_method=data["charging_method"],
             total_energy_kwh=data.get("total_energy_kwh", 0.0),
             last_power_kw=data.get("last_power_kw", 0.0),
+            last_aux_kw=data.get("last_aux_kw", 0.0),
             last_energy_update=data.get("last_energy_update"),
+            target_soc=data.get("target_soc"),
             restored=True,
         )
 
@@ -153,6 +159,7 @@ class ChargingSession:
                 net_power = max(avg_power - aux_power_kw, 0.0)
                 self.total_energy_kwh += net_power * hours
         self.last_power_kw = power_kw
+        self.last_aux_kw = aux_power_kw
         self.last_energy_update = timestamp
 
 
@@ -424,6 +431,7 @@ class SOCPredictor:
         battery_capacity_kwh: float,
         charging_method: str = "AC",
         timestamp: datetime | None = None,
+        target_soc: float | None = None,
     ) -> None:
         """Anchor a new charging session or update existing anchor.
 
@@ -436,6 +444,7 @@ class SOCPredictor:
             battery_capacity_kwh: Battery capacity in kWh
             charging_method: "AC" or "DC" for efficiency selection
             timestamp: Optional timestamp (defaults to now)
+            target_soc: Charge target SOC from BMW (e.g. 80%)
         """
         now = timestamp or datetime.now(UTC)
 
@@ -458,6 +467,7 @@ class SOCPredictor:
             total_energy_kwh=0.0,
             last_power_kw=0.0,
             last_energy_update=None,
+            target_soc=target_soc,
         )
 
         _LOGGER.debug(
@@ -905,12 +915,23 @@ class SOCPredictor:
         # Use accumulated net energy (already has aux subtracted)
         energy_added_kwh = session.total_energy_kwh * efficiency
 
+        # Extrapolate energy since last power reading using last known power.
+        # This provides smooth SOC updates between sparse API polls.
+        if session.last_power_kw > 0 and session.last_energy_update is not None:
+            gap = time.time() - session.last_energy_update
+            if gap > 0:
+                net_power = max(session.last_power_kw - session.last_aux_kw, 0.0)
+                extra_kwh = net_power * (gap / 3600.0) * efficiency
+                energy_added_kwh += extra_kwh
+
         # Convert to SOC percentage
         soc_added = (energy_added_kwh / session.battery_capacity_kwh) * 100.0
         predicted_soc = session.anchor_soc + soc_added
 
-        # Apply constraints: never decrease, then cap at 100%
+        # Apply constraints: never decrease, cap at target, then cap at 100%
         predicted_soc = max(predicted_soc, session.last_predicted_soc)
+        if session.target_soc is not None:
+            predicted_soc = min(predicted_soc, session.target_soc)
         predicted_soc = min(predicted_soc, self.MAX_SOC)
 
         # Update session and global tracking
