@@ -1383,6 +1383,10 @@ class CardataCoordinator:
                         self._last_predicted_soc_sent[vin] = current_estimate
                         if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                             schedule_soc_debounce = True
+                        # Magic SOC delegates to predicted SOC during charging
+                        if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                            if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                                schedule_soc_debounce = True
                         if debug_enabled():
                             _LOGGER.debug(
                                 "Periodic SOC update for %s: %.1f%% (was: %s)",
