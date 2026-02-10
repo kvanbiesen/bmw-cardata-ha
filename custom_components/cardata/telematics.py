@@ -302,8 +302,13 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     # This keeps worst-case API usage around 24 calls/day regardless of car count
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
-    # Track last check time to prevent spin
-    last_check_time: float = 0.0
+    # Skip immediate poll on restart if last poll was recent (saves quota)
+    last_poll_at = runtime.coordinator.last_telematic_api_at
+    if last_poll_at is not None:
+        age = (datetime.now(UTC) - last_poll_at).total_seconds()
+        last_check_time = time.time() - age
+    else:
+        last_check_time = 0.0
 
     _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
