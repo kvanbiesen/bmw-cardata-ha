@@ -226,8 +226,7 @@ class MotionDetector:
                 if len(park_readings) >= 3:
                     # Check if ALL recent readings are within park radius
                     all_within_park = all(
-                        self._calculate_distance(park_anchor[0], park_anchor[1], r[0], r[1])
-                        <= self.PARK_RADIUS_M
+                        self._calculate_distance(park_anchor[0], park_anchor[1], r[0], r[1]) <= self.PARK_RADIUS_M
                         for r in park_readings[-3:]
                     )
                     if all_within_park:
