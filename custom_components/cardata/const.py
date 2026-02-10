@@ -74,6 +74,7 @@ BOOTSTRAP_COMPLETE = "bootstrap_complete"
 # 1 car = 1h, 2 cars = 2h, etc. → worst case ~24 API calls/day regardless of car count
 STALE_THRESHOLD_PER_VIN = 60 * 60  # 1 hour per VIN
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
+TRIP_POLL_COOLDOWN_SECONDS = 600  # Min seconds between trip-end polls per VIN
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"

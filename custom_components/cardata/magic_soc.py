@@ -359,6 +359,10 @@ class MagicSOCPredictor:
         session = self._driving_sessions.get(vin)
         if session is None:
             return
+        # Skip no-op re-anchors (duplicate SOC/mileage from MQTT bursts).
+        # Without this guard, accumulated_aux_kwh is wiped on every duplicate.
+        if session.anchor_soc == new_soc and session.anchor_mileage == current_mileage:
+            return
         old_anchor = session.anchor_soc
         session.anchor_soc = new_soc
         session.anchor_mileage = current_mileage
