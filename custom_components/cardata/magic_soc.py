@@ -150,6 +150,7 @@ class MagicSOCPredictor:
         self._last_magic_soc: dict[str, float] = {}
         self._learned_consumption: dict[str, LearnedConsumption] = {}
         self._default_consumption: dict[str, float] = {}  # Per-VIN model-based defaults
+        self._default_capacity: dict[str, float] = {}  # Per-VIN model-based battery capacity
         self._magic_soc_entity_signaled: set[str] = set()
         # Continuity for isMoving flapping: (predicted_soc, unix_timestamp)
         self._last_driving_predicted_soc: dict[str, tuple[float, float]] = {}
@@ -276,6 +277,7 @@ class MagicSOCPredictor:
         self._last_driving_predicted_soc.pop(vin, None)
         self._magic_soc_entity_signaled.discard(vin)
         self._default_consumption.pop(vin, None)
+        self._default_capacity.pop(vin, None)
         self._is_phev.pop(vin, None)
         self._last_known_soc.pop(vin, None)
         self._last_known_capacity.pop(vin, None)
@@ -647,6 +649,14 @@ class MagicSOCPredictor:
     def set_default_consumption(self, vin: str, kwh_per_km: float) -> None:
         """Set model-based default consumption for a VIN."""
         self._default_consumption[vin] = kwh_per_km
+
+    def set_default_capacity(self, vin: str, capacity_kwh: float) -> None:
+        """Set model-based default battery capacity for a VIN."""
+        self._default_capacity[vin] = capacity_kwh
+
+    def get_default_capacity(self, vin: str) -> float | None:
+        """Get model-based default battery capacity for a VIN."""
+        return self._default_capacity.get(vin)
 
     def _get_consumption(self, vin: str) -> float:
         """Get consumption rate for prediction.

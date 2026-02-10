@@ -41,6 +41,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
+    DEFAULT_CAPACITY_BY_MODEL,
     DEFAULT_CONSUMPTION_BY_MODEL,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
@@ -469,13 +470,24 @@ class CardataCoordinator:
         else:
             capacity_kwh = self._magic_soc.get_last_known_capacity(vin)
             if capacity_kwh is None or capacity_kwh <= 0:
-                _LOGGER.debug("Magic SOC: Cannot anchor %s — no capacity available (live or cached)", redact_vin(vin))
-                return
-            _LOGGER.debug(
-                "Magic SOC: Using cached capacity %.1f kWh for %s (descriptor unavailable)",
-                capacity_kwh,
-                redact_vin(vin),
-            )
+                capacity_kwh = self._magic_soc.get_default_capacity(vin)
+                if capacity_kwh is None or capacity_kwh <= 0:
+                    _LOGGER.debug(
+                        "Magic SOC: Cannot anchor %s — no capacity available (live, cached, or model default)",
+                        redact_vin(vin),
+                    )
+                    return
+                _LOGGER.debug(
+                    "Magic SOC: Using model default capacity %.1f kWh for %s",
+                    capacity_kwh,
+                    redact_vin(vin),
+                )
+            else:
+                _LOGGER.debug(
+                    "Magic SOC: Using cached capacity %.1f kWh for %s (descriptor unavailable)",
+                    capacity_kwh,
+                    redact_vin(vin),
+                )
 
         self._magic_soc.anchor_driving_session(vin, current_soc, current_mileage, capacity_kwh)
 
@@ -1505,6 +1517,18 @@ class CardataCoordinator:
                     redact_vin(vin),
                     prefix,
                     DEFAULT_CONSUMPTION_BY_MODEL[prefix],
+                )
+                break
+
+        # Set model-based default battery capacity for Magic SOC
+        for prefix in sorted(DEFAULT_CAPACITY_BY_MODEL, key=len, reverse=True):
+            if model_name.startswith(prefix):
+                self._magic_soc.set_default_capacity(vin, DEFAULT_CAPACITY_BY_MODEL[prefix])
+                _LOGGER.debug(
+                    "Magic SOC: Set default capacity for %s (%s) to %.1f kWh",
+                    redact_vin(vin),
+                    prefix,
+                    DEFAULT_CAPACITY_BY_MODEL[prefix],
                 )
                 break
 
