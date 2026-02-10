@@ -966,9 +966,17 @@ class CardataCoordinator:
                         runtime.request_trip_poll(vin)
                     # End driving session for consumption learning
                     self._end_driving_session(vin, vehicle_state)
+                    # Signal magic SOC sensor to transition to passthrough
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                            schedule_debounce = True
                 elif last_bmw_moving is not True and new_is_moving is True:
                     # Trip started - anchor driving session
                     self._anchor_driving_session(vin, vehicle_state)
+                    # Signal magic SOC sensor to show prediction
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                            schedule_debounce = True
                 # Update tracking for BMW-provided state
                 if new_is_moving is not None:
                     self._last_derived_is_moving[f"{vin}_bmw"] = new_is_moving
@@ -1307,10 +1315,16 @@ class CardataCoordinator:
                             if runtime is not None:
                                 runtime.request_trip_poll(vin)
                             self._end_driving_session_from_state(vin)
+                            # Signal magic SOC sensor to transition to passthrough
+                            if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                                self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
                         # Trip started (stopped -> moving): anchor driving session
                         if last_sent is not True and current_derived is True:
                             self._anchor_driving_session_from_state(vin)
+                            # Signal magic SOC sensor to show prediction
+                            if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                                self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
         # Periodic predicted SOC recalculation during charging
         # Uses coordinator's get_predicted_soc() which fetches BMW SOC from stored state

@@ -249,11 +249,11 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 ## API Quota and MQTT Streaming
 
-BMW imposes a **50 calls/day** limit on the CarData API. This integration does not enforce the limit client-side — BMW's own 429 response is respected via backoff. API usage is minimized through MQTT freshness gating:
+BMW imposes a **50 calls/day** limit on the CarData API. This integration does not enforce the limit client-side — BMW's own 429 response is respected via backoff. API usage is minimized through MQTT freshness gating and rate limiting:
 
 - **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages. Token refresh during MQTT reconnection is lock-free to avoid blocking the connection. After each token refresh, the MQTT connection is proactively reconnected with the fresh credentials to prevent BMW from dropping the session when the old token expires (~1 hour).
-- **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state — but only if the MQTT stream hasn't delivered data for that VIN in the last 5 minutes. If the stream is healthy, it already provides the post-trip state.
-- **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor — same MQTT freshness check applies.
+- **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state. This ensures SOC is updated even when the MQTT stream only delivers GPS/mileage but not SOC (common on some models). The `ContainerRateLimiter` (3/hr, 10/day) prevents excessive API usage.
+- **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor, also gated by the `ContainerRateLimiter`.
 - **Fallback polling**: The integration polls every 12 hours as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
 - **Multi-VIN setups**: All vehicles share the same 50 call/day limit.
 - **Rate limiting**: If BMW returns a 429 (rate limited) response, the integration backs off automatically with exponential delay.
