@@ -531,6 +531,13 @@ class CardataCoordinator:
             _LOGGER.debug("Magic SOC: Skipping anchor for %s (PHEV)", redact_vin(vin))
             return
 
+        # Skip while charging (BEVs can't drive while plugged in, and delayed
+        # mileage arriving during charging would create a phantom session that
+        # persists until the next isMoving transition)
+        if self._soc_predictor.is_charging(vin):
+            _LOGGER.debug("Magic SOC: Skipping anchor for %s (charging active)", redact_vin(vin))
+            return
+
         # Get current SOC (prefer live descriptor, fallback to cached)
         soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
         current_soc: float | None = None
@@ -968,7 +975,12 @@ class CardataCoordinator:
                         self._motion_detector.update_mileage(vin, mileage)
                         needs_anchor = self._magic_soc.update_driving_mileage(vin, mileage)
                         if needs_anchor:
-                            self._anchor_driving_session(vin, vehicle_state)
+                            # Only anchor if vehicle is actually moving — delayed
+                            # mileage arriving while parked is stale telemetry
+                            bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
+                            gps_moving = self.get_derived_is_moving(vin)
+                            if bmw_moving is True or gps_moving is True:
+                                self._anchor_driving_session(vin, vehicle_state)
                         elif vin not in self._magic_soc._driving_sessions:
                             # Retry: isMoving fired before mileage arrived → anchor failed
                             bmw_moving = self._last_derived_is_moving.get(f"{vin}_bmw")
