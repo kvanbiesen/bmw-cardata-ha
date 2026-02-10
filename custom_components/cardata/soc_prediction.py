@@ -570,6 +570,8 @@ class SOCPredictor:
                     session.last_predicted_soc = soc
                     session.anchor_soc = soc
                     session.total_energy_kwh = 0.0
+                    session.last_power_kw = 0.0
+                    session.last_energy_update = None
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
@@ -584,6 +586,15 @@ class SOCPredictor:
                         current_predicted,
                     )
                     self._last_predicted_soc[vin] = soc
+                    # Also re-anchor the session so get_predicted_soc() sees
+                    # consistent state (prevents race with SyncWorker reads)
+                    session = self._sessions.get(vin)
+                    if session is not None:
+                        session.anchor_soc = soc
+                        session.last_predicted_soc = soc
+                        session.total_energy_kwh = 0.0
+                        session.last_power_kw = 0.0
+                        session.last_energy_update = None
         elif is_charging:
             # BEV charging: only sync up (never down during charge)
             if current_predicted is None or soc > current_predicted:
@@ -594,6 +605,15 @@ class SOCPredictor:
                     f"{current_predicted:.1f}%" if current_predicted else "none",
                 )
                 self._last_predicted_soc[vin] = soc
+                # Also re-anchor the session so get_predicted_soc() sees
+                # consistent state (prevents race with SyncWorker reads)
+                session = self._sessions.get(vin)
+                if session is not None:
+                    session.anchor_soc = soc
+                    session.last_predicted_soc = soc
+                    session.total_energy_kwh = 0.0
+                    session.last_power_kw = 0.0
+                    session.last_energy_update = None
         else:
             # BEV not charging: snap to actual BMW SOC
             self._last_predicted_soc[vin] = soc
