@@ -1164,7 +1164,7 @@ class CardataCoordinator:
             if descriptor == PREDICTED_SOC_DESCRIPTOR:
                 predicted_soc = self.get_predicted_soc(vin)
                 if predicted_soc is not None:
-                    return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
+                    return DescriptorState(value=round(predicted_soc, 1), unit="%", timestamp=None)
                 return None
 
             # Magic SOC is ALWAYS calculated dynamically
@@ -1224,7 +1224,7 @@ class CardataCoordinator:
             if descriptor == PREDICTED_SOC_DESCRIPTOR:
                 predicted_soc = self.get_predicted_soc(vin)
                 if predicted_soc is not None:
-                    return DescriptorState(value=predicted_soc, unit="%", timestamp=None)
+                    return DescriptorState(value=round(predicted_soc, 1), unit="%", timestamp=None)
                 return None
 
             # Magic SOC is ALWAYS calculated dynamically
