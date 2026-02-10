@@ -937,6 +937,23 @@ class SOCPredictor:
         predicted_soc = max(predicted_soc, session.last_predicted_soc)
         predicted_soc = min(predicted_soc, self.MAX_SOC)
 
+        # Re-anchor upward: BMW SOC is ground truth, always sync up
+        # Handles efficiency losses, missed updates, or restored sessions with stale energy
+        if bmw_soc is not None and bmw_soc > predicted_soc:
+            _LOGGER.debug(
+                "SOC: Re-anchoring %s upward: BMW SOC %.1f%% > predicted %.1f%% (resetting energy)",
+                redact_vin(vin),
+                bmw_soc,
+                predicted_soc,
+            )
+            session.anchor_soc = bmw_soc
+            session.last_predicted_soc = bmw_soc
+            session.total_energy_kwh = 0.0
+            session.last_power_kw = 0.0
+            session.last_energy_update = None
+            self._last_predicted_soc[vin] = bmw_soc
+            return bmw_soc
+
         # Update session and global tracking
         session.last_predicted_soc = predicted_soc
         self._last_predicted_soc[vin] = predicted_soc
