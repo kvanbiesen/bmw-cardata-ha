@@ -339,25 +339,13 @@ class CardataCoordinator:
             except (TypeError, ValueError):
                 pass
 
-        # Fallback chain for capacity:
-        # 1. Existing session (if any)
-        # 2. Last known capacity (stored from previous sessions)
+        # Fallback: use existing session capacity if available
         if capacity_kwh is None or capacity_kwh <= 0:
             existing_session = self._soc_predictor._sessions.get(vin)
             if existing_session and existing_session.battery_capacity_kwh > 0:
                 capacity_kwh = existing_session.battery_capacity_kwh
                 _LOGGER.debug(
                     "Anchor fallback for %s: using existing session capacity %.1f kWh",
-                    redact_vin(vin),
-                    capacity_kwh,
-                )
-
-        if capacity_kwh is None or capacity_kwh <= 0:
-            # Try last known capacity (battery capacity rarely changes)
-            capacity_kwh = self._soc_predictor.get_last_known_capacity(vin)
-            if capacity_kwh is not None and capacity_kwh > 0:
-                _LOGGER.debug(
-                    "Anchor fallback for %s: using last known capacity %.1f kWh",
                     redact_vin(vin),
                     capacity_kwh,
                 )
@@ -908,6 +896,18 @@ class CardataCoordinator:
                                 schedule_debounce = True
                     except (TypeError, ValueError):
                         pass
+
+            # Late anchor: capacity arrived during charging when session wasn't anchored
+            elif descriptor in (
+                "vehicle.drivetrain.batteryManagement.batterySizeMax",
+                "vehicle.drivetrain.batteryManagement.maxEnergy",
+            ):
+                if self._soc_predictor.is_charging(vin) and not self._soc_predictor.has_active_session(vin):
+                    _LOGGER.debug(
+                        "Late anchor attempt for %s (capacity arrived after charging started)",
+                        redact_vin(vin),
+                    )
+                    self._anchor_soc_session(vin, vehicle_state)
 
         # Check if predicted_soc sensor should be created (when EV descriptors are seen)
         # Signal creation when we see HV battery SOC (indicates EV/PHEV)

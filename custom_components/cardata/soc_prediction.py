@@ -223,10 +223,6 @@ class SOCPredictor:
         # PHEVs need special handling: sync predicted SOC down when actual is lower
         self._is_phev: dict[str, bool] = {}
 
-        # VIN -> last known battery capacity (kWh) for fallback when MQTT hasn't delivered yet
-        # Battery capacity rarely changes, so we can reuse the last known value
-        self._last_known_capacity: dict[str, float] = {}
-
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
 
@@ -265,7 +261,6 @@ class SOCPredictor:
             "pending_sessions": {vin: ps.to_dict() for vin, ps in self._pending_sessions.items()},
             "active_sessions": {vin: s.to_dict() for vin, s in self._sessions.items()},
             "charging_status": {vin: v for vin, v in self._is_charging.items() if v},
-            "battery_capacities": dict(self._last_known_capacity),
         }
 
     def load_session_data(self, data: dict[str, Any]) -> None:
@@ -304,9 +299,6 @@ class SOCPredictor:
                 session = ChargingSession.from_dict(s_data)
                 self._sessions[vin] = session
                 self._last_predicted_soc[vin] = session.last_predicted_soc
-                # Also restore capacity for fallback
-                if session.battery_capacity_kwh > 0:
-                    self._last_known_capacity[vin] = session.battery_capacity_kwh
             except Exception as err:
                 _LOGGER.warning("SOC: Failed to load active session for %s: %s", redact_vin(vin), err)
 
@@ -317,21 +309,12 @@ class SOCPredictor:
             except Exception as err:
                 _LOGGER.warning("SOC: Failed to load charging status for %s: %s", redact_vin(vin), err)
 
-        capacities = data.get("battery_capacities") or {}
-        for vin, capacity in capacities.items():
-            try:
-                if capacity and float(capacity) > 0:
-                    self._last_known_capacity[vin] = float(capacity)
-            except (TypeError, ValueError) as err:
-                _LOGGER.warning("SOC: Failed to load battery capacity for %s: %s", redact_vin(vin), err)
-
         _LOGGER.debug(
-            "Loaded v2 SOC data: %d learned, %d pending, %d active, %d charging, %d capacities",
+            "Loaded v2 SOC data: %d learned, %d pending, %d active, %d charging",
             len(self._learned_efficiency),
             len(self._pending_sessions),
             len(self._sessions),
             sum(1 for v in self._is_charging.values() if v),
-            len(self._last_known_capacity),
         )
 
     def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
@@ -476,9 +459,6 @@ class SOCPredictor:
             last_power_kw=0.0,
             last_energy_update=None,
         )
-
-        # Store capacity for future fallback (battery capacity rarely changes)
-        self._last_known_capacity[vin] = battery_capacity_kwh
 
         _LOGGER.debug(
             "SOC: Anchored session for %s at %.1f%% (capacity=%.1f kWh, method=%s)",
@@ -1018,20 +998,6 @@ class SOCPredictor:
         """
         self._entity_signaled.add(vin)
 
-    def get_last_known_capacity(self, vin: str) -> float | None:
-        """Get last known battery capacity for a VIN.
-
-        Battery capacity rarely changes, so this can be used as fallback
-        when MQTT hasn't delivered capacity data yet.
-
-        Args:
-            vin: Vehicle identification number
-
-        Returns:
-            Battery capacity in kWh, or None if not known
-        """
-        return self._last_known_capacity.get(vin)
-
     def cleanup_vin(self, vin: str) -> None:
         """Remove all tracking data for a VIN.
 
@@ -1045,7 +1011,6 @@ class SOCPredictor:
         self._entity_signaled.discard(vin)
         self._pending_sessions.pop(vin, None)
         self._is_phev.pop(vin, None)
-        self._last_known_capacity.pop(vin, None)
         # Note: We don't remove learned efficiency - that's persistent data
 
     def get_tracked_vins(self) -> set[str]:
