@@ -528,7 +528,7 @@ class SOCPredictor:
                     power_kw,
                     aux_power_kw,
                     session.total_energy_kwh,
-                    session.last_predicted_soc
+                    session.last_predicted_soc,
                 )
 
     def update_bmw_soc(self, vin: str, soc: float, timestamp: datetime | None = None) -> None:
@@ -1059,7 +1059,7 @@ class SOCPredictor:
         voltage: float | None = None,
         current: float | None = None,
         phases: float | None = None,
-        aux_power_kw: float | None = None
+        aux_power_kw: float | None = None,
     ) -> bool:
         """Update AC charging data and calculate power if voltage+current available.
 
@@ -1091,7 +1091,7 @@ class SOCPredictor:
                 power_kw,
                 session.last_voltage,
                 session.last_current,
-                session.phases
+                session.phases,
             )
             # Update power reading (accumulates energy)
             self.update_power_reading(vin, power_kw, aux_power_kw or 0.0)

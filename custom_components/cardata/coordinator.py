@@ -850,9 +850,15 @@ class CardataCoordinator:
                 "vehicle.drivetrain.electricEngine.charging.acVoltage",
             ):
                 if self._soc_predictor.is_charging(vin):
-                    voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
-                    current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
-                    phases = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber"))
+                    voltage = _descriptor_float(
+                        vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage")
+                    )
+                    current = _descriptor_float(
+                        vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere")
+                    )
+                    phases = _descriptor_float(
+                        vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber")
+                    )
                     aux_kw = 0.0
                     aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
                     if aux_state and aux_state.value is not None:
@@ -1287,14 +1293,20 @@ class CardataCoordinator:
                             _LOGGER.info(
                                 "Reconnection: restoring charging session for %s (status: %s)",
                                 redact_vin(vin),
-                                status_val
+                                status_val,
                             )
                             self._anchor_soc_session(vin, vehicle_state)
 
                             # Restore AC charging data from stored state for periodic updates
-                            voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
-                            current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
-                            phases = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber"))
+                            voltage = _descriptor_float(
+                                vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage")
+                            )
+                            current = _descriptor_float(
+                                vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere")
+                            )
+                            phases = _descriptor_float(
+                                vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber")
+                            )
 
                             if voltage and current:
                                 aux_kw = 0.0
@@ -1310,7 +1322,7 @@ class CardataCoordinator:
                                     "Reconnection: restored AC charging data for %s (%.1fV × %.1fA)",
                                     redact_vin(vin),
                                     voltage,
-                                    current
+                                    current,
                                 )
         await self._async_log_diagnostics()
 
