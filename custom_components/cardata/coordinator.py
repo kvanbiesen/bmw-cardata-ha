@@ -1092,7 +1092,7 @@ class CardataCoordinator:
             if descriptor == MAGIC_SOC_DESCRIPTOR:
                 magic_soc = self.get_magic_soc(vin)
                 if magic_soc is not None:
-                    return DescriptorState(value=magic_soc, unit="%", timestamp=None)
+                    return DescriptorState(value=round(magic_soc, 1), unit="%", timestamp=None)
                 return None
 
             # Derived fuel range is ALWAYS calculated dynamically - check BEFORE stored state
@@ -1152,7 +1152,7 @@ class CardataCoordinator:
             if descriptor == MAGIC_SOC_DESCRIPTOR:
                 magic_soc = self.get_magic_soc(vin)
                 if magic_soc is not None:
-                    return DescriptorState(value=magic_soc, unit="%", timestamp=None)
+                    return DescriptorState(value=round(magic_soc, 1), unit="%", timestamp=None)
                 return None
 
             # Derived fuel range is ALWAYS calculated dynamically
