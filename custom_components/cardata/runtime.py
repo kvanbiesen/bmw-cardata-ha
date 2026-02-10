@@ -122,7 +122,22 @@ class CardataRuntimeData:
         """Request an immediate API poll for a VIN after trip ends.
 
         Called by coordinator when vehicle.isMoving transitions True -> False.
+        Applies a per-VIN cooldown to prevent GPS burst flapping from burning
+        API quota (BMW sends GPS in bursts that cause DRIVING→PARKED→NOT_MOVING
+        flapping every ~3 min while parked).
         """
+        from .const import TRIP_POLL_COOLDOWN_SECONDS
+
+        age = self.coordinator.seconds_since_last_poll(vin)
+        if age is not None and age < TRIP_POLL_COOLDOWN_SECONDS:
+            _LOGGER.debug(
+                "Skipping trip-end poll for VIN %s (polled %.0fs ago, cooldown %ds)",
+                redact_vin(vin),
+                age,
+                TRIP_POLL_COOLDOWN_SECONDS,
+            )
+            return
+
         if self._trip_poll_vins is not None:
             self._trip_poll_vins.add(vin)
         if self._trip_poll_event is not None:

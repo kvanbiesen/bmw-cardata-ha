@@ -435,8 +435,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                                 "Event triggered for %d VIN(s), triggering immediate API poll",
                                 len(trip_vins),
                             )
-                            # Poll VINs that just finished trips — ContainerRateLimiter
-                            # (3/hr, 10/day) prevents quota burn.
+                            # Poll VINs that just finished trips.
+                            # Per-VIN cooldown in request_trip_poll() prevents flapping burn.
                             for vin in trip_vins:
                                 # Re-fetch entry before each poll
                                 entry = hass.config_entries.async_get_entry(entry_id)
