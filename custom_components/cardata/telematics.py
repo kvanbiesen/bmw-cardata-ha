@@ -302,8 +302,13 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     # This keeps worst-case API usage around 24 calls/day regardless of car count
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
-    # Track last check time to prevent spin
-    last_check_time: float = 0.0
+    # Skip immediate poll on restart if last poll was recent (saves quota)
+    last_poll_at = runtime.coordinator.last_telematic_api_at
+    if last_poll_at is not None:
+        poll_age = (datetime.now(UTC) - last_poll_at).total_seconds()
+        last_check_time = time.time() - poll_age
+    else:
+        last_check_time = 0.0
 
     _LOGGER.debug("Starting telematic poll loop for entry %s", entry_id)
 
@@ -425,29 +430,13 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     if event_task in done:
                         trip_vins = runtime.get_trip_poll_vins()
                         if trip_vins:
-                            # Filter out VINs with fresh MQTT data — the stream
-                            # is already delivering updates for those.  Each VIN
-                            # is checked independently: in a multi-car account,
-                            # one car may have a healthy stream while another is stale.
-                            stale_vins = []
-                            for vin in trip_vins:
-                                age = runtime.coordinator.seconds_since_last_mqtt(vin)
-                                if age is not None and age < MQTT_FRESH_THRESHOLD:
-                                    _LOGGER.debug(
-                                        "Skipping event poll for VIN: MQTT data is fresh (%.0fs old)",
-                                        age,
-                                    )
-                                else:
-                                    stale_vins.append(vin)
-                            if not stale_vins:
-                                continue
-
                             _LOGGER.info(
                                 "Event triggered for %d VIN(s), triggering immediate API poll",
-                                len(stale_vins),
+                                len(trip_vins),
                             )
-                            # Poll only the stale VINs that just finished trips
-                            for vin in stale_vins:
+                            # Poll VINs that just finished trips — ContainerRateLimiter
+                            # (3/hr, 10/day) prevents quota burn.
+                            for vin in trip_vins:
                                 # Re-fetch entry before each poll
                                 entry = hass.config_entries.async_get_entry(entry_id)
                                 if entry is None:

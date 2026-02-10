@@ -195,5 +195,38 @@ DEFAULT_CONSUMPTION_BY_MODEL: dict[str, float] = {
     "i7": 0.21,
 }
 
+# Model-based default battery capacities (usable kWh, not gross)
+DEFAULT_CAPACITY_BY_MODEL: dict[str, float] = {
+    # iX1 family
+    "iX1 xDrive30": 64.7,
+    "iX1": 64.7,
+    # iX2 family
+    "iX2 xDrive30": 64.7,
+    "iX2": 64.7,
+    # iX3 (G08)
+    "iX3": 74.0,
+    # iX family
+    "iX M60": 105.2,
+    "iX xDrive60": 105.2,
+    "iX xDrive50": 105.2,
+    "iX xDrive40": 71.0,
+    "iX": 76.6,
+    # i4 family
+    "i4 M50": 80.7,
+    "i4 eDrive40": 80.7,
+    "i4 eDrive35": 59.4,
+    "i4": 80.7,
+    # i5 family
+    "i5 M60": 81.2,
+    "i5 eDrive40": 81.2,
+    "i5 xDrive40": 81.2,
+    "i5": 81.2,
+    # i7 family
+    "i7 M70": 101.7,
+    "i7 xDrive60": 101.7,
+    "i7 eDrive50": 101.7,
+    "i7": 101.7,
+}
+
 # Key for storing deduplicated allowed VINs in entry data
 ALLOWED_VINS_KEY = "allowed_vins"

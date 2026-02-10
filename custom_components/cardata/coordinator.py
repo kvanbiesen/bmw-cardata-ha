@@ -41,6 +41,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
+    DEFAULT_CAPACITY_BY_MODEL,
     DEFAULT_CONSUMPTION_BY_MODEL,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
@@ -66,6 +67,16 @@ _LOGGER = logging.getLogger(__name__)
 
 # Pre-compiled regex for AC phase parsing (avoids recompilation on each message)
 _AC_PHASE_PATTERN = re.compile(r"(\d{1,2})")
+
+
+def _descriptor_float(state: DescriptorState | None) -> float | None:
+    """Extract a float from a descriptor state, returning None on failure."""
+    if state is None or state.value is None:
+        return None
+    try:
+        return float(state.value)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -331,13 +342,10 @@ class CardataCoordinator:
         # Get battery capacity (prefer batterySizeMax, fallback to maxEnergy, then metadata)
         capacity_kwh: float | None = None
         capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-        if not capacity_state or capacity_state.value is None:
+        capacity_kwh = _descriptor_float(capacity_state)
+        if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
-        if capacity_state and capacity_state.value is not None:
-            try:
-                capacity_kwh = float(capacity_state.value)
-            except (TypeError, ValueError):
-                pass
+            capacity_kwh = _descriptor_float(capacity_state)
 
         # Fallback: use existing session capacity if available
         if capacity_kwh is None or capacity_kwh <= 0:
@@ -484,26 +492,33 @@ class CardataCoordinator:
 
         # Get battery capacity (prefer live descriptor, fallback to cached)
         capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-        if not capacity_state or capacity_state.value is None:
+        capacity_kwh = _descriptor_float(capacity_state)
+        if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
-        capacity_kwh: float | None = None
-        if capacity_state and capacity_state.value is not None:
-            try:
-                capacity_kwh = float(capacity_state.value)
-            except (TypeError, ValueError):
-                pass
+            capacity_kwh = _descriptor_float(capacity_state)
         if capacity_kwh is not None and capacity_kwh > 0:
             self._magic_soc.update_battery_capacity(vin, capacity_kwh)
         else:
             capacity_kwh = self._magic_soc.get_last_known_capacity(vin)
             if capacity_kwh is None or capacity_kwh <= 0:
-                _LOGGER.debug("Magic SOC: Cannot anchor %s — no capacity available (live or cached)", redact_vin(vin))
-                return
-            _LOGGER.debug(
-                "Magic SOC: Using cached capacity %.1f kWh for %s (descriptor unavailable)",
-                capacity_kwh,
-                redact_vin(vin),
-            )
+                capacity_kwh = self._magic_soc.get_default_capacity(vin)
+                if capacity_kwh is None or capacity_kwh <= 0:
+                    _LOGGER.debug(
+                        "Magic SOC: Cannot anchor %s — no capacity available (live, cached, or model default)",
+                        redact_vin(vin),
+                    )
+                    return
+                _LOGGER.debug(
+                    "Magic SOC: Using model default capacity %.1f kWh for %s",
+                    capacity_kwh,
+                    redact_vin(vin),
+                )
+            else:
+                _LOGGER.debug(
+                    "Magic SOC: Using cached capacity %.1f kWh for %s (descriptor unavailable)",
+                    capacity_kwh,
+                    redact_vin(vin),
+                )
 
         self._magic_soc.anchor_driving_session(vin, current_soc, current_mileage, capacity_kwh)
 
@@ -951,9 +966,17 @@ class CardataCoordinator:
                         runtime.request_trip_poll(vin)
                     # End driving session for consumption learning
                     self._end_driving_session(vin, vehicle_state)
+                    # Signal magic SOC sensor to transition to passthrough
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                            schedule_debounce = True
                 elif last_bmw_moving is not True and new_is_moving is True:
                     # Trip started - anchor driving session
                     self._anchor_driving_session(vin, vehicle_state)
+                    # Signal magic SOC sensor to show prediction
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                            schedule_debounce = True
                 # Update tracking for BMW-provided state
                 if new_is_moving is not None:
                     self._last_derived_is_moving[f"{vin}_bmw"] = new_is_moving
@@ -1078,7 +1101,7 @@ class CardataCoordinator:
             if descriptor == MAGIC_SOC_DESCRIPTOR:
                 magic_soc = self.get_magic_soc(vin)
                 if magic_soc is not None:
-                    return DescriptorState(value=magic_soc, unit="%", timestamp=None)
+                    return DescriptorState(value=round(magic_soc, 1), unit="%", timestamp=None)
                 return None
 
             # Derived fuel range is ALWAYS calculated dynamically - check BEFORE stored state
@@ -1138,7 +1161,7 @@ class CardataCoordinator:
             if descriptor == MAGIC_SOC_DESCRIPTOR:
                 magic_soc = self.get_magic_soc(vin)
                 if magic_soc is not None:
-                    return DescriptorState(value=magic_soc, unit="%", timestamp=None)
+                    return DescriptorState(value=round(magic_soc, 1), unit="%", timestamp=None)
                 return None
 
             # Derived fuel range is ALWAYS calculated dynamically
@@ -1292,10 +1315,16 @@ class CardataCoordinator:
                             if runtime is not None:
                                 runtime.request_trip_poll(vin)
                             self._end_driving_session_from_state(vin)
+                            # Signal magic SOC sensor to transition to passthrough
+                            if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                                self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
                         # Trip started (stopped -> moving): anchor driving session
                         if last_sent is not True and current_derived is True:
                             self._anchor_driving_session_from_state(vin)
+                            # Signal magic SOC sensor to show prediction
+                            if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                                self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
         # Periodic predicted SOC recalculation during charging
         # Uses coordinator's get_predicted_soc() which fetches BMW SOC from stored state
@@ -1555,6 +1584,18 @@ class CardataCoordinator:
                     redact_vin(vin),
                     prefix,
                     DEFAULT_CONSUMPTION_BY_MODEL[prefix],
+                )
+                break
+
+        # Set model-based default battery capacity for Magic SOC
+        for prefix in sorted(DEFAULT_CAPACITY_BY_MODEL, key=len, reverse=True):
+            if model_name.startswith(prefix):
+                self._magic_soc.set_default_capacity(vin, DEFAULT_CAPACITY_BY_MODEL[prefix])
+                _LOGGER.debug(
+                    "Magic SOC: Set default capacity for %s (%s) to %.1f kWh",
+                    redact_vin(vin),
+                    prefix,
+                    DEFAULT_CAPACITY_BY_MODEL[prefix],
                 )
                 break
 
