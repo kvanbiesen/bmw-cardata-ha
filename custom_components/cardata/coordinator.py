@@ -395,6 +395,27 @@ class CardataCoordinator:
         self._magic_soc.update_battery_capacity(vin, capacity_kwh)
         self._soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method, target_soc=target_soc)
 
+        # Seed the session with current power reading if available.
+        # In telematic API responses, charging.power often appears before
+        # charging.status in the payload, so the power reading is dropped
+        # (no session yet). Retroactively apply it for extrapolation.
+        power_state = vehicle_state.get("vehicle.powertrain.electric.battery.charging.power")
+        if power_state and power_state.value is not None:
+            try:
+                power_val = float(power_state.value)
+                unit = (power_state.unit or "").lower()
+                power_kw = power_val / 1000.0 if unit == "w" else power_val
+                aux_kw = 0.0
+                aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+                if aux_state and aux_state.value is not None:
+                    try:
+                        aux_kw = float(aux_state.value) / 1000.0
+                    except (TypeError, ValueError):
+                        pass
+                self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+            except (TypeError, ValueError):
+                pass
+
     def _end_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
         """End SOC prediction session when charging stops.
 
