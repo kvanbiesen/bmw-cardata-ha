@@ -475,9 +475,7 @@ class SOCPredictor:
             last_pred = self._last_predicted_soc.get(vin, 0.0)
             anchor_soc = max(current_soc, last_pred)
 
-        resolved_method = self._charging_method.get(vin) or (
-            charging_method.upper() if charging_method else "AC"
-        )
+        resolved_method = self._charging_method.get(vin) or (charging_method.upper() if charging_method else "AC")
         self._charging_method[vin] = resolved_method
 
         self._sessions[vin] = ChargingSession(
