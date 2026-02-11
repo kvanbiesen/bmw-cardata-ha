@@ -407,9 +407,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             position_changed = distance >= self._MIN_MOVEMENT_DISTANCE
 
         update_reason = (
-            f"paired ({pair_method}, {distance:.1f}m)"
-            if self._current_lat is not None
-            else f"initial ({pair_method})"
+            f"paired ({pair_method}, {distance:.1f}m)" if self._current_lat is not None else f"initial ({pair_method})"
         )
 
         # Always propagate paired coordinates to the motion detector
@@ -438,9 +436,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         return distance
 
-    async def _apply_new_coordinates(
-        self, lat: float, lon: float, reason: str, position_changed: bool = False
-    ) -> None:
+    async def _apply_new_coordinates(self, lat: float, lon: float, reason: str, position_changed: bool = False) -> None:
         """Apply paired GPS coordinates.
 
         Always feeds the coordinator's location tracking (motion detector,
