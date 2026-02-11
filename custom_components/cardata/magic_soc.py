@@ -83,7 +83,11 @@ class DrivingSession:
     # Auxiliary power tracking (HVAC, heating, pumps)
     last_aux_power_kw: float = 0.0  # Last known aux power draw (kW)
     last_aux_update_at: float = 0.0  # Timestamp of last aux power update
-    accumulated_aux_kwh: float = 0.0  # Integrated aux energy over trip
+    accumulated_aux_kwh: float = 0.0  # Integrated aux energy over segment
+    # Trip-level tracking (set once at original anchor, never touched by re-anchors)
+    trip_start_soc: float = 0.0  # SOC % at original trip start
+    trip_start_mileage: float = 0.0  # Odometer km at original trip start
+    trip_total_aux_kwh: float = 0.0  # Aux energy accumulated across re-anchors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -100,14 +104,19 @@ class DrivingSession:
             "last_aux_power_kw": self.last_aux_power_kw,
             "last_aux_update_at": self.last_aux_update_at,
             "accumulated_aux_kwh": self.accumulated_aux_kwh,
+            "trip_start_soc": self.trip_start_soc,
+            "trip_start_mileage": self.trip_start_mileage,
+            "trip_total_aux_kwh": self.trip_total_aux_kwh,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DrivingSession:
         """Create from dictionary."""
+        anchor_soc = data["anchor_soc"]
+        anchor_mileage = data["anchor_mileage"]
         return cls(
-            anchor_soc=data["anchor_soc"],
-            anchor_mileage=data["anchor_mileage"],
+            anchor_soc=anchor_soc,
+            anchor_mileage=anchor_mileage,
             battery_capacity_kwh=data["battery_capacity_kwh"],
             consumption_kwh_per_km=data["consumption_kwh_per_km"],
             last_predicted_soc=data["last_predicted_soc"],
@@ -119,6 +128,10 @@ class DrivingSession:
             last_aux_power_kw=data.get("last_aux_power_kw", 0.0),
             last_aux_update_at=data.get("last_aux_update_at", 0.0),
             accumulated_aux_kwh=data.get("accumulated_aux_kwh", 0.0),
+            # Backwards-compatible: default to current anchor values
+            trip_start_soc=data.get("trip_start_soc", anchor_soc),
+            trip_start_mileage=data.get("trip_start_mileage", anchor_mileage),
+            trip_total_aux_kwh=data.get("trip_total_aux_kwh", 0.0),
         )
 
 
@@ -345,6 +358,8 @@ class MagicSOCPredictor:
             consumption_kwh_per_km=consumption,
             last_predicted_soc=anchor_soc,
             created_at=time.time(),
+            trip_start_soc=anchor_soc,
+            trip_start_mileage=current_mileage,
         )
         _LOGGER.debug(
             "Magic SOC: Anchored driving session for %s at %.1f%% / %.1f km (consumption=%.3f kWh/km)",
@@ -367,7 +382,8 @@ class MagicSOCPredictor:
         session.anchor_soc = new_soc
         session.anchor_mileage = current_mileage
         session.last_predicted_soc = new_soc
-        # Reset aux accumulation (new anchor point)
+        # Transfer segment aux to trip total before resetting for new segment
+        session.trip_total_aux_kwh += session.accumulated_aux_kwh
         session.accumulated_aux_kwh = 0.0
         _LOGGER.debug(
             "Magic SOC: Re-anchored %s from %.1f%% to %.1f%% at %.1f km",
@@ -393,8 +409,8 @@ class MagicSOCPredictor:
                 self._on_learning_updated()
             return
 
-        distance = end_mileage - session.anchor_mileage
-        soc_drop = session.anchor_soc - end_soc
+        distance = end_mileage - session.trip_start_mileage
+        soc_drop = session.trip_start_soc - end_soc
 
         if distance < MIN_LEARNING_TRIP_DISTANCE_KM:
             _LOGGER.debug(
@@ -420,7 +436,7 @@ class MagicSOCPredictor:
 
         # Calculate measured consumption, subtracting aux energy to learn pure driving rate
         total_energy_kwh = (soc_drop / 100.0) * session.battery_capacity_kwh
-        aux_energy = self._get_aux_energy(session)
+        aux_energy = session.trip_total_aux_kwh + self._get_aux_energy(session)
         driving_energy_kwh = total_energy_kwh - aux_energy
         # Guard: if aux energy exceeds total (bad data), fall back to total
         if driving_energy_kwh < 0:
