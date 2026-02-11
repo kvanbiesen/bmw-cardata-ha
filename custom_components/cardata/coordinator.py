@@ -333,10 +333,11 @@ class CardataCoordinator:
         if not vehicle_data:
             return None
 
-        # Get current BMW SOC — prefer charging.level during charging
-        # (fresher than header which lags during active charging)
+        # Get current BMW SOC — prefer charging.level only during DC charging
+        # (fresher than header during DC); AC uses batteryManagement.header
+        # as ground truth since charging.level is BMW's own prediction
         bmw_soc = None
-        if self._soc_predictor.is_charging(vin):
+        if self._soc_predictor.get_charging_method(vin) == "DC":
             cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
             if cl and cl.value is not None:
                 try:
@@ -363,15 +364,18 @@ class CardataCoordinator:
         Must be called while holding _lock.
         Uses fallbacks if live data is missing (restored sensor values, last known values).
         """
-        # Get current SOC - prefer charging.level (fresher during active charging),
-        # fall back to batteryManagement.header, then last predicted
+        # Get current SOC - prefer charging.level only for DC charging
+        # (fresher than header during DC); AC uses batteryManagement.header
+        # as ground truth. Fall back to last predicted.
+        charging_method = self._soc_predictor.get_charging_method(vin) or "AC"
         current_soc: float | None = None
-        charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
-        if charging_level and charging_level.value is not None:
-            try:
-                current_soc = float(charging_level.value)
-            except (TypeError, ValueError):
-                pass
+        if charging_method == "DC":
+            charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
+            if charging_level and charging_level.value is not None:
+                try:
+                    current_soc = float(charging_level.value)
+                except (TypeError, ValueError):
+                    pass
         if current_soc is None:
             soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
             if soc_state and soc_state.value is not None:
@@ -416,14 +420,6 @@ class CardataCoordinator:
         if capacity_kwh is None or capacity_kwh <= 0:
             _LOGGER.debug("Cannot anchor session for %s: no capacity data available", redact_vin(vin))
             return
-
-        # Get charging method if available
-        method_state = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.method")
-        charging_method = "AC"
-        if method_state and method_state.value:
-            method_str = str(method_state.value).upper()
-            if "DC" in method_str:
-                charging_method = "DC"
 
         # Get charge target SOC if available
         target_soc: float | None = None
@@ -914,46 +910,49 @@ class CardataCoordinator:
                 if value:
                     self._soc_predictor.set_charging_method(vin, str(value))
 
-            # Update power reading with power value for energy accumulation
+            # Update power reading with direct power value (DC charging only;
+            # AC charging uses voltage × amps instead)
             elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                power_kw = None
-                if value is not None:
-                    try:
-                        power_val = float(value)
-                        # Get unit from payload
-                        unit = descriptor_payload.get("unit", "").lower()
-                        # Convert to kW if needed
-                        if unit == "w":
-                            power_kw = power_val / 1000.0
-                        else:
-                            # Assume kW
-                            power_kw = power_val
-                    except (TypeError, ValueError):
-                        pass
-                # Get current aux power for net energy calculation
-                aux_kw = 0.0
-                aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
-                if aux_state and aux_state.value is not None:
-                    try:
-                        aux_kw = float(aux_state.value) / 1000.0  # Convert W to kW
-                    except (TypeError, ValueError):
-                        pass
-                self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
-                # Trigger predicted_soc and magic_soc sensor updates during charging
-                if self._soc_predictor.is_charging(vin):
-                    if self._soc_predictor.has_signaled_entity(vin):
-                        if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
-                            schedule_debounce = True
-                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
-                        if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
-                            schedule_debounce = True
+                if self._soc_predictor.get_charging_method(vin) != "AC":
+                    power_kw = None
+                    if value is not None:
+                        try:
+                            power_val = float(value)
+                            # Get unit from payload
+                            unit = descriptor_payload.get("unit", "").lower()
+                            # Convert to kW if needed
+                            if unit == "w":
+                                power_kw = power_val / 1000.0
+                            else:
+                                # Assume kW
+                                power_kw = power_val
+                        except (TypeError, ValueError):
+                            pass
+                    # Get current aux power for net energy calculation
+                    aux_kw = 0.0
+                    aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+                    if aux_state and aux_state.value is not None:
+                        try:
+                            aux_kw = float(aux_state.value) / 1000.0  # Convert W to kW
+                        except (TypeError, ValueError):
+                            pass
+                    self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+                    # Trigger predicted_soc and magic_soc sensor updates during charging
+                    if self._soc_predictor.is_charging(vin):
+                        if self._soc_predictor.has_signaled_entity(vin):
+                            if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                        if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                            if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                                schedule_debounce = True
 
-            # Calculate AC power from current and voltage for PHEVs without direct power streaming
+            # Calculate AC power from current and voltage (AC charging only;
+            # DC charging uses the direct power descriptor instead)
             elif descriptor in (
                 "vehicle.drivetrain.electricEngine.charging.acAmpere",
                 "vehicle.drivetrain.electricEngine.charging.acVoltage",
             ):
-                if self._soc_predictor.is_charging(vin):
+                if self._soc_predictor.is_charging(vin) and self._soc_predictor.get_charging_method(vin) != "DC":
                     voltage = _descriptor_float(
                         vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage")
                     )

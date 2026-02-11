@@ -244,6 +244,10 @@ class SOCPredictor:
         # PHEVs need special handling: sync predicted SOC down when actual is lower
         self._is_phev: dict[str, bool] = {}
 
+        # VIN -> charging method ("AC" or "DC"), set when method descriptor arrives
+        # or session is anchored. Cleared when charging ends.
+        self._charging_method: dict[str, str] = {}
+
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
 
@@ -471,13 +475,18 @@ class SOCPredictor:
             last_pred = self._last_predicted_soc.get(vin, 0.0)
             anchor_soc = max(current_soc, last_pred)
 
+        resolved_method = self._charging_method.get(vin) or (
+            charging_method.upper() if charging_method else "AC"
+        )
+        self._charging_method[vin] = resolved_method
+
         self._sessions[vin] = ChargingSession(
             anchor_soc=anchor_soc,
             anchor_timestamp=now,
             battery_capacity_kwh=battery_capacity_kwh,
             last_predicted_soc=anchor_soc,
             last_power_update=now,
-            charging_method=charging_method.upper() if charging_method else "AC",
+            charging_method=resolved_method,
             total_energy_kwh=0.0,
             last_power_kw=0.0,
             last_energy_update=None,
@@ -495,14 +504,19 @@ class SOCPredictor:
     def set_charging_method(self, vin: str, method: str) -> None:
         """Update charging method for efficiency selection.
 
+        Normalizes the raw descriptor value to "AC" or "DC".
+        If the value contains "DC" (e.g. "DC_FAST"), it's DC; otherwise AC.
+
         Args:
             vin: Vehicle identification number
-            method: "AC" or "DC"
+            method: Raw charging method descriptor value
         """
+        resolved = "DC" if method and "DC" in str(method).upper() else "AC"
+        self._charging_method[vin] = resolved
         session = self._sessions.get(vin)
         if session:
             old_method = session.charging_method
-            session.charging_method = method.upper() if method else "AC"
+            session.charging_method = resolved
             if old_method != session.charging_method:
                 _LOGGER.debug(
                     "SOC: Charging method changed for %s: %s -> %s",
@@ -690,8 +704,9 @@ class SOCPredictor:
                 battery_capacity_kwh=session.battery_capacity_kwh,
             )
 
-        # Clear active session
+        # Clear active session and charging method
         del self._sessions[vin]
+        self._charging_method.pop(vin, None)
 
         # Persist updated state (pending session added or session removed)
         if self._on_learning_updated:
@@ -1048,6 +1063,17 @@ class SOCPredictor:
             True if charging, False otherwise
         """
         return self._is_charging.get(vin, False)
+
+    def get_charging_method(self, vin: str) -> str | None:
+        """Get current charging method for vehicle.
+
+        Args:
+            vin: Vehicle identification number
+
+        Returns:
+            "AC", "DC", or None if not charging / unknown
+        """
+        return self._charging_method.get(vin)
 
     def has_active_session(self, vin: str) -> bool:
         """Check if vehicle has an active prediction session.
