@@ -9,7 +9,7 @@
   "integration_type": "device",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/kvanbiesen/bmw-cardata-ha/issues",
-  "loggers": ["paho-mqtt"],
+  "loggers": ["custom_components.cardata", "paho.mqtt", "paho.mqtt.client"],
   "requirements": [
     "paho-mqtt>=1.6.1"
   ],
