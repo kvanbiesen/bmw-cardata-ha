@@ -19,15 +19,24 @@ class MotionDetector:
     active proof of recent movement.
 
     Data sources (priority order):
-    1. GPS (primary) - 2 minute window, most accurate for small movements
-    2. Mileage (fallback) - 7 minute window, only when GPS unavailable
+    1. Charging → always NOT MOVING
+    2. GPS (primary) - 2 minute window, most accurate for small movements
+    3. Door lock state - if doors unlocked after GPS stale → car stopped
+    4. Mileage (fallback) - must show actual odometer increase since GPS went stale
+    5. MQTT silence - no MQTT stream data for 2 min → NOT MOVING (car off)
     """
+
+    # Door lock states that indicate the car is driving (doors auto-lock while moving)
+    DRIVING_DOOR_STATES: ClassVar[frozenset[str]] = frozenset({"locked", "selectivelocked"})
 
     # GPS movement window (short for responsive parking detection)
     MOTION_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 2.0
 
     # Mileage movement window (longer, less frequent updates)
     MILEAGE_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 7.0
+
+    # MQTT silence threshold - no MQTT stream data for this long → car is off
+    MQTT_SILENCE_MINUTES: ClassVar[float] = 2.0
 
     # Park zone radius - GPS readings within this distance are considered "parked jitter"
     PARK_RADIUS_M: ClassVar[float] = 35.0
@@ -39,14 +48,8 @@ class MotionDetector:
     # Max GPS readings to keep for centroid calculation while parked
     MAX_PARK_READINGS: ClassVar[int] = 10
 
-    # Enable GPS confidence score tracking (% of readings within park radius)
-    ENABLE_CONFIDENCE_TRACKING: ClassVar[bool] = False
-
-    # Minimum confidence threshold to consider GPS reliable (0.0-1.0)
-    # Below this threshold, GPS is considered unreliable
-    MIN_CONFIDENCE_THRESHOLD: ClassVar[float] = 0.6
-
     # Minutes without GPS update to consider GPS unavailable (switch to mileage fallback)
+    # Longer than MOTION_ACTIVE_WINDOW to handle BMW's bursty GPS (every 2-3 min)
     GPS_UPDATE_STALE_MINUTES: ClassVar[float] = 5.0
 
     def __init__(self) -> None:
@@ -86,9 +89,14 @@ class MotionDetector:
         # VINs that are currently charging (definitely not moving)
         self._charging_vins: set[str] = set()
 
-        # VIN -> GPS confidence score (0.0-1.0): % of recent readings within park radius
-        # Only tracked if ENABLE_CONFIDENCE_TRACKING is True
-        self._gps_confidence: dict[str, float] = {}
+        # VIN -> datetime of last MQTT stream message (excludes telematics API)
+        self._last_mqtt_stream_at: dict[str, datetime] = {}
+
+        # VIN -> last known door lock state (e.g. "locked", "selectiveLocked", "unlocked", "secured")
+        self._door_lock_state: dict[str, str] = {}
+
+        # VIN -> datetime when door state changed from driving (locked/selectiveLocked) to parked
+        self._door_unlocked_at: dict[str, datetime] = {}
 
     @staticmethod
     def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -121,38 +129,6 @@ class MotionDetector:
         count = len(readings)
 
         return (total_lat / count, total_lon / count)
-
-    def _calculate_confidence(self, vin: str) -> float:
-        """Calculate GPS confidence score based on recent readings.
-
-        Confidence = percentage of recent readings within park radius from anchor.
-        Higher score = more stable GPS signal, less jitter.
-
-        Args:
-            vin: Vehicle identification number
-
-        Returns:
-            Confidence score from 0.0 (unstable) to 1.0 (very stable)
-        """
-        if not self.ENABLE_CONFIDENCE_TRACKING:
-            return 1.0  # Disabled, return perfect score
-
-        park_anchor = self._park_anchor.get(vin)
-        park_readings = self._park_readings.get(vin, [])
-
-        if park_anchor is None or not park_readings:
-            return 0.0  # No data yet
-
-        # Count how many readings are within park radius
-        within_radius = 0
-        for lat, lon, _ in park_readings:
-            distance = self._calculate_distance(park_anchor[0], park_anchor[1], lat, lon)
-            if distance <= self.PARK_RADIUS_M:
-                within_radius += 1
-
-        # Calculate percentage
-        confidence = within_radius / len(park_readings)
-        return confidence
 
     def update_location(self, vin: str, lat: float, lon: float) -> bool:
         """Update location tracking with parking zone logic to handle GPS jitter.
@@ -266,10 +242,6 @@ class MotionDetector:
             # Update park anchor to centroid of recent readings
             self._park_anchor[vin] = self._calculate_centroid(park_readings)
 
-            # Update confidence score (optional)
-            if self.ENABLE_CONFIDENCE_TRACKING:
-                self._gps_confidence[vin] = self._calculate_confidence(vin)
-
             # Still parked (within jitter tolerance)
             return False
 
@@ -283,10 +255,6 @@ class MotionDetector:
                 park_readings = park_readings[-self.MAX_PARK_READINGS :]
 
             self._park_readings[vin] = park_readings
-
-            # Update confidence score (optional)
-            if self.ENABLE_CONFIDENCE_TRACKING:
-                self._gps_confidence[vin] = self._calculate_confidence(vin)
 
             # Not yet confirmed as moving
             return False
@@ -309,10 +277,6 @@ class MotionDetector:
             if vin in self._charging_vins:
                 _LOGGER.debug("Motion: %s clearing charging state (GPS movement)", redact_vin(vin))
                 self._charging_vins.discard(vin)
-
-            # Reset confidence (starting fresh)
-            if self.ENABLE_CONFIDENCE_TRACKING:
-                self._gps_confidence[vin] = 0.0
 
             return True
 
@@ -371,181 +335,208 @@ class MotionDetector:
         else:
             self._charging_vins.discard(vin)
 
+    def update_mqtt_activity(self, vin: str) -> None:
+        """Record that an MQTT stream message was received for this VIN.
+
+        Only call this for real MQTT stream messages, NOT telematics API responses.
+        Used as a last-resort fallback: if no MQTT for 2 min, car is off.
+        """
+        self._last_mqtt_stream_at[vin] = datetime.now(UTC)
+
+    def update_door_lock_state(self, vin: str, state: str) -> None:
+        """Update door lock state tracking.
+
+        While driving, BMW doors are "locked" or "selectiveLocked".
+        When the driver exits, it transitions to "unlocked", "secured", etc.
+        This transition is a strong signal that the car has stopped.
+        """
+        now = datetime.now(UTC)
+        state_lower = state.lower() if state else ""
+        previous = self._door_lock_state.get(vin)
+
+        self._door_lock_state[vin] = state_lower
+
+        # Detect transition from driving state → parked state
+        if previous in self.DRIVING_DOOR_STATES and state_lower not in self.DRIVING_DOOR_STATES:
+            self._door_unlocked_at[vin] = now
+            _LOGGER.debug(
+                "Motion: %s door lock changed %s -> %s (driving → parked transition)",
+                redact_vin(vin),
+                previous,
+                state_lower,
+            )
+        # If doors go back to a driving state, clear the unlocked timestamp
+        elif state_lower in self.DRIVING_DOOR_STATES:
+            self._door_unlocked_at.pop(vin, None)
+
     def is_moving(self, vin: str) -> bool | None:
         """Determine if vehicle is currently moving.
 
         Philosophy: Default to NOT MOVING. Only return True with active proof.
-        Maintain last known state when GPS goes stale.
 
-        Data priority:
-        1. Charging → False (can't move)
-        2. GPS (primary) → 2 min window, IF confidence ≥ threshold (when enabled)
-        3. When GPS stale → Maintain last GPS state + use mileage to confirm
-        4. No GPS data → None (let caller fall back to BMW-provided isMoving)
-        5. Default → False (assume parked)
+        Priority chain:
+        1. Charging → always False (absolute override, trumps everything)
+        2. GPS (primary) → fresh GPS within 2 min, with driving mode trust
+        3. GPS gap + MQTT active → trust driving mode (unless doors unlocked)
+        4. Door lock state → doors changed from locked/selectiveLocked → stopped
+        5. Mileage (fallback) → actual odometer increase since GPS went stale
+        6. MQTT silence → no MQTT stream for 2 min → False (car is off)
+        7. No data at all → None (fall back to BMW-provided isMoving)
+        8. Default → False
 
         Returns:
-            True - Active proof of movement within last 2 minutes
+            True - Active proof of movement
             False - No recent movement (default: parked)
-            None - No GPS data available for this VIN
+            None - No data available for this VIN
         """
         now = datetime.now(UTC)
 
-        # 1. Charging = definitely not moving
+        # 1. Charging = ALWAYS not moving (absolute override, trumps everything)
         if vin in self._charging_vins:
+            if self._is_driving.get(vin, False):
+                self._is_driving[vin] = False
             _LOGGER.debug("Motion: %s is charging - NOT MOVING", redact_vin(vin))
             return False
 
-        # Get all timestamps
-        last_gps_change = self._last_location_change.get(vin)
+        # Gather timestamps
         last_gps_update = self._last_gps_update.get(vin)
-        last_mileage_change = self._last_mileage_change.get(vin)
+        last_gps_change = self._last_location_change.get(vin)
         last_mileage = self._last_mileage.get(vin)
+        last_mileage_change = self._last_mileage_change.get(vin)
+        last_mqtt = self._last_mqtt_stream_at.get(vin)
 
-        # 2. GPS available (updated within 5 min) - PRIMARY
-        if last_gps_update is not None:
-            gps_age = (now - last_gps_update).total_seconds() / 60.0
-            if gps_age <= self.GPS_UPDATE_STALE_MINUTES:
-                # GPS is active - clear mileage baseline if it was set
-                self._mileage_baseline_when_gps_stale.pop(vin, None)
+        # Calculate ages (None if no data)
+        gps_update_age = (now - last_gps_update).total_seconds() / 60.0 if last_gps_update else None
+        mqtt_age = (now - last_mqtt).total_seconds() / 60.0 if last_mqtt else None
 
-                # In confirmed driving mode (escaped park zone) and GPS still active:
-                # trust the driving state. BMW GPS arrives in bursts every 2-3 min,
-                # and the short movement window causes mid-trip flapping.
-                # Driving mode exits via update_location() when 3 consecutive
-                # readings land within park radius (hysteresis).
-                if self._is_driving.get(vin, False):
+        # 2. GPS PRIMARY - GPS data arrived within 2 minutes (freshest source)
+        if gps_update_age is not None and gps_update_age < self.MOTION_ACTIVE_WINDOW_MINUTES:
+            # GPS is freshly updating - most reliable source
+            self._mileage_baseline_when_gps_stale.pop(vin, None)
+
+            # In confirmed driving mode with fresh GPS → trust it
+            if self._is_driving.get(vin, False):
+                _LOGGER.debug(
+                    "Motion: %s in driving mode, GPS active (%.1f min old) - MOVING",
+                    redact_vin(vin),
+                    gps_update_age,
+                )
+                return True
+
+            # Not driving - check GPS movement window
+            if last_gps_change is None:
+                _LOGGER.debug(
+                    "Motion: %s GPS active but never moved - NOT MOVING",
+                    redact_vin(vin),
+                )
+                return False
+
+            gps_change_age = (now - last_gps_change).total_seconds() / 60.0
+            result = gps_change_age < self.MOTION_ACTIVE_WINDOW_MINUTES
+            _LOGGER.debug(
+                "Motion: %s GPS decision - %.1f min since movement (threshold=%.1f) - %s",
+                redact_vin(vin),
+                gps_change_age,
+                self.MOTION_ACTIVE_WINDOW_MINUTES,
+                "MOVING" if result else "NOT MOVING",
+            )
+            return result
+
+        # 3. GPS GAP HANDLING - GPS between 2-5 min old, driving mode active
+        # BMW GPS arrives in bursts every 2-3 min; trust driving mode if MQTT is still active
+        # BUT: check door lock first - if doors unlocked, driver exited → not moving
+        if self._is_driving.get(vin, False) and gps_update_age is not None:
+            if gps_update_age < self.GPS_UPDATE_STALE_MINUTES:
+                # Door lock override: if doors changed from driving state, car stopped
+                door_unlocked_at = self._door_unlocked_at.get(vin)
+                if door_unlocked_at is not None and last_gps_update is not None and door_unlocked_at > last_gps_update:
+                    door_state = self._door_lock_state.get(vin, "unknown")
                     _LOGGER.debug(
-                        "Motion: %s in driving mode, GPS active (%.1f min old) - MOVING",
+                        "Motion: %s door lock changed to '%s' after GPS stale - NOT MOVING",
                         redact_vin(vin),
-                        gps_age,
+                        door_state,
+                    )
+                    self._is_driving[vin] = False
+                    return False
+
+                if mqtt_age is not None and mqtt_age < self.MQTT_SILENCE_MINUTES:
+                    _LOGGER.debug(
+                        "Motion: %s driving mode, GPS gap (%.1f min) but MQTT active (%.1f min) - MOVING",
+                        redact_vin(vin),
+                        gps_update_age,
+                        mqtt_age,
                     )
                     return True
 
-                # Check GPS confidence if tracking enabled
-                if self.ENABLE_CONFIDENCE_TRACKING:
-                    confidence = self._gps_confidence.get(vin, 0.0)
-                    if confidence < self.MIN_CONFIDENCE_THRESHOLD:
-                        # GPS unreliable (low confidence) - skip to mileage fallback
+        # 4. DOOR LOCK FALLBACK - GPS stale, doors changed from driving to parked state
+        # This catches the case where GPS is >5 min stale but door state signals arrival
+        door_unlocked_at = self._door_unlocked_at.get(vin)
+        if door_unlocked_at is not None and last_gps_update is not None and door_unlocked_at > last_gps_update:
+            door_state = self._door_lock_state.get(vin, "unknown")
+            _LOGGER.debug(
+                "Motion: %s door lock fallback - doors '%s' after GPS stale - NOT MOVING",
+                redact_vin(vin),
+                door_state,
+            )
+            if self._is_driving.get(vin, False):
+                self._is_driving[vin] = False
+            return False
+
+        # 5. MILEAGE FALLBACK - GPS stale, check if odometer ACTUALLY increased
+        if last_gps_update is not None and last_mileage is not None:
+            # Establish baseline when we first enter mileage fallback territory
+            if vin not in self._mileage_baseline_when_gps_stale:
+                self._mileage_baseline_when_gps_stale[vin] = (last_mileage, now)
+                _LOGGER.debug(
+                    "Motion: %s mileage baseline set at %.1f (GPS stale)",
+                    redact_vin(vin),
+                    last_mileage,
+                )
+
+            baseline = self._mileage_baseline_when_gps_stale.get(vin)
+            if baseline and last_mileage_change is not None:
+                baseline_mileage, baseline_time = baseline
+                # Odometer must have ACTUALLY increased AND the change must be AFTER baseline
+                if last_mileage > baseline_mileage + 0.1 and last_mileage_change > baseline_time:
+                    mileage_age = (now - last_mileage_change).total_seconds() / 60.0
+                    if mileage_age < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
                         _LOGGER.debug(
-                            "Motion: %s GPS unreliable (confidence=%.2f < %.2f) - falling back to mileage",
+                            "Motion: %s mileage fallback - odometer increased %.1f -> %.1f (%.1f min ago) - MOVING",
                             redact_vin(vin),
-                            confidence,
-                            self.MIN_CONFIDENCE_THRESHOLD,
+                            baseline_mileage,
+                            last_mileage,
+                            mileage_age,
                         )
-                        pass  # Fall through to mileage check below
-                    else:
-                        # GPS reliable - use it (ignore mileage)
-                        if last_gps_change is None:
-                            _LOGGER.debug(
-                                "Motion: %s GPS active but never moved - NOT MOVING",
-                                redact_vin(vin),
-                            )
-                            return False  # GPS active but never moved
-                        elapsed_gps = (now - last_gps_change).total_seconds() / 60.0
-                        result = elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
-                        _LOGGER.debug(
-                            "Motion: %s GPS decision - %.1f min since movement (threshold=%.1f) - %s",
-                            redact_vin(vin),
-                            elapsed_gps,
-                            self.MOTION_ACTIVE_WINDOW_MINUTES,
-                            "MOVING" if result else "NOT MOVING",
-                        )
-                        return result
-                else:
-                    # Confidence tracking disabled - trust GPS
-                    if last_gps_change is None:
-                        _LOGGER.debug(
-                            "Motion: %s GPS active but never moved - NOT MOVING",
-                            redact_vin(vin),
-                        )
-                        return False  # GPS active but never moved
-                    elapsed_gps = (now - last_gps_change).total_seconds() / 60.0
-                    result = elapsed_gps < self.MOTION_ACTIVE_WINDOW_MINUTES
-                    _LOGGER.debug(
-                        "Motion: %s GPS decision - %.1f min since movement (threshold=%.1f) - %s",
-                        redact_vin(vin),
-                        elapsed_gps,
-                        self.MOTION_ACTIVE_WINDOW_MINUTES,
-                        "MOVING" if result else "NOT MOVING",
-                    )
-                    return result
+                        return True
 
-        # 3. GPS stale - maintain last known GPS state + use mileage to confirm
-        if last_gps_update is not None:
-            gps_age = (now - last_gps_update).total_seconds() / 60.0
-            if gps_age > self.GPS_UPDATE_STALE_MINUTES:
-                # In driving mode: check mileage FIRST before dropping to NOT MOVING
-                # GPS may be temporarily unavailable (tunnel, poor signal) while still driving
-                if self._is_driving.get(vin, False):
-                    if last_mileage_change is not None:
-                        elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
-                        if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
-                            _LOGGER.debug(
-                                "Motion: %s driving mode + GPS stale, mileage confirms movement (%.1f min ago) - MOVING",
-                                redact_vin(vin),
-                                elapsed_mileage,
-                            )
-                            return True
-                    # No mileage confirmation - exit driving mode, fall through to normal stale logic
-                    _LOGGER.debug(
-                        "Motion: %s driving mode but GPS stale (%.1f min) and no mileage - exiting driving mode",
-                        redact_vin(vin),
-                        gps_age,
-                    )
-                    self._is_driving[vin] = False
+        # GPS stale + no mileage increase → exit driving mode if still set
+        if self._is_driving.get(vin, False):
+            _LOGGER.debug(
+                "Motion: %s exiting driving mode (GPS stale, no mileage increase)",
+                redact_vin(vin),
+            )
+            self._is_driving[vin] = False
 
-                # Determine what last GPS state was AT THE TIME GPS WENT STALE
-                if last_gps_change is None:
-                    last_gps_was_moving = False  # Never moved according to GPS
-                else:
-                    # Calculate time between last movement and when GPS went stale
-                    time_between_movement_and_stale = (last_gps_update - last_gps_change).total_seconds() / 60.0
-                    # Was GPS showing "moving" when it went stale?
-                    last_gps_was_moving = time_between_movement_and_stale < self.MOTION_ACTIVE_WINDOW_MINUTES
+        # 6. MQTT SILENCE FALLBACK - no MQTT stream data for 2+ min → car is off
+        if mqtt_age is not None and mqtt_age >= self.MQTT_SILENCE_MINUTES:
+            _LOGGER.debug(
+                "Motion: %s MQTT silent for %.1f min (threshold=%.1f) - NOT MOVING",
+                redact_vin(vin),
+                mqtt_age,
+                self.MQTT_SILENCE_MINUTES,
+            )
+            return False
 
-                # If last GPS showed "not moving", stay parked (don't check mileage)
-                if not last_gps_was_moving:
-                    return False
-
-                # Last GPS showed "moving" - establish mileage baseline if needed
-                if vin not in self._mileage_baseline_when_gps_stale and last_mileage is not None:
-                    self._mileage_baseline_when_gps_stale[vin] = (last_mileage, now)
-
-                # Use mileage to confirm continued movement
-                baseline_data = self._mileage_baseline_when_gps_stale.get(vin)
-                if baseline_data is not None and last_mileage is not None and last_mileage_change is not None:
-                    baseline_mileage, baseline_time = baseline_data
-
-                    # Only count mileage changes AFTER GPS went stale (after baseline was set)
-                    if last_mileage > baseline_mileage + 0.1:
-                        # Mileage increased after GPS went stale
-                        # Also verify the mileage change happened AFTER baseline was established
-                        if last_mileage_change > baseline_time:
-                            # Mileage change is recent (after baseline)
-                            elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
-                            if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
-                                _LOGGER.debug(
-                                    "Motion: %s mileage fallback - %.1f min since odometer change (threshold=%.1f) - MOVING",
-                                    redact_vin(vin),
-                                    elapsed_mileage,
-                                    self.MILEAGE_ACTIVE_WINDOW_MINUTES,
-                                )
-                                return True  # Still moving (confirmed by mileage)
-
-                # If no baseline, no mileage increase, or mileage change before baseline, default to not moving
-                # (Don't use old mileage data from before GPS went stale)
-
-        # 4. No GPS data at all for this VIN — use mileage if available,
+        # 7. No GPS data at all for this VIN — use mileage if available,
         # otherwise return None so the caller falls back to BMW-provided vehicle.isMoving.
         if last_gps_update is None:
             if last_mileage_change is not None:
-                elapsed_mileage = (now - last_mileage_change).total_seconds() / 60.0
-                if elapsed_mileage < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
+                mileage_age = (now - last_mileage_change).total_seconds() / 60.0
+                if mileage_age < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
                     return True
             return None
 
-        # 5. DEFAULT: Not moving (safest assumption after GPS went stale with no mileage confirmation)
+        # 8. DEFAULT: Not moving
         return False
 
     def has_signaled_entity(self, vin: str) -> bool:
@@ -569,7 +560,9 @@ class MotionDetector:
         self._last_mileage_change.pop(vin, None)
         self._is_moving_entity_signaled.discard(vin)
         self._charging_vins.discard(vin)
-        self._gps_confidence.pop(vin, None)
+        self._last_mqtt_stream_at.pop(vin, None)
+        self._door_lock_state.pop(vin, None)
+        self._door_unlocked_at.pop(vin, None)
 
     def get_tracked_vins(self) -> set[str]:
         """Get all VINs currently being tracked."""

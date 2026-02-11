@@ -36,7 +36,7 @@ from typing import Any
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -399,42 +399,24 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if not accepted:
             return
 
-        # Final coordinates (may be smoothed)
-        final_lat = lat
-        final_lon = lon
-
-        # Check if coordinates changed from previous position
-        lat_changed = True
-        lon_changed = True
+        # Calculate distance from current position
+        distance = 0.0
+        position_changed = False
         if self._current_lat is not None and self._current_lon is not None:
-            lat_changed = abs(lat - self._current_lat) > self._COORD_PRECISION
-            lon_changed = abs(lon - self._current_lon) > self._COORD_PRECISION
+            distance = self._calculate_distance(self._current_lat, self._current_lon, lat, lon)
+            position_changed = distance >= self._MIN_MOVEMENT_DISTANCE
 
-            if not lat_changed and not lon_changed:
-                _LOGGER.debug("Ignoring update for %s - no movement detected", redacted_vin)
-                return
+        update_reason = (
+            f"paired ({pair_method}, {distance:.1f}m)"
+            if self._current_lat is not None
+            else f"initial ({pair_method})"
+        )
 
-        # Apply movement threshold check
-        update_reason = None
-        if self._current_lat is not None and self._current_lon is not None:
-            distance = self._calculate_distance(self._current_lat, self._current_lon, final_lat, final_lon)
-
-            if distance < self._MIN_MOVEMENT_DISTANCE:
-                _LOGGER.debug(
-                    "Ignoring update for %s - movement too small (%.1fm < %dm threshold)",
-                    redacted_vin,
-                    distance,
-                    self._MIN_MOVEMENT_DISTANCE,
-                )
-                return
-
-            update_reason = f"paired update ({pair_method}, moved {distance:.1f}m)"
-
-        else:
-            update_reason = f"initial position ({pair_method})"
-
-        # Update the tracker position
-        await self._apply_new_coordinates(final_lat, final_lon, update_reason)
+        # Always propagate paired coordinates to the motion detector
+        # (keeps GPS freshness current, feeds park readings even for 0m updates)
+        # Only update HA device tracker position when movement exceeds threshold
+        # or vehicle is confirmed moving (mileage fallback for sparse GPS)
+        await self._apply_new_coordinates(lat, lon, update_reason, position_changed)
 
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """Calculate distance between two GPS coordinates in meters using Haversine formula."""
@@ -456,50 +438,52 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
         return distance
 
-    async def _apply_new_coordinates(self, lat: float, lon: float, reason: str) -> None:
-        """Apply new coordinates and trigger Home Assistant state update."""
-        self._current_lat = lat
-        self._current_lon = lon
+    async def _apply_new_coordinates(
+        self, lat: float, lon: float, reason: str, position_changed: bool = False
+    ) -> None:
+        """Apply paired GPS coordinates.
 
-        # Update motion detector with properly paired coordinates
-        # This ensures isMoving sensor gets accurate data (not mismatched lat/lon)
-        moved = self._coordinator._update_location_tracking(self._vin, lat, lon)
+        Always feeds the coordinator's location tracking (motion detector,
+        GPS freshness, park readings). Only updates the HA device tracker
+        position when movement exceeds the GPS threshold or the vehicle is
+        confirmed moving by the motion detector (which includes mileage).
+        """
+        # Feed the coordinator — it handles motion detection and isMoving
+        self._coordinator._update_location_tracking(self._vin, lat, lon)
 
-        # Signal creation of vehicle.isMoving entity if not already done
-        if not self._coordinator._motion_detector.has_signaled_entity(self._vin):
-            self._coordinator._motion_detector.signal_entity_created(self._vin)
-            # Notify coordinator to create the binary sensor entity
-            async_dispatcher_send(
-                self.hass,
-                self._coordinator.signal_new_binary,
-                self._vin,
-                "vehicle.isMoving",
-            )
-        else:
-            # Update cache and notify binary sensor
-            current_state = self._coordinator.get_derived_is_moving(self._vin)
+        if self._current_lat is None:
+            # First GPS ever (no restored state) — establish reference point
+            self._current_lat = lat
+            self._current_lon = lon
+            self.schedule_update_ha_state()
             _LOGGER.debug(
-                "Motion detector updated for %s: moved=%s, current_state=%s",
+                "GPS initial for %s (%s): lat=%.6f lon=%.6f",
                 self._redacted_vin,
-                moved,
-                current_state,
+                reason,
+                lat,
+                lon,
             )
-            self._coordinator._last_derived_is_moving[self._vin] = current_state
-            # Notify binary sensor
-            async_dispatcher_send(
-                self.hass,
-                self._coordinator.signal_update,
-                self._vin,
-                "vehicle.isMoving",
-            )
+            return
 
-        self.schedule_update_ha_state()
+        # GPS didn't show enough distance — check if vehicle is moving
+        # (motion detector includes mileage fallback for sparse GPS)
+        if not position_changed:
+            is_moving = self._coordinator.get_derived_is_moving(self._vin)
+            if is_moving is True:
+                position_changed = True
+
+        if position_changed:
+            self._current_lat = lat
+            self._current_lon = lon
+            self.schedule_update_ha_state()
+
         _LOGGER.debug(
-            "Location updated for %s (%s): lat=%.6f lon=%.6f",
+            "GPS paired for %s (%s): lat=%.6f lon=%.6f%s",
             self._redacted_vin,
             reason,
             lat,
             lon,
+            "" if position_changed else " (position unchanged)",
         )
 
     def _fetch_coordinate(self, descriptor: str) -> float | None:

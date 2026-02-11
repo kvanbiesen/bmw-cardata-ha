@@ -261,7 +261,7 @@ async def async_perform_telematic_fetch(
         telematic_payload = extract_telematic_payload(payload)
 
         if isinstance(telematic_payload, dict):
-            await runtime.coordinator.async_handle_message({"vin": vin, "data": telematic_payload})
+            await runtime.coordinator.async_handle_message({"vin": vin, "data": telematic_payload}, is_telematic=True)
             runtime.coordinator.record_telematic_poll(vin)
             any_success = True
 

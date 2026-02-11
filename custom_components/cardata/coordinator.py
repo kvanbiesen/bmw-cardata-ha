@@ -201,8 +201,29 @@ class CardataCoordinator:
     # --- Derived motion detection from GPS ---
 
     def _update_location_tracking(self, vin: str, lat: float, lon: float) -> bool:
-        """Update location tracking and return True if position changed significantly (>50m)."""
+        """Update location tracking and handle isMoving state changes.
+
+        Called by the device tracker whenever a valid GPS pair arrives.
+        Feeds the motion detector, handles isMoving entity creation and
+        state change dispatch, and updates Magic SOC GPS tracking.
+
+        Returns True if the motion detector considers this a significant move.
+        """
         result = self._motion_detector.update_location(vin, lat, lon)
+
+        # Handle isMoving entity creation and state changes
+        if not self._motion_detector.has_signaled_entity(vin):
+            # First GPS for this VIN - create the isMoving binary sensor
+            self._motion_detector.signal_entity_created(vin)
+            self._safe_dispatcher_send(self.signal_new_binary, vin, "vehicle.isMoving")
+        else:
+            # Check if motion state actually changed
+            current_state = self.get_derived_is_moving(vin)
+            previous_state = self._last_derived_is_moving.get(vin)
+            if current_state != previous_state:
+                self._last_derived_is_moving[vin] = current_state
+                self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
+
         self._magic_soc.update_driving_gps(vin, lat, lon)
         # Signal magic_soc update when GPS distance advances during driving
         # This ensures the sensor updates even when travelledDistance isn't arriving
@@ -671,7 +692,7 @@ class CardataCoordinator:
             if debug_enabled():
                 raise
 
-    async def async_handle_message(self, payload: dict[str, Any]) -> None:
+    async def async_handle_message(self, payload: dict[str, Any], *, is_telematic: bool = False) -> None:
         vin = payload.get("vin")
         data = payload.get("data") or {}
         if not vin or not isinstance(data, dict):
@@ -726,7 +747,9 @@ class CardataCoordinator:
             return
 
         async with self._lock:
-            immediate_updates, schedule_debounce = await self._async_handle_message_locked(payload, vin, data)
+            immediate_updates, schedule_debounce = await self._async_handle_message_locked(
+                payload, vin, data, is_telematic=is_telematic
+            )
 
         for update_vin, descriptor in immediate_updates:
             self._safe_dispatcher_send(self.signal_update, update_vin, descriptor)
@@ -735,7 +758,7 @@ class CardataCoordinator:
             await self._async_schedule_debounced_update()
 
     async def _async_handle_message_locked(
-        self, payload: dict[str, Any], vin: str, data: dict[str, Any]
+        self, payload: dict[str, Any], vin: str, data: dict[str, Any], *, is_telematic: bool = False
     ) -> tuple[list[tuple[str, str]], bool]:
         """Handle message while holding the lock."""
         redacted_vin = redact_vin(vin)
@@ -747,6 +770,10 @@ class CardataCoordinator:
 
         self.last_message_at = datetime.now(UTC)
         self._last_vin_message_at[vin] = time.time()
+
+        # Track MQTT stream activity for motion detection (exclude telematics API)
+        if not is_telematic:
+            self._motion_detector.update_mqtt_activity(vin)
 
         # If we're receiving messages, we must be connected
         # Update status if it's not already "connected" to ensure diagnostic sensor shows correct state
@@ -1029,6 +1056,11 @@ class CardataCoordinator:
                                 schedule_debounce = True
                     except (TypeError, ValueError):
                         pass
+
+            # Wire door lock state to motion detector for parking detection
+            elif descriptor == "vehicle.cabin.door.lock.status":
+                if value is not None:
+                    self._motion_detector.update_door_lock_state(vin, str(value))
 
             # Late anchor: capacity arrived during charging when session wasn't anchored
             elif descriptor in (
