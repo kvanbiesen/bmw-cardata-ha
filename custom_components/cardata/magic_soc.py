@@ -649,7 +649,7 @@ class MagicSOCPredictor:
         if session is not None:
             elapsed_h = (time.time() - session.created_at) / 3600.0
             if elapsed_h > 0 and session.last_mileage > 0:
-                delta_km = session.last_mileage - session.anchor_mileage
+                delta_km = session.last_mileage - session.trip_start_mileage
                 if delta_km > 0:
                     attrs["avg_speed_kmh"] = round(delta_km / elapsed_h, 0)
 
