@@ -1095,8 +1095,8 @@ class CardataCoordinator:
                     except (TypeError, ValueError):
                         pass
 
-            # Wire door lock state to motion detector for parking detection
-            elif descriptor == "vehicle.cabin.door.lock.status":
+            # Wire door state to motion detector for parking detection
+            elif descriptor == "vehicle.cabin.door.status":
                 if value is not None:
                     self._motion_detector.update_door_lock_state(vin, str(value))
 
