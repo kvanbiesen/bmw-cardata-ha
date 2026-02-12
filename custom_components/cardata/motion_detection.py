@@ -52,6 +52,11 @@ class MotionDetector:
     # Longer than MOTION_ACTIVE_WINDOW to handle BMW's bursty GPS (every 2-3 min)
     GPS_UPDATE_STALE_MINUTES: ClassVar[float] = 5.0
 
+    # Minimum wall-clock duration for park confirmation while driving
+    # BMW sends GPS in bursts (~3 readings in <1s) - require readings to span
+    # this duration to distinguish a real stop from a burst artifact
+    MIN_PARK_DURATION_SECONDS: ClassVar[float] = 30.0
+
     def __init__(self) -> None:
         """Initialize motion detector."""
         # VIN -> (latitude, longitude) of last known position
@@ -206,13 +211,20 @@ class MotionDetector:
                         for r in park_readings[-3:]
                     )
                     if all_within_park:
+                        # Check time span between oldest and newest confirming readings
+                        time_span = (park_readings[-1][2] - park_readings[-3][2]).total_seconds()
+                        if time_span < self.MIN_PARK_DURATION_SECONDS:
+                            # Burst artifact - readings too close together to confirm a real stop
+                            return True
+
                         # Vehicle has stopped - exit driving mode
                         # Backdate last movement to when the car first entered the park zone
                         # (oldest of the 3 confirming readings) for accurate timing
                         first_park_time = park_readings[-3][2]
                         _LOGGER.debug(
-                            "Motion: %s stopped (3 readings within park radius) - NOW PARKED",
+                            "Motion: %s stopped (3 readings within park radius, %.1fs span) - NOW PARKED",
                             redact_vin(vin),
+                            time_span,
                         )
                         self._is_driving[vin] = False
                         self._last_location_change[vin] = first_park_time
