@@ -592,8 +592,8 @@ class SOCPredictor:
                     session.last_predicted_soc = soc
                     session.anchor_soc = soc
                     session.total_energy_kwh = 0.0
-                    session.last_power_kw = 0.0
-                    session.last_energy_update = None
+                    session.last_energy_update = time.time()
+                    # Keep last_power_kw + reset gap to now for extrapolation continuity
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
@@ -615,8 +615,8 @@ class SOCPredictor:
                         session.anchor_soc = soc
                         session.last_predicted_soc = soc
                         session.total_energy_kwh = 0.0
-                        session.last_power_kw = 0.0
-                        session.last_energy_update = None
+                        session.last_energy_update = time.time()
+                        # Keep last_power_kw + reset gap to now for extrapolation continuity
         elif is_charging:
             # BEV charging: only sync up (never down during charge)
             if current_predicted is None or soc > current_predicted:
@@ -634,8 +634,8 @@ class SOCPredictor:
                     session.anchor_soc = soc
                     session.last_predicted_soc = soc
                     session.total_energy_kwh = 0.0
-                    session.last_power_kw = 0.0
-                    session.last_energy_update = None
+                    session.last_energy_update = time.time()
+                    # Keep last_power_kw + reset gap to now for extrapolation continuity
         else:
             # BEV not charging: snap to actual BMW SOC
             self._last_predicted_soc[vin] = soc
@@ -1002,8 +1002,8 @@ class SOCPredictor:
             session.anchor_soc = bmw_soc
             session.last_predicted_soc = bmw_soc
             session.total_energy_kwh = 0.0
-            session.last_power_kw = 0.0
-            session.last_energy_update = None
+            session.last_energy_update = time.time()
+            # Keep last_power_kw + reset gap to now for extrapolation continuity
             self._last_predicted_soc[vin] = bmw_soc
             return bmw_soc
 
