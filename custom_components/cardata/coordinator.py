@@ -912,7 +912,7 @@ class CardataCoordinator:
             # Update power reading with direct power value (DC charging only;
             # AC charging uses voltage × amps instead)
             elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                if self._soc_predictor.get_charging_method(vin) != "AC":
+                if self._soc_predictor.get_charging_method(vin) == "DC":
                     power_kw = None
                     if value is not None:
                         try:
