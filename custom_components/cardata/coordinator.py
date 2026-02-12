@@ -333,15 +333,19 @@ class CardataCoordinator:
         if not vehicle_data:
             return None
 
-        # Prefer charging.level during charging (fresher than header)
+        # Use charging.level during charging (fresher than header) but ONLY
+        # if it arrived after the session was anchored — stale values from a
+        # previous session would cause incorrect re-anchoring.
         bmw_soc = None
         if self._soc_predictor.is_charging(vin):
+            session = self._soc_predictor._sessions.get(vin)
             cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
-            if cl and cl.value is not None:
-                try:
-                    bmw_soc = float(cl.value)
-                except (TypeError, ValueError):
-                    pass
+            if cl and cl.value is not None and session is not None:
+                if cl.last_seen >= session.anchor_timestamp.timestamp():
+                    try:
+                        bmw_soc = float(cl.value)
+                    except (TypeError, ValueError):
+                        pass
         if bmw_soc is None:
             soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
             if soc_state and soc_state.value is not None:
@@ -362,21 +366,17 @@ class CardataCoordinator:
         Must be called while holding _lock.
         Uses fallbacks if live data is missing (restored sensor values, last known values).
         """
-        # Prefer charging.level (fresher during active charging)
+        # Use header (actual HV battery SOC) for anchoring.
+        # Do NOT use charging.level from vehicle_state — it may be stale from a
+        # previous session and would anchor the prediction at a wrong value.
+        # Fresh charging.level updates are handled via update_bmw_soc() when they arrive.
         current_soc: float | None = None
-        charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
-        if charging_level and charging_level.value is not None:
+        soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+        if soc_state and soc_state.value is not None:
             try:
-                current_soc = float(charging_level.value)
+                current_soc = float(soc_state.value)
             except (TypeError, ValueError):
                 pass
-        if current_soc is None:
-            soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
-            if soc_state and soc_state.value is not None:
-                try:
-                    current_soc = float(soc_state.value)
-                except (TypeError, ValueError):
-                    pass
 
         # Fallback: use last predicted SOC if available
         if current_soc is None:
@@ -519,16 +519,19 @@ class CardataCoordinator:
             return None
 
         # BEV: prefer charging.level during charging (fresher than header)
+        # but ONLY if it arrived after the session anchor (not stale from previous session).
         # PHEV: use header (BMW prediction overshoots on small batteries)
         bmw_soc = None
         is_charging = self._soc_predictor.is_charging(vin)
         if is_charging and not self._soc_predictor.is_phev(vin):
+            session = self._soc_predictor._sessions.get(vin)
             cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
-            if cl and cl.value is not None:
-                try:
-                    bmw_soc = float(cl.value)
-                except (TypeError, ValueError):
-                    pass
+            if cl and cl.value is not None and session is not None:
+                if cl.last_seen >= session.anchor_timestamp.timestamp():
+                    try:
+                        bmw_soc = float(cl.value)
+                    except (TypeError, ValueError):
+                        pass
         if bmw_soc is None:
             soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
             if soc_state and soc_state.value is not None:
@@ -1025,6 +1028,31 @@ class CardataCoordinator:
                             if bmw_moving is True or gps_moving is True:
                                 self._anchor_driving_session(vin, vehicle_state)
                         # Signal magic_soc update on BMW SOC change
+                        if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                            if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                    except (TypeError, ValueError):
+                        pass
+
+            # Sync charging.level to prediction during active charging
+            # This provides fresher SOC updates than header during charging.
+            # Only syncs UP (never down) via update_bmw_soc.
+            elif descriptor == "vehicle.drivetrain.electricEngine.charging.level":
+                if value is not None and self._soc_predictor.is_charging(vin):
+                    try:
+                        level_val = float(value)
+                        self._soc_predictor.update_bmw_soc(vin, level_val)
+                        # Late anchor: charging started but session wasn't anchored yet
+                        if not self._soc_predictor.has_active_session(vin):
+                            _LOGGER.debug(
+                                "Late anchor attempt for %s (charging.level arrived after charging started)",
+                                redact_vin(vin),
+                            )
+                            self._anchor_soc_session(vin, vehicle_state)
+                        # Trigger predicted_soc sensor update
+                        if self._soc_predictor.has_signaled_entity(vin):
+                            if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                                schedule_debounce = True
                         if self._magic_soc.has_signaled_magic_soc_entity(vin):
                             if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                                 schedule_debounce = True
