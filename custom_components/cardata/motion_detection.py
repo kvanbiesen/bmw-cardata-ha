@@ -23,7 +23,6 @@ class MotionDetector:
     2. GPS (primary) - 2 minute window, most accurate for small movements
     3. Door lock state - if doors unlocked after GPS stale → car stopped
     4. Mileage (fallback) - must show actual odometer increase since GPS went stale
-    5. MQTT silence - no MQTT stream data for 2 min → NOT MOVING (car off)
     """
 
     # Door lock states that indicate the car is driving (doors auto-lock while moving)
@@ -35,9 +34,6 @@ class MotionDetector:
     # Mileage movement window (longer, less frequent updates)
     MILEAGE_ACTIVE_WINDOW_MINUTES: ClassVar[float] = 7.0
 
-    # MQTT silence threshold - no MQTT stream data for this long → car is off
-    MQTT_SILENCE_MINUTES: ClassVar[float] = 2.0
-
     # Park zone radius - GPS readings within this distance are considered "parked jitter"
     PARK_RADIUS_M: ClassVar[float] = 35.0
 
@@ -48,14 +44,14 @@ class MotionDetector:
     # Max GPS readings to keep for centroid calculation while parked
     MAX_PARK_READINGS: ClassVar[int] = 10
 
+    # Minimum time span (seconds) for the 3 park-confirming readings.
+    # BMW sends GPS in bursts (3 readings within <1s at the same position).
+    # Without this guard the burst immediately parks the car while driving.
+    MIN_PARK_SPAN_SECONDS: ClassVar[float] = 30.0
+
     # Minutes without GPS update to consider GPS unavailable (switch to mileage fallback)
     # Longer than MOTION_ACTIVE_WINDOW to handle BMW's bursty GPS (every 2-3 min)
     GPS_UPDATE_STALE_MINUTES: ClassVar[float] = 5.0
-
-    # Minimum wall-clock duration for park confirmation while driving
-    # BMW sends GPS in bursts (~3 readings in <1s) - require readings to span
-    # this duration to distinguish a real stop from a burst artifact
-    MIN_PARK_DURATION_SECONDS: ClassVar[float] = 30.0
 
     def __init__(self) -> None:
         """Initialize motion detector."""
@@ -203,7 +199,8 @@ class MotionDetector:
                 self._park_readings[vin] = park_readings
 
                 # Check if we've been stationary for enough readings to confirm parked
-                # Need at least 3 readings within park radius to confirm stop
+                # Need at least 3 readings within park radius AND spread over time
+                # (BMW sends GPS in bursts — 3 readings within <1s is not real parking)
                 if len(park_readings) >= 3:
                     # Check if ALL recent readings are within park radius
                     all_within_park = all(
@@ -211,18 +208,19 @@ class MotionDetector:
                         for r in park_readings[-3:]
                     )
                     if all_within_park:
-                        # Check time span between oldest and newest confirming readings
-                        time_span = (park_readings[-1][2] - park_readings[-3][2]).total_seconds()
-                        if time_span < self.MIN_PARK_DURATION_SECONDS:
-                            # Burst artifact - readings too close together to confirm a real stop
+                        # Require readings to span a minimum time window to avoid
+                        # treating a single GPS burst as parking
+                        first_park_time = park_readings[-3][2]
+                        time_span = (now - first_park_time).total_seconds()
+                        if time_span < self.MIN_PARK_SPAN_SECONDS:
+                            # Burst detection: readings too close together, not real parking
+                            # Stay in driving mode
                             return True
 
                         # Vehicle has stopped - exit driving mode
                         # Backdate last movement to when the car first entered the park zone
-                        # (oldest of the 3 confirming readings) for accurate timing
-                        first_park_time = park_readings[-3][2]
                         _LOGGER.debug(
-                            "Motion: %s stopped (3 readings within park radius, %.1fs span) - NOW PARKED",
+                            "Motion: %s stopped (3 readings within park radius over %.0fs) - NOW PARKED",
                             redact_vin(vin),
                             time_span,
                         )
@@ -351,7 +349,7 @@ class MotionDetector:
         """Record that an MQTT stream message was received for this VIN.
 
         Only call this for real MQTT stream messages, NOT telematics API responses.
-        Used as a last-resort fallback: if no MQTT for 2 min, car is off.
+        Currently unused by motion detection but kept for diagnostics.
         """
         self._last_mqtt_stream_at[vin] = datetime.now(UTC)
 
@@ -389,12 +387,11 @@ class MotionDetector:
         Priority chain:
         1. Charging → always False (absolute override, trumps everything)
         2. GPS (primary) → fresh GPS within 2 min, with driving mode trust
-        3. GPS gap + MQTT active → trust driving mode (unless doors unlocked)
+        3. GPS gap → trust driving mode during gap (door lock overrides)
         4. Door lock state → doors changed from locked/selectiveLocked → stopped
         5. Mileage (fallback) → actual odometer increase since GPS went stale
-        6. MQTT silence → no MQTT stream for 2 min → False (car is off)
-        7. No data at all → None (fall back to BMW-provided isMoving)
-        8. Default → False
+        6. No data at all → None (fall back to BMW-provided isMoving)
+        7. Default → False
 
         Returns:
             True - Active proof of movement
@@ -415,11 +412,9 @@ class MotionDetector:
         last_gps_change = self._last_location_change.get(vin)
         last_mileage = self._last_mileage.get(vin)
         last_mileage_change = self._last_mileage_change.get(vin)
-        last_mqtt = self._last_mqtt_stream_at.get(vin)
 
         # Calculate ages (None if no data)
         gps_update_age = (now - last_gps_update).total_seconds() / 60.0 if last_gps_update else None
-        mqtt_age = (now - last_mqtt).total_seconds() / 60.0 if last_mqtt else None
 
         # 2. GPS PRIMARY - GPS data arrived within 2 minutes (freshest source)
         if gps_update_age is not None and gps_update_age < self.MOTION_ACTIVE_WINDOW_MINUTES:
@@ -455,8 +450,8 @@ class MotionDetector:
             return result
 
         # 3. GPS GAP HANDLING - GPS between 2-5 min old, driving mode active
-        # BMW GPS arrives in bursts every 2-3 min; trust driving mode if MQTT is still active
-        # BUT: check door lock first - if doors unlocked, driver exited → not moving
+        # BMW GPS arrives in bursts every 2-3 min; trust driving mode during gaps.
+        # Door lock overrides: if doors changed from locked → unlocked, car stopped.
         if self._is_driving.get(vin, False) and gps_update_age is not None:
             if gps_update_age < self.GPS_UPDATE_STALE_MINUTES:
                 # Door lock override: if doors changed from driving state, car stopped
@@ -464,21 +459,19 @@ class MotionDetector:
                 if door_unlocked_at is not None and last_gps_update is not None and door_unlocked_at > last_gps_update:
                     door_state = self._door_lock_state.get(vin, "unknown")
                     _LOGGER.debug(
-                        "Motion: %s door lock changed to '%s' after GPS stale - NOT MOVING",
+                        "Motion: %s door state changed to '%s' after GPS stale - NOT MOVING",
                         redact_vin(vin),
                         door_state,
                     )
                     self._is_driving[vin] = False
                     return False
 
-                if mqtt_age is not None and mqtt_age < self.MQTT_SILENCE_MINUTES:
-                    _LOGGER.debug(
-                        "Motion: %s driving mode, GPS gap (%.1f min) but MQTT active (%.1f min) - MOVING",
-                        redact_vin(vin),
-                        gps_update_age,
-                        mqtt_age,
-                    )
-                    return True
+                _LOGGER.debug(
+                    "Motion: %s driving mode, GPS gap (%.1f min) - MOVING",
+                    redact_vin(vin),
+                    gps_update_age,
+                )
+                return True
 
         # 4. DOOR LOCK FALLBACK - GPS stale, doors changed from driving to parked state
         # This catches the case where GPS is >5 min stale but door state signals arrival
@@ -529,17 +522,7 @@ class MotionDetector:
             )
             self._is_driving[vin] = False
 
-        # 6. MQTT SILENCE FALLBACK - no MQTT stream data for 2+ min → car is off
-        if mqtt_age is not None and mqtt_age >= self.MQTT_SILENCE_MINUTES:
-            _LOGGER.debug(
-                "Motion: %s MQTT silent for %.1f min (threshold=%.1f) - NOT MOVING",
-                redact_vin(vin),
-                mqtt_age,
-                self.MQTT_SILENCE_MINUTES,
-            )
-            return False
-
-        # 7. No GPS data at all for this VIN — use mileage if available,
+        # 6. No GPS data at all for this VIN — use mileage if available,
         # otherwise return None so the caller falls back to BMW-provided vehicle.isMoving.
         if last_gps_update is None:
             if last_mileage_change is not None:
@@ -548,7 +531,7 @@ class MotionDetector:
                     return True
             return None
 
-        # 8. DEFAULT: Not moving
+        # 7. DEFAULT: Not moving
         return False
 
     def has_signaled_entity(self, vin: str) -> bool:
