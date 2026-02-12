@@ -333,10 +333,9 @@ class CardataCoordinator:
         if not vehicle_data:
             return None
 
-        # BEV: prefer charging.level during charging (fresher than header)
-        # PHEV: use header (BMW prediction overshoots on small batteries)
+        # Prefer charging.level during charging (fresher than header)
         bmw_soc = None
-        if self._soc_predictor.is_charging(vin) and not self._soc_predictor.is_phev(vin):
+        if self._soc_predictor.is_charging(vin):
             cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
             if cl and cl.value is not None:
                 try:
@@ -363,17 +362,14 @@ class CardataCoordinator:
         Must be called while holding _lock.
         Uses fallbacks if live data is missing (restored sensor values, last known values).
         """
-        # BEV: prefer charging.level (fresher during active charging)
-        # PHEV: use header as ground truth (BMW prediction overshoots small batteries)
-        is_phev = self._soc_predictor.is_phev(vin)
+        # Prefer charging.level (fresher during active charging)
         current_soc: float | None = None
-        if not is_phev:
-            charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
-            if charging_level and charging_level.value is not None:
-                try:
-                    current_soc = float(charging_level.value)
-                except (TypeError, ValueError):
-                    pass
+        charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
+        if charging_level and charging_level.value is not None:
+            try:
+                current_soc = float(charging_level.value)
+            except (TypeError, ValueError):
+                pass
         if current_soc is None:
             soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
             if soc_state and soc_state.value is not None:
