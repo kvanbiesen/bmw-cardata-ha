@@ -473,6 +473,18 @@ class MotionDetector:
                 )
                 return True
 
+                # Mileage evidence: odometer increased recently → wheels turning
+                if last_mileage_change is not None:
+                    mileage_age = (now - last_mileage_change).total_seconds() / 60.0
+                    if mileage_age < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
+                        _LOGGER.debug(
+                            "Motion: %s driving mode, GPS gap (%.1f min) but mileage recent (%.1f min) - MOVING",
+                            redact_vin(vin),
+                            gps_update_age,
+                            mileage_age,
+                        )
+                        return True
+
         # 4. DOOR LOCK FALLBACK - GPS stale, doors changed from driving to parked state
         # This catches the case where GPS is >5 min stale but door state signals arrival
         door_unlocked_at = self._door_unlocked_at.get(vin)
@@ -514,10 +526,19 @@ class MotionDetector:
                         )
                         return True
 
-        # GPS stale + no mileage increase → exit driving mode if still set
+        # GPS stale — check if mileage keeps driving mode alive before exiting
         if self._is_driving.get(vin, False):
+            if last_mileage_change is not None:
+                mileage_age = (now - last_mileage_change).total_seconds() / 60.0
+                if mileage_age < self.MILEAGE_ACTIVE_WINDOW_MINUTES:
+                    _LOGGER.debug(
+                        "Motion: %s GPS stale but mileage recent (%.1f min) - staying DRIVING",
+                        redact_vin(vin),
+                        mileage_age,
+                    )
+                    return True
             _LOGGER.debug(
-                "Motion: %s exiting driving mode (GPS stale, no mileage increase)",
+                "Motion: %s exiting driving mode (GPS stale, no recent mileage)",
                 redact_vin(vin),
             )
             self._is_driving[vin] = False
