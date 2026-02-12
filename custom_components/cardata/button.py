@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from homeassistant.components import persistent_notification
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
@@ -153,7 +154,18 @@ class ResetACLearningButton(ButtonEntity):
     async def async_press(self) -> None:
         """Handle button press."""
         _LOGGER.info("Resetting AC learning for VIN %s", redact_vin(self._vin))
-        self._coordinator._soc_predictor.reset_learned_efficiency(self._vin, "AC")
+        result = self._coordinator._soc_predictor.reset_learned_efficiency(self._vin, "AC")
+        vehicle_name = self._coordinator.names.get(self._vin, redact_vin(self._vin))
+        if result:
+            msg = f"AC charging efficiency learning reset for {vehicle_name}."
+        else:
+            msg = f"No AC charging efficiency data to reset for {vehicle_name}."
+        persistent_notification.async_create(
+            self.hass,
+            msg,
+            title="BMW CarData",
+            notification_id=f"{DOMAIN}_reset_{self._vin}_ac",
+        )
 
 
 class ResetDCLearningButton(ButtonEntity):
@@ -184,7 +196,18 @@ class ResetDCLearningButton(ButtonEntity):
     async def async_press(self) -> None:
         """Handle button press."""
         _LOGGER.info("Resetting DC learning for VIN %s", redact_vin(self._vin))
-        self._coordinator._soc_predictor.reset_learned_efficiency(self._vin, "DC")
+        result = self._coordinator._soc_predictor.reset_learned_efficiency(self._vin, "DC")
+        vehicle_name = self._coordinator.names.get(self._vin, redact_vin(self._vin))
+        if result:
+            msg = f"DC charging efficiency learning reset for {vehicle_name}."
+        else:
+            msg = f"No DC charging efficiency data to reset for {vehicle_name}."
+        persistent_notification.async_create(
+            self.hass,
+            msg,
+            title="BMW CarData",
+            notification_id=f"{DOMAIN}_reset_{self._vin}_dc",
+        )
 
 
 class ResetConsumptionLearningButton(ButtonEntity):
@@ -215,4 +238,15 @@ class ResetConsumptionLearningButton(ButtonEntity):
     async def async_press(self) -> None:
         """Handle button press."""
         _LOGGER.info("Resetting consumption learning for VIN %s", redact_vin(self._vin))
-        self._coordinator._magic_soc.reset_learned_consumption(self._vin)
+        result = self._coordinator._magic_soc.reset_learned_consumption(self._vin)
+        vehicle_name = self._coordinator.names.get(self._vin, redact_vin(self._vin))
+        if result:
+            msg = f"Driving consumption learning reset for {vehicle_name}."
+        else:
+            msg = f"No driving consumption data to reset for {vehicle_name}."
+        persistent_notification.async_create(
+            self.hass,
+            msg,
+            title="BMW CarData",
+            notification_id=f"{DOMAIN}_reset_{self._vin}_consumption",
+        )

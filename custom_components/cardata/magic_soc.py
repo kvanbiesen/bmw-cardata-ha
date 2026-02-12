@@ -699,7 +699,11 @@ class MagicSOCPredictor:
         LEARNING_RATE (0.2) after 5 trips: rate = max(LEARNING_RATE, 1/(trip_count+1))
         Short trips contribute less via distance weighting.
         """
-        learned = self._learned_consumption.setdefault(vin, LearnedConsumption())
+        learned = self._learned_consumption.get(vin)
+        if learned is None:
+            default = self._default_consumption.get(vin, DEFAULT_CONSUMPTION_KWH_PER_KM)
+            learned = LearnedConsumption(kwh_per_km=default)
+            self._learned_consumption[vin] = learned
         # Adaptive rate: learn fast initially, converge to LEARNING_RATE
         rate = max(LEARNING_RATE, 1.0 / (learned.trip_count + 1))
         # Weight by trip distance: short trips contribute less

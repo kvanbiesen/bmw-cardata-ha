@@ -333,11 +333,9 @@ class CardataCoordinator:
         if not vehicle_data:
             return None
 
-        # Get current BMW SOC — prefer charging.level only during DC charging
-        # (fresher than header during DC); AC uses batteryManagement.header
-        # as ground truth since charging.level is BMW's own prediction
+        # Prefer charging.level during charging (fresher than header)
         bmw_soc = None
-        if self._soc_predictor.get_charging_method(vin) == "DC":
+        if self._soc_predictor.is_charging(vin):
             cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
             if cl and cl.value is not None:
                 try:
@@ -364,18 +362,14 @@ class CardataCoordinator:
         Must be called while holding _lock.
         Uses fallbacks if live data is missing (restored sensor values, last known values).
         """
-        # Get current SOC - prefer charging.level only for DC charging
-        # (fresher than header during DC); AC uses batteryManagement.header
-        # as ground truth. Fall back to last predicted.
-        charging_method = self._soc_predictor.get_charging_method(vin) or "AC"
+        # Prefer charging.level (fresher during active charging)
         current_soc: float | None = None
-        if charging_method == "DC":
-            charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
-            if charging_level and charging_level.value is not None:
-                try:
-                    current_soc = float(charging_level.value)
-                except (TypeError, ValueError):
-                    pass
+        charging_level = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
+        if charging_level and charging_level.value is not None:
+            try:
+                current_soc = float(charging_level.value)
+            except (TypeError, ValueError):
+                pass
         if current_soc is None:
             soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
             if soc_state and soc_state.value is not None:
@@ -431,28 +425,45 @@ class CardataCoordinator:
                 pass
 
         self._magic_soc.update_battery_capacity(vin, capacity_kwh)
+        charging_method = self._soc_predictor.get_charging_method(vin) or "AC"
         self._soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method, target_soc=target_soc)
 
-        # Seed the session with current power reading if available.
+        # Seed session with current power reading if available.
         # In telematic API responses, charging.power often appears before
         # charging.status in the payload, so the power reading is dropped
         # (no session yet). Retroactively apply it for extrapolation.
-        power_state = vehicle_state.get("vehicle.powertrain.electric.battery.charging.power")
-        if power_state and power_state.value is not None:
-            try:
-                power_val = float(power_state.value)
-                unit = (power_state.unit or "").lower()
-                power_kw = power_val / 1000.0 if unit == "w" else power_val
-                aux_kw = 0.0
-                aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
-                if aux_state and aux_state.value is not None:
-                    try:
-                        aux_kw = float(aux_state.value) / 1000.0
-                    except (TypeError, ValueError):
-                        pass
-                self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
-            except (TypeError, ValueError):
-                pass
+        # DC: use direct charging.power; AC: use voltage × current.
+        if charging_method == "DC":
+            power_state = vehicle_state.get("vehicle.powertrain.electric.battery.charging.power")
+            if power_state and power_state.value is not None:
+                try:
+                    power_val = float(power_state.value)
+                    unit = (power_state.unit or "").lower()
+                    power_kw = power_val / 1000.0 if unit == "w" else power_val
+                    aux_kw = 0.0
+                    aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+                    if aux_state and aux_state.value is not None:
+                        try:
+                            aux_kw = float(aux_state.value) / 1000.0
+                        except (TypeError, ValueError):
+                            pass
+                    self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+                except (TypeError, ValueError):
+                    pass
+        else:
+            # AC: seed with voltage × current if available
+            voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
+            current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
+            phases = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber"))
+            aux_kw = 0.0
+            aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
+            if aux_state and aux_state.value is not None:
+                try:
+                    aux_kw = float(aux_state.value) / 1000.0
+                except (TypeError, ValueError):
+                    pass
+            if voltage and current:
+                self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
 
     def _end_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
         """End SOC prediction session when charging stops.
@@ -507,11 +518,11 @@ class CardataCoordinator:
         if not vehicle_data:
             return None
 
-        # Get current BMW SOC — prefer charging.level during charging
-        # (fresher than header which lags during active charging)
+        # BEV: prefer charging.level during charging (fresher than header)
+        # PHEV: use header (BMW prediction overshoots on small batteries)
         bmw_soc = None
         is_charging = self._soc_predictor.is_charging(vin)
-        if is_charging:
+        if is_charging and not self._soc_predictor.is_phev(vin):
             cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
             if cl and cl.value is not None:
                 try:
@@ -913,7 +924,7 @@ class CardataCoordinator:
             # Update power reading with direct power value (DC charging only;
             # AC charging uses voltage × amps instead)
             elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                if self._soc_predictor.get_charging_method(vin) != "AC":
+                if self._soc_predictor.get_charging_method(vin) == "DC":
                     power_kw = None
                     if value is not None:
                         try:
