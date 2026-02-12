@@ -394,8 +394,9 @@ class CardataCoordinator:
 
         # Get battery capacity (prefer batterySizeMax, fallback to maxEnergy, then metadata)
         capacity_kwh: float | None = None
-        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-        capacity_kwh = _descriptor_float(capacity_state)
+        # capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
+        # capacity_kwh = _descriptor_float(capacity_state)
+        # temporary always use energy max as batterysize is all over place
         if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
             capacity_kwh = _descriptor_float(capacity_state)
