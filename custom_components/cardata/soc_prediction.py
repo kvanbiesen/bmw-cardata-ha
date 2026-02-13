@@ -1161,7 +1161,7 @@ class SOCPredictor:
         if aux_power_kw is not None:
             session.last_aux_power = aux_power_kw
 
-        '''
+        """
         # Calculate power if we have both voltage and current
         if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:
             power_kw = (session.last_voltage * session.last_current) / 1000.0
@@ -1180,7 +1180,7 @@ class SOCPredictor:
             # Update power reading (accumulates energy)
             self.update_power_reading(vin, power_kw, aux_power_kw or 0.0)
             return True
-        '''
+        """
         # Calculate power if we have both voltage and current
         if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:
             # Raw input Power calculation without phase multiplier, for logging and energy tracking
@@ -1188,7 +1188,9 @@ class SOCPredictor:
 
             # phase multiplier
             if session.phases and session.phases > 1:
-                input_power_kw *= 3.0 if session.last_voltage < 250 else 1.732  # 3x for 3-phase low-voltage, √3 for 3-phase high-voltage
+                input_power_kw *= (
+                    3.0 if session.last_voltage < 250 else 1.732
+                )  # 3x for 3-phase low-voltage, √3 for 3-phase high-voltage
 
             obc_efficiency = 0.94
             fixed_load_kw = 0.3
