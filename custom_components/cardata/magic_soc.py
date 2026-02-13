@@ -605,14 +605,19 @@ class MagicSOCPredictor:
         if last_driving is not None:
             predicted_soc, saved_at = last_driving
             if (time.time() - saved_at) < DRIVING_SOC_CONTINUITY_SECONDS:
-                # Use last prediction if BMW SOC appears stale (higher or equal)
-                if bmw_soc is None or bmw_soc >= predicted_soc:
+                # Use last prediction if BMW SOC is stale (higher/equal) or
+                # within rounding of our sub-integer prediction
+                if bmw_soc is None or bmw_soc >= predicted_soc or abs(bmw_soc - predicted_soc) < 0.5:
                     self._last_magic_soc[vin] = predicted_soc
                     return predicted_soc
             # Expired or BMW sent fresh lower SOC — discard
             del self._last_driving_predicted_soc[vin]
 
         if bmw_soc is not None:
+            # Keep existing sub-integer prediction if BMW agrees within rounding
+            existing = self._last_magic_soc.get(vin)
+            if existing is not None and abs(bmw_soc - existing) < 0.5:
+                return existing
             self._last_magic_soc[vin] = bmw_soc
             return bmw_soc
         return self._last_magic_soc.get(vin)
