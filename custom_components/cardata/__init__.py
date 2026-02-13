@@ -79,6 +79,7 @@ PLATFORMS: list[Platform] = [
     Platform.DEVICE_TRACKER,
     Platform.IMAGE,
     Platform.BUTTON,
+    Platform.NUMBER,
 ]
 
 
