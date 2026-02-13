@@ -148,7 +148,7 @@ DC_SESSION_FINALIZE_MINUTES = 5.0
 AC_SESSION_FINALIZE_MINUTES = 15.0
 # Storage key and version for learned efficiency data
 SOC_LEARNING_STORAGE_KEY = "cardata.soc_learning"
-SOC_LEARNING_STORAGE_VERSION = 2
+SOC_LEARNING_STORAGE_VERSION = 3
 # Maximum gap between energy readings before skipping integration (seconds)
 MAX_ENERGY_GAP_SECONDS = 600
 

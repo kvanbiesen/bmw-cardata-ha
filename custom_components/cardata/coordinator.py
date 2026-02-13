@@ -1144,31 +1144,6 @@ class CardataCoordinator:
                     except (TypeError, ValueError):
                         pass
 
-            # Sync charging.level to prediction during active charging
-            # This provides fresher SOC updates than header during charging.
-            # Only syncs UP (never down) via update_bmw_soc.
-            elif descriptor == "vehicle.drivetrain.electricEngine.charging.level":
-                if value is not None and self._soc_predictor.is_charging(vin):
-                    try:
-                        level_val = float(value)
-                        self._soc_predictor.update_bmw_soc(vin, level_val)
-                        # Late anchor: charging started but session wasn't anchored yet
-                        if not self._soc_predictor.has_active_session(vin):
-                            _LOGGER.debug(
-                                "Late anchor attempt for %s (charging.level arrived after charging started)",
-                                redact_vin(vin),
-                            )
-                            self._anchor_soc_session(vin, vehicle_state)
-                        # Trigger predicted_soc sensor update
-                        if self._soc_predictor.has_signaled_entity(vin):
-                            if self._pending_manager.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
-                                schedule_debounce = True
-                        if self._magic_soc.has_signaled_magic_soc_entity(vin):
-                            if self._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR):
-                                schedule_debounce = True
-                    except (TypeError, ValueError):
-                        pass
-
             # Wire avgAuxPower to Magic SOC for auxiliary energy tracking
             elif descriptor == "vehicle.vehicle.avgAuxPower":
                 if value is not None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -27,32 +27,195 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class LearnedEfficiency:
-    """Learned charging efficiency per vehicle."""
+class ChargingCondition:
+    """Key for identifying charging conditions."""
+    phases: int  # 1 or 3
+    voltage_bracket: int  # 230, 400, etc.
+    current_bracket: int  # 6, 11, 16, 32, etc.
 
-    ac_efficiency: float = 0.90  # Default AC efficiency
-    dc_efficiency: float = 0.93  # Default DC efficiency
-    ac_session_count: int = 0  # Number of AC sessions used for learning
-    dc_session_count: int = 0  # Number of DC sessions used for learning
+    def __hash__(self):
+        return hash((self.phases, self.voltage_bracket, self.current_bracket))
+
+    def __eq__(self, other):
+        return (self.phases == other.phases and self.voltage_bracket == other.voltage_bracket and self.current_bracket == other.current_bracket)
+
+    def to_tuple(self):
+        """For JSON serialization."""
+        return (self.phases, self.voltage_bracket, self.current_bracket)
+
+    @classmethod
+    def from_tuple(cls, data):
+        """From JSON deserialization."""
+        return cls(data[0], data[1], data[2])
+
+
+@dataclass
+class EfficiencyEntry:
+    """Efficiency data for a specific charging condition."""
+    efficiency: float  # Current learned efficiency
+    sample_count: int = 0  # Number of sessions
+    history: list[float] = field(default_factory=list)  # Last N measurements
+    max_history: int = 10  # Keep last 10 sessions per condition
+
+
+@dataclass
+class LearnedEfficiency:
+    """Vehicle-specific efficiency learning with detailed charging profile matrix."""
+    # Legacy average efficiencies (fallback)
+    ac_efficiency: float = 0.90
+    dc_efficiency: float = 0.93
+    ac_session_count: int = 0
+    dc_session_count: int = 0
+
+    # New: Efficiency matrix indexed by charging conditions
+    efficiency_matrix: dict[ChargingCondition, EfficiencyEntry] = field(default_factory=dict)
+
+    # Voltage/current bracketing configuration
+    voltage_brackets: list[int] = field(default_factory=lambda: [240, 410, 810])
+    current_brackets: list[int] = field(default_factory=lambda: [6, 11, 16, 32, 64])
+
+    def _get_bracket(self, value: float, brackets: list[int]) -> int:
+        """Find closest bracket for voltage or current."""
+        if not brackets:
+            return int(value)
+        return min(brackets, key=lambda x: abs(x - value))
+
+    def get_condition(self, phases: int, voltage: float, current: float) -> ChargingCondition:
+        """Convert charging parameters to a ChargingCondition key."""
+        voltage_bracket = self._get_bracket(voltage, self.voltage_brackets)
+        current_bracket = self._get_bracket(current, self.current_brackets)
+        return ChargingCondition(phases, voltage_bracket, current_bracket)
+
+    def get_efficiency(self, phases: int, voltage: float, current: float, is_dc: bool) -> float:
+        """Get efficiency for specific charging conditions."""
+        if is_dc:
+            # DC fast charging: use legacy DC efficiency
+            return self.dc_efficiency
+
+        condition = self.get_condition(phases, voltage, current)
+        entry = self.efficiency_matrix.get(condition)
+
+        if entry and entry.sample_count >= 1:
+            return entry.efficiency
+
+        # Fallback: check similar conditions (±1 bracket)
+        for v_offset in [-1, 0, 1]:
+            for c_offset in [-1, 0, 1]:
+                if v_offset == 0 and c_offset == 0:
+                    continue
+                v_idx = self.voltage_brackets.index(condition.voltage_bracket) + v_offset
+                c_idx = self.current_brackets.index(condition.current_bracket) + c_offset
+                if 0 <= v_idx < len(self.voltage_brackets) and 0 <= c_idx < len(self.current_brackets):
+                    nearby = ChargingCondition(
+                        phases,
+                        self.voltage_brackets[v_idx],
+                        self.current_brackets[c_idx]
+                    )
+                    nearby_entry = self.efficiency_matrix.get(nearby)
+                    if nearby_entry and nearby_entry.sample_count >= 2:
+                        return nearby_entry.efficiency
+
+        # Final fallback: legacy AC efficiency
+        return self.ac_efficiency
+
+    def update_efficiency(
+        self,
+        phases: int,
+        voltage: float,
+        current: float,
+        is_dc: bool,
+        true_efficiency: float
+    ) -> bool:
+        """Update efficiency matrix with new measurement.
+
+        Returns True if accepted, False if rejected as outlier.
+        """
+        if is_dc:
+            # DC: use legacy learning
+            old = self.dc_efficiency
+            self.dc_efficiency = old * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
+            self.dc_session_count += 1
+            return True
+
+        condition = self.get_condition(phases, voltage, current)
+        entry = self.efficiency_matrix.get(condition)
+
+        if entry is None:
+            # First time seeing this condition
+            entry = EfficiencyEntry(efficiency=true_efficiency, sample_count=1)
+            entry.history.append(true_efficiency)
+            self.efficiency_matrix[condition] = entry
+            return True
+
+        # Outlier detection using condition-specific history
+        if len(entry.history) >= 3:
+            mean = sum(entry.history) / len(entry.history)
+            variance = sum((x - mean) ** 2 for x in entry.history) / len(entry.history)
+            std_dev = variance ** 0.5
+
+            if abs(true_efficiency - mean) > 2 * std_dev:
+                return False  # Reject outlier
+
+        # Update entry
+        entry.history.append(true_efficiency)
+        if len(entry.history) > entry.max_history:
+            entry.history.pop(0)
+
+        old_eff = entry.efficiency
+        entry.efficiency = old_eff * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
+        entry.sample_count += 1
+
+        # Also update legacy AC average for backward compatibility
+        self.ac_efficiency = self.ac_efficiency * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
+        self.ac_session_count += 1
+
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
+        matrix_serialized = {
+            f"{k.phases}_{k.voltage_bracket}_{k.current_bracket}": {
+                "efficiency": v.efficiency,
+                "sample_count": v.sample_count,
+                "history": v.history,
+            }
+            for k, v in self.efficiency_matrix.items()
+        }
         return {
             "ac_efficiency": self.ac_efficiency,
             "dc_efficiency": self.dc_efficiency,
             "ac_session_count": self.ac_session_count,
             "dc_session_count": self.dc_session_count,
+            "efficiency_matrix": matrix_serialized,
+            "voltage_brackets": self.voltage_brackets,
+            "current_brackets": self.current_brackets,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LearnedEfficiency:
         """Create from dictionary."""
-        return cls(
+        learned = cls(
             ac_efficiency=data.get("ac_efficiency", 0.90),
             dc_efficiency=data.get("dc_efficiency", 0.93),
             ac_session_count=data.get("ac_session_count", 0),
             dc_session_count=data.get("dc_session_count", 0),
+            voltage_brackets=data.get("voltage_brackets", [230, 400, 800]),
+            current_brackets=data.get("current_brackets", [6, 11, 16, 32, 64]),
         )
+
+        # Deserialize matrix
+        matrix_data = data.get("efficiency_matrix", {})
+        for key, entry_data in matrix_data.items():
+            phases, voltage, current = map(int, key.split("_"))
+            condition = ChargingCondition(phases, voltage, current)
+            entry = EfficiencyEntry(
+                efficiency=entry_data["efficiency"],
+                sample_count=entry_data["sample_count"],
+                history=entry_data.get("history", []),
+            )
+            learned.efficiency_matrix[condition] = entry
+
+        return learned
 
 
 @dataclass
@@ -64,6 +227,10 @@ class PendingSession:
     total_energy_kwh: float  # Total energy input during session
     charging_method: str  # "AC" or "DC"
     battery_capacity_kwh: float  # Battery capacity for calculations
+    # Charging condition data for learning
+    phases: int = 1
+    voltage: float = 230.0
+    current: float = 16.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -73,6 +240,9 @@ class PendingSession:
             "total_energy_kwh": self.total_energy_kwh,
             "charging_method": self.charging_method,
             "battery_capacity_kwh": self.battery_capacity_kwh,
+            "phases": self.phases,
+            "voltage": self.voltage,
+            "current": self.current,
         }
 
     @classmethod
@@ -84,6 +254,9 @@ class PendingSession:
             total_energy_kwh=data["total_energy_kwh"],
             charging_method=data["charging_method"],
             battery_capacity_kwh=data["battery_capacity_kwh"],
+            phases=data.get("phases", 1),
+            voltage=data.get("voltage", 230.0),
+            current=data.get("current", 16.0),
         )
 
 
@@ -700,6 +873,9 @@ class SOCPredictor:
                 total_energy_kwh=session.total_energy_kwh,
                 charging_method=session.charging_method,
                 battery_capacity_kwh=session.battery_capacity_kwh,
+                phases=session.phases if hasattr(session, 'phases') else 1,
+                voltage=session.last_voltage if session.last_voltage else 230.0,
+                current=session.last_current if session.last_current else 16.0,
             )
 
         # Clear active session and charging method
@@ -799,8 +975,20 @@ class SOCPredictor:
             )
             return
 
-        # Apply learning
-        self._apply_learning(vin, session.charging_method, true_efficiency)
+        # Extract charging parameters from session for matrix learning
+        phases = session.phases if hasattr(session, 'phases') else 1
+        voltage = session.last_voltage if session.last_voltage else 230.0
+        current = session.last_current if session.last_current else 16.0
+
+        # Apply learning with charging condition details
+        self._apply_learning(
+            vin,
+            session.charging_method,
+            true_efficiency,
+            phases=phases,
+            voltage=voltage,
+            current=current
+        )
 
     def _finalize_learning_from_pending(self, vin: str, pending: PendingSession, end_soc: float) -> None:
         """Finalize learning from a pending session.
@@ -840,68 +1028,100 @@ class SOCPredictor:
             )
             return
 
+        # For pending sessions, we don't have the session object anymore,
+        # so use safe defaults for charging parameters
+        # TODO: Store voltage/current/phases in PendingSession if needed
+        phases = pending.phases
+        voltage = pending.voltage
+        current = pending.current
+
         # Apply learning
-        self._apply_learning(vin, pending.charging_method, true_efficiency)
+        self._apply_learning(
+            vin,
+            pending.charging_method,
+            true_efficiency,
+            phases=phases,
+            voltage=voltage,
+            current=current
+        )
 
-    def _apply_learning(self, vin: str, charging_method: str, true_efficiency: float) -> None:
-        """Apply EMA learning update.
-
-        Args:
-            vin: Vehicle identification number
-            charging_method: "AC" or "DC"
-            true_efficiency: Measured efficiency from session
-        """
+    def _apply_learning(
+        self,
+        vin: str,
+        charging_method: str,
+        true_efficiency: float,
+        phases: int = 1,
+        voltage: float = 230.0,
+        current: float = 16.0
+    ) -> None:
+        """Apply learned efficiency with charging condition tracking."""
         learned = self._learned_efficiency.setdefault(vin, LearnedEfficiency())
 
-        if charging_method == "DC":
-            old = learned.dc_efficiency
-            learned.dc_efficiency = old * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
-            learned.dc_session_count += 1
-            _LOGGER.info(
-                "SOC: Learned DC efficiency for %s: %.3f -> %.3f (session %d, measured %.3f)",
+        is_dc = charging_method == "DC"
+
+        accepted = learned.update_efficiency(phases, voltage, current, is_dc, true_efficiency)
+
+        if accepted:
+            if is_dc:
+                _LOGGER.info(
+                    "%s: Learned DC efficiency: %.2f%% (session %d)",
+                    redact_vin(vin),
+                    learned.dc_efficiency * 100,
+                    learned.dc_session_count,
+                )
+            else:
+                condition = learned.get_condition(phases, voltage, current)
+                entry = learned.efficiency_matrix[condition]
+                _LOGGER.info(
+                    "%s: Learned AC efficiency [%dP, %dV, %dA]: %.2f%% (session %d for this config)",
+                    redact_vin(vin),
+                    condition.phases,
+                    condition.voltage_bracket,
+                    condition.current_bracket,
+                    entry.efficiency * 100,
+                    entry.sample_count,
+                )
+
+            # Trigger persistence callback
+            if self._on_learning_updated:
+                self._on_learning_updated()
+        else:
+            condition = learned.get_condition(phases, voltage, current)
+            _LOGGER.warning(
+                "%s: Rejected efficiency outlier [%dP, %dV, %dA]: %.2f%%",
                 redact_vin(vin),
-                old,
-                learned.dc_efficiency,
-                learned.dc_session_count,
-                true_efficiency,
-            )
-        elif charging_method == "AC":
-            old = learned.ac_efficiency
-            learned.ac_efficiency = old * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
-            learned.ac_session_count += 1
-            _LOGGER.info(
-                "SOC: Learned AC efficiency for %s: %.3f -> %.3f (session %d, measured %.3f)",
-                redact_vin(vin),
-                old,
-                learned.ac_efficiency,
-                learned.ac_session_count,
-                true_efficiency,
+                condition.phases,
+                condition.voltage_bracket,
+                condition.current_bracket,
+                true_efficiency * 100,
             )
 
-        # Trigger persistence callback
-        if self._on_learning_updated:
-            self._on_learning_updated()
-
-    def _get_efficiency(self, vin: str, charging_method: str) -> float:
+    def _get_efficiency(
+        self,
+        vin: str,
+        charging_method: str,
+        phases: int = 1,
+        voltage: float = 230.0,
+        current: float = 16.0
+    ) -> float:
         """Get efficiency for prediction, using learned value if available.
 
         Args:
             vin: Vehicle identification number
             charging_method: "AC" or "DC"
+            phases: Number of phases (1 or 3)
+            voltage: Voltage in volts
+            current: Current in amps
 
         Returns:
             Efficiency to use for prediction
         """
         learned = self._learned_efficiency.get(vin)
+        if not learned:
+            return self.DC_EFFICIENCY if charging_method == "DC" else self.AC_EFFICIENCY
 
-        if charging_method == "DC":
-            if learned and learned.dc_session_count > 0:
-                return learned.dc_efficiency
-            return self.DC_EFFICIENCY
-        else:
-            if learned and learned.ac_session_count > 0:
-                return learned.ac_efficiency
-            return self.AC_EFFICIENCY
+        is_dc = charging_method == "DC"
+        return learned.get_efficiency(phases, voltage, current, is_dc)
 
     def get_predicted_soc(
         self,
@@ -966,7 +1186,10 @@ class SOCPredictor:
             return session.last_predicted_soc
 
         # Get efficiency (learned or default)
-        efficiency = self._get_efficiency(vin, session.charging_method)
+        phases = session.phases if hasattr(session, 'phases') else 1
+        voltage = session.last_voltage if session.last_voltage else 230.0
+        current = session.last_current if session.last_current else 16.0
+        efficiency = self._get_efficiency(vin, session.charging_method, phases, voltage, current)
 
         # Use accumulated net energy (already has aux subtracted)
         energy_added_kwh = session.total_energy_kwh * efficiency
@@ -1211,3 +1434,19 @@ class SOCPredictor:
                 updated_vins.append(vin)
 
         return updated_vins
+
+    def get_charging_efficiency(
+        self,
+        vin: str,
+        charging_method: str,
+        phases: int = 1,
+        voltage: float = 230.0,
+        current: float = 16.0
+    ) -> float:
+        """Get learned efficiency for specific charging conditions."""
+        learned = self._learned_efficiency.get(vin)
+        if not learned:
+            return 0.93 if charging_method == "DC" else 0.90
+
+        is_dc = charging_method == "DC"
+        return learned.get_efficiency(phases, voltage, current, is_dc)
