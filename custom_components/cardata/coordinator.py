@@ -1579,7 +1579,7 @@ class CardataCoordinator:
                                     except (TypeError, ValueError):
                                         pass
                                 if _OVERULE_AUX_POWER > 0:
-                                    aux_kw = float(_OVERULE_AUX_POWER)        
+                                    aux_kw = float(_OVERULE_AUX_POWER)
                                 self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
                                 _LOGGER.info(
                                     "Reconnection: restored AC charging data for %s (%.1fV × %.1fA)",
