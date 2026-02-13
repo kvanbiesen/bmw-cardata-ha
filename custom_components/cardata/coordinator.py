@@ -904,7 +904,7 @@ class CardataCoordinator:
                         # Charging started - try to anchor session
                         self._anchor_soc_session(vin, vehicle_state)
                         # End any active driving session (can't drive and charge)
-                        self._magic_soc.cancel_driving_session(vin)
+                        self._end_driving_session(vin, vehicle_state)
                     elif was_charging:
                         # Charging stopped - end session for learning
                         self._end_soc_session(vin, vehicle_state)

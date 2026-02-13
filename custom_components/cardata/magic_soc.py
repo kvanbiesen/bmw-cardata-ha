@@ -537,14 +537,6 @@ class MagicSOCPredictor:
         session.last_aux_power_kw = power_kw
         session.last_aux_update_at = now
 
-    def cancel_driving_session(self, vin: str) -> None:
-        """Cancel a driving session without saving prediction for continuity.
-
-        Used when charging starts (genuine session end, not isMoving flap).
-        """
-        self._driving_sessions.pop(vin, None)
-        self._last_driving_predicted_soc.pop(vin, None)
-
     # --- Prediction ---
 
     def _get_aux_energy(self, session: DrivingSession) -> float:
