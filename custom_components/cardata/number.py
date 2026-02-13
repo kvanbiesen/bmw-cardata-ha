@@ -165,22 +165,11 @@ class ManualBatteryCapacityNumber(NumberEntity, RestoreEntity):
 
         # Restore previous value
         last_state = await self.async_get_last_state()
-        last_number_data = await self.async_get_last_number_data()
 
-        if last_number_data is not None and last_number_data.native_value is not None:
-            value = last_number_data.native_value
-            # Store restored value in coordinator
-            if value > 0:
-                self._coordinator.set_manual_battery_capacity(self._vin, value)
-                _LOGGER.debug(
-                    "Restored manual battery capacity for %s: %.1f kWh",
-                    redact_vin(self._vin),
-                    value,
-                )
-            self._attr_native_value = value
-        elif last_state is not None and last_state.state not in ("unknown", "unavailable"):
+        if last_state is not None and last_state.state not in ("unknown", "unavailable"):
             try:
                 value = float(last_state.state)
+                # Store restored value in coordinator
                 if value > 0:
                     self._coordinator.set_manual_battery_capacity(self._vin, value)
                     _LOGGER.debug(
