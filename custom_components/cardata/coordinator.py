@@ -392,13 +392,12 @@ class CardataCoordinator:
             _LOGGER.debug("Cannot anchor session for %s: no SOC data available", redact_vin(vin))
             return
 
-        # Get battery capacity (prefer batterySizeMax, fallback to maxEnergy, then metadata)
+        # Get battery capacity (prefer maxEnergy, fallback to batterySizeMax, then metadata)
         capacity_kwh: float | None = None
-        # capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-        # capacity_kwh = _descriptor_float(capacity_state)
-        # temporary always use energy max as batterysize is all over place
+        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+        capacity_kwh = _descriptor_float(capacity_state)
         if capacity_kwh is None or capacity_kwh <= 0:
-            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
             capacity_kwh = _descriptor_float(capacity_state)
 
         # Fallback: use existing session capacity if available
