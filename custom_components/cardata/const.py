@@ -139,7 +139,7 @@ LEARNING_RATE = 0.2
 # Minimum SOC gain required to learn from a session (percentage)
 MIN_LEARNING_SOC_GAIN = 5.0
 # Valid efficiency bounds - reject outliers outside this range
-MIN_VALID_EFFICIENCY = 0.82
+MIN_VALID_EFFICIENCY = 0.40
 MAX_VALID_EFFICIENCY = 0.98
 # Tolerance for matching target SOC (percentage) - if within this, finalize immediately
 TARGET_SOC_TOLERANCE = 2.0
