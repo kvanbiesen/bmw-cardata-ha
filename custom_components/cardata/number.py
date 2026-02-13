@@ -61,8 +61,15 @@ async def async_setup_entry(
     entities: list[NumberEntity] = []
     created_vins: set[str] = set()
 
+    # Get all known VINs (both live MQTT data and restored metadata)
+    all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
+    
+    # Filter by allowed VINs if initialized
+    if coordinator._allowed_vins_initialized:
+        all_vins = all_vins & coordinator._allowed_vins
+
     # Create manual battery capacity input for each known EV/PHEV vehicle
-    for vin in coordinator.data.keys():
+    for vin in all_vins:
         # Check if this vehicle has HV battery (EV/PHEV)
         vehicle_data = coordinator.data.get(vin, {})
         if "vehicle.drivetrain.batteryManagement.header" in vehicle_data:
@@ -79,7 +86,7 @@ async def async_setup_entry(
             created_vins.add(vin)
             _LOGGER.debug("Created manual battery capacity input for %s (%s)", vehicle_name, redact_vin(vin))
 
-    # Restore previously created entities from entity registry (even if VIN not currently online)
+    # Restore previously created entities from entity registry (for VINs not yet in coordinator data)
     entity_registry = async_get(hass)
     for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
         if entity_entry.domain != "number":
@@ -158,22 +165,11 @@ class ManualBatteryCapacityNumber(NumberEntity, RestoreEntity):
 
         # Restore previous value
         last_state = await self.async_get_last_state()
-        last_number_data = await self.async_get_last_number_data()
 
-        if last_number_data is not None and last_number_data.native_value is not None:
-            value = last_number_data.native_value
-            # Store restored value in coordinator
-            if value > 0:
-                self._coordinator.set_manual_battery_capacity(self._vin, value)
-                _LOGGER.debug(
-                    "Restored manual battery capacity for %s: %.1f kWh",
-                    redact_vin(self._vin),
-                    value,
-                )
-            self._attr_native_value = value
-        elif last_state is not None and last_state.state not in ("unknown", "unavailable"):
+        if last_state is not None and last_state.state not in ("unknown", "unavailable"):
             try:
                 value = float(last_state.state)
+                # Store restored value in coordinator
                 if value > 0:
                     self._coordinator.set_manual_battery_capacity(self._vin, value)
                     _LOGGER.debug(
