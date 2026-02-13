@@ -29,6 +29,7 @@ _LOGGER = logging.getLogger(__name__)
 @dataclass
 class ChargingCondition:
     """Key for identifying charging conditions."""
+
     phases: int  # 1 or 3
     voltage_bracket: int  # 230, 400, etc.
     current_bracket: int  # 6, 11, 16, 32, etc.
@@ -37,7 +38,11 @@ class ChargingCondition:
         return hash((self.phases, self.voltage_bracket, self.current_bracket))
 
     def __eq__(self, other):
-        return (self.phases == other.phases and self.voltage_bracket == other.voltage_bracket and self.current_bracket == other.current_bracket)
+        return (
+            self.phases == other.phases
+            and self.voltage_bracket == other.voltage_bracket
+            and self.current_bracket == other.current_bracket
+        )
 
     def to_tuple(self):
         """For JSON serialization."""
@@ -52,6 +57,7 @@ class ChargingCondition:
 @dataclass
 class EfficiencyEntry:
     """Efficiency data for a specific charging condition."""
+
     efficiency: float  # Current learned efficiency
     sample_count: int = 0  # Number of sessions
     history: list[float] = field(default_factory=list)  # Last N measurements
@@ -61,6 +67,7 @@ class EfficiencyEntry:
 @dataclass
 class LearnedEfficiency:
     """Vehicle-specific efficiency learning with detailed charging profile matrix."""
+
     # Legacy average efficiencies (fallback)
     ac_efficiency: float = 0.90
     dc_efficiency: float = 0.93
@@ -106,11 +113,7 @@ class LearnedEfficiency:
                 v_idx = self.voltage_brackets.index(condition.voltage_bracket) + v_offset
                 c_idx = self.current_brackets.index(condition.current_bracket) + c_offset
                 if 0 <= v_idx < len(self.voltage_brackets) and 0 <= c_idx < len(self.current_brackets):
-                    nearby = ChargingCondition(
-                        phases,
-                        self.voltage_brackets[v_idx],
-                        self.current_brackets[c_idx]
-                    )
+                    nearby = ChargingCondition(phases, self.voltage_brackets[v_idx], self.current_brackets[c_idx])
                     nearby_entry = self.efficiency_matrix.get(nearby)
                     if nearby_entry and nearby_entry.sample_count >= 2:
                         return nearby_entry.efficiency
@@ -119,12 +122,7 @@ class LearnedEfficiency:
         return self.ac_efficiency
 
     def update_efficiency(
-        self,
-        phases: int,
-        voltage: float,
-        current: float,
-        is_dc: bool,
-        true_efficiency: float
+        self, phases: int, voltage: float, current: float, is_dc: bool, true_efficiency: float
     ) -> bool:
         """Update efficiency matrix with new measurement.
 
@@ -151,7 +149,7 @@ class LearnedEfficiency:
         if len(entry.history) >= 3:
             mean = sum(entry.history) / len(entry.history)
             variance = sum((x - mean) ** 2 for x in entry.history) / len(entry.history)
-            std_dev = variance ** 0.5
+            std_dev = variance**0.5
 
             if abs(true_efficiency - mean) > 2 * std_dev:
                 return False  # Reject outlier
@@ -873,7 +871,7 @@ class SOCPredictor:
                 total_energy_kwh=session.total_energy_kwh,
                 charging_method=session.charging_method,
                 battery_capacity_kwh=session.battery_capacity_kwh,
-                phases=session.phases if hasattr(session, 'phases') else 1,
+                phases=session.phases if hasattr(session, "phases") else 1,
                 voltage=session.last_voltage if session.last_voltage else 230.0,
                 current=session.last_current if session.last_current else 16.0,
             )
@@ -976,18 +974,13 @@ class SOCPredictor:
             return
 
         # Extract charging parameters from session for matrix learning
-        phases = session.phases if hasattr(session, 'phases') else 1
+        phases = session.phases if hasattr(session, "phases") else 1
         voltage = session.last_voltage if session.last_voltage else 230.0
         current = session.last_current if session.last_current else 16.0
 
         # Apply learning with charging condition details
         self._apply_learning(
-            vin,
-            session.charging_method,
-            true_efficiency,
-            phases=phases,
-            voltage=voltage,
-            current=current
+            vin, session.charging_method, true_efficiency, phases=phases, voltage=voltage, current=current
         )
 
     def _finalize_learning_from_pending(self, vin: str, pending: PendingSession, end_soc: float) -> None:
@@ -1037,12 +1030,7 @@ class SOCPredictor:
 
         # Apply learning
         self._apply_learning(
-            vin,
-            pending.charging_method,
-            true_efficiency,
-            phases=phases,
-            voltage=voltage,
-            current=current
+            vin, pending.charging_method, true_efficiency, phases=phases, voltage=voltage, current=current
         )
 
     def _apply_learning(
@@ -1052,7 +1040,7 @@ class SOCPredictor:
         true_efficiency: float,
         phases: int = 1,
         voltage: float = 230.0,
-        current: float = 16.0
+        current: float = 16.0,
     ) -> None:
         """Apply learned efficiency with charging condition tracking."""
         learned = self._learned_efficiency.setdefault(vin, LearnedEfficiency())
@@ -1097,12 +1085,7 @@ class SOCPredictor:
             )
 
     def _get_efficiency(
-        self,
-        vin: str,
-        charging_method: str,
-        phases: int = 1,
-        voltage: float = 230.0,
-        current: float = 16.0
+        self, vin: str, charging_method: str, phases: int = 1, voltage: float = 230.0, current: float = 16.0
     ) -> float:
         """Get efficiency for prediction, using learned value if available.
 
@@ -1186,7 +1169,7 @@ class SOCPredictor:
             return session.last_predicted_soc
 
         # Get efficiency (learned or default)
-        phases = session.phases if hasattr(session, 'phases') else 1
+        phases = session.phases if hasattr(session, "phases") else 1
         voltage = session.last_voltage if session.last_voltage else 230.0
         current = session.last_current if session.last_current else 16.0
         efficiency = self._get_efficiency(vin, session.charging_method, phases, voltage, current)
@@ -1436,12 +1419,7 @@ class SOCPredictor:
         return updated_vins
 
     def get_charging_efficiency(
-        self,
-        vin: str,
-        charging_method: str,
-        phases: int = 1,
-        voltage: float = 230.0,
-        current: float = 16.0
+        self, vin: str, charging_method: str, phases: int = 1, voltage: float = 230.0, current: float = 16.0
     ) -> float:
         """Get learned efficiency for specific charging conditions."""
         learned = self._learned_efficiency.get(vin)
