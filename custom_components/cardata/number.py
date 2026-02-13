@@ -63,7 +63,7 @@ async def async_setup_entry(
 
     # Get all known VINs (both live MQTT data and restored metadata)
     all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
-    
+
     # Filter by allowed VINs if initialized
     if coordinator._allowed_vins_initialized:
         all_vins = all_vins & coordinator._allowed_vins
