@@ -379,18 +379,35 @@ class MagicSOCPredictor:
         if session.anchor_soc == new_soc and session.anchor_mileage == current_mileage:
             return
         old_anchor = session.anchor_soc
-        session.anchor_soc = new_soc
+        # BMW sends integer SOC. If our sub-integer prediction rounds to that
+        # integer (abs < 0.5), keep prediction as anchor to avoid cosmetic jumps.
+        # Otherwise BMW disagrees and we correct to their value.
+        #
+        # P=pred  N=bmw  |diff| branch   anchor  display
+        # 54.7    55     0.3   keep      54.7    54.7  (rounding, smooth)
+        # 54.1    54     0.1   keep      54.1    54.1  (rounding, smooth)
+        # 54.0    55     1.0   correct   55      55.0  (real drift up)
+        # 54.0    54     0.0   keep      54.0    54.0  (exact match)
+        # 54.7    54     0.7   correct   54      54.0  (real drift down)
+        # 54.7    57     2.3   correct   57      57.0  (real drift up)
+        # 54.4    54     0.4   keep      54.4    54.4  (rounding, smooth)
+        # 54.4    55     0.6   correct   55      55.0  (54.4 != round(55))
+        if abs(new_soc - session.last_predicted_soc) < 0.5:
+            session.anchor_soc = session.last_predicted_soc
+        else:
+            session.anchor_soc = new_soc
+            session.last_predicted_soc = new_soc
         session.anchor_mileage = current_mileage
-        session.last_predicted_soc = new_soc
         # Transfer segment aux to trip total before resetting for new segment
         session.trip_total_aux_kwh += session.accumulated_aux_kwh
         session.accumulated_aux_kwh = 0.0
         _LOGGER.debug(
-            "Magic SOC: Re-anchored %s from %.1f%% to %.1f%% at %.1f km",
+            "Magic SOC: Re-anchored %s %.1f%% → %.1f%% at %.1f km (BMW: %d%%)",
             redact_vin(vin),
             old_anchor,
-            new_soc,
+            session.anchor_soc,
             current_mileage,
+            new_soc,
         )
 
     def end_driving_session(self, vin: str, end_soc: float | None, end_mileage: float | None) -> None:
@@ -588,14 +605,19 @@ class MagicSOCPredictor:
         if last_driving is not None:
             predicted_soc, saved_at = last_driving
             if (time.time() - saved_at) < DRIVING_SOC_CONTINUITY_SECONDS:
-                # Use last prediction if BMW SOC appears stale (higher or equal)
-                if bmw_soc is None or bmw_soc >= predicted_soc:
+                # Use last prediction if BMW SOC is stale (higher/equal) or
+                # within rounding of our sub-integer prediction
+                if bmw_soc is None or bmw_soc >= predicted_soc or abs(bmw_soc - predicted_soc) < 0.5:
                     self._last_magic_soc[vin] = predicted_soc
                     return predicted_soc
             # Expired or BMW sent fresh lower SOC — discard
             del self._last_driving_predicted_soc[vin]
 
         if bmw_soc is not None:
+            # Keep existing sub-integer prediction if BMW agrees within rounding
+            existing = self._last_magic_soc.get(vin)
+            if existing is not None and abs(bmw_soc - existing) < 0.5:
+                return existing
             self._last_magic_soc[vin] = bmw_soc
             return bmw_soc
         return self._last_magic_soc.get(vin)
