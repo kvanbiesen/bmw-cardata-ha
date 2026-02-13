@@ -69,7 +69,9 @@ _LOGGER = logging.getLogger(__name__)
 # Pre-compiled regex for AC phase parsing (avoids recompilation on each message)
 _AC_PHASE_PATTERN = re.compile(r"(\d{1,2})")
 
-_OVERULE_AUX_POWER = 0.3  # kW - estimated auxiliary power load during charging (for SOC prediction) - set to zero to use bmw values
+_OVERULE_AUX_POWER = (
+    0.3  # kW - estimated auxiliary power load during charging (for SOC prediction) - set to zero to use bmw values
+)
 
 
 def _descriptor_float(state: DescriptorState | None) -> float | None:
