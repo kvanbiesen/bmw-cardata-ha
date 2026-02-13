@@ -80,6 +80,13 @@ def _descriptor_float(state: DescriptorState | None) -> float | None:
         return None
 
 
+def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Check if AC voltage × current data is available."""
+    voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
+    current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
+    return bool(voltage and current)
+
+
 @dataclass
 class CardataCoordinator:
     hass: HomeAssistant
@@ -513,7 +520,7 @@ class CardataCoordinator:
                 except (TypeError, ValueError):
                     pass
         else:
-            # AC: seed with voltage × current if available
+            # AC: try voltage × current first, fall back to charging.power
             voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
             current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
             phases = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber"))
@@ -526,6 +533,17 @@ class CardataCoordinator:
                     pass
             if voltage and current:
                 self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
+            else:
+                # Fallback: seed from charging.power when V×A is unavailable
+                power_state = vehicle_state.get("vehicle.powertrain.electric.battery.charging.power")
+                if power_state and power_state.value is not None:
+                    try:
+                        power_val = float(power_state.value)
+                        unit = (power_state.unit or "").lower()
+                        power_kw = power_val / 1000.0 if unit == "w" else power_val
+                        self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+                    except (TypeError, ValueError):
+                        pass
 
     def _end_soc_session(self, vin: str, vehicle_state: dict[str, DescriptorState]) -> None:
         """End SOC prediction session when charging stops.
@@ -1004,10 +1022,11 @@ class CardataCoordinator:
                 if value:
                     self._soc_predictor.set_charging_method(vin, str(value))
 
-            # Update power reading with direct power value (DC charging only;
-            # AC charging uses voltage × amps instead)
+            # Update power reading with direct power value (DC charging,
+            # or AC fallback when voltage × amps data is unavailable)
             elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
-                if self._soc_predictor.get_charging_method(vin) == "DC":
+                method = self._soc_predictor.get_charging_method(vin)
+                if method == "DC" or (method is not None and not _has_ac_power_data(vehicle_state)):
                     power_kw = None
                     if value is not None:
                         try:
