@@ -322,4 +322,5 @@ DESCRIPTOR_TITLES = {
     # Derived/calculated sensors
     "vehicle.predicted_soc": "Battery EV Predicted State Of Charge",
     "vehicle.magic_soc": "Magic SOC",
+    "vehicle.manual_battery_capacity": "Battery HV Manual Capacity",
 }

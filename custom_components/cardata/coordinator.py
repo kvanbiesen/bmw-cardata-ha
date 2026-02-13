@@ -38,6 +38,7 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
@@ -151,6 +152,10 @@ class CardataCoordinator:
     # Flag to track if _allowed_vins has been initialized (distinguishes "not set" from "empty")
     _allowed_vins_initialized: bool = field(default=False, init=False)
 
+    # Manual battery capacity (user input, takes priority over automatic detection)
+    # Per-VIN storage: VIN -> capacity in kWh (None = not set, use auto-detection)
+    _manual_battery_capacity: dict[str, float | None] = field(default_factory=dict, init=False)
+
     # Cached signal strings (initialized in __post_init__ for performance)
     _signal_new_sensor: str = field(default="", init=False)
     _signal_new_binary: str = field(default="", init=False)
@@ -260,6 +265,48 @@ class CardataCoordinator:
     def record_telematic_poll(self, vin: str) -> None:
         """Record that a telematic API poll succeeded for this VIN."""
         self._last_poll_at[vin] = time.time()
+
+    def get_manual_battery_capacity(self, vin: str) -> float | None:
+        """Get manual battery capacity for a VIN (user input).
+
+        Returns:
+            Manual capacity in kWh, or None if not set or entity is disabled
+        """
+        # Check if we have a stored value
+        capacity = self._manual_battery_capacity.get(vin)
+        if capacity is None:
+            return None
+
+        # Check if the entity is disabled in entity registry
+        from .const import MANUAL_CAPACITY_DESCRIPTOR
+
+        entity_registry = async_get_entity_registry(self.hass)
+        unique_id = f"{vin}_{MANUAL_CAPACITY_DESCRIPTOR}"
+        entity_id = entity_registry.async_get_entity_id("number", DOMAIN, unique_id)
+
+        if entity_id:
+            entity_entry = entity_registry.async_get(entity_id)
+            if entity_entry and entity_entry.disabled_by is not None:
+                # Entity is disabled, ignore stored value and use auto-detection
+                _LOGGER.debug(
+                    "Manual battery capacity entity is disabled for %s - using auto-detection",
+                    redact_vin(vin),
+                )
+                return None
+
+        return capacity
+
+    def set_manual_battery_capacity(self, vin: str, capacity_kwh: float | None) -> None:
+        """Set manual battery capacity for a VIN.
+
+        Args:
+            vin: Vehicle identification number
+            capacity_kwh: Battery capacity in kWh, or None to disable manual override
+        """
+        if capacity_kwh is None or capacity_kwh <= 0:
+            self._manual_battery_capacity.pop(vin, None)
+        else:
+            self._manual_battery_capacity[vin] = capacity_kwh
 
     def _is_metadata_bev(self, vin: str) -> bool:
         """Check if vehicle metadata identifies this as a BEV (not PHEV/ICE).
@@ -392,10 +439,25 @@ class CardataCoordinator:
             _LOGGER.debug("Cannot anchor session for %s: no SOC data available", redact_vin(vin))
             return
 
-        # Get battery capacity (prefer maxEnergy, fallback to batterySizeMax, then metadata)
+        # Get battery capacity (prefer manual input, then maxEnergy, fallback to batterySizeMax, then existing session)
         capacity_kwh: float | None = None
-        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
-        capacity_kwh = _descriptor_float(capacity_state)
+
+        # Priority 1: Manual capacity from user (if set)
+        manual_capacity = self.get_manual_battery_capacity(vin)
+        if manual_capacity is not None and manual_capacity > 0:
+            capacity_kwh = manual_capacity
+            _LOGGER.debug(
+                "Using manual battery capacity for %s: %.1f kWh",
+                redact_vin(vin),
+                capacity_kwh,
+            )
+
+        # Priority 2: maxEnergy descriptor
+        if capacity_kwh is None or capacity_kwh <= 0:
+            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+            capacity_kwh = _descriptor_float(capacity_state)
+
+        # Priority 3: batterySizeMax descriptor
         if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
             capacity_kwh = _descriptor_float(capacity_state)
@@ -602,17 +664,35 @@ class CardataCoordinator:
         except (TypeError, ValueError):
             return
 
-        # Get battery capacity (prefer live descriptor, fallback to cached)
-        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-        capacity_kwh = _descriptor_float(capacity_state)
+        # Get battery capacity (prefer manual input, then live descriptor, fallback to cached)
+        capacity_kwh: float | None = None
+
+        # Priority 1: Manual capacity from user (if set)
+        manual_capacity = self.get_manual_battery_capacity(vin)
+        if manual_capacity is not None and manual_capacity > 0:
+            capacity_kwh = manual_capacity
+            _LOGGER.debug(
+                "Soc prediction: Using manual battery capacity for %s: %.1f kWh",
+                redact_vin(vin),
+                capacity_kwh,
+            )
+
+        # Priority 2: Live descriptors
+        if capacity_kwh is None or capacity_kwh <= 0:
+            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
+            capacity_kwh = _descriptor_float(capacity_state)
         if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
             capacity_kwh = _descriptor_float(capacity_state)
+
+        # Store live capacity if found
         if capacity_kwh is not None and capacity_kwh > 0:
             self._magic_soc.update_battery_capacity(vin, capacity_kwh)
         else:
+            # Priority 3: Cached capacity
             capacity_kwh = self._magic_soc.get_last_known_capacity(vin)
             if capacity_kwh is None or capacity_kwh <= 0:
+                # Priority 4: Model default
                 capacity_kwh = self._magic_soc.get_default_capacity(vin)
                 if capacity_kwh is None or capacity_kwh <= 0:
                     _LOGGER.debug(
