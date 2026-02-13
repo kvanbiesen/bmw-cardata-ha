@@ -36,6 +36,7 @@ from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN, MANUAL_CAPACITY_DESCRIPTOR
@@ -58,6 +59,7 @@ async def async_setup_entry(
     coordinator = runtime.coordinator
 
     entities: list[NumberEntity] = []
+    created_vins: set[str] = set()
 
     # Create manual battery capacity input for each known EV/PHEV vehicle
     for vin in coordinator.data.keys():
@@ -74,7 +76,46 @@ async def async_setup_entry(
                     entry_id=entry.entry_id,
                 )
             )
+            created_vins.add(vin)
             _LOGGER.debug("Created manual battery capacity input for %s (%s)", vehicle_name, redact_vin(vin))
+
+    # Restore previously created entities from entity registry (even if VIN not currently online)
+    entity_registry = async_get(hass)
+    for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if entity_entry.domain != "number":
+            continue
+
+        unique_id = entity_entry.unique_id
+        if not unique_id or "_" not in unique_id:
+            continue
+
+        # Check if this is a manual capacity entity
+        if not unique_id.endswith(f"_{MANUAL_CAPACITY_DESCRIPTOR}"):
+            continue
+
+        # Extract VIN from unique_id
+        vin = unique_id.replace(f"_{MANUAL_CAPACITY_DESCRIPTOR}", "")
+
+        # Skip if already created above
+        if vin in created_vins:
+            continue
+
+        # Restore entity even if vehicle is offline or not in coordinator.data yet
+        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+        entities.append(
+            ManualBatteryCapacityNumber(
+                coordinator=coordinator,
+                vin=vin,
+                vehicle_name=vehicle_name,
+                entry_id=entry.entry_id,
+            )
+        )
+        created_vins.add(vin)
+        _LOGGER.debug(
+            "Restored manual battery capacity input for %s (%s) from entity registry",
+            vehicle_name,
+            redact_vin(vin),
+        )
 
     if entities:
         async_add_entities(entities)
