@@ -185,6 +185,10 @@ class CardataCoordinator:
         self._signal_telematic_api = f"{DOMAIN}_{self.entry_id}_telematic_api"
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
+        self._signal_efficiency_learning = f"{DOMAIN}_{self.entry_id}_efficiency_learning"
+
+        # Connect SOC predictor learning callback to signal efficiency updates
+        self._soc_predictor._on_learning_updated = self._handle_learning_update
 
     @property
     def signal_new_sensor(self) -> str:
@@ -213,6 +217,10 @@ class CardataCoordinator:
     @property
     def signal_metadata(self) -> str:
         return self._signal_metadata
+
+    @property
+    def signal_efficiency_learning(self) -> str:
+        return self._signal_efficiency_learning
 
     # --- Derived motion detection from GPS ---
 
@@ -1959,3 +1967,94 @@ class CardataCoordinator:
                 return self.apply_basic_data(vin, payload)
         finally:
             await self._basic_data_pending.release(vin)
+
+    def _get_learning_summary(self, vin: str) -> str:
+        """Summary of learning progress."""
+        learned = self._soc_predictor._learned_efficiency.get(vin)
+        if not learned:
+            return "Not started"
+
+        total_sessions = learned.ac_session_count + learned.dc_session_count
+        conditions_learned = len(learned.efficiency_matrix)
+
+        # Check if currently charging to show active status
+        is_charging = self._soc_predictor._is_charging.get(vin, False)
+        if is_charging:
+            return f"Active: {total_sessions} sessions, {conditions_learned} conditions"
+
+        return f"{total_sessions} sessions, {conditions_learned} conditions"
+
+    def _calculate_std(self, values: list[float]) -> float:
+        """Calculate standard deviation."""
+        if len(values) < 2:
+            return 0.0
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        return (variance ** 0.5) * 100  # Convert to percentage
+
+    def _get_trend(self, history: list[float]) -> str:
+        """Get recent trend in efficiency."""
+        if len(history) < 3:
+            return "Insufficient data"
+        recent = history[-3:]
+        if recent[-1] > recent[0] + 0.01:
+            return "↗ Improving"
+        elif recent[-1] < recent[0] - 0.01:
+            return "↘ Degrading"
+        else:
+            return "→ Stable"
+
+    def get_efficiency_learning_attributes(self, vin: str) -> dict[str, Any]:
+        """Get efficiency matrix as sensor attributes."""
+        learned = self._soc_predictor._learned_efficiency.get(vin)
+        if not learned:
+            return {"status": "No learning data"}
+
+        attrs = {
+            "legacy_ac_efficiency": f"{learned.ac_efficiency*100:.2f}%",
+            "legacy_dc_efficiency": f"{learned.dc_efficiency*100:.2f}%",
+            "total_ac_sessions": learned.ac_session_count,
+            "total_dc_sessions": learned.dc_session_count,
+            "conditions_learned": len(learned.efficiency_matrix),
+            "voltage_brackets": learned.voltage_brackets,
+            "current_brackets": learned.current_brackets,
+        }
+
+        # Add current charging info if active
+        is_charging = self._soc_predictor._is_charging.get(vin, False)
+        if is_charging:
+            session = self._soc_predictor._sessions.get(vin)
+            if session:
+                attrs["current_charging"] = {
+                    "active": True,
+                    "start_soc": f"{session.anchor_soc:.1f}%",
+                    "target_soc": f"{session.target_soc:.1f}%" if session.target_soc else "Unknown",
+                    "phases": session.phases,
+                    "method": session.charging_method,
+                }
+        else:
+            attrs["current_charging"] = {"active": False}
+
+        # Group by charging profiles
+        matrix_data = {}
+        for condition, entry in sorted(
+            learned.efficiency_matrix.items(),
+            key=lambda x: x[1].sample_count,
+            reverse=True
+        ):
+            profile_name = f"{condition.phases}P_{condition.voltage_bracket}V_{condition.current_bracket}A"
+            matrix_data[profile_name] = {
+                "efficiency": f"{entry.efficiency*100:.2f}%",
+                "sessions": entry.sample_count,
+                "min": f"{min(entry.history)*100:.2f}%" if entry.history else "N/A",
+                "max": f"{max(entry.history)*100:.2f}%" if entry.history else "N/A",
+                "std_dev": f"{self._calculate_std(entry.history):.2f}%" if len(entry.history) >= 2 else "N/A",
+                "recent_trend": self._get_trend(entry.history),
+            }
+
+        attrs["charging_profiles"] = matrix_data
+        return attrs
+
+    def _handle_learning_update(self) -> None:
+        """Signal efficiency learning sensor to update."""
+        self._safe_dispatcher_send(self.signal_efficiency_learning)

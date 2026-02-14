@@ -691,6 +691,78 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
         return attrs
 
 
+class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity):
+    """Diagnostic sensor for charging efficiency learning matrix."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:school"
+
+    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin, "diagnostics_charging_matrix")
+        self._base_name = "Charging Efficiency Learning"
+        self._update_name(write_state=False)
+        self._unsubscribe = None
+        _LOGGER.info(
+            "[EFFICIENCY_SENSOR] __init__ called for VIN %s, unique_id: %s",
+            redact_vin(vin),
+            self.unique_id,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore state and subscribe to updates."""
+        _LOGGER.info(
+            "[EFFICIENCY_SENSOR] async_added_to_hass called for VIN %s, entity_id: %s",
+            redact_vin(self._vin),
+            self.entity_id,
+        )
+        await super().async_added_to_hass()
+
+        if (last_state := await self.async_get_last_state()) is not None:
+            _LOGGER.debug(
+                "[EFFICIENCY_SENSOR] Restoring last state: %s",
+                last_state.state,
+            )
+            if last_state.state not in ("unknown", "unavailable"):
+                self._attr_native_value = last_state.state
+
+        # Subscribe to dedicated efficiency learning signal
+        self._unsubscribe = async_dispatcher_connect(
+            self.hass,
+            self._coordinator.signal_efficiency_learning,
+            self._handle_efficiency_update,
+        )
+        self._load_current_value()
+        self.schedule_update_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from updates."""
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+        await super().async_will_remove_from_hass()
+
+    def _load_current_value(self) -> None:
+        """Load current learning summary from coordinator."""
+        summary = self._coordinator._get_learning_summary(self._vin)
+        self._attr_native_value = summary
+
+    def _handle_efficiency_update(self) -> None:
+        """Handle efficiency learning updates."""
+        self._load_current_value()
+        self.schedule_update_ha_state()
+
+    @property
+    def native_value(self) -> str | None:
+        """Return learning summary."""
+        return self._attr_native_value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return efficiency matrix as attributes."""
+        return self._coordinator.get_efficiency_learning_attributes(self._vin)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     """Set up sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]
@@ -698,6 +770,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     entities: dict[tuple[str, str], CardataSensor] = {}
     metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
+    efficiency_entities: dict[str, CardataEfficiencyLearningSensor] = {}
 
     def ensure_metadata_sensor(vin: str) -> None:
         """Ensure metadata sensor exists for VIN (all vehicles)."""
@@ -711,6 +784,69 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         metadata_entities[vin] = CardataVehicleMetadataSensor(coordinator, vin)
         async_add_entities([metadata_entities[vin]], True)
+
+    def ensure_efficiency_sensor(vin: str) -> None:
+        """Ensure efficiency learning sensor exists for VIN (EVs only)."""
+        _LOGGER.info(
+            "[EFFICIENCY_SENSOR] ensure_efficiency_sensor called for VIN %s",
+            redact_vin(vin),
+        )
+        
+        if vin in efficiency_entities:
+            _LOGGER.debug(
+                "[EFFICIENCY_SENSOR] Sensor already exists in local dict for VIN %s",
+                redact_vin(vin),
+            )
+            return
+
+        # Only create for vehicles with HV battery (EV/PHEV)
+        vehicle_data = coordinator.data.get(vin)
+        if not vehicle_data:
+            _LOGGER.debug(
+                "[EFFICIENCY_SENSOR] No vehicle data found for VIN %s",
+                redact_vin(vin),
+            )
+            return
+
+        # Check if vehicle has battery management data (EV/PHEV indicator)
+        has_battery = "vehicle.drivetrain.batteryManagement.header" in vehicle_data
+        _LOGGER.debug(
+            "[EFFICIENCY_SENSOR] Battery management check for VIN %s: %s",
+            redact_vin(vin),
+            has_battery,
+        )
+        
+        if not has_battery:
+            # For restored entities, also check device metadata
+            metadata = coordinator.device_metadata.get(vin, {})
+            extra_attrs = metadata.get("extra_attributes", {})
+            # Check if vehicle has electric drivetrain
+            drivetrain = extra_attrs.get("drivetrain", "").lower()
+            has_battery = "electric" in drivetrain or "phev" in drivetrain
+            _LOGGER.debug(
+                "[EFFICIENCY_SENSOR] Metadata drivetrain check for VIN %s: %s (has_battery: %s)",
+                redact_vin(vin),
+                drivetrain,
+                has_battery,
+            )
+
+        if not has_battery:
+            _LOGGER.debug(
+                "[EFFICIENCY_SENSOR] No battery found for VIN %s, skipping sensor creation",
+                redact_vin(vin),
+            )
+            return
+
+        _LOGGER.info(
+            "[EFFICIENCY_SENSOR] Creating new efficiency learning sensor for VIN %s",
+            redact_vin(vin),
+        )
+        efficiency_entities[vin] = CardataEfficiencyLearningSensor(coordinator, vin)
+        async_add_entities([efficiency_entities[vin]], True)
+        _LOGGER.info(
+            "[EFFICIENCY_SENSOR] async_add_entities called for VIN %s",
+            redact_vin(vin),
+        )
 
     def ensure_entity(vin: str, descriptor: str, *, assume_sensor: bool = False, from_signal: bool = False) -> None:
         """Ensure sensor entity exists for VIN + descriptor.
@@ -822,6 +958,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 ensure_metadata_sensor(vin)
                 continue
 
+            if descriptor == "diagnostics_charging_matrix":
+                _LOGGER.debug(
+                    "[EFFICIENCY_SENSOR] Restoring efficiency sensor from entity registry for VIN %s",
+                    redact_vin(vin),
+                )
+                ensure_efficiency_sensor(vin)
+                continue
+
             ensure_entity(vin, descriptor, assume_sensor=True)
     except Exception as err:
         _LOGGER.warning("Error restoring sensors from entity registry: %s", err)
@@ -841,10 +985,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
         if coordinator._allowed_vins_initialized:
             all_vins = all_vins & coordinator._allowed_vins
+        _LOGGER.info(
+            "[EFFICIENCY_SENSOR] Processing %d VINs for metadata/efficiency sensors",
+            len(all_vins),
+        )
         for vin in all_vins:
             ensure_metadata_sensor(vin)
+            ensure_efficiency_sensor(vin)
     except Exception as err:
-        _LOGGER.warning("Error creating metadata sensors: %s", err)
+        _LOGGER.warning("Error creating metadata/efficiency sensors: %s", err, exc_info=True)
 
     # Add diagnostic sensors (CRITICAL - must always be created for debug device)
     diagnostic_entities: list[CardataDiagnosticsSensor] = []

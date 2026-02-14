@@ -204,8 +204,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if stored_learning and isinstance(stored_learning, dict):
                 coordinator._soc_predictor.load_session_data(stored_learning)
                 coordinator._magic_soc.load_session_data(stored_learning)
+                _LOGGER.debug("Loaded SOC learning data")
         except Exception as err:
-            _LOGGER.warning("Failed to load SOC learning data: %s", err)
+            _LOGGER.warning("Failed to load SOC learning data: %s - %s", type(err).__name__, err)
 
         # Set up persistence callback for learning updates
         async def _save_learning_data() -> None:
@@ -814,9 +815,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     persistent_notification.async_dismiss(hass, notification_id)
 
     return True
-
-
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle removal of config entry."""
-    # Home Assistant handles entity cleanup automatically
-    _LOGGER.debug("Config entry %s removed", entry.entry_id)

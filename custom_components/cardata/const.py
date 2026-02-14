@@ -70,7 +70,7 @@ DEFAULT_STREAM_PORT = 9000
 # How often to refresh the auth tokens in seconds
 DEFAULT_REFRESH_INTERVAL = 45 * 60
 MQTT_KEEPALIVE = 30
-DEBUG_LOG = False
+DEBUG_LOG = True
 DIAGNOSTIC_LOG_INTERVAL = 30  # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
 # Staleness threshold per VIN - scales with number of cars to stay within API quota
@@ -148,7 +148,7 @@ DC_SESSION_FINALIZE_MINUTES = 5.0
 AC_SESSION_FINALIZE_MINUTES = 15.0
 # Storage key and version for learned efficiency data
 SOC_LEARNING_STORAGE_KEY = "cardata.soc_learning"
-SOC_LEARNING_STORAGE_VERSION = 3
+SOC_LEARNING_STORAGE_VERSION = 2  # Keep at 2 - new matrix fields are optional/backward compatible
 # Maximum gap between energy readings before skipping integration (seconds)
 MAX_ENERGY_GAP_SECONDS = 600
 
