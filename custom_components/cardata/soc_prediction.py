@@ -1220,8 +1220,10 @@ class SOCPredictor:
                 self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_power or 0.0)
                 updated_vins.append(vin)
 
-            # Fallback: use last known power for sessions without V×A data
-            elif session.last_power_kw > 0:
+            # Fallback: use last known power for AC sessions without V×A data.
+            # DC excluded — power tapers during charging, so replaying stale
+            # power would overestimate energy.
+            elif session.last_power_kw > 0 and session.charging_method != "DC":
                 self.update_power_reading(vin, session.last_power_kw, aux_power_kw=session.last_aux_kw)
                 updated_vins.append(vin)
 
