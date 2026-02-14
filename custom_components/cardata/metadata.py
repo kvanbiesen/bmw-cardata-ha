@@ -354,12 +354,12 @@ async def async_restore_vehicle_images(
         redacted_vin = redact_vin(vin)
         safe_image_file = redact_vin_in_text(str(image_file))
 
-        # Skip empty marker files (0 bytes = 404)
-        if image_file.stat().st_size == 0:
-            _LOGGER.debug("Skipping empty marker file for %s (no image available)", redacted_vin)
-            continue
-
         try:
+            # Skip empty marker files (0 bytes = 404)
+            if image_file.stat().st_size == 0:
+                _LOGGER.debug("Skipping empty marker file for %s (no image available)", redacted_vin)
+                continue
+
             if vin not in coordinator.device_metadata:
                 coordinator.device_metadata[vin] = {}
             coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_file)
