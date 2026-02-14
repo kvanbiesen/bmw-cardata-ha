@@ -703,12 +703,12 @@ class CardataCoordinator:
                 capacity_kwh,
             )
 
-        # Priority 2: Live descriptors
-        if capacity_kwh is None or capacity_kwh <= 0:
-            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-            capacity_kwh = _descriptor_float(capacity_state)
+        # Priority 2: Live descriptors (prefer maxEnergy — reflects actual usable capacity)
         if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+            capacity_kwh = _descriptor_float(capacity_state)
+        if capacity_kwh is None or capacity_kwh <= 0:
+            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
             capacity_kwh = _descriptor_float(capacity_state)
 
         # Store live capacity if found
