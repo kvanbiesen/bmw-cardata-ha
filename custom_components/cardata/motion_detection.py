@@ -270,7 +270,24 @@ class MotionDetector:
             return False
 
         else:
-            # Beyond escape radius - vehicle is definitely moving!
+            # Beyond escape radius - but check if this is a stale GPS catch-up.
+            # If door just transitioned locked → unlocked, the car arrived at its
+            # destination and this GPS jump is catching up, not real-time driving.
+            # At trip START the door sequence is unlocked → locked (auto-lock at
+            # speed), which clears _door_unlocked_at before significant GPS
+            # displacement occurs.
+            door_unlocked_at = self._door_unlocked_at.get(vin)
+            if door_unlocked_at is not None:
+                _LOGGER.debug(
+                    "Motion: %s GPS relocated %.1fm (door unlocked, skipping driving mode)",
+                    redact_vin(vin),
+                    distance_from_anchor,
+                )
+                self._park_anchor[vin] = (lat, lon)
+                self._park_readings[vin] = [(lat, lon, now)]
+                return False
+
+            # Vehicle is definitely moving!
             # Enter driving mode - will update last_location_change on every GPS update
             _LOGGER.debug(
                 "Motion: %s escaped park zone (%.1fm > %.0fm) - NOW DRIVING",
