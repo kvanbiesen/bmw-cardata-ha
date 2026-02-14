@@ -3,10 +3,14 @@ name: Check debug logs in bug reports
 on:
   issues:
     types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
 
 jobs:
-  check-logs:
-    if: contains(github.event.issue.labels.*.name, 'bug')
+  check-logs-issue:
+    if: >-
+      github.event_name == 'issues' &&
+      contains(github.event.issue.labels.*.name, 'bug')
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -68,6 +72,48 @@ jobs:
               }
             } else if (hasLabel) {
               // Valid logs found and label exists — remove it
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  name: 'needs-debug-logs'
+                });
+              } catch (e) {
+                // Label might already be removed
+              }
+            }
+
+  check-logs-comment:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      !github.event.issue.pull_request &&
+      contains(github.event.issue.labels.*.name, 'needs-debug-logs')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Check comment for debug logs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = context.payload.comment.body || '';
+
+            // Check for attached log files (.log or .txt from github attachments)
+            const hasLogAttachment = /github\.com\/user-attachments\/files\/\d+\/[^\s)]+\.log\b/i.test(comment);
+
+            // Patterns that indicate real debug logs (inline in comment)
+            const logPatterns = [
+              /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/,  // timestamp
+              /\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b/,   // log level
+              /custom_components\.cardata/,                 // integration logger
+              /\(MainThread\)/,                             // HA thread marker
+            ];
+
+            const matchCount = logPatterns.filter(p => p.test(comment)).length;
+            const hasInlineLogs = comment.length > 100 && matchCount >= 2;
+
+            if (hasLogAttachment || hasInlineLogs) {
               try {
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
