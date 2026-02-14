@@ -546,7 +546,11 @@ class MagicSOCPredictor:
 
         now = time.time()
         if session.last_aux_update_at > 0:
-            dt_hours = (now - session.last_aux_update_at) / 3600.0
+            dt_seconds = now - session.last_aux_update_at
+            # Cap gap to prevent spurious energy after HA restart
+            if dt_seconds > AUX_EXTRAPOLATION_MAX_SECONDS:
+                dt_seconds = AUX_EXTRAPOLATION_MAX_SECONDS
+            dt_hours = dt_seconds / 3600.0
             if dt_hours > 0:
                 avg_power = (session.last_aux_power_kw + power_kw) / 2.0
                 session.accumulated_aux_kwh += avg_power * dt_hours
