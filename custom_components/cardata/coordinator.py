@@ -69,7 +69,7 @@ _LOGGER = logging.getLogger(__name__)
 # Pre-compiled regex for AC phase parsing (avoids recompilation on each message)
 _AC_PHASE_PATTERN = re.compile(r"(\d{1,2})")
 
-_OVERULE_AUX_POWER = (
+_OVERRIDE_AUX_POWER = (
     0.3  # kW - estimated auxiliary power load during charging (for SOC prediction) - set to zero to use bmw values
 )
 
@@ -528,8 +528,8 @@ class CardataCoordinator:
                             aux_kw = float(aux_state.value) / 1000.0
                         except (TypeError, ValueError):
                             pass
-                    if _OVERULE_AUX_POWER > 0:
-                        aux_kw = float(_OVERULE_AUX_POWER)
+                    if _OVERRIDE_AUX_POWER > 0:
+                        aux_kw = float(_OVERRIDE_AUX_POWER)
                     self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
                 except (TypeError, ValueError):
                     pass
@@ -545,8 +545,8 @@ class CardataCoordinator:
                     aux_kw = float(aux_state.value) / 1000.0
                 except (TypeError, ValueError):
                     pass
-            if _OVERULE_AUX_POWER > 0:
-                aux_kw = float(_OVERULE_AUX_POWER)
+            if _OVERRIDE_AUX_POWER > 0:
+                aux_kw = float(_OVERRIDE_AUX_POWER)
             if voltage and current:
                 self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
             else:
@@ -1065,8 +1065,8 @@ class CardataCoordinator:
                             aux_kw = float(aux_state.value) / 1000.0  # Convert W to kW
                         except (TypeError, ValueError):
                             pass
-                    if _OVERULE_AUX_POWER > 0:
-                        aux_kw = float(_OVERULE_AUX_POWER)
+                    if _OVERRIDE_AUX_POWER > 0:
+                        aux_kw = float(_OVERRIDE_AUX_POWER)
                     self._soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
                     # Trigger predicted_soc and magic_soc sensor updates during charging
                     if self._soc_predictor.is_charging(vin):
@@ -1100,8 +1100,8 @@ class CardataCoordinator:
                             aux_kw = float(aux_state.value) / 1000.0
                         except (TypeError, ValueError):
                             pass
-                    if _OVERULE_AUX_POWER > 0:
-                        aux_kw = float(_OVERULE_AUX_POWER)
+                    if _OVERRIDE_AUX_POWER > 0:
+                        aux_kw = float(_OVERRIDE_AUX_POWER)
                     # Delegate to predictor
                     if self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw):
                         if self._soc_predictor.has_signaled_entity(vin):
@@ -1157,8 +1157,8 @@ class CardataCoordinator:
                 if value is not None:
                     try:
                         aux_w = float(value)
-                        if _OVERULE_AUX_POWER > 0:
-                            aux_kw = float(_OVERULE_AUX_POWER)
+                        if _OVERRIDE_AUX_POWER > 0:
+                            aux_kw = float(_OVERRIDE_AUX_POWER)
                         self._magic_soc.update_aux_power(vin, aux_w / 1000.0)
                     except (TypeError, ValueError):
                         pass
@@ -1563,8 +1563,8 @@ class CardataCoordinator:
                                         aux_kw = float(aux_state.value) / 1000.0
                                     except (TypeError, ValueError):
                                         pass
-                                if _OVERULE_AUX_POWER > 0:
-                                    aux_kw = float(_OVERULE_AUX_POWER)
+                                if _OVERRIDE_AUX_POWER > 0:
+                                    aux_kw = float(_OVERRIDE_AUX_POWER)
                                 self._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
                                 _LOGGER.info(
                                     "Reconnection: restored AC charging data for %s (%.1fV × %.1fA)",
