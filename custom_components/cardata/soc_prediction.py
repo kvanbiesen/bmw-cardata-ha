@@ -359,12 +359,13 @@ class ChargingSession:
         """
         if self.last_energy_update is not None and power_kw > 0:
             gap = timestamp - self.last_energy_update
-            hours = gap / 3600.0
-            if hours > 0 and gap <= MAX_ENERGY_GAP_SECONDS:
+            if gap > 0:
+                # Cap gap to avoid massive energy jumps after restart
+                capped_hours = min(gap, MAX_ENERGY_GAP_SECONDS) / 3600.0
                 # Trapezoidal integration: average of last and current power
                 avg_power = (self.last_power_kw + power_kw) / 2.0
                 net_power = max(avg_power - aux_power_kw, 0.0)
-                self.total_energy_kwh += net_power * hours
+                self.total_energy_kwh += net_power * capped_hours
         self.last_power_kw = power_kw
         self.last_aux_kw = aux_power_kw
         self.last_energy_update = timestamp
@@ -440,6 +441,9 @@ class SOCPredictor:
         # VIN -> charging method ("AC" or "DC"), set when method descriptor arrives
         # or session is anchored. Cleared when charging ends.
         self._charging_method: dict[str, str] = {}
+
+        # Counter for periodic save during charging (every 10 heartbeats)
+        self._periodic_save_counter: int = 0
 
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
@@ -777,16 +781,17 @@ class SOCPredictor:
                     current_predicted,
                 )
                 self._last_predicted_soc[vin] = soc
-                # Also reset the active session anchor so the monotonicity
-                # guard (max(predicted, session.last_predicted_soc)) doesn't
-                # immediately override the sync-down on the next prediction.
                 session = self._sessions.get(vin)
                 if session is not None:
+                    # Update display value so monotonicity guard doesn't
+                    # immediately override the sync-down on the next prediction.
                     session.last_predicted_soc = soc
-                    session.anchor_soc = soc
-                    session.total_energy_kwh = 0.0
-                    session.last_energy_update = time.time()
-                    # Keep last_power_kw + reset gap to now for extrapolation continuity
+                    if not is_charging:
+                        # Not charging: full reset — anchor + energy
+                        session.anchor_soc = soc
+                        session.total_energy_kwh = 0.0
+                        session.last_energy_update = time.time()
+                    # During charging: preserve anchor/energy for learning
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
@@ -1222,11 +1227,15 @@ class SOCPredictor:
 
         # Extrapolate energy since last power reading using last known power.
         # This provides smooth SOC updates between sparse API polls.
+        # Cap gap to MAX_ENERGY_GAP_SECONDS to match accumulate_energy() —
+        # without cap, long MQTT gaps inflate prediction, then "never decrease"
+        # constraint locks in the inflated value creating visible plateaus.
         if session.last_power_kw > 0 and session.last_energy_update is not None:
             gap = time.time() - session.last_energy_update
             if gap > 0:
+                capped_gap = min(gap, MAX_ENERGY_GAP_SECONDS)
                 net_power = max(session.last_power_kw - session.last_aux_kw, 0.0)
-                extra_kwh = net_power * (gap / 3600.0) * efficiency
+                extra_kwh = net_power * (capped_gap / 3600.0) * efficiency
                 energy_added_kwh += extra_kwh
 
         # Convert to SOC percentage
@@ -1435,9 +1444,11 @@ class SOCPredictor:
         return False
 
     def periodic_update_all(self) -> list[str]:
-        """Periodic update for all charging sessions (called every 60s).
+        """Periodic update for all charging sessions (called every 30s).
 
         Recalculates power from last known AC voltage/current and accumulates energy.
+        Falls back to last_power_kw for sessions without V×A data (e.g. DC, or AC
+        vehicles that only report charging.power).
 
         Returns:
             List of VINs that had their prediction updated
@@ -1445,19 +1456,33 @@ class SOCPredictor:
         updated_vins = []
 
         for vin, session in list(self._sessions.items()):
-            if not session or session.charging_method == "DC":
-                continue  # DC uses direct power descriptor
+            if not session:
+                continue
 
-            # Recalculate AC power from last known values
+            # Prefer V×A recalculation for AC sessions
             if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:
                 power_kw = (session.last_voltage * session.last_current) / 1000.0
 
                 if session.phases and session.phases > 1:
                     power_kw *= 1.732
 
-                # Accumulate energy based on time elapsed
                 self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_power or 0.0)
                 updated_vins.append(vin)
+
+            # Fallback: use last known power for AC sessions without V×A data.
+            # DC excluded — power tapers during charging, so replaying stale
+            # power would overestimate energy.
+            elif session.last_power_kw > 0 and session.charging_method != "DC":
+                self.update_power_reading(vin, session.last_power_kw, aux_power_kw=session.last_aux_kw)
+                updated_vins.append(vin)
+
+        # Periodic save: every 10 updates (~300s at 30s interval)
+        if updated_vins:
+            self._periodic_save_counter += 1
+            if self._periodic_save_counter >= 10:
+                self._periodic_save_counter = 0
+                if self._on_learning_updated:
+                    self._on_learning_updated()
 
         return updated_vins
 
