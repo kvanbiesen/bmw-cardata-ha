@@ -1215,7 +1215,7 @@ class SOCPredictor:
                 power_kw = (session.last_voltage * session.last_current) / 1000.0
 
                 if session.phases and session.phases > 1:
-                    power_kw *= 1.732
+                    power_kw *= 3.0 if session.last_voltage < 250 else 1.732
 
                 self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_power or 0.0)
                 updated_vins.append(vin)
