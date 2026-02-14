@@ -401,6 +401,10 @@ class MagicSOCPredictor:
         # Transfer segment aux to trip total before resetting for new segment
         session.trip_total_aux_kwh += session.accumulated_aux_kwh
         session.accumulated_aux_kwh = 0.0
+        # Reset GPS distance so fallback doesn't use pre-re-anchor distance
+        session.gps_distance_km = 0.0
+        session.last_gps_lat = None
+        session.last_gps_lon = None
         _LOGGER.debug(
             "Magic SOC: Re-anchored %s %.1f%% → %.1f%% at %.1f km (BMW: %d%%)",
             redact_vin(vin),
