@@ -1990,7 +1990,7 @@ class CardataCoordinator:
             return 0.0
         mean = sum(values) / len(values)
         variance = sum((x - mean) ** 2 for x in values) / len(values)
-        return (variance ** 0.5) * 100  # Convert to percentage
+        return (variance**0.5) * 100  # Convert to percentage
 
     def _get_trend(self, history: list[float]) -> str:
         """Get recent trend in efficiency."""
@@ -2038,9 +2038,7 @@ class CardataCoordinator:
         # Group by charging profiles
         matrix_data = {}
         for condition, entry in sorted(
-            learned.efficiency_matrix.items(),
-            key=lambda x: x[1].sample_count,
-            reverse=True
+            learned.efficiency_matrix.items(), key=lambda x: x[1].sample_count, reverse=True
         ):
             profile_name = f"{condition.phases}P_{condition.voltage_bracket}V_{condition.current_bracket}A"
             matrix_data[profile_name] = {
