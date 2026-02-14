@@ -2044,7 +2044,7 @@ class CardataCoordinator:
         ):
             profile_name = f"{condition.phases}P_{condition.voltage_bracket}V_{condition.current_bracket}A"
             matrix_data[profile_name] = {
-                "efficiency": f"{entry.efficiency *100:.2f}%",
+                "efficiency": f"{entry.efficiency * 100:.2f}%",
                 "sessions": entry.sample_count,
                 "min": f"{min(entry.history) * 100:.2f}%" if entry.history else "N/A",
                 "max": f"{max(entry.history) * 100:.2f}%" if entry.history else "N/A",
