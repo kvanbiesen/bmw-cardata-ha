@@ -974,11 +974,15 @@ class SOCPredictor:
 
         # Extrapolate energy since last power reading using last known power.
         # This provides smooth SOC updates between sparse API polls.
+        # Cap gap to MAX_ENERGY_GAP_SECONDS to match accumulate_energy() —
+        # without cap, long MQTT gaps inflate prediction, then "never decrease"
+        # constraint locks in the inflated value creating visible plateaus.
         if session.last_power_kw > 0 and session.last_energy_update is not None:
             gap = time.time() - session.last_energy_update
             if gap > 0:
+                capped_gap = min(gap, MAX_ENERGY_GAP_SECONDS)
                 net_power = max(session.last_power_kw - session.last_aux_kw, 0.0)
-                extra_kwh = net_power * (gap / 3600.0) * efficiency
+                extra_kwh = net_power * (capped_gap / 3600.0) * efficiency
                 energy_added_kwh += extra_kwh
 
         # Convert to SOC percentage

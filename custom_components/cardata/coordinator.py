@@ -1005,6 +1005,8 @@ class CardataCoordinator:
                 was_charging = self._soc_predictor.is_charging(vin)
                 status_changed = self._soc_predictor.update_charging_status(vin, str(value) if value else None)
                 if status_changed:
+                    # Keep motion detector in sync with charging state
+                    self._motion_detector.set_charging(vin, self._soc_predictor.is_charging(vin))
                     if self._soc_predictor.is_charging(vin):
                         # Charging started - try to anchor session
                         self._anchor_soc_session(vin, vehicle_state)
