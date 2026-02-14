@@ -791,7 +791,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             "[EFFICIENCY_SENSOR] ensure_efficiency_sensor called for VIN %s",
             redact_vin(vin),
         )
-        
+
         if vin in efficiency_entities:
             _LOGGER.debug(
                 "[EFFICIENCY_SENSOR] Sensor already exists in local dict for VIN %s",
@@ -815,7 +815,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             redact_vin(vin),
             has_battery,
         )
-        
+
         if not has_battery:
             # For restored entities, also check device metadata
             metadata = coordinator.device_metadata.get(vin, {})

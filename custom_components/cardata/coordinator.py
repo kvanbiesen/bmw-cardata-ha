@@ -2011,8 +2011,8 @@ class CardataCoordinator:
             return {"status": "No learning data"}
 
         attrs = {
-            "legacy_ac_efficiency": f"{learned.ac_efficiency*100:.2f}%",
-            "legacy_dc_efficiency": f"{learned.dc_efficiency*100:.2f}%",
+            "legacy_ac_efficiency": f"{learned.ac_efficiency * 100:.2f}%",
+            "legacy_dc_efficiency": f"{learned.dc_efficiency * 100:.2f}%",
             "total_ac_sessions": learned.ac_session_count,
             "total_dc_sessions": learned.dc_session_count,
             "conditions_learned": len(learned.efficiency_matrix),
@@ -2044,10 +2044,10 @@ class CardataCoordinator:
         ):
             profile_name = f"{condition.phases}P_{condition.voltage_bracket}V_{condition.current_bracket}A"
             matrix_data[profile_name] = {
-                "efficiency": f"{entry.efficiency*100:.2f}%",
+                "efficiency": f"{entry.efficiency *100:.2f}%",
                 "sessions": entry.sample_count,
-                "min": f"{min(entry.history)*100:.2f}%" if entry.history else "N/A",
-                "max": f"{max(entry.history)*100:.2f}%" if entry.history else "N/A",
+                "min": f"{min(entry.history) * 100:.2f}%" if entry.history else "N/A",
+                "max": f"{max(entry.history) * 100:.2f}%" if entry.history else "N/A",
                 "std_dev": f"{self._calculate_std(entry.history):.2f}%" if len(entry.history) >= 2 else "N/A",
                 "recent_trend": self._get_trend(entry.history),
             }
