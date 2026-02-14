@@ -1921,8 +1921,8 @@ class CardataCoordinator:
             metadata["model"] = model
         if raw_payload.get("puStep"):
             metadata["sw_version"] = raw_payload["puStep"]
-        if raw_payload.get("series_development"):
-            metadata["hw_version"] = raw_payload["series_development"]
+        if raw_payload.get("seriesDevt"):
+            metadata["hw_version"] = raw_payload["seriesDevt"]
         return metadata
 
     def apply_basic_data(self, vin: str, payload: dict[str, Any]) -> dict[str, Any] | None:
