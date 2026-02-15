@@ -147,9 +147,6 @@ class CardataCoordinator:
     # Callback set by button.py to create consumption reset button when Magic SOC sensor is created
     _create_consumption_reset_callback: Callable[[str], None] | None = field(default=None, init=False, repr=False)
 
-    # Track VINs that have had fuel range sensor created (hybrid vehicles only)
-    _fuel_range_signaled: set[str] = field(default_factory=set, init=False)
-
     # Pending operation tracking to prevent duplicate work
     _basic_data_pending: PendingManager[str] = field(default_factory=lambda: PendingManager("basic_data"), init=False)
 

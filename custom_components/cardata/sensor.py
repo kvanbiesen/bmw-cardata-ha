@@ -269,8 +269,6 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             self._coordinator._soc_predictor.signal_entity_created(self._vin)
         elif self._descriptor == MAGIC_SOC_DESCRIPTOR:
             self._coordinator._magic_soc.signal_magic_soc_entity_created(self._vin)
-        elif self._descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
-            self._coordinator._fuel_range_signaled.add(self._vin)
 
         if getattr(self, "_attr_native_value", None) is None:
             last_state = await self.async_get_last_state()
@@ -749,8 +747,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             coordinator._soc_predictor.signal_entity_created(vin)
         elif descriptor == MAGIC_SOC_DESCRIPTOR:
             coordinator._magic_soc.signal_magic_soc_entity_created(vin)
-        elif descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
-            coordinator._fuel_range_signaled.add(vin)
 
     # Handle entity registry migrations
     entity_registry = async_get(hass)
