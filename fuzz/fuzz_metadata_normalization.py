@@ -33,9 +33,7 @@ import atheris
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
 
-CARDATA_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "custom_components", "cardata")
-)
+CARDATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "custom_components", "cardata"))
 
 
 def _install_homeassistant_stubs() -> None:
@@ -127,10 +125,7 @@ def _consume_json_value(fdp: atheris.FuzzedDataProvider, depth: int = 0):
     if choice == 3:
         return None
     if choice == 4:
-        return [
-            _consume_json_value(fdp, depth + 1)
-            for _ in range(fdp.ConsumeIntInRange(0, 5))
-        ]
+        return [_consume_json_value(fdp, depth + 1) for _ in range(fdp.ConsumeIntInRange(0, 5))]
     payload = {}
     for _ in range(fdp.ConsumeIntInRange(0, 5)):
         key = _consume_text(fdp, 16)
@@ -139,10 +134,7 @@ def _consume_json_value(fdp: atheris.FuzzedDataProvider, depth: int = 0):
 
 
 def _consume_string_list(fdp: atheris.FuzzedDataProvider, max_len: int) -> list:
-    return [
-        _consume_text(fdp, max_len)
-        for _ in range(fdp.ConsumeIntInRange(0, 4))
-    ]
+    return [_consume_text(fdp, max_len) for _ in range(fdp.ConsumeIntInRange(0, 4))]
 
 
 def _consume_metadata_payload(fdp: atheris.FuzzedDataProvider) -> dict:
@@ -235,7 +227,9 @@ def TestOneInput(data: bytes) -> None:
         else:
             payload = _consume_json_value(fdp)
 
-        coordinator_module.CardataCoordinator._build_device_metadata(vin, payload)
+        from cardata.device_info import build_device_metadata
+
+        build_device_metadata(vin, payload)
 
         if isinstance(payload, dict) and fdp.ConsumeBool():
             coordinator.apply_basic_data(vin, payload)

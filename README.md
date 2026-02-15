@@ -112,7 +112,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 ```js
 document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l => l.click());
 ```
-   - If you want the "Extrapolated SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the extrapolated state of charge and calculate the charging slope between stream updates. It seems like the `vehicle.drivetrain.batteryManagement.maxEnergy` always get sended even tho its not explicitly set, but check it anyways.
+   - If you want the "Predicted SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the predicted state of charge and calculate the charging slope between stream updates. It seems like the `vehicle.drivetrain.batteryManagement.maxEnergy` always get sended even tho its not explicitly set, but check it anyways.
 
 9. Save the selection.
 10. Repeat for all the cars you want to support
@@ -288,6 +288,28 @@ The setup wizard, error messages, and options menu are translated into the follo
 - Portuguese (pt)
 
 Home Assistant automatically selects the translation matching your configured language. Entity names are not translated as they use BMW descriptor names with values and units.
+
+## Project Architecture
+
+The integration is organized into focused modules:
+
+| Module | Purpose |
+|--------|---------|
+| `__init__.py` | Entry point: setup/unload, token refresh loop, ghost device cleanup |
+| `coordinator.py` | Central state management, message dispatch, entity signaling |
+| `soc_wiring.py` | SOC/charging/driving prediction wiring between descriptors and prediction engines |
+| `device_info.py` | Device metadata building, BEV detection, state restoration |
+| `coordinator_housekeeping.py` | Diagnostics, stale VIN cleanup, old descriptor eviction, connection events |
+| `soc_prediction.py` | Charging SOC: trapezoidal energy integration, EMA efficiency learning |
+| `magic_soc.py` | Driving SOC: distance-based consumption prediction, adaptive EMA learning |
+| `stream.py` | MQTT connection management, circuit breaker, credential hot-swap |
+| `motion_detection.py` | GPS centroid movement detection, parking zone logic |
+| `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
+| `config_flow.py` | Setup, reauthorization, and options UI flows |
+| `bootstrap.py` | VIN discovery, metadata fetch, container creation |
+| `auth.py` | Token refresh, reauth flow, stream error handling |
+| `telematics.py` | Scheduled API polling, trip-end/charge-end triggers |
+| `container.py` | Telematic container CRUD, signature-based reuse |
 
 ## Known Limitations
 

@@ -161,8 +161,6 @@ MIN_LEARNING_SOC_DROP = 2.0
 DRIVING_SOC_CONTINUITY_SECONDS = 300  # 5 min window for isMoving flap tolerance
 DRIVING_SESSION_MAX_AGE_SECONDS = 4 * 60 * 60  # 4 hours
 GPS_MAX_STEP_DISTANCE_M = 2000  # Max single GPS step (m) — reject jumps after tunnel/lost signal
-AUX_EXTRAPOLATION_MAX_SECONDS = 600  # Stop extrapolating aux power after 10 min without update
-MAX_AUX_POWER_KW = 10.0  # Sanity cap: reject aux power readings above this (bogus data)
 REFERENCE_LEARNING_TRIP_KM = 30.0  # Reference distance for weighting learning: short trips contribute less
 
 # Model-to-consumption mapping (kWh/km, real-world averages)

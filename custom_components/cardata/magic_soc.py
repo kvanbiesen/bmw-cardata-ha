@@ -9,13 +9,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .const import (
-    AUX_EXTRAPOLATION_MAX_SECONDS,
     DEFAULT_CONSUMPTION_KWH_PER_KM,
     DRIVING_SESSION_MAX_AGE_SECONDS,
     DRIVING_SOC_CONTINUITY_SECONDS,
     GPS_MAX_STEP_DISTANCE_M,
     LEARNING_RATE,
-    MAX_AUX_POWER_KW,
     MAX_VALID_CONSUMPTION,
     MIN_LEARNING_SOC_DROP,
     MIN_LEARNING_TRIP_DISTANCE_KM,
@@ -80,14 +78,9 @@ class DrivingSession:
     last_gps_lat: float | None = None
     last_gps_lon: float | None = None
     last_mileage: float = 0.0  # Latest odometer reading during trip (ephemeral)
-    # Auxiliary power tracking (HVAC, heating, pumps)
-    last_aux_power_kw: float = 0.0  # Last known aux power draw (kW)
-    last_aux_update_at: float = 0.0  # Timestamp of last aux power update
-    accumulated_aux_kwh: float = 0.0  # Integrated aux energy over segment
     # Trip-level tracking (set once at original anchor, never touched by re-anchors)
     trip_start_soc: float = 0.0  # SOC % at original trip start
     trip_start_mileage: float = 0.0  # Odometer km at original trip start
-    trip_total_aux_kwh: float = 0.0  # Aux energy accumulated across re-anchors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -101,12 +94,8 @@ class DrivingSession:
             "gps_distance_km": self.gps_distance_km,
             "last_gps_lat": self.last_gps_lat,
             "last_gps_lon": self.last_gps_lon,
-            "last_aux_power_kw": self.last_aux_power_kw,
-            "last_aux_update_at": self.last_aux_update_at,
-            "accumulated_aux_kwh": self.accumulated_aux_kwh,
             "trip_start_soc": self.trip_start_soc,
             "trip_start_mileage": self.trip_start_mileage,
-            "trip_total_aux_kwh": self.trip_total_aux_kwh,
         }
 
     @classmethod
@@ -125,13 +114,9 @@ class DrivingSession:
             # GPS position is stale after restore — new readings start fresh
             last_gps_lat=None,
             last_gps_lon=None,
-            last_aux_power_kw=data.get("last_aux_power_kw", 0.0),
-            last_aux_update_at=data.get("last_aux_update_at", 0.0),
-            accumulated_aux_kwh=data.get("accumulated_aux_kwh", 0.0),
             # Backwards-compatible: default to current anchor values
             trip_start_soc=data.get("trip_start_soc", anchor_soc),
             trip_start_mileage=data.get("trip_start_mileage", anchor_mileage),
-            trip_total_aux_kwh=data.get("trip_total_aux_kwh", 0.0),
         )
 
 
@@ -375,7 +360,6 @@ class MagicSOCPredictor:
         if session is None:
             return
         # Skip no-op re-anchors (duplicate SOC/mileage from MQTT bursts).
-        # Without this guard, accumulated_aux_kwh is wiped on every duplicate.
         if session.anchor_soc == new_soc and session.anchor_mileage == current_mileage:
             return
         old_anchor = session.anchor_soc
@@ -398,9 +382,6 @@ class MagicSOCPredictor:
             session.anchor_soc = new_soc
             session.last_predicted_soc = new_soc
         session.anchor_mileage = current_mileage
-        # Transfer segment aux to trip total before resetting for new segment
-        session.trip_total_aux_kwh += session.accumulated_aux_kwh
-        session.accumulated_aux_kwh = 0.0
         # Reset GPS distance so fallback doesn't use pre-re-anchor distance
         session.gps_distance_km = 0.0
         session.last_gps_lat = None
@@ -455,23 +436,8 @@ class MagicSOCPredictor:
                 self._on_learning_updated()
             return
 
-        # Calculate measured consumption, subtracting aux energy to learn pure driving rate
         total_energy_kwh = (soc_drop / 100.0) * session.battery_capacity_kwh
-        aux_energy = session.trip_total_aux_kwh + self._get_aux_energy(session)
-        driving_energy_kwh = total_energy_kwh - aux_energy
-        # Guard: if aux energy exceeds total (bad data), fall back to total
-        if driving_energy_kwh < 0:
-            driving_energy_kwh = total_energy_kwh
-        if aux_energy > 0:
-            _LOGGER.debug(
-                "Magic SOC: Trip energy for %s: total=%.2f kWh, aux=%.2f kWh, driving=%.2f kWh (%.1f km)",
-                redact_vin(vin),
-                total_energy_kwh,
-                aux_energy,
-                driving_energy_kwh,
-                distance,
-            )
-        measured_consumption = driving_energy_kwh / distance
+        measured_consumption = total_energy_kwh / distance
 
         if not MIN_VALID_CONSUMPTION <= measured_consumption <= MAX_VALID_CONSUMPTION:
             _LOGGER.debug(
@@ -536,42 +502,7 @@ class MagicSOCPredictor:
         session.last_gps_lat = lat
         session.last_gps_lon = lon
 
-    def update_aux_power(self, vin: str, power_kw: float) -> None:
-        """Update auxiliary power reading during active driving session.
-
-        Integrates aux power over time using trapezoidal rule.
-        """
-        if power_kw < 0 or power_kw > MAX_AUX_POWER_KW:
-            return
-
-        session = self._driving_sessions.get(vin)
-        if session is None:
-            return
-
-        now = time.time()
-        if session.last_aux_update_at > 0:
-            dt_seconds = now - session.last_aux_update_at
-            # Cap gap to prevent spurious energy after HA restart
-            if dt_seconds > AUX_EXTRAPOLATION_MAX_SECONDS:
-                dt_seconds = AUX_EXTRAPOLATION_MAX_SECONDS
-            dt_hours = dt_seconds / 3600.0
-            if dt_hours > 0:
-                avg_power = (session.last_aux_power_kw + power_kw) / 2.0
-                session.accumulated_aux_kwh += avg_power * dt_hours
-
-        session.last_aux_power_kw = power_kw
-        session.last_aux_update_at = now
-
     # --- Prediction ---
-
-    def _get_aux_energy(self, session: DrivingSession) -> float:
-        """Get total aux energy including capped extrapolation."""
-        aux_energy = session.accumulated_aux_kwh
-        if session.last_aux_update_at > 0 and session.last_aux_power_kw > 0:
-            age = time.time() - session.last_aux_update_at
-            if age < AUX_EXTRAPOLATION_MAX_SECONDS:
-                aux_energy += session.last_aux_power_kw * (age / 3600.0)
-        return aux_energy
 
     def get_magic_soc(self, vin: str, bmw_soc: float | None, mileage: float | None) -> float | None:
         """Get Magic SOC prediction.
@@ -596,9 +527,7 @@ class MagicSOCPredictor:
             if delta_km == 0.0 and session.gps_distance_km > 0:
                 delta_km = session.gps_distance_km
             if session.battery_capacity_kwh > 0:
-                driving_energy = delta_km * session.consumption_kwh_per_km
-                aux_energy = self._get_aux_energy(session)
-                energy_used = driving_energy + aux_energy
+                energy_used = delta_km * session.consumption_kwh_per_km
                 soc_drop = (energy_used / session.battery_capacity_kwh) * 100.0
                 predicted = session.anchor_soc - soc_drop
                 # Clamp to valid range, monotonically decreasing
@@ -666,8 +595,6 @@ class MagicSOCPredictor:
         # Active session info
         if session is not None and session.gps_distance_km > 0:
             attrs["driving_distance_km"] = round(session.gps_distance_km, 1)
-        if session is not None and session.accumulated_aux_kwh > 0:
-            attrs["aux_energy_kwh"] = round(session.accumulated_aux_kwh, 2)
         if session is not None:
             elapsed_h = (time.time() - session.created_at) / 3600.0
             if elapsed_h > 0 and session.last_mileage > 0:
