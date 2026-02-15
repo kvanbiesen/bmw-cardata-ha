@@ -1436,51 +1436,6 @@ class CardataCoordinator:
             # - TypeError: unexpected None or wrong type in chain
             return None
 
-    async def async_get_state(self, vin: str, descriptor: str) -> DescriptorState | None:
-        """Get state for a descriptor with proper lock acquisition."""
-        async with self._lock:
-            # Predicted SOC is ALWAYS calculated dynamically
-            if descriptor == PREDICTED_SOC_DESCRIPTOR:
-                predicted_soc = self.get_predicted_soc(vin)
-                if predicted_soc is not None:
-                    return DescriptorState(value=round(predicted_soc, 1), unit="%", timestamp=None)
-                return None
-
-            # Magic SOC is ALWAYS calculated dynamically
-            if descriptor == MAGIC_SOC_DESCRIPTOR:
-                magic_soc = self.get_magic_soc(vin)
-                if magic_soc is not None:
-                    return DescriptorState(value=round(magic_soc, 1), unit="%", timestamp=None)
-                return None
-
-            # Derived fuel range is ALWAYS calculated dynamically
-            if descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
-                fuel_range = self.get_derived_fuel_range(vin)
-                if fuel_range is not None:
-                    return DescriptorState(value=fuel_range, unit="km", timestamp=None)
-                return None
-
-            # Derived isMoving: try derived first, fall back to stored (BMW-provided)
-            if descriptor == "vehicle.isMoving":
-                derived = self.get_derived_is_moving(vin)
-                if derived is not None:
-                    return DescriptorState(value=derived, unit=None, timestamp=None)
-                # Fall back to stored value (might be BMW-provided via MQTT)
-                vehicle_data = self.data.get(vin)
-                if vehicle_data:
-                    state = vehicle_data.get(descriptor)
-                    if state is not None:
-                        return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
-                return None
-
-            vehicle_data = self.data.get(vin)
-            if vehicle_data is None:
-                return None
-            state = vehicle_data.get(descriptor)
-            if state is None:
-                return None
-            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
-
     def iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
         """Iterate over descriptors (sync version for platform setup).
 
