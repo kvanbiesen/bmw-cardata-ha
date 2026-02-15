@@ -224,8 +224,29 @@ class CardataCoordinator:
             current_state = self.get_derived_is_moving(vin)
             previous_state = self._last_derived_is_moving.get(vin)
             if current_state != previous_state:
+                _LOGGER.debug(
+                    "isMoving state changed for %s: %s -> %s",
+                    redact_vin(vin),
+                    previous_state,
+                    current_state,
+                )
                 self._last_derived_is_moving[vin] = current_state
                 self._safe_dispatcher_send(self.signal_update, vin, "vehicle.isMoving")
+
+                # Trip ended (moving -> stopped)
+                if previous_state is True and current_state is False:
+                    runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
+                    if runtime is not None:
+                        runtime.request_trip_poll(vin)
+                    self._end_driving_session_from_state(vin)
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
+
+                # Trip started (stopped -> moving)
+                if previous_state is not True and current_state is True:
+                    self._anchor_driving_session_from_state(vin)
+                    if self._magic_soc.has_signaled_magic_soc_entity(vin):
+                        self._safe_dispatcher_send(self.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
         self._magic_soc.update_driving_gps(vin, lat, lon)
         # Signal magic_soc update when GPS distance advances during driving
