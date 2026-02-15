@@ -304,7 +304,9 @@ The integration is organized into focused modules:
 | `soc_types.py` | Charging data types: `LearnedEfficiency`, `PendingSession`, `ChargingSession` |
 | `soc_learning.py` | Charging efficiency EMA learning, session finalization, persistence |
 | `magic_soc.py` | Driving SOC: distance-based consumption prediction, adaptive EMA learning |
-| `stream.py` | MQTT connection management, circuit breaker, credential hot-swap |
+| `stream.py` | MQTT connection management, credential hot-swap |
+| `stream_circuit_breaker.py` | Circuit breaker for reconnection rate limiting |
+| `stream_reconnect.py` | Reconnection, unauthorized handling, retry scheduling |
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
 | `config_flow.py` | Setup, reauthorization, and options UI flows |
