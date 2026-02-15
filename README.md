@@ -295,7 +295,8 @@ The integration is organized into focused modules:
 
 | Module | Purpose |
 |--------|---------|
-| `__init__.py` | Entry point: setup/unload, token refresh loop, ghost device cleanup |
+| `__init__.py` | Thin entry point: delegates to `lifecycle.py` |
+| `lifecycle.py` | Setup/unload orchestration, ghost device cleanup |
 | `coordinator.py` | Central state management, message dispatch, entity signaling |
 | `soc_wiring.py` | SOC/charging/driving prediction wiring between descriptors and prediction engines |
 | `device_info.py` | Device metadata building, BEV detection, state restoration |
@@ -311,7 +312,7 @@ The integration is organized into focused modules:
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
 | `config_flow.py` | Setup, reauthorization, and options UI flows |
 | `bootstrap.py` | VIN discovery, metadata fetch, container creation |
-| `auth.py` | Token refresh, reauth flow, stream error handling |
+| `auth.py` | Token refresh loop, reauth flow, stream error handling |
 | `telematics.py` | Scheduled API polling, trip-end/charge-end triggers |
 | `container.py` | Telematic container CRUD, signature-based reuse |
 
