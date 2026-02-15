@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -65,9 +64,6 @@ from .units import normalize_unit
 from .utils import get_all_registered_vins, is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
-
-# Pre-compiled regex for AC phase parsing (avoids recompilation on each message)
-_AC_PHASE_PATTERN = re.compile(r"(\d{1,2})")
 
 _OVERULE_AUX_POWER = (
     0.3  # kW - estimated auxiliary power load during charging (for SOC prediction) - set to zero to use bmw values
