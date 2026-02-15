@@ -300,7 +300,9 @@ The integration is organized into focused modules:
 | `soc_wiring.py` | SOC/charging/driving prediction wiring between descriptors and prediction engines |
 | `device_info.py` | Device metadata building, BEV detection, state restoration |
 | `coordinator_housekeeping.py` | Diagnostics, stale VIN cleanup, old descriptor eviction, connection events |
-| `soc_prediction.py` | Charging SOC: trapezoidal energy integration, EMA efficiency learning |
+| `soc_prediction.py` | Charging SOC: trapezoidal energy integration, session management |
+| `soc_types.py` | Charging data types: `LearnedEfficiency`, `PendingSession`, `ChargingSession` |
+| `soc_learning.py` | Charging efficiency EMA learning, session finalization, persistence |
 | `magic_soc.py` | Driving SOC: distance-based consumption prediction, adaptive EMA learning |
 | `stream.py` | MQTT connection management, circuit breaker, credential hot-swap |
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
