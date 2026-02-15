@@ -1059,9 +1059,6 @@ class CardataStreamManager:
         finally:
             self._credential_lock.release()
 
-    async def async_update_token(self, id_token: str | None) -> None:
-        await self.async_update_credentials(id_token=id_token)
-
     def _cancel_retry(self) -> None:
         """Cancel retry task (sync version for MQTT callbacks)."""
         if self._retry_task and not self._retry_task.done():
