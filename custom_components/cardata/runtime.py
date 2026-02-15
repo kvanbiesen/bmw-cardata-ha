@@ -262,25 +262,6 @@ def cleanup_entry_lock(entry_id: str) -> None:
         _LOGGER.debug("Cleaned up lock for entry %s", entry_id)
 
 
-def cleanup_orphaned_locks(hass: HomeAssistant) -> int:
-    """Remove locks for entries that no longer exist.
-
-    Returns the number of orphaned locks removed.
-    """
-    from .const import DOMAIN
-
-    active_entry_ids = {entry.entry_id for entry in hass.config_entries.async_entries(DOMAIN)}
-    orphaned = [entry_id for entry_id in _entry_locks if entry_id not in active_entry_ids]
-
-    for entry_id in orphaned:
-        _entry_locks.pop(entry_id, None)
-
-    if orphaned:
-        _LOGGER.info("Cleaned up %d orphaned entry locks", len(orphaned))
-
-    return len(orphaned)
-
-
 async def async_update_entry_data(
     hass: HomeAssistant,
     entry: ConfigEntry,
