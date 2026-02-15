@@ -165,7 +165,6 @@ class CardataCoordinator:
     _signal_new_binary: str = field(default="", init=False)
     _signal_update: str = field(default="", init=False)
     _signal_diagnostics: str = field(default="", init=False)
-    _signal_telematic_api: str = field(default="", init=False)
     _signal_new_image: str = field(default="", init=False)
     _signal_metadata: str = field(default="", init=False)
 
@@ -175,7 +174,6 @@ class CardataCoordinator:
         self._signal_new_binary = f"{DOMAIN}_{self.entry_id}_new_binary"
         self._signal_update = f"{DOMAIN}_{self.entry_id}_update"
         self._signal_diagnostics = f"{DOMAIN}_{self.entry_id}_diagnostics"
-        self._signal_telematic_api = f"{DOMAIN}_{self.entry_id}_telematic_api"
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
 
@@ -194,10 +192,6 @@ class CardataCoordinator:
     @property
     def signal_diagnostics(self) -> str:
         return self._signal_diagnostics
-
-    @property
-    def signal_telematic_api(self) -> str:
-        return self._signal_telematic_api
 
     @property
     def signal_new_image(self) -> str:
