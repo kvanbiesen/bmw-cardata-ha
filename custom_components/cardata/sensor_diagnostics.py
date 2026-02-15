@@ -257,10 +257,13 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
 
 
 class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity):
-    "`"`"Diagnostic sensor for efficiency learning matrix data."`"`"
+    """Diagnostic sensor for efficiency learning matrix data."""
 
     _attr_should_poll = False
-    _attr_entity_category = EntityCategory.DIAGNOSTIC    _attr_entity_registry_enabled_default = False  # Hidden by default, enable in device settings    _attr_icon = "mdi:chart-line"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False  
+    # Hidden by default, enable in device settings
+    _attr_icon = "mdi:chart-line"
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "diagnostics_charging_matrix")
@@ -269,7 +272,7 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
         self._unsubscribe = None
 
     async def async_added_to_hass(self) -> None:
-        "`"`"Restore state and subscribe to learning updates."`"`"
+        """Restore state and subscribe to learning updates."""
         await super().async_added_to_hass()
 
         # Restore last state if available
@@ -289,14 +292,14 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
         self.schedule_update_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
-        "`"`"Unsubscribe from updates."`"`"
+        """Unsubscribe from updates."""
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
         await super().async_will_remove_from_hass()
 
     def _load_current_value(self) -> None:
-        "`"`"Load current efficiency learning status from coordinator."`"`"
+        """Load current efficiency learning status from coordinator."""
         learned = self._coordinator._soc_predictor.get_learned_efficiency(self._vin)
         if not learned:
             self._attr_native_value = "no data"
@@ -312,16 +315,16 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
             self._attr_native_value = f"{total_ac_sessions} AC sessions, {num_conditions} conditions"
 
     def _handle_learning_update(self) -> None:
-        "`"`"Handle efficiency learning updates for all VINs."`"`"
+        """Handle efficiency learning updates for all VINs."""
         self._load_current_value()
         self.schedule_update_ha_state()
 
     @property
     def native_value(self) -> str | None:
-        "`"`"Return learning status summary."`"`"
+        """Return learning status summary."""
         return self._attr_native_value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        "`"`"Return efficiency learning matrix as attributes."`"`"
+        """Return efficiency learning matrix as attributes."""
         return self._coordinator.get_efficiency_learning_attributes(self._vin)

@@ -306,7 +306,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     efficiency_entities: dict[str, CardataEfficiencyLearningSensor] = {}
 
     def ensure_efficiency_learning_sensor(vin: str) -> None:
-        \"Ensure efficiency learning sensor exists for EVs/PHEVs with battery management.\"
+        """Ensure efficiency learning sensor exists for EVs/PHEVs with battery management."""
         if vin in efficiency_entities:
             return
 
@@ -439,7 +439,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
             if descriptor == "diagnostics_vehicle_metadata":
                 ensure_metadata_sensor(vin)
-        ensure_efficiency_learning_sensor(vin)
                 continue
 
             ensure_entity(vin, descriptor, assume_sensor=True)

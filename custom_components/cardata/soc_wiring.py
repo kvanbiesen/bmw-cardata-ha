@@ -682,4 +682,3 @@ def process_soc_descriptors(
                 coordinator._last_derived_is_moving[f"{vin}_bmw"] = new_is_moving
 
     return schedule_debounce
-

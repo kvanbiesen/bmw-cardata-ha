@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .const import LEARNING_RATE, MAX_ENERGY_GAP_SECONDS, MAX_VALID_EFFICIENCY, MIN_VALID_EFFICIENCY
+from .const import LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
 from .utils import redact_vin
 
 
@@ -109,6 +109,9 @@ class LearnedEfficiency:
                 ac_avg * 100,
             )
         return ac_avg
+
+    def update_efficiency(self, phases: int, voltage: float, current: float, is_dc: bool, true_efficiency: float) -> bool:
+        """Update efficiency with new measurement.
         Returns True if accepted, False if rejected as outlier.
         """
         if is_dc:
@@ -150,7 +153,7 @@ class LearnedEfficiency:
 
     def _calculate_ac_average(self) -> float:
         """Calculate weighted average AC efficiency from all learned conditions.
-        
+
         Returns weighted average based on sample counts, or default 0.90 if no data.
         """
         if not self.efficiency_matrix:
@@ -191,7 +194,7 @@ class LearnedEfficiency:
         """Create from dictionary (backward compatible with old format)."""
         import logging
         _LOGGER = logging.getLogger(__name__)
-        
+
         try:
             learned = cls(
                 voltage_brackets=data.get("voltage_brackets", [240, 410, 810]),
@@ -218,7 +221,7 @@ class LearnedEfficiency:
                         learned.efficiency_matrix[condition] = entry
                     except (ValueError, KeyError) as err:
                         _LOGGER.warning("Failed to deserialize efficiency entry %s: %s", key, err)
-            
+
             # Backward compatibility: migrate old flat AC efficiency to matrix
             elif "ac_efficiency" in data and data.get("ac_session_count", 0) > 0:
                 # Create a default condition for migrated data (1-phase, 240V, 16A)
@@ -230,6 +233,8 @@ class LearnedEfficiency:
                     sample_count=data["ac_session_count"],
                     history=[data["ac_efficiency"]]  # Initialize history with migrated value
                 )
+
+            return learned
         except Exception as err:
             _LOGGER.error("Failed to deserialize LearnedEfficiency: %s. Using defaults.", err)
             # Return default instance instead of crashing
