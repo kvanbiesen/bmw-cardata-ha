@@ -7,6 +7,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from .const import LOCK_ACQUIRE_TIMEOUT
 from .debug import debug_enabled
 
 if TYPE_CHECKING:
@@ -26,7 +27,7 @@ async def async_reconnect(manager: CardataStreamManager) -> None:
 
     # Phase 1: Stop the current client (requires lock, but quick)
     try:
-        await asyncio.wait_for(manager._connect_lock.acquire(), timeout=60.0)
+        await asyncio.wait_for(manager._connect_lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT)
     except TimeoutError:
         _LOGGER.debug("Connect lock held during reconnect; connection attempt already in progress")
         # Trigger status update in case we're already connected but status wasn't propagated
@@ -97,7 +98,7 @@ async def async_reconnect(manager: CardataStreamManager) -> None:
 
     # Phase 4: Start the client (requires lock)
     try:
-        await asyncio.wait_for(manager._connect_lock.acquire(), timeout=60.0)
+        await asyncio.wait_for(manager._connect_lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT)
     except TimeoutError:
         _LOGGER.debug("Connect lock held after backoff; another connection attempt in progress")
         return

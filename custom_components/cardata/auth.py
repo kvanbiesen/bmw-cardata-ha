@@ -37,7 +37,13 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DEFAULT_REFRESH_INTERVAL, DOMAIN, ERR_TOKEN_REFRESH_IN_PROGRESS, HV_BATTERY_DESCRIPTORS
+from .const import (
+    DEFAULT_REFRESH_INTERVAL,
+    DOMAIN,
+    ERR_TOKEN_REFRESH_IN_PROGRESS,
+    HV_BATTERY_DESCRIPTORS,
+    LOCK_ACQUIRE_TIMEOUT,
+)
 from .container import CardataContainerManager
 from .device_flow import CardataAuthError, refresh_tokens
 from .runtime import CardataRuntimeData, async_update_entry_data
@@ -586,7 +592,7 @@ async def async_token_refresh_loop(hass: HomeAssistant, entry_id: str) -> None:
                         runtime.container_manager,
                         buffer_seconds=DEFAULT_REFRESH_INTERVAL,
                     ),
-                    timeout=60.0,
+                    timeout=LOCK_ACQUIRE_TIMEOUT,
                 )
                 # Success - reset failure counters
                 if consecutive_auth_failures > 0:

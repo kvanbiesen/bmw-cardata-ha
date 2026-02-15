@@ -48,6 +48,9 @@ from .const import (
     DEBUG_LOG,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
+    DESC_FUEL_LEVEL,
+    DESC_REMAINING_FUEL,
+    DESC_SOC_HEADER,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
@@ -501,11 +504,8 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # and the sensor platform's ensure_entity callback is registered
         if coordinator.enable_magic_soc and coordinator._create_sensor_callback:
             for vin, vehicle_state in list(coordinator.data.items()):
-                has_battery = "vehicle.drivetrain.batteryManagement.header" in vehicle_state
-                has_fuel = (
-                    "vehicle.drivetrain.fuelSystem.remainingFuel" in vehicle_state
-                    or "vehicle.drivetrain.fuelSystem.level" in vehicle_state
-                )
+                has_battery = DESC_SOC_HEADER in vehicle_state
+                has_fuel = DESC_REMAINING_FUEL in vehicle_state or DESC_FUEL_LEVEL in vehicle_state
                 is_phev = has_fuel and not coordinator._is_metadata_bev(vin)
                 if has_battery and not is_phev and MAGIC_SOC_DESCRIPTOR not in vehicle_state:
                     coordinator._create_sensor_callback(vin, MAGIC_SOC_DESCRIPTOR)

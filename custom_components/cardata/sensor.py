@@ -62,6 +62,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     BATTERY_DESCRIPTORS,
+    DESC_REMAINING_FUEL,
+    DESC_TRAVELLED_DISTANCE,
     DOMAIN,
     LOCATION_ALTITUDE_DESCRIPTOR,
     LOCATION_HEADING_DESCRIPTOR,
@@ -110,7 +112,7 @@ UNIT_DEVICE_CLASS_MAP = _build_unit_device_class_map()
 
 # Tank volume descriptors should expose stored volume (HA device_class volume_storage)
 FUEL_VOLUME_DESCRIPTORS = {
-    "vehicle.drivetrain.fuelSystem.remainingFuel",
+    DESC_REMAINING_FUEL,
 }
 
 
@@ -385,7 +387,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
     def _determine_state_class(self) -> SensorStateClass | None:
         """Automatically determine state class based on unit."""
         # Special case: mileage
-        if self._descriptor == "vehicle.vehicle.travelledDistance":
+        if self._descriptor == DESC_TRAVELLED_DISTANCE:
             return SensorStateClass.TOTAL_INCREASING
 
         # Special case: predicted SOC

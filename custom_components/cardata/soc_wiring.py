@@ -11,6 +11,18 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from .const import (
+    DESC_BATTERY_SIZE_MAX,
+    DESC_CHARGING_AC_AMPERE,
+    DESC_CHARGING_AC_VOLTAGE,
+    DESC_CHARGING_LEVEL,
+    DESC_CHARGING_PHASES,
+    DESC_CHARGING_POWER,
+    DESC_CHARGING_STATUS,
+    DESC_FUEL_LEVEL,
+    DESC_MAX_ENERGY,
+    DESC_REMAINING_FUEL,
+    DESC_SOC_HEADER,
+    DESC_TRAVELLED_DISTANCE,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
     PREDICTED_SOC_DESCRIPTOR,
@@ -40,8 +52,8 @@ def _descriptor_float(state: DescriptorState | None) -> float | None:
 
 def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
     """Check if AC voltage x current data is available."""
-    voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
-    current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
+    voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
+    current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
     return bool(voltage and current)
 
 
@@ -74,7 +86,7 @@ def get_predicted_soc(
     bmw_soc = None
     if soc_predictor.is_charging(vin):
         session = soc_predictor._sessions.get(vin)
-        cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
+        cl = vehicle_data.get(DESC_CHARGING_LEVEL)
         if cl and cl.value is not None and session is not None:
             if cl.last_seen >= session.anchor_timestamp.timestamp():
                 try:
@@ -82,7 +94,7 @@ def get_predicted_soc(
                 except (TypeError, ValueError):
                     pass
     if bmw_soc is None:
-        soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+        soc_state = vehicle_data.get(DESC_SOC_HEADER)
         if soc_state and soc_state.value is not None:
             try:
                 bmw_soc = float(soc_state.value)
@@ -114,7 +126,7 @@ def get_magic_soc(
     is_charging = soc_predictor.is_charging(vin)
     if is_charging and not soc_predictor.is_phev(vin):
         session = soc_predictor._sessions.get(vin)
-        cl = vehicle_data.get("vehicle.drivetrain.electricEngine.charging.level")
+        cl = vehicle_data.get(DESC_CHARGING_LEVEL)
         if cl and cl.value is not None and session is not None:
             if cl.last_seen >= session.anchor_timestamp.timestamp():
                 try:
@@ -122,7 +134,7 @@ def get_magic_soc(
                 except (TypeError, ValueError):
                     pass
     if bmw_soc is None:
-        soc_state = vehicle_data.get("vehicle.drivetrain.batteryManagement.header")
+        soc_state = vehicle_data.get(DESC_SOC_HEADER)
         if soc_state and soc_state.value is not None:
             try:
                 bmw_soc = float(soc_state.value)
@@ -132,7 +144,7 @@ def get_magic_soc(
     if is_charging:
         return soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
 
-    mileage_state = vehicle_data.get("vehicle.vehicle.travelledDistance")
+    mileage_state = vehicle_data.get(DESC_TRAVELLED_DISTANCE)
     mileage = None
     if mileage_state and mileage_state.value is not None:
         try:
@@ -167,7 +179,7 @@ def anchor_soc_session(
     Must be called while holding _lock.
     """
     current_soc: float | None = None
-    soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+    soc_state = vehicle_state.get(DESC_SOC_HEADER)
     if soc_state and soc_state.value is not None:
         try:
             current_soc = float(soc_state.value)
@@ -198,11 +210,11 @@ def anchor_soc_session(
         )
 
     if capacity_kwh is None or capacity_kwh <= 0:
-        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+        capacity_state = vehicle_state.get(DESC_MAX_ENERGY)
         capacity_kwh = _descriptor_float(capacity_state)
 
     if capacity_kwh is None or capacity_kwh <= 0:
-        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
+        capacity_state = vehicle_state.get(DESC_BATTERY_SIZE_MAX)
         capacity_kwh = _descriptor_float(capacity_state)
 
     if capacity_kwh is None or capacity_kwh <= 0:
@@ -244,7 +256,7 @@ def _seed_power_after_anchor(
     aux_kw = _get_aux_kw(vehicle_state)
 
     if charging_method == "DC":
-        power_state = vehicle_state.get("vehicle.powertrain.electric.battery.charging.power")
+        power_state = vehicle_state.get(DESC_CHARGING_POWER)
         if power_state and power_state.value is not None:
             try:
                 power_val = float(power_state.value)
@@ -254,13 +266,13 @@ def _seed_power_after_anchor(
             except (TypeError, ValueError):
                 pass
     else:
-        voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
-        current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
-        phases = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber"))
+        voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
+        current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
+        phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
         if voltage and current:
             soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
         else:
-            power_state = vehicle_state.get("vehicle.powertrain.electric.battery.charging.power")
+            power_state = vehicle_state.get(DESC_CHARGING_POWER)
             if power_state and power_state.value is not None:
                 try:
                     power_val = float(power_state.value)
@@ -281,7 +293,7 @@ def end_soc_session(
 
     Must be called while holding _lock.
     """
-    soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+    soc_state = vehicle_state.get(DESC_SOC_HEADER)
     current_soc = None
     if soc_state and soc_state.value is not None:
         try:
@@ -325,7 +337,7 @@ def anchor_driving_session(
         _LOGGER.debug("Magic SOC: Skipping anchor for %s (charging active)", redact_vin(vin))
         return
 
-    soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+    soc_state = vehicle_state.get(DESC_SOC_HEADER)
     current_soc: float | None = None
     if soc_state and soc_state.value is not None:
         try:
@@ -343,7 +355,7 @@ def anchor_driving_session(
             redact_vin(vin),
         )
 
-    mileage_state = vehicle_state.get("vehicle.vehicle.travelledDistance")
+    mileage_state = vehicle_state.get(DESC_TRAVELLED_DISTANCE)
     if not mileage_state or mileage_state.value is None:
         _LOGGER.debug("Magic SOC: Cannot anchor %s — no mileage in vehicle_state", redact_vin(vin))
         return
@@ -363,10 +375,10 @@ def anchor_driving_session(
         )
 
     if capacity_kwh is None or capacity_kwh <= 0:
-        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+        capacity_state = vehicle_state.get(DESC_MAX_ENERGY)
         capacity_kwh = _descriptor_float(capacity_state)
     if capacity_kwh is None or capacity_kwh <= 0:
-        capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
+        capacity_state = vehicle_state.get(DESC_BATTERY_SIZE_MAX)
         capacity_kwh = _descriptor_float(capacity_state)
 
     if capacity_kwh is not None and capacity_kwh > 0:
@@ -405,7 +417,7 @@ def end_driving_session(
 
     Must be called while holding _lock.
     """
-    soc_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.header")
+    soc_state = vehicle_state.get(DESC_SOC_HEADER)
     end_soc = None
     if soc_state and soc_state.value is not None:
         try:
@@ -413,7 +425,7 @@ def end_driving_session(
         except (TypeError, ValueError):
             pass
 
-    mileage_state = vehicle_state.get("vehicle.vehicle.travelledDistance")
+    mileage_state = vehicle_state.get(DESC_TRAVELLED_DISTANCE)
     end_mileage = None
     if mileage_state and mileage_state.value is not None:
         try:
@@ -450,7 +462,7 @@ def process_soc_descriptors(
             continue
         value = descriptor_payload.get("value")
 
-        if descriptor == "vehicle.drivetrain.electricEngine.charging.status":
+        if descriptor == DESC_CHARGING_STATUS:
             was_charging = soc_predictor.is_charging(vin)
             status_changed = soc_predictor.update_charging_status(vin, str(value) if value else None)
             if status_changed:
@@ -476,7 +488,7 @@ def process_soc_descriptors(
             if value:
                 soc_predictor.set_charging_method(vin, str(value))
 
-        elif descriptor == "vehicle.powertrain.electric.battery.charging.power":
+        elif descriptor == DESC_CHARGING_POWER:
             method = soc_predictor.get_charging_method(vin)
             if method == "DC" or (method is not None and not _has_ac_power_data(vehicle_state)):
                 power_kw = None
@@ -501,13 +513,13 @@ def process_soc_descriptors(
                             schedule_debounce = True
 
         elif descriptor in (
-            "vehicle.drivetrain.electricEngine.charging.acAmpere",
-            "vehicle.drivetrain.electricEngine.charging.acVoltage",
+            DESC_CHARGING_AC_AMPERE,
+            DESC_CHARGING_AC_VOLTAGE,
         ):
             if soc_predictor.is_charging(vin) and soc_predictor.get_charging_method(vin) != "DC":
-                voltage = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage"))
-                current = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere"))
-                phases = _descriptor_float(vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber"))
+                voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
+                current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
+                phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
                 aux_kw = _get_aux_kw(vehicle_state)
                 if soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw):
                     if soc_predictor.has_signaled_entity(vin):
@@ -517,14 +529,14 @@ def process_soc_descriptors(
                         if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                             schedule_debounce = True
 
-        elif descriptor == "vehicle.drivetrain.batteryManagement.header":
+        elif descriptor == DESC_SOC_HEADER:
             if value is not None:
                 try:
                     soc_val = float(value)
                     skip_stale_header = False
                     if soc_predictor.is_phev(vin) and soc_predictor.is_charging(vin):
                         session = soc_predictor._sessions.get(vin)
-                        cl = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
+                        cl = vehicle_state.get(DESC_CHARGING_LEVEL)
                         if (
                             session is not None
                             and cl is not None
@@ -546,7 +558,7 @@ def process_soc_descriptors(
                         if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                             schedule_debounce = True
                     if vin in magic_soc_pred._driving_sessions:
-                        mileage_state = vehicle_state.get("vehicle.vehicle.travelledDistance")
+                        mileage_state = vehicle_state.get(DESC_TRAVELLED_DISTANCE)
                         if mileage_state and mileage_state.value is not None:
                             try:
                                 current_mileage = float(mileage_state.value)
@@ -565,7 +577,7 @@ def process_soc_descriptors(
                 except (TypeError, ValueError):
                     pass
 
-        elif descriptor == "vehicle.drivetrain.electricEngine.charging.level":
+        elif descriptor == DESC_CHARGING_LEVEL:
             if value is not None and soc_predictor.is_charging(vin):
                 try:
                     level_val = float(value)
@@ -586,7 +598,7 @@ def process_soc_descriptors(
                 except (TypeError, ValueError):
                     pass
 
-        elif descriptor == "vehicle.vehicle.travelledDistance":
+        elif descriptor == DESC_TRAVELLED_DISTANCE:
             if value is not None:
                 try:
                     mileage = float(value)
@@ -615,8 +627,8 @@ def process_soc_descriptors(
                 coordinator._motion_detector.update_door_lock_state(vin, str(value))
 
         elif descriptor in (
-            "vehicle.drivetrain.batteryManagement.batterySizeMax",
-            "vehicle.drivetrain.batteryManagement.maxEnergy",
+            DESC_BATTERY_SIZE_MAX,
+            DESC_MAX_ENERGY,
         ):
             if soc_predictor.is_charging(vin) and not soc_predictor.has_active_session(vin):
                 _LOGGER.debug(
@@ -627,17 +639,14 @@ def process_soc_descriptors(
                 anchor_soc_session(soc_predictor, magic_soc_pred, vin, vehicle_state, manual_cap)
 
     # Check if predicted_soc sensor should be created
-    if "vehicle.drivetrain.batteryManagement.header" in vehicle_state:
+    if DESC_SOC_HEADER in vehicle_state:
         if PREDICTED_SOC_DESCRIPTOR not in vehicle_state:
             if pending.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
                 schedule_debounce = True
 
     # Detect PHEV
-    has_hv_battery = "vehicle.drivetrain.batteryManagement.header" in vehicle_state
-    has_fuel_system = (
-        "vehicle.drivetrain.fuelSystem.remainingFuel" in vehicle_state
-        or "vehicle.drivetrain.fuelSystem.level" in vehicle_state
-    )
+    has_hv_battery = DESC_SOC_HEADER in vehicle_state
+    has_fuel_system = DESC_REMAINING_FUEL in vehicle_state or DESC_FUEL_LEVEL in vehicle_state
     if has_hv_battery:
         is_phev = has_fuel_system and not coordinator._is_metadata_bev(vin)
         soc_predictor.set_vehicle_is_phev(vin, is_phev)

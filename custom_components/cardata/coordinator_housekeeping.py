@@ -8,6 +8,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .const import (
+    DESC_CHARGING_AC_AMPERE,
+    DESC_CHARGING_AC_VOLTAGE,
+    DESC_CHARGING_PHASES,
+    DESC_CHARGING_STATUS,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
     PREDICTED_SOC_DESCRIPTOR,
@@ -44,7 +48,7 @@ async def async_handle_connection_event(
                 if not vehicle_state:
                     continue
 
-                status_state = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.status")
+                status_state = vehicle_state.get(DESC_CHARGING_STATUS)
                 if status_state and status_state.value:
                     status_val = str(status_state.value)
                     coordinator._soc_predictor.update_charging_status(vin, status_val)
@@ -66,15 +70,9 @@ async def async_handle_connection_event(
                             manual_cap,
                         )
 
-                        voltage = _descriptor_float(
-                            vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acVoltage")
-                        )
-                        current = _descriptor_float(
-                            vehicle_state.get("vehicle.drivetrain.electricEngine.charging.acAmpere")
-                        )
-                        phases = _descriptor_float(
-                            vehicle_state.get("vehicle.drivetrain.electricEngine.charging.phaseNumber")
-                        )
+                        voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
+                        current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
+                        phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
 
                         if voltage and current:
                             aux_kw = _get_aux_kw(vehicle_state)

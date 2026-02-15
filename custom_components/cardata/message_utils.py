@@ -29,18 +29,28 @@ from __future__ import annotations
 
 from typing import Any
 
+from .const import (
+    DESC_CHARGING_AC_AMPERE,
+    DESC_CHARGING_AC_VOLTAGE,
+    DESC_CHARGING_PHASES,
+    DESC_CHARGING_POWER,
+    DESC_CHARGING_STATUS,
+    DESC_MAX_ENERGY,
+    DESC_SOC_HEADER,
+)
+
 # Descriptors that require parsed timestamps for SOC/charging tracking
 TIMESTAMPED_SOC_DESCRIPTORS = frozenset(
     {
-        "vehicle.drivetrain.batteryManagement.header",
-        "vehicle.drivetrain.batteryManagement.maxEnergy",
-        "vehicle.powertrain.electric.battery.charging.power",
-        "vehicle.drivetrain.electricEngine.charging.status",
+        DESC_SOC_HEADER,
+        DESC_MAX_ENERGY,
+        DESC_CHARGING_POWER,
+        DESC_CHARGING_STATUS,
         "vehicle.powertrain.electric.battery.stateOfCharge.target",
         "vehicle.vehicle.avgAuxPower",
-        "vehicle.drivetrain.electricEngine.charging.acVoltage",
-        "vehicle.drivetrain.electricEngine.charging.acAmpere",
-        "vehicle.drivetrain.electricEngine.charging.phaseNumber",
+        DESC_CHARGING_AC_VOLTAGE,
+        DESC_CHARGING_AC_AMPERE,
+        DESC_CHARGING_PHASES,
     }
 )
 

@@ -295,6 +295,7 @@ The integration is organized into focused modules:
 
 | Module | Purpose |
 |--------|---------|
+| `const.py` | Shared constants: descriptor paths, timeouts, domain identifiers |
 | `__init__.py` | Thin entry point: delegates to `lifecycle.py` |
 | `lifecycle.py` | Setup/unload orchestration, ghost device cleanup |
 | `coordinator.py` | Central state management, message dispatch, entity signaling |

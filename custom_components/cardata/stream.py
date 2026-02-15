@@ -42,6 +42,7 @@ import paho.mqtt.client as mqtt
 from homeassistant.core import HomeAssistant
 
 from . import stream_reconnect
+from .const import LOCK_ACQUIRE_TIMEOUT
 from .debug import debug_enabled
 from .stream_circuit_breaker import CircuitBreaker
 from .utils import redact_vin_in_text, redact_vin_payload
@@ -169,7 +170,7 @@ class CardataStreamManager:
     async def async_start(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
         try:
-            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT)
         except TimeoutError:
             _LOGGER.debug("Connect lock held for >60s; connection attempt already in progress")
             # Trigger status update in case we're already connected but status wasn't propagated
@@ -301,7 +302,7 @@ class CardataStreamManager:
     async def async_stop(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
         try:
-            await asyncio.wait_for(self._connect_lock.acquire(), timeout=60.0)
+            await asyncio.wait_for(self._connect_lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT)
         except TimeoutError:
             _LOGGER.warning("Connect lock held during stop; forcing cleanup")
             # Force stop without lock - resource cleanup is critical
@@ -676,7 +677,7 @@ class CardataStreamManager:
 
         # Acquire lock with timeout to prevent indefinite blocking
         try:
-            await asyncio.wait_for(self._credential_lock.acquire(), timeout=60.0)
+            await asyncio.wait_for(self._credential_lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT)
         except TimeoutError:
             _LOGGER.debug("Credential lock held; credential update already in progress")
             return
