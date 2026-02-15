@@ -173,7 +173,7 @@ class CardataCoordinator:
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
         self._signal_efficiency_learning = f"{DOMAIN}_{self.entry_id}_efficiency_learning"
-        
+
         # Set up efficiency learning callback
         self._soc_predictor.set_learning_callback(self._handle_learning_update)
 
@@ -398,7 +398,7 @@ class CardataCoordinator:
     def _calculate_std(self, values: list[float]) -> float:
         """Calculate standard deviation of values."""
         if len(values) < 2:
-           return 0.0
+            return 0.0
         mean = sum(values) / len(values)
         variance = sum((x - mean) ** 2 for x in values) / len(values)
         return round(variance**0.5 * 100, 2)  # Convert to percentage points
@@ -408,9 +408,9 @@ class CardataCoordinator:
         if len(history) < 3:
             return "stable"
         recent = history[-3:]
-        if all(recent[i] > recent[i-1] for i in range(1, len(recent))):
+        if all(recent[i] > recent[i - 1] for i in range(1, len(recent))):
             return "increasing"
-        if all(recent[i] < recent[i-1] for i in range(1, len(recent))):
+        if all(recent[i] < recent[i - 1] for i in range(1, len(recent))):
             return "decreasing"
         return "stable"
 
@@ -825,4 +825,3 @@ class CardataCoordinator:
                 return self.apply_basic_data(vin, payload)
         finally:
             await self._basic_data_pending.release(vin)
-
