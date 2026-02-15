@@ -462,7 +462,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             all_vins = all_vins & coordinator._allowed_vins
         for vin in all_vins:
             ensure_metadata_sensor(vin)
-        ensure_efficiency_learning_sensor(vin)
+            ensure_efficiency_learning_sensor(vin)
     except Exception as err:
         _LOGGER.warning("Error creating metadata sensors: %s", err)
 
