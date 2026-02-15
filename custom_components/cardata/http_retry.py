@@ -137,11 +137,6 @@ class HttpResponse:
         """Check if response indicates authentication error."""
         return self.status in (401, 403)
 
-    @property
-    def is_server_error(self) -> bool:
-        """Check if response indicates server error."""
-        return 500 <= self.status < 600
-
 
 async def async_request_with_retry(
     session: aiohttp.ClientSession,
