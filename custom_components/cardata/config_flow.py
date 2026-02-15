@@ -783,37 +783,3 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 description_placeholders=flow_result.get("description_placeholders"),
             )
         return self.async_abort(reason="reauth_started")
-
-    async def async_step_remove(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Handle removal of config entry - prompt user about entity cleanup."""
-
-        if user_input is not None:
-            # User made their choice
-            delete_entities = user_input.get("delete_entities", False)
-
-            if delete_entities:
-                _LOGGER.info(
-                    "User chose to delete entities for entry %s",
-                    self.context["entry_id"],
-                )
-            else:
-                _LOGGER.debug(
-                    "User chose to keep entities for entry %s",
-                    self.context["entry_id"],
-                )
-
-            # Proceed with removal
-            return self.async_abort(reason="user_remove_completed")
-
-        # Show form asking user's preference
-        return self.async_show_form(
-            step_id="remove",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("delete_entities", default=False): bool,
-                }
-            ),
-            description_placeholders={
-                "warning": "[WARN] **Delete entities and history?**\n\nIf you check this box, ALL sensors for this integration will be permanently deleted from Home Assistant, including their historical data.\n\nOnly check this if you want to completely remove all traces, or if you have orphaned entities with wrong names.\n\n**Unchecked (default)**: Entities will be kept and can be reused if you re-add the integration later.\n\n**Checked**: Entities will be permanently deleted. They will be recreated fresh if you re-add the integration.",
-            },
-        )
