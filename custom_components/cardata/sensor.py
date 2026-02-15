@@ -343,7 +343,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 coordinator state. Used when called from dispatcher signals.
         """
         ensure_metadata_sensor(vin)
-        ensure_efficiency_learning_sensor(vin)
 
         if (vin, descriptor) in entities:
             return
@@ -439,6 +438,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
             if descriptor == "diagnostics_vehicle_metadata":
                 ensure_metadata_sensor(vin)
+                continue
+
+            if descriptor == "diagnostics_charging_matrix":
+                ensure_efficiency_learning_sensor(vin)
                 continue
 
             ensure_entity(vin, descriptor, assume_sensor=True)
