@@ -443,8 +443,18 @@ class SOCPredictor:
         if session.battery_capacity_kwh <= 0:
             return session.last_predicted_soc
 
-        # Get efficiency (learned or default)
-        efficiency = soc_learning.get_efficiency(self._learned_efficiency, vin, session.charging_method)
+        # Get efficiency (learned or default) with charging parameters
+        phases = session.phases if hasattr(session, "phases") else 1
+        voltage = session.last_voltage if session.last_voltage else 230.0
+        current = session.last_current if session.last_current else 16.0
+        efficiency = soc_learning.get_efficiency(
+            self._learned_efficiency,
+            vin,
+            session.charging_method,
+            phases,
+            voltage,
+            current,
+        )
 
         # Use accumulated net energy (already has aux subtracted)
         energy_added_kwh = session.total_energy_kwh * efficiency
