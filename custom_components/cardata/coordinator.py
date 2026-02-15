@@ -1372,8 +1372,6 @@ class CardataCoordinator:
         - Defensive copy of returned state prevents external mutations
         - Exception handling catches concurrent modification edge cases
 
-        Use async_get_state() for async contexts that need guaranteed consistency.
-
         Returns:
             A defensive copy of the state, or None if not found/race condition.
         """
