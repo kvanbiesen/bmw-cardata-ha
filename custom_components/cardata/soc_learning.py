@@ -442,7 +442,7 @@ def get_efficiency(
     """
     learned = learned_efficiency.get(vin)
     if not learned:
-        return _DEFAULT_EFFICIENCY.dc_efficiency if charging_method == "DC" else _DEFAULT_EFFICIENCY.ac_efficiency
+        learned = _DEFAULT_EFFICIENCY
 
     is_dc = charging_method == "DC"
     return learned.get_efficiency(phases, voltage, current, is_dc, vin)
