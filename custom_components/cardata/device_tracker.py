@@ -131,7 +131,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # unique_id is already set in CardataEntity.__init__ as: f"{vin}_device_tracker"
 
         self._unsubscribe = None
-        self._debounce_handle: asyncio.TimerHandle | None = None
         self._base_name = "Location"
         # Update name to include vehicle name prefix
         self._update_name(write_state=False)
@@ -237,11 +236,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
         await super().async_will_remove_from_hass()
-
-        # Cancel any pending debounce
-        if self._debounce_handle is not None:
-            self._debounce_handle.cancel()
-            self._debounce_handle = None
 
         if self._unsubscribe:
             self._unsubscribe()
