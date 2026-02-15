@@ -141,8 +141,8 @@ def main() -> int:
         client.loop_forever()
     except KeyboardInterrupt:
         print("Disconnected by user")
-        client.disconnect()
-        return 0
+    client.disconnect()
+    return 0
 
 
 if __name__ == "__main__":

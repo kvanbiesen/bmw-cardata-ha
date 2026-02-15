@@ -147,25 +147,16 @@ class CardataStreamManager:
         future = asyncio.run_coroutine_threadsafe(coro, self.hass.loop)
         future.add_done_callback(_done_callback)
 
-    def _safe_loop_stop(self, client: mqtt.Client, force: bool = False) -> None:
+    def _safe_loop_stop(self, client: mqtt.Client) -> None:
         """Safely stop the MQTT loop, handling any exceptions.
 
         This ensures cleanup continues even if loop_stop() fails, preventing
         resource leaks from zombie MQTT threads.
         """
         try:
-            if force:
-                client.loop_stop(force=True)
-            else:
-                client.loop_stop()
+            client.loop_stop()
         except Exception as err:
             _LOGGER.warning("Error stopping MQTT loop: %s", err)
-            # Try force stop as fallback
-            if not force:
-                try:
-                    client.loop_stop(force=True)
-                except Exception:
-                    pass
 
     async def async_start(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
@@ -515,7 +506,7 @@ class CardataStreamManager:
             if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
                 if debug_enabled():
                     _LOGGER.debug("BMW MQTT connection refused shortly after disconnect; scheduling retry")
-                self._safe_loop_stop(client, force=True)
+                self._safe_loop_stop(client)
                 self._client = None
                 stream_reconnect.schedule_retry(self, 3)
                 return
