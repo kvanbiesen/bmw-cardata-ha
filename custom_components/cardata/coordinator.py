@@ -1097,8 +1097,25 @@ class CardataCoordinator:
                 if value is not None:
                     try:
                         soc_val = float(value)
-                        self._soc_predictor.update_bmw_soc(vin, soc_val)
-                        self._magic_soc.update_bmw_soc(vin, soc_val)
+                        # During PHEV charging, header often stays frozen at
+                        # pre-charge value while charging.level provides fresh
+                        # updates.  Skip update_bmw_soc to avoid stale header
+                        # corrupting _last_predicted_soc (mirrors read-side
+                        # guard in get_predicted_soc).
+                        skip_stale_header = False
+                        if self._soc_predictor.is_phev(vin) and self._soc_predictor.is_charging(vin):
+                            session = self._soc_predictor._sessions.get(vin)
+                            cl = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
+                            if (
+                                session is not None
+                                and cl is not None
+                                and cl.value is not None
+                                and cl.last_seen >= session.anchor_timestamp.timestamp()
+                            ):
+                                skip_stale_header = True
+                        if not skip_stale_header:
+                            self._soc_predictor.update_bmw_soc(vin, soc_val)
+                            self._magic_soc.update_bmw_soc(vin, soc_val)
                         # If charging but no session anchored, try to anchor now
                         # This handles cases where charging status arrived before SOC data
                         if self._soc_predictor.is_charging(vin) and not self._soc_predictor.has_active_session(vin):
@@ -1135,7 +1152,7 @@ class CardataCoordinator:
 
             # Sync charging.level to prediction during active charging
             # This provides fresher SOC updates than header during charging.
-            # Only syncs UP (never down) via update_bmw_soc.
+            # For BEVs: only syncs up. For PHEVs: may sync down (hybrid battery depletion).
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.level":
                 if value is not None and self._soc_predictor.is_charging(vin):
                     try:
