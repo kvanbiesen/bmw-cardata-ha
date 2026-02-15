@@ -28,15 +28,6 @@ class ChargingCondition:
             and self.current_bracket == other.current_bracket
         )
 
-    def to_tuple(self):
-        """For JSON serialization."""
-        return (self.phases, self.voltage_bracket, self.current_bracket)
-
-    @classmethod
-    def from_tuple(cls, data):
-        """From JSON deserialization."""
-        return cls(data[0], data[1], data[2])
-
 
 @dataclass
 class EfficiencyEntry:
@@ -121,7 +112,7 @@ class LearnedEfficiency:
         Returns True if accepted, False if rejected as outlier.
         """
         if is_dc:
-            # DC: use legacy learning
+            # DC: simple weighted average (not condition-dependent)
             old = self.dc_efficiency
             self.dc_efficiency = old * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
             self.dc_session_count += 1
