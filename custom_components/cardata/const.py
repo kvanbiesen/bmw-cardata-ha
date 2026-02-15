@@ -27,6 +27,23 @@
 
 DOMAIN = "cardata"
 
+# Individual descriptor constants (used across 3+ files)
+DESC_SOC_HEADER = "vehicle.drivetrain.batteryManagement.header"
+DESC_MAX_ENERGY = "vehicle.drivetrain.batteryManagement.maxEnergy"
+DESC_BATTERY_SIZE_MAX = "vehicle.drivetrain.batteryManagement.batterySizeMax"
+DESC_CHARGING_AC_VOLTAGE = "vehicle.drivetrain.electricEngine.charging.acVoltage"
+DESC_CHARGING_AC_AMPERE = "vehicle.drivetrain.electricEngine.charging.acAmpere"
+DESC_CHARGING_PHASES = "vehicle.drivetrain.electricEngine.charging.phaseNumber"
+DESC_CHARGING_STATUS = "vehicle.drivetrain.electricEngine.charging.status"
+DESC_CHARGING_LEVEL = "vehicle.drivetrain.electricEngine.charging.level"
+DESC_CHARGING_POWER = "vehicle.powertrain.electric.battery.charging.power"
+DESC_REMAINING_FUEL = "vehicle.drivetrain.fuelSystem.remainingFuel"
+DESC_FUEL_LEVEL = "vehicle.drivetrain.fuelSystem.level"
+DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
+
+# Lock acquisition timeout (seconds) — used for connect, credential, and token refresh locks
+LOCK_ACQUIRE_TIMEOUT = 60.0
+
 # Location descriptors
 LOCATION_LATITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.latitude"
 LOCATION_LONGITUDE_DESCRIPTOR = "vehicle.cabin.infotainment.navigation.currentLocation.longitude"
@@ -44,8 +61,8 @@ WINDOW_DESCRIPTORS = (
 
 # Battery descriptors for device class detection
 BATTERY_DESCRIPTORS = {
-    "vehicle.drivetrain.batteryManagement.header",
-    "vehicle.drivetrain.electricEngine.charging.level",
+    DESC_SOC_HEADER,
+    DESC_CHARGING_LEVEL,
     "vehicle.powertrain.electric.battery.stateOfCharge.target",
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
 }
@@ -97,9 +114,9 @@ HV_BATTERY_CONTAINER_NAME = "BMW CarData HV Battery"
 HV_BATTERY_CONTAINER_PURPOSE = "High voltage battery telemetry"
 HV_BATTERY_DESCRIPTORS = [
     # Current high-voltage battery state of charge
-    "vehicle.drivetrain.batteryManagement.header",
-    "vehicle.drivetrain.electricEngine.charging.acAmpere",
-    "vehicle.drivetrain.electricEngine.charging.acVoltage",
+    DESC_SOC_HEADER,
+    DESC_CHARGING_AC_AMPERE,
+    DESC_CHARGING_AC_VOLTAGE,
     "vehicle.powertrain.electric.battery.preconditioning.automaticMode.statusFeedback",
     "vehicle.vehicle.avgAuxPower",
     "vehicle.powertrain.tractionBattery.charging.port.anyPosition.flap.isOpen",
@@ -108,7 +125,7 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.powertrain.electric.battery.charging.acLimit.selected",
     "vehicle.drivetrain.electricEngine.charging.method",
     "vehicle.body.chargingPort.plugEventId",
-    "vehicle.drivetrain.electricEngine.charging.phaseNumber",
+    DESC_CHARGING_PHASES,
     "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
     "vehicle.trip.segment.accumulated.drivetrain.electricEngine.recuperationTotal",
     "vehicle.drivetrain.electricEngine.remainingElectricRange",
@@ -120,13 +137,13 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.drivetrain.electricEngine.charging.reasonChargingEnd",
     "vehicle.powertrain.electric.battery.stateOfCharge.target",
     "vehicle.body.chargingPort.lockedStatus",
-    "vehicle.drivetrain.electricEngine.charging.level",
+    DESC_CHARGING_LEVEL,
     "vehicle.powertrain.electric.battery.stateOfHealth.displayed",
     "vehicle.vehicleIdentification.basicVehicleData",
-    "vehicle.drivetrain.batteryManagement.batterySizeMax",
-    "vehicle.drivetrain.batteryManagement.maxEnergy",
-    "vehicle.powertrain.electric.battery.charging.power",
-    "vehicle.drivetrain.electricEngine.charging.status",
+    DESC_BATTERY_SIZE_MAX,
+    DESC_MAX_ENERGY,
+    DESC_CHARGING_POWER,
+    DESC_CHARGING_STATUS,
 ]
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"

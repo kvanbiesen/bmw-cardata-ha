@@ -58,7 +58,7 @@ class CardataRuntimeData:
     """Runtime data for a CarData integration entry."""
 
     stream: CardataStreamManager
-    refresh_task: asyncio.Task
+    refresh_task: asyncio.Task | None
     session: aiohttp.ClientSession
     coordinator: CardataCoordinator
     container_manager: CardataContainerManager | None

@@ -32,7 +32,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import requests
 
@@ -134,7 +134,7 @@ def resolve_base_url(base_url: str, openapi_path: Optional[str], server_index: i
     return url
 
 
-def main(argv: Optional[Iterable[str]] = None) -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Fetch BMW CarData information using an access token."

@@ -110,6 +110,7 @@ asyncio.set_event_loop(_LOOP)
 with atheris.instrument_imports():
     from cardata import const
     from cardata import coordinator as coordinator_module
+    from cardata import message_utils
     from homeassistant.core import HomeAssistant
 
 
@@ -121,7 +122,7 @@ KNOWN_DESCRIPTORS = list(const.HV_BATTERY_DESCRIPTORS) + [
     "vehicle.vehicleIdentification.basicVehicleData",
     "vehicle.isMoving",
 ]
-SOC_DESCRIPTORS = list(coordinator_module.TIMESTAMPED_SOC_DESCRIPTORS)
+SOC_DESCRIPTORS = list(message_utils.TIMESTAMPED_SOC_DESCRIPTORS)
 KNOWN_DESCRIPTORS.extend(SOC_DESCRIPTORS)
 
 

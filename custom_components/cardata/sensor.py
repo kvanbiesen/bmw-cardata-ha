@@ -28,12 +28,9 @@
 from __future__ import annotations
 
 import logging
-import math
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
@@ -41,27 +38,21 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
-    UnitOfEnergy,
-    UnitOfEnergyDistance,
-    UnitOfLength,
     UnitOfPower,
     UnitOfPressure,
     UnitOfTemperature,
-    UnitOfTime,
     UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util import dt as dt_util
 
 from .const import (
-    BATTERY_DESCRIPTORS,
+    DESC_TRAVELLED_DISTANCE,
     DOMAIN,
     LOCATION_ALTITUDE_DESCRIPTOR,
     LOCATION_HEADING_DESCRIPTOR,
@@ -75,165 +66,16 @@ from .const import (
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
+from .sensor_diagnostics import CardataDiagnosticsSensor, CardataVehicleMetadataSensor
+from .sensor_helpers import (
+    convert_value_for_unit,
+    get_device_class_for_unit,
+    map_unit_to_ha,
+    validate_restored_state,
+)
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
-
-
-# Build unit-to-device-class mapping
-def _build_unit_device_class_map() -> dict[str, SensorDeviceClass]:
-    """Build mapping of unit values to sensor device classes."""
-    mapping = {}
-
-    units_and_classes = [
-        (SensorDeviceClass.DISTANCE, UnitOfLength),
-        (SensorDeviceClass.PRESSURE, UnitOfPressure),
-        (SensorDeviceClass.ENERGY, UnitOfEnergy),
-        (SensorDeviceClass.ENERGY_DISTANCE, UnitOfEnergyDistance),
-        (SensorDeviceClass.POWER, UnitOfPower),
-        (SensorDeviceClass.CURRENT, UnitOfElectricCurrent),
-        (SensorDeviceClass.DURATION, UnitOfTime),
-        (SensorDeviceClass.VOLTAGE, UnitOfElectricPotential),
-        (SensorDeviceClass.VOLUME, UnitOfVolume),
-        (SensorDeviceClass.TEMPERATURE, UnitOfTemperature),
-    ]
-
-    for device_class, unit_enum in units_and_classes:
-        for unit in unit_enum:
-            mapping[unit.value] = device_class
-
-    return mapping
-
-
-UNIT_DEVICE_CLASS_MAP = _build_unit_device_class_map()
-
-
-# Tank volume descriptors should expose stored volume (HA device_class volume_storage)
-FUEL_VOLUME_DESCRIPTORS = {
-    "vehicle.drivetrain.fuelSystem.remainingFuel",
-}
-
-
-def map_unit_to_ha(unit: str | None) -> str | None:
-    """Map BMW unit strings to Home Assistant compatible units."""
-    if unit is None:
-        return None
-
-    unit_mapping = {
-        "l": UnitOfVolume.LITERS,
-        "celsius": UnitOfTemperature.CELSIUS,
-        "weeks": UnitOfTime.DAYS,
-        # Note: "w" is NOT mapped here - it's ambiguous (could be watts or weeks)
-        # BMW uses "weeks" explicitly for time, and "W" or "kW" for power
-        "months": UnitOfTime.DAYS,
-        "kPa": UnitOfPressure.KPA,
-        "kpa": UnitOfPressure.KPA,
-        "d": UnitOfTime.DAYS,
-    }
-
-    return unit_mapping.get(unit, unit)
-
-
-def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -> SensorDeviceClass | None:
-    """Get device class, with special handling for ambiguous units like 'm'."""
-    if descriptor:
-        descriptor_lower = descriptor.lower()
-        if unit is None:
-            return None
-        # Fuel tank volume is a stored volume, not a flowing volume
-        if descriptor in FUEL_VOLUME_DESCRIPTORS:
-            return getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME)
-        # Check if this is a battery-related descriptor with % unit
-        if descriptor and descriptor in BATTERY_DESCRIPTORS:
-            # Only apply battery class if unit is % (percentage)
-            normalized_unit = map_unit_to_ha(unit)
-            if normalized_unit == "%":
-                return SensorDeviceClass.BATTERY
-
-        # Predicted SOC is always a battery sensor
-        if descriptor == PREDICTED_SOC_DESCRIPTOR:
-            return SensorDeviceClass.BATTERY
-
-        # Magic SOC is always a battery sensor
-        if descriptor == MAGIC_SOC_DESCRIPTOR:
-            return SensorDeviceClass.BATTERY
-
-        # Special case: 'm' can be meters OR minutes depending on context
-        if unit == "m":
-            distance_keywords = [
-                "altitude",
-                "elevation",
-                "sealevel",
-                "sea_level",
-                "height",
-                "position",
-                "location",
-                "distance",
-            ]
-            if any(keyword in descriptor_lower for keyword in distance_keywords):
-                return SensorDeviceClass.DISTANCE
-
-            duration_keywords = ["time", "duration", "minutes", "mins"]
-            if any(keyword in descriptor_lower for keyword in duration_keywords):
-                return SensorDeviceClass.DURATION
-
-    if unit is None:
-        return None
-
-    return UNIT_DEVICE_CLASS_MAP.get(unit)
-
-
-def convert_value_for_unit(
-    value: float | str | int | None, original_unit: str | None, normalized_unit: str | None
-) -> float | str | int | None:
-    """Convert value when unit normalization requires it."""
-    if original_unit == normalized_unit or value is None:
-        return value
-
-    try:
-        numeric_value = float(value)
-    except (TypeError, ValueError):
-        return value
-
-    # Convert weeks to days (only explicit "weeks", not "w" which could be watts)
-    if original_unit == "weeks" and normalized_unit == UnitOfTime.DAYS:
-        return numeric_value * 7
-
-    # Convert months to days (approximate)
-    if original_unit == "months" and normalized_unit == UnitOfTime.DAYS:
-        return numeric_value * 30
-
-    return value
-
-
-def _validate_restored_state(state_value: str | None, unit: str | None) -> float | str | None:
-    """Validate a restored state value is usable.
-
-    Returns the validated value (float for numeric, str otherwise) or None if invalid.
-    """
-    if state_value is None:
-        return None
-
-    # Reject empty or whitespace-only values
-    if not isinstance(state_value, str) or not state_value.strip():
-        return None
-
-    # For numeric units, validate the value is a valid number
-    if unit is not None:
-        try:
-            numeric = float(state_value)
-            # Reject NaN and infinity
-            if not math.isfinite(numeric):
-                _LOGGER.debug("Rejecting non-finite restored value: %s", state_value)
-                return None
-            # Return as float so it compares correctly with live numeric values
-            return numeric
-        except (TypeError, ValueError):
-            # Non-numeric string with a unit - could be enum value like "OPEN"
-            # Allow these through
-            pass
-
-    return state_value
 
 
 class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
@@ -274,7 +116,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
                 unit = last_state.attributes.get("unit_of_measurement")
-                validated_state = _validate_restored_state(last_state.state, unit)
+                validated_state = validate_restored_state(last_state.state, unit)
                 if validated_state is None:
                     # Invalid restored state - skip restoration
                     last_state = None
@@ -385,7 +227,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
     def _determine_state_class(self) -> SensorStateClass | None:
         """Automatically determine state class based on unit."""
         # Special case: mileage
-        if self._descriptor == "vehicle.vehicle.travelledDistance":
+        if self._descriptor == DESC_TRAVELLED_DISTANCE:
             return SensorStateClass.TOTAL_INCREASING
 
         # Special case: predicted SOC
@@ -445,247 +287,12 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)
 
-    ''' For future options and colors
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra attributes."""
-        attrs = super().extra_state_attributes or {}
-
-        # Add color hint for window sensors
-        descriptor_lower = self._descriptor.lower()
-        if "window" in descriptor_lower:
-            value = str(self._attr_native_value).lower() if self._attr_native_value else ""
-            if "open" in value:
-                attrs["color_hint"] = "red"
-            elif "closed" in value:
-                attrs["color_hint"] = "green"
-            else:
-                attrs["color_hint"] = "orange"
-
-        return attrs
-    '''
-
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes, with Magic SOC prediction info."""
         attrs = super().extra_state_attributes or {}
         if self._descriptor == MAGIC_SOC_DESCRIPTOR:
             attrs.update(self._coordinator.get_magic_soc_attributes(self._vin))
-        return attrs
-
-
-class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
-    """Diagnostic sensor for connection and polling info."""
-
-    _attr_should_poll = False
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_native_value: datetime | str | None = None
-
-    def __init__(
-        self,
-        coordinator: CardataCoordinator,
-        stream_manager,
-        entry_id: str,
-        sensor_type: str,
-    ) -> None:
-        self._coordinator = coordinator
-        self._stream = stream_manager
-        self._entry_id = entry_id
-        self._sensor_type = sensor_type
-        self._unsubscribe = None
-
-        # Configure based on sensor type
-        if sensor_type == "last_message":
-            self._attr_name = "Last Message Received"
-            self._attr_device_class = SensorDeviceClass.TIMESTAMP
-            suffix = "last_message"
-        elif sensor_type == "last_telematic_api":
-            self._attr_name = "Last Telematics API Call"
-            self._attr_device_class = SensorDeviceClass.TIMESTAMP
-            suffix = "last_telematic_api"
-        elif sensor_type == "connection_status":
-            self._attr_name = "Stream Connection Status"
-            suffix = "connection_status"
-        else:
-            self._attr_name = sensor_type
-            suffix = sensor_type
-
-        self._attr_unique_id = f"{entry_id}_diagnostics_{suffix}"
-
-    @property
-    def device_info(self):
-        """Return device info."""
-        return {
-            "identifiers": {(DOMAIN, self._entry_id)},
-            "manufacturer": "BMW",
-            "name": "CarData Debug Device",
-        }
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra state attributes."""
-        if self._sensor_type == "connection_status":
-            attrs = dict(self._stream.debug_info)
-            if self._coordinator.last_disconnect_reason:
-                attrs["last_disconnect_reason"] = self._coordinator.last_disconnect_reason
-            # Expose evicted descriptors count for diagnostics visibility
-            if hasattr(self._coordinator, "_descriptors_evicted_count"):
-                attrs["evicted_descriptors_count"] = self._coordinator._descriptors_evicted_count
-            return attrs
-
-        if self._sensor_type == "last_telematic_api":
-            return {}
-
-        return {}
-
-    async def async_added_to_hass(self) -> None:
-        """Restore state and subscribe to updates."""
-        await super().async_added_to_hass()
-
-        # Track if we restored state (to ensure fresh data updates it)
-        restored_state = False
-
-        if self._attr_native_value is None:
-            last_state = await self.async_get_last_state()
-            if last_state and last_state.state not in ("unknown", "unavailable"):
-                if self._sensor_type in ("last_message", "last_telematic_api"):
-                    self._attr_native_value = dt_util.parse_datetime(last_state.state)
-                else:
-                    self._attr_native_value = last_state.state
-                restored_state = True
-
-        self._unsubscribe = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_diagnostics,
-            self._handle_update,
-        )
-
-        # Get initial value from coordinator to ensure we're not stuck with old state
-        if restored_state:
-            # For connection_status, always get fresh value from coordinator
-            if self._sensor_type == "connection_status":
-                current_value: str | None = self._coordinator.connection_status
-                if current_value is not None:
-                    self._attr_native_value = current_value
-            # For timestamps, check if coordinator has fresher data
-            elif self._sensor_type == "last_message":
-                current_value_ts: datetime | None = self._coordinator.last_message_at
-                if current_value_ts is not None:
-                    self._attr_native_value = current_value_ts
-            elif self._sensor_type == "last_telematic_api":
-                current_value_api: datetime | None = self._coordinator.last_telematic_api_at
-                if current_value_api is not None:
-                    self._attr_native_value = current_value_api
-
-        self._handle_update()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Unsubscribe from updates."""
-        await super().async_will_remove_from_hass()
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-
-    def _handle_update(self) -> None:
-        """Handle updates from coordinator."""
-        value: datetime | str | None
-        if self._sensor_type == "last_message":
-            value = self._coordinator.last_message_at
-        elif self._sensor_type == "last_telematic_api":
-            value = self._coordinator.last_telematic_api_at
-        elif self._sensor_type == "connection_status":
-            value = self._coordinator.connection_status
-        else:
-            value = None
-
-        if value is not None:
-            self._attr_native_value = value
-        self.schedule_update_ha_state()
-
-    @property
-    def native_value(self) -> datetime | str | None:
-        """Return native value."""
-        return self._attr_native_value
-
-
-class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
-    """Diagnostic sensor for vehicle metadata (stored once per vehicle)."""
-
-    _attr_should_poll = False
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:car-info"
-
-    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(coordinator, vin, "diagnostics_vehicle_metadata")
-        self._base_name = "Vehicle Metadata"
-        self._update_name(write_state=False)
-        self._unsubscribe = None
-
-    async def async_added_to_hass(self) -> None:
-        """Restore state and subscribe to updates."""
-        await super().async_added_to_hass()
-
-        # Restore last state if available
-        last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in ("unknown", "unavailable"):
-            self._attr_native_value = last_state.state
-
-        # Subscribe to metadata updates (triggered by apply_basic_data)
-        self._unsubscribe = async_dispatcher_connect(
-            self.hass,
-            self._coordinator.signal_metadata,
-            self._handle_metadata_update,
-        )
-
-        # Load current value
-        self._load_current_value()
-        self.schedule_update_ha_state()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Unsubscribe from updates."""
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-        await super().async_will_remove_from_hass()
-
-    def _load_current_value(self) -> None:
-        """Load current metadata status from coordinator."""
-        metadata = self._coordinator.device_metadata.get(self._vin)
-        if metadata:
-            self._attr_native_value = "available"
-        else:
-            self._attr_native_value = "unavailable"
-
-    def _handle_metadata_update(self, vin: str) -> None:
-        """Handle metadata updates.
-
-        Always push to HA since metadata signals are infrequent (bootstrap/reconnect)
-        and the extra_state_attributes (vehicle details) may have changed even when
-        native_value ("available"/"unavailable") stays the same.
-        """
-        if vin != self._vin:
-            return
-
-        self._load_current_value()
-        self.schedule_update_ha_state()
-
-    @property
-    def native_value(self) -> str | None:
-        """Return metadata status."""
-        return self._attr_native_value
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return all vehicle metadata as attributes."""
-        metadata = self._coordinator.device_metadata.get(self._vin, {})
-        attrs = {}
-
-        if extra := metadata.get("extra_attributes"):
-            attrs["vehicle_basic_data"] = dict(extra)
-
-        if raw := metadata.get("raw_data"):
-            attrs["vehicle_basic_data_raw"] = dict(raw)
-
         return attrs
 
 
@@ -780,7 +387,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # also subscribe to updates
 
     async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
-        ensure_entity(vin, descriptor, from_signal=True)  # ← Trust the signal!
+        ensure_entity(vin, descriptor, from_signal=True)  # <- Trust the signal!
 
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation))
     # Note: signal_update subscription above handles entity creation for updates.

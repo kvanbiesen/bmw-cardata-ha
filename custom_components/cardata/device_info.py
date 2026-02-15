@@ -9,6 +9,11 @@ from typing import Any
 from .const import (
     DEFAULT_CAPACITY_BY_MODEL,
     DEFAULT_CONSUMPTION_BY_MODEL,
+    DESC_CHARGING_AC_AMPERE,
+    DESC_CHARGING_AC_VOLTAGE,
+    DESC_CHARGING_POWER,
+    DESC_MAX_ENERGY,
+    DESC_SOC_HEADER,
 )
 from .descriptor_state import DescriptorState
 from .magic_soc import MagicSOCPredictor
@@ -196,11 +201,11 @@ def restore_descriptor_state(
     vehicle_state = data.setdefault(vin, {})
     stored_value: Any = value
     if descriptor in {
-        "vehicle.drivetrain.batteryManagement.header",
-        "vehicle.drivetrain.batteryManagement.maxEnergy",
-        "vehicle.powertrain.electric.battery.charging.power",
-        "vehicle.drivetrain.electricEngine.charging.acVoltage",
-        "vehicle.drivetrain.electricEngine.charging.acAmpere",
+        DESC_SOC_HEADER,
+        DESC_MAX_ENERGY,
+        DESC_CHARGING_POWER,
+        DESC_CHARGING_AC_VOLTAGE,
+        DESC_CHARGING_AC_AMPERE,
     }:
         try:
             stored_value = float(value)

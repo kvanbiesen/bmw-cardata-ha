@@ -295,19 +295,25 @@ The integration is organized into focused modules:
 
 | Module | Purpose |
 |--------|---------|
-| `__init__.py` | Entry point: setup/unload, token refresh loop, ghost device cleanup |
+| `const.py` | Shared constants: descriptor paths, timeouts, domain identifiers |
+| `__init__.py` | Thin entry point: delegates to `lifecycle.py` |
+| `lifecycle.py` | Setup/unload orchestration, ghost device cleanup |
 | `coordinator.py` | Central state management, message dispatch, entity signaling |
 | `soc_wiring.py` | SOC/charging/driving prediction wiring between descriptors and prediction engines |
 | `device_info.py` | Device metadata building, BEV detection, state restoration |
 | `coordinator_housekeeping.py` | Diagnostics, stale VIN cleanup, old descriptor eviction, connection events |
-| `soc_prediction.py` | Charging SOC: trapezoidal energy integration, EMA efficiency learning |
+| `soc_prediction.py` | Charging SOC: trapezoidal energy integration, session management |
+| `soc_types.py` | Charging data types: `LearnedEfficiency`, `PendingSession`, `ChargingSession` |
+| `soc_learning.py` | Charging efficiency EMA learning, session finalization, persistence |
 | `magic_soc.py` | Driving SOC: distance-based consumption prediction, adaptive EMA learning |
-| `stream.py` | MQTT connection management, circuit breaker, credential hot-swap |
+| `stream.py` | MQTT connection management, credential hot-swap |
+| `stream_circuit_breaker.py` | Circuit breaker for reconnection rate limiting |
+| `stream_reconnect.py` | Reconnection, unauthorized handling, retry scheduling |
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
 | `config_flow.py` | Setup, reauthorization, and options UI flows |
 | `bootstrap.py` | VIN discovery, metadata fetch, container creation |
-| `auth.py` | Token refresh, reauth flow, stream error handling |
+| `auth.py` | Token refresh loop, reauth flow, stream error handling |
 | `telematics.py` | Scheduled API polling, trip-end/charge-end triggers |
 | `container.py` | Telematic container CRUD, signature-based reuse |
 

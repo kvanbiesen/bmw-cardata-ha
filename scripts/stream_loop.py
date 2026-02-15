@@ -135,7 +135,6 @@ def build_client(
     client.reconnect_delay_set(min_delay=5, max_delay=60)
 
     client.on_connect = on_connect
-    client.on_connack = on_connack
     client.on_message = on_message
     client.on_disconnect = on_disconnect
     client.on_subscribe = on_subscribe
@@ -165,10 +164,6 @@ def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage):
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     payload = msg.payload.decode(errors="replace")
     print(f"[{timestamp}] {msg.topic}: {payload}")
-
-
-def on_connack(client, userdata, reason_code, flags, properties):  # type: ignore[override]
-    print(f"CONNACK received: reason_code={reason_code}, flags={flags}")
 
 
 def on_disconnect(client: mqtt.Client, userdata, disconnect_flags, reason_code, properties=None):

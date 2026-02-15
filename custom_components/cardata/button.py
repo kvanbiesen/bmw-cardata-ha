@@ -39,7 +39,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 
-from .const import DOMAIN, MAGIC_SOC_DESCRIPTOR
+from .const import DESC_SOC_HEADER, DOMAIN, MAGIC_SOC_DESCRIPTOR
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ async def async_setup_entry(
     for vin in coordinator.data.keys():
         # Check if this vehicle has HV battery (EV/PHEV)
         vehicle_data = coordinator.data.get(vin, {})
-        if "vehicle.drivetrain.batteryManagement.header" in vehicle_data:
+        if DESC_SOC_HEADER in vehicle_data:
             vehicle_name = coordinator.names.get(vin, redact_vin(vin))
 
             entities.append(

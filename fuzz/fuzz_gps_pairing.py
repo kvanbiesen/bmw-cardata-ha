@@ -266,6 +266,10 @@ class _Coordinator:
             return False
         return prev != (lat, lon)
 
+    def get_derived_is_moving(self, vin: str) -> bool | None:
+        """Stub for motion detection - always returns None."""
+        return None
+
 
 def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
     return fdp.ConsumeUnicodeNoSurrogates(max_len)
@@ -380,10 +384,9 @@ def TestOneInput(data: bytes) -> None:
     tracker.schedule_update_ha_state = lambda: None
     tracker.async_write_ha_state = lambda: None
 
-    # Mock hass with async_create_task that runs coroutine synchronously
+    # Mock hass with async_create_task and add_job that run coroutines synchronously
     class _MockHass:
         def async_create_task(self, coro):
-            # Run the coroutine synchronously for testing
             import asyncio
 
             try:
@@ -392,6 +395,17 @@ def TestOneInput(data: bytes) -> None:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
             return loop.run_until_complete(coro)
+
+        def add_job(self, target, *args):
+            import asyncio
+
+            if asyncio.iscoroutinefunction(target):
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                loop.run_until_complete(target(*args))
 
     tracker.hass = _MockHass()
 
