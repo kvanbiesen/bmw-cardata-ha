@@ -1175,10 +1175,10 @@ class CardataCoordinator:
             elif descriptor == "vehicle.vehicle.avgAuxPower":
                 if value is not None:
                     try:
-                        aux_w = float(value)
+                        aux_kw = float(value) / 1000.0
                         if _OVERULE_AUX_POWER > 0:
                             aux_kw = float(_OVERULE_AUX_POWER)
-                        self._magic_soc.update_aux_power(vin, aux_w / 1000.0)
+                        self._magic_soc.update_aux_power(vin, aux_kw)
                     except (TypeError, ValueError):
                         pass
 
