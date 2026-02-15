@@ -315,8 +315,14 @@ def _finalize_learning(
 
     # Apply learning with charging condition details
     _apply_learning(
-        learned_efficiency, on_learning_updated, vin, session.charging_method, true_efficiency,
-        phases=phases, voltage=voltage, current=current
+        learned_efficiency,
+        on_learning_updated,
+        vin,
+        session.charging_method,
+        true_efficiency,
+        phases=phases,
+        voltage=voltage,
+        current=current,
     )
 
 
@@ -360,8 +366,14 @@ def _finalize_learning_from_pending(
 
     # Apply learning with charging condition details from pending session
     _apply_learning(
-        learned_efficiency, on_learning_updated, vin, pending.charging_method, true_efficiency,
-        phases=pending.phases, voltage=pending.voltage, current=pending.current
+        learned_efficiency,
+        on_learning_updated,
+        vin,
+        pending.charging_method,
+        true_efficiency,
+        phases=pending.phases,
+        voltage=pending.voltage,
+        current=pending.current,
     )
 
 
