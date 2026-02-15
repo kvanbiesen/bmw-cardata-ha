@@ -123,10 +123,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     # Movement filtering
     _MIN_MOVEMENT_DISTANCE = 3  # meters - MORE SENSITIVE (was 5m)
 
-    # GPS precision
-    # degrees (~0.1 meter) - ignore smaller changes
-    _COORD_PRECISION = 0.000001
-
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         """Initialize the device tracker."""
         super().__init__(coordinator, vin, "device_tracker")
@@ -135,7 +131,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # unique_id is already set in CardataEntity.__init__ as: f"{vin}_device_tracker"
 
         self._unsubscribe = None
-        self._debounce_handle: asyncio.TimerHandle | None = None
         self._base_name = "Location"
         # Update name to include vehicle name prefix
         self._update_name(write_state=False)
@@ -241,11 +236,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     async def async_will_remove_from_hass(self) -> None:
         """Handle entity removal from Home Assistant."""
         await super().async_will_remove_from_hass()
-
-        # Cancel any pending debounce
-        if self._debounce_handle is not None:
-            self._debounce_handle.cancel()
-            self._debounce_handle = None
 
         if self._unsubscribe:
             self._unsubscribe()
@@ -481,11 +471,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             lon,
             "" if position_changed else " (position unchanged)",
         )
-
-    def _fetch_coordinate(self, descriptor: str) -> float | None:
-        """Fetch and validate coordinate value from coordinator."""
-        result = self._fetch_coordinate_with_ts(descriptor)
-        return result[0] if result else None
 
     def _fetch_coordinate_with_ts(self, descriptor: str) -> tuple[float, str | None] | None:
         """Fetch and validate coordinate value with its BMW timestamp from coordinator.

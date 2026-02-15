@@ -181,7 +181,7 @@ class CardataContainerManager:
                         self._entry_id,
                     )
 
-                except (TimeoutError, aiohttp.ClientError, KeyError, TypeError, ValueError) as err:
+                except (CardataContainerError, KeyError, TypeError, ValueError) as err:
                     _LOGGER.warning(
                         "[%s] Failed to list existing containers: %s. Will attempt to create new one.",
                         self._entry_id,

@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -65,9 +64,6 @@ from .units import normalize_unit
 from .utils import get_all_registered_vins, is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
-
-# Pre-compiled regex for AC phase parsing (avoids recompilation on each message)
-_AC_PHASE_PATTERN = re.compile(r"(\d{1,2})")
 
 _OVERULE_AUX_POWER = (
     0.3  # kW - estimated auxiliary power load during charging (for SOC prediction) - set to zero to use bmw values
@@ -151,9 +147,6 @@ class CardataCoordinator:
     # Callback set by button.py to create consumption reset button when Magic SOC sensor is created
     _create_consumption_reset_callback: Callable[[str], None] | None = field(default=None, init=False, repr=False)
 
-    # Track VINs that have had fuel range sensor created (hybrid vehicles only)
-    _fuel_range_signaled: set[str] = field(default_factory=set, init=False)
-
     # Pending operation tracking to prevent duplicate work
     _basic_data_pending: PendingManager[str] = field(default_factory=lambda: PendingManager("basic_data"), init=False)
 
@@ -172,7 +165,6 @@ class CardataCoordinator:
     _signal_new_binary: str = field(default="", init=False)
     _signal_update: str = field(default="", init=False)
     _signal_diagnostics: str = field(default="", init=False)
-    _signal_telematic_api: str = field(default="", init=False)
     _signal_new_image: str = field(default="", init=False)
     _signal_metadata: str = field(default="", init=False)
 
@@ -182,7 +174,6 @@ class CardataCoordinator:
         self._signal_new_binary = f"{DOMAIN}_{self.entry_id}_new_binary"
         self._signal_update = f"{DOMAIN}_{self.entry_id}_update"
         self._signal_diagnostics = f"{DOMAIN}_{self.entry_id}_diagnostics"
-        self._signal_telematic_api = f"{DOMAIN}_{self.entry_id}_telematic_api"
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
 
@@ -201,10 +192,6 @@ class CardataCoordinator:
     @property
     def signal_diagnostics(self) -> str:
         return self._signal_diagnostics
-
-    @property
-    def signal_telematic_api(self) -> str:
-        return self._signal_telematic_api
 
     @property
     def signal_new_image(self) -> str:
@@ -703,12 +690,12 @@ class CardataCoordinator:
                 capacity_kwh,
             )
 
-        # Priority 2: Live descriptors
-        if capacity_kwh is None or capacity_kwh <= 0:
-            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
-            capacity_kwh = _descriptor_float(capacity_state)
+        # Priority 2: Live descriptors (prefer maxEnergy — reflects actual usable capacity)
         if capacity_kwh is None or capacity_kwh <= 0:
             capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.maxEnergy")
+            capacity_kwh = _descriptor_float(capacity_state)
+        if capacity_kwh is None or capacity_kwh <= 0:
+            capacity_state = vehicle_state.get("vehicle.drivetrain.batteryManagement.batterySizeMax")
             capacity_kwh = _descriptor_float(capacity_state)
 
         # Store live capacity if found
@@ -1110,8 +1097,25 @@ class CardataCoordinator:
                 if value is not None:
                     try:
                         soc_val = float(value)
-                        self._soc_predictor.update_bmw_soc(vin, soc_val)
-                        self._magic_soc.update_bmw_soc(vin, soc_val)
+                        # During PHEV charging, header often stays frozen at
+                        # pre-charge value while charging.level provides fresh
+                        # updates.  Skip update_bmw_soc to avoid stale header
+                        # corrupting _last_predicted_soc (mirrors read-side
+                        # guard in get_predicted_soc).
+                        skip_stale_header = False
+                        if self._soc_predictor.is_phev(vin) and self._soc_predictor.is_charging(vin):
+                            session = self._soc_predictor._sessions.get(vin)
+                            cl = vehicle_state.get("vehicle.drivetrain.electricEngine.charging.level")
+                            if (
+                                session is not None
+                                and cl is not None
+                                and cl.value is not None
+                                and cl.last_seen >= session.anchor_timestamp.timestamp()
+                            ):
+                                skip_stale_header = True
+                        if not skip_stale_header:
+                            self._soc_predictor.update_bmw_soc(vin, soc_val)
+                            self._magic_soc.update_bmw_soc(vin, soc_val)
                         # If charging but no session anchored, try to anchor now
                         # This handles cases where charging status arrived before SOC data
                         if self._soc_predictor.is_charging(vin) and not self._soc_predictor.has_active_session(vin):
@@ -1148,7 +1152,7 @@ class CardataCoordinator:
 
             # Sync charging.level to prediction during active charging
             # This provides fresher SOC updates than header during charging.
-            # Only syncs UP (never down) via update_bmw_soc.
+            # For BEVs: only syncs up. For PHEVs: may sync down (hybrid battery depletion).
             elif descriptor == "vehicle.drivetrain.electricEngine.charging.level":
                 if value is not None and self._soc_predictor.is_charging(vin):
                     try:
@@ -1175,10 +1179,10 @@ class CardataCoordinator:
             elif descriptor == "vehicle.vehicle.avgAuxPower":
                 if value is not None:
                     try:
-                        aux_w = float(value)
+                        aux_kw = float(value) / 1000.0
                         if _OVERULE_AUX_POWER > 0:
                             aux_kw = float(_OVERULE_AUX_POWER)
-                        self._magic_soc.update_aux_power(vin, aux_w / 1000.0)
+                        self._magic_soc.update_aux_power(vin, aux_kw)
                     except (TypeError, ValueError):
                         pass
 
@@ -1385,8 +1389,6 @@ class CardataCoordinator:
         - Defensive copy of returned state prevents external mutations
         - Exception handling catches concurrent modification edge cases
 
-        Use async_get_state() for async contexts that need guaranteed consistency.
-
         Returns:
             A defensive copy of the state, or None if not found/race condition.
         """
@@ -1449,56 +1451,10 @@ class CardataCoordinator:
             # - TypeError: unexpected None or wrong type in chain
             return None
 
-    async def async_get_state(self, vin: str, descriptor: str) -> DescriptorState | None:
-        """Get state for a descriptor with proper lock acquisition."""
-        async with self._lock:
-            # Predicted SOC is ALWAYS calculated dynamically
-            if descriptor == PREDICTED_SOC_DESCRIPTOR:
-                predicted_soc = self.get_predicted_soc(vin)
-                if predicted_soc is not None:
-                    return DescriptorState(value=round(predicted_soc, 1), unit="%", timestamp=None)
-                return None
-
-            # Magic SOC is ALWAYS calculated dynamically
-            if descriptor == MAGIC_SOC_DESCRIPTOR:
-                magic_soc = self.get_magic_soc(vin)
-                if magic_soc is not None:
-                    return DescriptorState(value=round(magic_soc, 1), unit="%", timestamp=None)
-                return None
-
-            # Derived fuel range is ALWAYS calculated dynamically
-            if descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
-                fuel_range = self.get_derived_fuel_range(vin)
-                if fuel_range is not None:
-                    return DescriptorState(value=fuel_range, unit="km", timestamp=None)
-                return None
-
-            # Derived isMoving: try derived first, fall back to stored (BMW-provided)
-            if descriptor == "vehicle.isMoving":
-                derived = self.get_derived_is_moving(vin)
-                if derived is not None:
-                    return DescriptorState(value=derived, unit=None, timestamp=None)
-                # Fall back to stored value (might be BMW-provided via MQTT)
-                vehicle_data = self.data.get(vin)
-                if vehicle_data:
-                    state = vehicle_data.get(descriptor)
-                    if state is not None:
-                        return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
-                return None
-
-            vehicle_data = self.data.get(vin)
-            if vehicle_data is None:
-                return None
-            state = vehicle_data.get(descriptor)
-            if state is None:
-                return None
-            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
-
     def iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
         """Iterate over descriptors (sync version for platform setup).
 
-        Returns a snapshot list to minimize race condition impact. For guaranteed
-        thread-safety, use async_iter_descriptors() instead.
+        Returns a snapshot list to minimize race condition impact.
         """
         # Take a snapshot of the data to avoid iteration issues during concurrent modification
         # Using list() on items() creates a shallow copy of the dict items at that moment
@@ -1522,16 +1478,6 @@ class CardataCoordinator:
             # data dict changed during snapshot
             pass
         return result
-
-    async def async_iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
-        """Iterate over descriptors with proper lock acquisition."""
-        async with self._lock:
-            result: list[tuple[str, str]] = []
-            for vin, descriptors in self.data.items():
-                for descriptor, descriptor_state in descriptors.items():
-                    if isinstance(descriptor_state.value, bool) == binary:
-                        result.append((vin, descriptor))
-            return result
 
     async def async_handle_connection_event(self, status: str, reason: str | None = None) -> None:
         self.connection_status = status
@@ -1921,8 +1867,8 @@ class CardataCoordinator:
             metadata["model"] = model
         if raw_payload.get("puStep"):
             metadata["sw_version"] = raw_payload["puStep"]
-        if raw_payload.get("series_development"):
-            metadata["hw_version"] = raw_payload["series_development"]
+        if raw_payload.get("seriesDevt"):
+            metadata["hw_version"] = raw_payload["seriesDevt"]
         return metadata
 
     def apply_basic_data(self, vin: str, payload: dict[str, Any]) -> dict[str, Any] | None:

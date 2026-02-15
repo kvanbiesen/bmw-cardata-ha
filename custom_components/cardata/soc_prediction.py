@@ -95,7 +95,6 @@ class ChargingSession:
     anchor_timestamp: datetime  # When session started
     battery_capacity_kwh: float  # Battery size for calculation
     last_predicted_soc: float  # Last calculated prediction (for monotonicity)
-    last_power_update: datetime  # When we last got power data (for staleness)
     charging_method: str  # "AC" or "DC" for efficiency selection
     # Energy tracking for learning
     total_energy_kwh: float = 0.0  # Accumulated energy input
@@ -118,7 +117,6 @@ class ChargingSession:
             "anchor_timestamp": self.anchor_timestamp.isoformat(),
             "battery_capacity_kwh": self.battery_capacity_kwh,
             "last_predicted_soc": self.last_predicted_soc,
-            "last_power_update": self.last_power_update.isoformat(),
             "charging_method": self.charging_method,
             "total_energy_kwh": self.total_energy_kwh,
             "last_power_kw": self.last_power_kw,
@@ -139,7 +137,6 @@ class ChargingSession:
             anchor_timestamp=datetime.fromisoformat(data["anchor_timestamp"]),
             battery_capacity_kwh=data["battery_capacity_kwh"],
             last_predicted_soc=data["last_predicted_soc"],
-            last_power_update=datetime.fromisoformat(data["last_power_update"]),
             charging_method=data["charging_method"],
             total_energy_kwh=data.get("total_energy_kwh", 0.0),
             last_power_kw=data.get("last_power_kw", 0.0),
@@ -270,14 +267,6 @@ class SOCPredictor:
             self._learned_efficiency[vin] = LearnedEfficiency.from_dict(efficiency_data)
         _LOGGER.debug("Loaded learned efficiency for %d vehicle(s)", len(data))
 
-    def get_learned_efficiency_data(self) -> dict[str, dict[str, Any]]:
-        """Get learned efficiency data for persistence.
-
-        Returns:
-            Dictionary mapping VIN to learned efficiency data
-        """
-        return {vin: eff.to_dict() for vin, eff in self._learned_efficiency.items()}
-
     def get_session_data(self) -> dict[str, Any]:
         """Get charging session data for persistence.
 
@@ -345,17 +334,6 @@ class SOCPredictor:
             len(self._sessions),
             sum(1 for v in self._is_charging.values() if v),
         )
-
-    def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
-        """Get learned efficiency for a VIN.
-
-        Args:
-            vin: Vehicle identification number
-
-        Returns:
-            LearnedEfficiency if available, None otherwise
-        """
-        return self._learned_efficiency.get(vin)
 
     def set_vehicle_is_phev(self, vin: str, is_phev: bool) -> None:
         """Mark a vehicle as PHEV or not.
@@ -487,7 +465,6 @@ class SOCPredictor:
             anchor_timestamp=now,
             battery_capacity_kwh=battery_capacity_kwh,
             last_predicted_soc=anchor_soc,
-            last_power_update=now,
             charging_method=resolved_method,
             total_energy_kwh=0.0,
             last_power_kw=0.0,
@@ -527,22 +504,16 @@ class SOCPredictor:
                     session.charging_method,
                 )
 
-    def update_power_reading(
-        self, vin: str, power_kw: float | None = None, aux_power_kw: float = 0.0, timestamp: datetime | None = None
-    ) -> None:
-        """Record power update for staleness tracking and energy accumulation.
+    def update_power_reading(self, vin: str, power_kw: float | None = None, aux_power_kw: float = 0.0) -> None:
+        """Record power update for energy accumulation.
 
         Args:
             vin: Vehicle identification number
             power_kw: Current gross charging power in kW (optional, for energy tracking)
             aux_power_kw: Auxiliary power consumption in kW (preheating, etc.)
-            timestamp: Optional timestamp (defaults to now)
         """
         session = self._sessions.get(vin)
         if session:
-            now = timestamp or datetime.now(UTC)
-            session.last_power_update = now
-
             # Accumulate net energy if power provided
             if power_kw is not None and power_kw >= 0:
                 session.accumulate_energy(power_kw, aux_power_kw, time.time())
@@ -1215,7 +1186,7 @@ class SOCPredictor:
                 power_kw = (session.last_voltage * session.last_current) / 1000.0
 
                 if session.phases and session.phases > 1:
-                    power_kw *= 1.732
+                    power_kw *= 3.0 if session.last_voltage < 250 else 1.732
 
                 self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_power or 0.0)
                 updated_vins.append(vin)

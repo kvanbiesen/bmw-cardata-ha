@@ -401,6 +401,10 @@ class MagicSOCPredictor:
         # Transfer segment aux to trip total before resetting for new segment
         session.trip_total_aux_kwh += session.accumulated_aux_kwh
         session.accumulated_aux_kwh = 0.0
+        # Reset GPS distance so fallback doesn't use pre-re-anchor distance
+        session.gps_distance_km = 0.0
+        session.last_gps_lat = None
+        session.last_gps_lon = None
         _LOGGER.debug(
             "Magic SOC: Re-anchored %s %.1f%% → %.1f%% at %.1f km (BMW: %d%%)",
             redact_vin(vin),
@@ -546,7 +550,11 @@ class MagicSOCPredictor:
 
         now = time.time()
         if session.last_aux_update_at > 0:
-            dt_hours = (now - session.last_aux_update_at) / 3600.0
+            dt_seconds = now - session.last_aux_update_at
+            # Cap gap to prevent spurious energy after HA restart
+            if dt_seconds > AUX_EXTRAPOLATION_MAX_SECONDS:
+                dt_seconds = AUX_EXTRAPOLATION_MAX_SECONDS
+            dt_hours = dt_seconds / 3600.0
             if dt_hours > 0:
                 avg_power = (session.last_aux_power_kw + power_kw) / 2.0
                 session.accumulated_aux_kwh += avg_power * dt_hours
