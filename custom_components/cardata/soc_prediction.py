@@ -338,17 +338,6 @@ class SOCPredictor:
             sum(1 for v in self._is_charging.values() if v),
         )
 
-    def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
-        """Get learned efficiency for a VIN.
-
-        Args:
-            vin: Vehicle identification number
-
-        Returns:
-            LearnedEfficiency if available, None otherwise
-        """
-        return self._learned_efficiency.get(vin)
-
     def set_vehicle_is_phev(self, vin: str, is_phev: bool) -> None:
         """Mark a vehicle as PHEV or not.
 
