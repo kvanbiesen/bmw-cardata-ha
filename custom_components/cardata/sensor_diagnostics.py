@@ -260,8 +260,7 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
     "`"`"Diagnostic sensor for efficiency learning matrix data."`"`"
 
     _attr_should_poll = False
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_icon = "mdi:chart-line"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC    _attr_entity_registry_enabled_default = False  # Hidden by default, enable in device settings    _attr_icon = "mdi:chart-line"
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "diagnostics_charging_matrix")

@@ -52,18 +52,16 @@ class EfficiencyEntry:
 class LearnedEfficiency:
     """Vehicle-specific efficiency learning with detailed charging profile matrix."""
 
-    # Legacy average efficiencies (fallback)
-    ac_efficiency: float = 0.90
-    dc_efficiency: float = 0.93
-    ac_session_count: int = 0
-    dc_session_count: int = 0
-
-    # New: Efficiency matrix indexed by charging conditions
+    # Efficiency matrix indexed by charging conditions (primary storage)
     efficiency_matrix: dict[ChargingCondition, EfficiencyEntry] = field(default_factory=dict)
 
     # Voltage/current bracketing configuration
     voltage_brackets: list[int] = field(default_factory=lambda: [240, 410, 810])
     current_brackets: list[int] = field(default_factory=lambda: [6, 11, 16, 32, 64])
+
+    # DC efficiency tracked separately (not condition-dependent)
+    dc_efficiency: float = 0.93
+    dc_session_count: int = 0
 
     def _get_bracket(self, value: float, brackets: list[int]) -> int:
         """Find closest bracket for voltage or current."""
@@ -83,10 +81,10 @@ class LearnedEfficiency:
         _LOGGER = logging.getLogger(__name__)
 
         if is_dc:
-            # DC fast charging: use legacy DC efficiency
+            # DC fast charging: use tracked DC efficiency
             if vin:
                 _LOGGER.debug(
-                    "[EFFICIENCY] VIN %s: Using legacy DC efficiency: %.2f%%",
+                    "[EFFICIENCY] VIN %s: Using DC efficiency: %.2f%%",
                     redact_vin(vin),
                     self.dc_efficiency * 100,
                 )
@@ -108,23 +106,18 @@ class LearnedEfficiency:
                 )
             return entry.efficiency
 
-        # No exact match: use legacy AC efficiency
+        # No matrix data yet: use weighted average from all AC conditions, or default
+        ac_avg = self._calculate_ac_average()
         if vin:
             _LOGGER.info(
-                "[EFFICIENCY] VIN %s: Using LEGACY AC for %dP/%dV/%dA: %.2f%% (no matrix data yet)",
+                "[EFFICIENCY] VIN %s: Using AC AVERAGE for %dP/%dV/%dA: %.2f%% (no matrix data for this condition)",
                 redact_vin(vin),
                 phases,
                 condition.voltage_bracket,
                 condition.current_bracket,
-                self.ac_efficiency * 100,
+                ac_avg * 100,
             )
-        return self.ac_efficiency
-
-    def update_efficiency(
-        self, phases: int, voltage: float, current: float, is_dc: bool, true_efficiency: float
-    ) -> bool:
-        """Update efficiency matrix with new measurement.
-
+        return ac_avg
         Returns True if accepted, False if rejected as outlier.
         """
         if is_dc:
@@ -162,14 +155,30 @@ class LearnedEfficiency:
         entry.efficiency = old_eff * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
         entry.sample_count += 1
 
-        # Also update legacy AC average for backward compatibility
-        self.ac_efficiency = self.ac_efficiency * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
-        self.ac_session_count += 1
-
         return True
 
+    def _calculate_ac_average(self) -> float:
+        """Calculate weighted average AC efficiency from all learned conditions.
+        
+        Returns weighted average based on sample counts, or default 0.90 if no data.
+        """
+        if not self.efficiency_matrix:
+            return 0.90  # Default AC efficiency
+
+        total_efficiency_weighted = 0.0
+        total_samples = 0
+
+        for entry in self.efficiency_matrix.values():
+            total_efficiency_weighted += entry.efficiency * entry.sample_count
+            total_samples += entry.sample_count
+
+        if total_samples == 0:
+            return 0.90
+
+        return total_efficiency_weighted / total_samples
+
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for persistence."""
+        """Convert to dictionary for persistence (matrix-only storage)."""
         matrix_serialized = {
             f"{k.phases}_{k.voltage_bracket}_{k.current_bracket}": {
                 "efficiency": v.efficiency,
@@ -179,32 +188,28 @@ class LearnedEfficiency:
             for k, v in self.efficiency_matrix.items()
         }
         return {
-            "ac_efficiency": self.ac_efficiency,
-            "dc_efficiency": self.dc_efficiency,
-            "ac_session_count": self.ac_session_count,
-            "dc_session_count": self.dc_session_count,
             "efficiency_matrix": matrix_serialized,
             "voltage_brackets": self.voltage_brackets,
             "current_brackets": self.current_brackets,
+            "dc_efficiency": self.dc_efficiency,
+            "dc_session_count": self.dc_session_count,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LearnedEfficiency:
-        """Create from dictionary (handles both old and new formats)."""
+        """Create from dictionary (backward compatible with old format)."""
         import logging
         _LOGGER = logging.getLogger(__name__)
-
+        
         try:
             learned = cls(
-                ac_efficiency=data.get("ac_efficiency", 0.90),
-                dc_efficiency=data.get("dc_efficiency", 0.93),
-                ac_session_count=data.get("ac_session_count", 0),
-                dc_session_count=data.get("dc_session_count", 0),
                 voltage_brackets=data.get("voltage_brackets", [240, 410, 810]),
                 current_brackets=data.get("current_brackets", [6, 11, 16, 32, 64]),
+                dc_efficiency=data.get("dc_efficiency", 0.93),
+                dc_session_count=data.get("dc_session_count", 0),
             )
 
-            # Deserialize matrix (optional - may not exist in old storage)
+            # Deserialize matrix (new format)
             matrix_data = data.get("efficiency_matrix", {})
             if matrix_data:
                 for key, entry_data in matrix_data.items():
@@ -222,8 +227,18 @@ class LearnedEfficiency:
                         learned.efficiency_matrix[condition] = entry
                     except (ValueError, KeyError) as err:
                         _LOGGER.warning("Failed to deserialize efficiency entry %s: %s", key, err)
-
-            return learned
+            
+            # Backward compatibility: migrate old flat AC efficiency to matrix
+            elif "ac_efficiency" in data and data.get("ac_session_count", 0) > 0:
+                # Create a default condition for migrated data (1-phase, 240V, 16A)
+                _LOGGER.info("Migrating legacy AC efficiency %.2f%% (%d sessions) to matrix format",
+                             data["ac_efficiency"] * 100, data["ac_session_count"])
+                default_condition = ChargingCondition(1, 240, 16)
+                learned.efficiency_matrix[default_condition] = EfficiencyEntry(
+                    efficiency=data["ac_efficiency"],
+                    sample_count=data["ac_session_count"],
+                    history=[data["ac_efficiency"]]  # Initialize history with migrated value
+                )
         except Exception as err:
             _LOGGER.error("Failed to deserialize LearnedEfficiency: %s. Using defaults.", err)
             # Return default instance instead of crashing
