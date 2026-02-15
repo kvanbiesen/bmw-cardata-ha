@@ -1439,8 +1439,7 @@ class CardataCoordinator:
     def iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
         """Iterate over descriptors (sync version for platform setup).
 
-        Returns a snapshot list to minimize race condition impact. For guaranteed
-        thread-safety, use async_iter_descriptors() instead.
+        Returns a snapshot list to minimize race condition impact.
         """
         # Take a snapshot of the data to avoid iteration issues during concurrent modification
         # Using list() on items() creates a shallow copy of the dict items at that moment
@@ -1464,16 +1463,6 @@ class CardataCoordinator:
             # data dict changed during snapshot
             pass
         return result
-
-    async def async_iter_descriptors(self, *, binary: bool) -> list[tuple[str, str]]:
-        """Iterate over descriptors with proper lock acquisition."""
-        async with self._lock:
-            result: list[tuple[str, str]] = []
-            for vin, descriptors in self.data.items():
-                for descriptor, descriptor_state in descriptors.items():
-                    if isinstance(descriptor_state.value, bool) == binary:
-                        result.append((vin, descriptor))
-            return result
 
     async def async_handle_connection_event(self, status: str, reason: str | None = None) -> None:
         self.connection_status = status
