@@ -1196,17 +1196,6 @@ class CardataCoordinator:
                     except (TypeError, ValueError):
                         pass
 
-            # Wire avgAuxPower to Magic SOC for auxiliary energy tracking
-            elif descriptor == "vehicle.vehicle.avgAuxPower":
-                if value is not None:
-                    try:
-                        aux_kw = float(value) / 1000.0
-                        if _OVERULE_AUX_POWER > 0:
-                            aux_kw = float(_OVERULE_AUX_POWER)
-                        self._magic_soc.update_aux_power(vin, aux_kw)
-                    except (TypeError, ValueError):
-                        pass
-
             # Wire travelledDistance to motion detector and driving prediction
             elif descriptor == "vehicle.vehicle.travelledDistance":
                 if value is not None:
