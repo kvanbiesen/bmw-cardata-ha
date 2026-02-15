@@ -69,6 +69,7 @@ class LearnedEfficiency:
     def get_efficiency(self, phases: int, voltage: float, current: float, is_dc: bool, vin: str | None = None) -> float:
         """Get efficiency for specific charging conditions."""
         import logging
+
         _LOGGER = logging.getLogger(__name__)
 
         if is_dc:
@@ -110,7 +111,9 @@ class LearnedEfficiency:
             )
         return ac_avg
 
-    def update_efficiency(self, phases: int, voltage: float, current: float, is_dc: bool, true_efficiency: float) -> bool:
+    def update_efficiency(
+        self, phases: int, voltage: float, current: float, is_dc: bool, true_efficiency: float
+    ) -> bool:
         """Update efficiency with new measurement.
         Returns True if accepted, False if rejected as outlier.
         """
@@ -193,6 +196,7 @@ class LearnedEfficiency:
     def from_dict(cls, data: dict[str, Any]) -> LearnedEfficiency:
         """Create from dictionary (backward compatible with old format)."""
         import logging
+
         _LOGGER = logging.getLogger(__name__)
 
         try:
@@ -225,13 +229,16 @@ class LearnedEfficiency:
             # Backward compatibility: migrate old flat AC efficiency to matrix
             elif "ac_efficiency" in data and data.get("ac_session_count", 0) > 0:
                 # Create a default condition for migrated data (1-phase, 240V, 16A)
-                _LOGGER.info("Migrating legacy AC efficiency %.2f%% (%d sessions) to matrix format",
-                             data["ac_efficiency"] * 100, data["ac_session_count"])
+                _LOGGER.info(
+                    "Migrating legacy AC efficiency %.2f%% (%d sessions) to matrix format",
+                    data["ac_efficiency"] * 100,
+                    data["ac_session_count"],
+                )
                 default_condition = ChargingCondition(1, 240, 16)
                 learned.efficiency_matrix[default_condition] = EfficiencyEntry(
                     efficiency=data["ac_efficiency"],
                     sample_count=data["ac_session_count"],
-                    history=[data["ac_efficiency"]]  # Initialize history with migrated value
+                    history=[data["ac_efficiency"]],  # Initialize history with migrated value
                 )
 
             return learned
