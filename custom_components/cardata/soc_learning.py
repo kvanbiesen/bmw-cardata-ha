@@ -124,13 +124,13 @@ def reset_learned_efficiency(predictor: SOCPredictor, vin: str, charging_method:
         return False
 
     if charging_method is None:
-        # Reset both
+        # Reset both AC matrix and DC
         del predictor._learned_efficiency[vin]
         _LOGGER.info("Reset all learned efficiency for %s", redact_vin(vin))
     elif charging_method.upper() == "AC":
-        learned.ac_efficiency = predictor.AC_EFFICIENCY
-        learned.ac_session_count = 0
-        _LOGGER.info("Reset AC learned efficiency for %s", redact_vin(vin))
+        # Clear the entire efficiency matrix for AC
+        learned.efficiency_matrix.clear()
+        _LOGGER.info("Reset AC learned efficiency matrix for %s", redact_vin(vin))
     elif charging_method.upper() == "DC":
         learned.dc_efficiency = predictor.DC_EFFICIENCY
         learned.dc_session_count = 0
