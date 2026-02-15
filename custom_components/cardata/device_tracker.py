@@ -472,11 +472,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             "" if position_changed else " (position unchanged)",
         )
 
-    def _fetch_coordinate(self, descriptor: str) -> float | None:
-        """Fetch and validate coordinate value from coordinator."""
-        result = self._fetch_coordinate_with_ts(descriptor)
-        return result[0] if result else None
-
     def _fetch_coordinate_with_ts(self, descriptor: str) -> tuple[float, str | None] | None:
         """Fetch and validate coordinate value with its BMW timestamp from coordinator.
 
