@@ -151,7 +151,7 @@ class SOCPredictor:
 
     def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
         """Get learned efficiency data for a VIN.
-        
+
         Returns:
             LearnedEfficiency object if exists, None otherwise
         """
