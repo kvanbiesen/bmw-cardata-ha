@@ -270,14 +270,6 @@ class SOCPredictor:
             self._learned_efficiency[vin] = LearnedEfficiency.from_dict(efficiency_data)
         _LOGGER.debug("Loaded learned efficiency for %d vehicle(s)", len(data))
 
-    def get_learned_efficiency_data(self) -> dict[str, dict[str, Any]]:
-        """Get learned efficiency data for persistence.
-
-        Returns:
-            Dictionary mapping VIN to learned efficiency data
-        """
-        return {vin: eff.to_dict() for vin, eff in self._learned_efficiency.items()}
-
     def get_session_data(self) -> dict[str, Any]:
         """Get charging session data for persistence.
 
