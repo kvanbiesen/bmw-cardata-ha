@@ -149,6 +149,14 @@ class SOCPredictor:
         """Reset learned efficiency for a VIN."""
         return soc_learning.reset_learned_efficiency(self, vin, charging_method)
 
+    def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
+        """Get learned efficiency data for a VIN.
+        
+        Returns:
+            LearnedEfficiency object if exists, None otherwise
+        """
+        return self._learned_efficiency.get(vin)
+
     def update_charging_status(self, vin: str, status: str | None) -> bool:
         """Update charging status and detect session start/end.
 
