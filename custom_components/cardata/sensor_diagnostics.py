@@ -261,8 +261,7 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
 
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False  
-    # Hidden by default, enable in device settings
+    _attr_entity_registry_enabled_default = False  # Hidden by default, enable in device settings
     _attr_icon = "mdi:chart-line"
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
