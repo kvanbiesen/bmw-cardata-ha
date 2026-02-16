@@ -400,9 +400,16 @@ class CardataCoordinator:
                 "trend": self._get_trend(entry.history) if len(entry.history) >= 3 else "stable",
             }
 
+        # DC efficiency (tracked separately, not condition-dependent)
+        dc_info = {
+            "efficiency": round(learned.dc_efficiency * 100, 2),
+            "sessions": learned.dc_session_count,
+        }
+
         return {
             "current_charging": current_charging,
             "charging_profiles": charging_profiles,
+            "dc": dc_info,
         }
 
     def _calculate_std(self, values: list[float]) -> float:
