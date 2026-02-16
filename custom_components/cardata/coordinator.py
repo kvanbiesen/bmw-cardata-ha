@@ -284,27 +284,43 @@ class CardataCoordinator:
         self._last_poll_at[vin] = time.time()
 
     def get_manual_battery_capacity(self, vin: str) -> float | None:
-        """Get manual battery capacity for a VIN (user input)."""
+        """Get manual battery capacity for a VIN (user input).
+
+        Returns None if not set, value is 0, or entity is disabled in the registry.
+        """
         capacity = self._manual_battery_capacity.get(vin)
         if capacity is None:
             return None
 
+        # Check if entity is disabled (cached per VIN, refreshed by refresh_manual_capacity_cache)
+        if self._manual_capacity_disabled.get(vin, False):
+            return None
+
+        return capacity
+
+    def refresh_manual_capacity_cache(self, vin: str) -> None:
+        """Refresh the disabled-state cache for a VIN's manual capacity entity.
+
+        Called once when the entity is added to HA, and when it is enabled/disabled.
+        """
         from .const import MANUAL_CAPACITY_DESCRIPTOR
 
         entity_registry = async_get_entity_registry(self.hass)
         unique_id = f"{vin}_{MANUAL_CAPACITY_DESCRIPTOR}"
         entity_id = entity_registry.async_get_entity_id("number", DOMAIN, unique_id)
 
+        disabled = False
         if entity_id:
             entity_entry = entity_registry.async_get(entity_id)
             if entity_entry and entity_entry.disabled_by is not None:
-                _LOGGER.debug(
-                    "Manual battery capacity entity is disabled for %s - using auto-detection",
-                    redact_vin(vin),
-                )
-                return None
+                disabled = True
 
-        return capacity
+        self._manual_capacity_disabled[vin] = disabled
+        if disabled:
+            _LOGGER.debug(
+                "Manual battery capacity entity is disabled for %s - using auto-detection",
+                redact_vin(vin),
+            )
 
     def set_manual_battery_capacity(self, vin: str, capacity_kwh: float | None) -> None:
         """Set manual battery capacity for a VIN."""
