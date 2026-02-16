@@ -236,7 +236,7 @@ class LearnedEfficiency:
                     data["ac_efficiency"] * 100,
                     data["ac_session_count"],
                 )
-                default_condition = ChargingCondition(1, 240, 16)
+                default_condition = learned.get_condition(1, 230.0, 16.0)
                 learned.efficiency_matrix[default_condition] = EfficiencyEntry(
                     efficiency=data["ac_efficiency"],
                     sample_count=data["ac_session_count"],
