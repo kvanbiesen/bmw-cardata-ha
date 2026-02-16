@@ -83,6 +83,7 @@ class SOCPredictor:
 
         # Callback for when learning data is updated (for persistence)
         self._on_learning_updated: Callable[[], None] | None = None
+        self._on_save: Callable[[], None] | None = None
 
         # VIN -> bool for PHEV detection (has both HV battery and fuel system)
         # PHEVs need special handling: sync predicted SOC down when actual is lower
@@ -98,10 +99,20 @@ class SOCPredictor:
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
 
+        Called when efficiency actually changes (dispatches signal + saves).
+
         Args:
-            callback: Function to call after learning updates (e.g., for persistence)
+            callback: Function to call after learning updates (e.g., for persistence + sensor dispatch)
         """
         self._on_learning_updated = callback
+
+    def set_save_callback(self, callback: Callable[[], None]) -> None:
+        """Set callback for periodic data persistence (save only, no sensor dispatch).
+
+        Args:
+            callback: Function to call for periodic saves during charging sessions
+        """
+        self._on_save = callback
 
     def load_learned_efficiency(self, data: dict[str, dict[str, Any]]) -> None:
         """Load learned efficiency data from storage."""
@@ -720,10 +731,12 @@ class SOCPredictor:
                 updated_vins.append(vin)
 
         # Periodic save: every 10 updates (~300s at 30s interval)
-        if updated_vins and self._on_learning_updated:
+        # Uses save-only callback (no sensor dispatch — no learning happened here)
+        save_cb = self._on_save or self._on_learning_updated
+        if updated_vins and save_cb:
             self._periodic_save_counter += 1
             if self._periodic_save_counter >= 10:
                 self._periodic_save_counter = 0
-                self._on_learning_updated()
+                save_cb()
 
         return updated_vins
