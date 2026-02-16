@@ -118,9 +118,10 @@ class LearnedEfficiency:
         Returns True if accepted, False if rejected as outlier.
         """
         if is_dc:
-            # DC: simple weighted average (not condition-dependent)
+            # DC: adaptive EMA (converges fast early, settles to LEARNING_RATE after ~5 sessions)
+            rate = max(LEARNING_RATE, 1.0 / (self.dc_session_count + 1))
             old = self.dc_efficiency
-            self.dc_efficiency = old * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
+            self.dc_efficiency = old * (1 - rate) + true_efficiency * rate
             self.dc_session_count += 1
             return True
 
@@ -153,9 +154,10 @@ class LearnedEfficiency:
         if is_outlier:
             return False
 
-        # Update EMA and session count
+        # Adaptive EMA: converges fast early, settles to LEARNING_RATE after ~5 sessions
+        rate = max(LEARNING_RATE, 1.0 / (entry.sample_count + 1))
         old_eff = entry.efficiency
-        entry.efficiency = old_eff * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
+        entry.efficiency = old_eff * (1 - rate) + true_efficiency * rate
         entry.sample_count += 1
 
         return True
