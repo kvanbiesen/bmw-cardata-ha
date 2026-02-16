@@ -163,6 +163,9 @@ class ManualBatteryCapacityNumber(NumberEntity, RestoreEntity):
         """Restore previous value when entity is added."""
         await super().async_added_to_hass()
 
+        # Cache whether this entity is disabled in the registry
+        self._coordinator.refresh_manual_capacity_cache(self._vin)
+
         # Restore previous value
         last_state = await self.async_get_last_state()
 
