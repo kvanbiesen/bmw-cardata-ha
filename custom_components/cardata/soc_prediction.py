@@ -616,6 +616,7 @@ class SOCPredictor:
         self._entity_signaled.discard(vin)
         self._pending_sessions.pop(vin, None)
         self._is_phev.pop(vin, None)
+        self._charging_method.pop(vin, None)
         # Note: We don't remove learned efficiency - that's persistent data
 
     def get_tracked_vins(self) -> set[str]:
@@ -719,11 +720,10 @@ class SOCPredictor:
                 updated_vins.append(vin)
 
         # Periodic save: every 10 updates (~300s at 30s interval)
-        if updated_vins:
+        if updated_vins and self._on_learning_updated:
             self._periodic_save_counter += 1
             if self._periodic_save_counter >= 10:
                 self._periodic_save_counter = 0
-                if self._on_learning_updated:
-                    self._on_learning_updated()
+                self._on_learning_updated()
 
         return updated_vins
