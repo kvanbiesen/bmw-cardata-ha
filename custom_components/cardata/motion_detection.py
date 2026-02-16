@@ -373,7 +373,7 @@ class MotionDetector:
     def update_door_lock_state(self, vin: str, state: str) -> None:
         """Update door lock state tracking.
 
-        While driving, BMW doors are "locked" or "selectiveLocked".
+        While driving, BMW doors are "locked" or "selectivelocked".
         When the driver exits, it transitions to "unlocked", "secured", etc.
         This transition is a strong signal that the car has stopped.
         """
