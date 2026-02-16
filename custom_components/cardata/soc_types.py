@@ -9,6 +9,10 @@ from typing import Any
 from .const import LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
 from .utils import redact_vin
 
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+
 
 @dataclass
 class ChargingCondition:
@@ -22,6 +26,8 @@ class ChargingCondition:
         return hash((self.phases, self.voltage_bracket, self.current_bracket))
 
     def __eq__(self, other):
+        if not isinstance(other, ChargingCondition):
+            return NotImplemented
         return (
             self.phases == other.phases
             and self.voltage_bracket == other.voltage_bracket
@@ -47,7 +53,7 @@ class LearnedEfficiency:
     efficiency_matrix: dict[ChargingCondition, EfficiencyEntry] = field(default_factory=dict)
 
     # Voltage/current bracketing configuration
-    voltage_brackets: list[int] = field(default_factory=lambda: [240, 410, 810])
+    voltage_brackets: list[int] = field(default_factory=lambda: [250, 410, 810])
     current_brackets: list[int] = field(default_factory=lambda: [6, 11, 16, 32, 64])
 
     # DC efficiency tracked separately (not condition-dependent)
@@ -68,12 +74,7 @@ class LearnedEfficiency:
 
     def get_efficiency(self, phases: int, voltage: float, current: float, is_dc: bool, vin: str | None = None) -> float:
         """Get efficiency for specific charging conditions."""
-        import logging
-
-        _LOGGER = logging.getLogger(__name__)
-
         if is_dc:
-            # DC fast charging: use tracked DC efficiency
             if vin:
                 _LOGGER.debug(
                     "[EFFICIENCY] VIN %s: Using DC efficiency: %.2f%%",
@@ -87,7 +88,7 @@ class LearnedEfficiency:
 
         if entry and entry.sample_count >= 1:
             if vin:
-                _LOGGER.info(
+                _LOGGER.debug(
                     "[EFFICIENCY] VIN %s: Using MATRIX for %dP/%dV/%dA: %.2f%% (%d sessions)",
                     redact_vin(vin),
                     phases,
@@ -101,7 +102,7 @@ class LearnedEfficiency:
         # No matrix data yet: use weighted average from all AC conditions, or default
         ac_avg = self._calculate_ac_average()
         if vin:
-            _LOGGER.info(
+            _LOGGER.debug(
                 "[EFFICIENCY] VIN %s: Using AC AVERAGE for %dP/%dV/%dA: %.2f%% (no matrix data for this condition)",
                 redact_vin(vin),
                 phases,
@@ -201,7 +202,7 @@ class LearnedEfficiency:
 
         try:
             learned = cls(
-                voltage_brackets=data.get("voltage_brackets", [240, 410, 810]),
+                voltage_brackets=data.get("voltage_brackets", [250, 410, 810]),
                 current_brackets=data.get("current_brackets", [6, 11, 16, 32, 64]),
                 dc_efficiency=data.get("dc_efficiency", 0.93),
                 dc_session_count=data.get("dc_session_count", 0),
@@ -228,7 +229,7 @@ class LearnedEfficiency:
 
             # Backward compatibility: migrate old flat AC efficiency to matrix
             elif "ac_efficiency" in data and data.get("ac_session_count", 0) > 0:
-                # Create a default condition for migrated data (1-phase, 240V, 16A)
+                # Create a default condition for migrated data (1-phase, 250V, 16A)
                 _LOGGER.info(
                     "Migrating legacy AC efficiency %.2f%% (%d sessions) to matrix format",
                     data["ac_efficiency"] * 100,
