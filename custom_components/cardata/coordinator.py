@@ -175,9 +175,6 @@ class CardataCoordinator:
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
         self._signal_efficiency_learning = f"{DOMAIN}_{self.entry_id}_efficiency_learning"
 
-        # Set up efficiency learning callback
-        self._soc_predictor.set_learning_callback(self._handle_learning_update)
-
     @property
     def signal_new_sensor(self) -> str:
         return self._signal_new_sensor
@@ -368,10 +365,6 @@ class CardataCoordinator:
             _sw_end_driving(self._magic_soc, vin, vehicle_state)
 
     # --- Efficiency learning ---
-
-    def _handle_learning_update(self) -> None:
-        """Handle efficiency learning update - dispatches signal for sensor updates."""
-        self._safe_dispatcher_send(self.signal_efficiency_learning)
 
     def get_efficiency_learning_attributes(self, vin: str) -> dict[str, Any]:
         """Get efficiency learning attributes for diagnostic sensor.
