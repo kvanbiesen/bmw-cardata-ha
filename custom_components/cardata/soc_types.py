@@ -135,19 +135,25 @@ class LearnedEfficiency:
             return True
 
         # Outlier detection using condition-specific history
+        is_outlier = False
         if len(entry.history) >= 3:
             mean = sum(entry.history) / len(entry.history)
             variance = sum((x - mean) ** 2 for x in entry.history) / len(entry.history)
             std_dev = variance**0.5
 
             if abs(true_efficiency - mean) > 2 * std_dev:
-                return False  # Reject outlier
+                is_outlier = True
 
-        # Update entry
+        # Always add to history so the window adapts over time
+        # (without this, a genuine efficiency shift would be rejected forever)
         entry.history.append(true_efficiency)
         if len(entry.history) > entry.max_history:
             entry.history.pop(0)
 
+        if is_outlier:
+            return False
+
+        # Update EMA and session count
         old_eff = entry.efficiency
         entry.efficiency = old_eff * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
         entry.sample_count += 1
