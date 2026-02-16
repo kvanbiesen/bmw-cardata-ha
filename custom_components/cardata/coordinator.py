@@ -375,7 +375,7 @@ class CardataCoordinator:
                     "active": True,
                     "anchor_soc": session.anchor_soc,
                     "target_soc": session.target_soc if session.target_soc else "unknown",
-                    "phases": session.phases if hasattr(session, "phases") else 1,
+                    "phases": session.phases,
                     "charging_method": session.charging_method,
                 }
 

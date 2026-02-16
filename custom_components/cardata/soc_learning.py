@@ -202,7 +202,7 @@ def end_session(
             total_energy_kwh=session.total_energy_kwh,
             charging_method=session.charging_method,
             battery_capacity_kwh=session.battery_capacity_kwh,
-            phases=session.phases if hasattr(session, "phases") else 1,
+            phases=session.phases,
             voltage=session.last_voltage if session.last_voltage else 230.0,
             current=session.last_current if session.last_current else 16.0,
         )
@@ -309,7 +309,7 @@ def _finalize_learning(
         return
 
     # Extract charging parameters from session for matrix learning
-    phases = session.phases if hasattr(session, "phases") else 1
+    phases = session.phases
     voltage = session.last_voltage if session.last_voltage else 230.0
     current = session.last_current if session.last_current else 16.0
 

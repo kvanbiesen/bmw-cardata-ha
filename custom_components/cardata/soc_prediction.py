@@ -452,7 +452,7 @@ class SOCPredictor:
             return session.last_predicted_soc
 
         # Get efficiency (learned or default) with charging parameters
-        phases = session.phases if hasattr(session, "phases") else 1
+        phases = session.phases
         voltage = session.last_voltage if session.last_voltage else 230.0
         current = session.last_current if session.last_current else 16.0
         efficiency = soc_learning.get_efficiency(
