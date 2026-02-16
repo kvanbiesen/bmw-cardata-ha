@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from .const import LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
 from .utils import redact_vin
-
-import logging
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -196,10 +195,6 @@ class LearnedEfficiency:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LearnedEfficiency:
         """Create from dictionary (backward compatible with old format)."""
-        import logging
-
-        _LOGGER = logging.getLogger(__name__)
-
         try:
             learned = cls(
                 voltage_brackets=data.get("voltage_brackets", [250, 410, 810]),
