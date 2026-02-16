@@ -154,6 +154,7 @@ class CardataCoordinator:
     # Manual battery capacity (user input, takes priority over automatic detection)
     # Per-VIN storage: VIN -> capacity in kWh (None = not set, use auto-detection)
     _manual_battery_capacity: dict[str, float | None] = field(default_factory=dict, init=False)
+    _manual_capacity_disabled: dict[str, bool] = field(default_factory=dict, init=False)
 
     # Cached signal strings (initialized in __post_init__ for performance)
     _signal_new_sensor: str = field(default="", init=False)
