@@ -226,7 +226,7 @@ class SOCPredictor:
             redact_vin(vin),
             anchor_soc,
             battery_capacity_kwh,
-            charging_method,
+            resolved_method,
         )
 
     def set_charging_method(self, vin: str, method: str) -> None:
