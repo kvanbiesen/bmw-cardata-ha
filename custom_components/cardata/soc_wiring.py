@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-_OVERULE_AUX_POWER = 0.3  # kW - estimated auxiliary power load during charging (for SOC prediction)
+_OVERRIDE_AUX_POWER = 0.3  # kW - estimated auxiliary power load during charging (for SOC prediction)
 
 
 def _descriptor_float(state: DescriptorState | None) -> float | None:
@@ -59,8 +59,8 @@ def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
 
 def _get_aux_kw(vehicle_state: dict[str, DescriptorState]) -> float:
     """Get auxiliary power in kW from vehicle state, with override."""
-    if _OVERULE_AUX_POWER > 0:
-        return float(_OVERULE_AUX_POWER)
+    if _OVERRIDE_AUX_POWER > 0:
+        return float(_OVERRIDE_AUX_POWER)
     aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
     if aux_state and aux_state.value is not None:
         try:

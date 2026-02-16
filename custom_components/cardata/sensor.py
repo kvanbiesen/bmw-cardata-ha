@@ -66,7 +66,7 @@ from .const import (
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
-from .sensor_diagnostics import CardataDiagnosticsSensor, CardataVehicleMetadataSensor
+from .sensor_diagnostics import CardataDiagnosticsSensor, CardataEfficiencyLearningSensor, CardataVehicleMetadataSensor
 from .sensor_helpers import (
     convert_value_for_unit,
     get_device_class_for_unit,
@@ -303,6 +303,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     entities: dict[tuple[str, str], CardataSensor] = {}
     metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
+    efficiency_entities: dict[str, CardataEfficiencyLearningSensor] = {}
+
+    def ensure_efficiency_learning_sensor(vin: str) -> None:
+        """Ensure efficiency learning sensor exists for EVs/PHEVs with battery management."""
+        if vin in efficiency_entities:
+            return
+
+        # Check if vehicle has battery management descriptor (EVs/PHEVs only)
+        battery_state = coordinator.get_state(vin, "vehicle.drivetrain.batteryManagement.header")
+        if not battery_state:
+            return
+
+        efficiency_entities[vin] = CardataEfficiencyLearningSensor(coordinator, vin)
+        async_add_entities([efficiency_entities[vin]], True)
 
     def ensure_metadata_sensor(vin: str) -> None:
         """Ensure metadata sensor exists for VIN (all vehicles)."""
@@ -398,6 +412,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     async def async_handle_metadata_update(vin: str) -> None:
         ensure_metadata_sensor(vin)
+        ensure_efficiency_learning_sensor(vin)
 
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update))
 
@@ -425,6 +440,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 ensure_metadata_sensor(vin)
                 continue
 
+            if descriptor == "diagnostics_charging_matrix":
+                ensure_efficiency_learning_sensor(vin)
+                continue
+
             ensure_entity(vin, descriptor, assume_sensor=True)
     except Exception as err:
         _LOGGER.warning("Error restoring sensors from entity registry: %s", err)
@@ -446,6 +465,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             all_vins = all_vins & coordinator._allowed_vins
         for vin in all_vins:
             ensure_metadata_sensor(vin)
+            ensure_efficiency_learning_sensor(vin)
     except Exception as err:
         _LOGGER.warning("Error creating metadata sensors: %s", err)
 

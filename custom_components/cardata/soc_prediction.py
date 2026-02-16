@@ -83,6 +83,7 @@ class SOCPredictor:
 
         # Callback for when learning data is updated (for persistence)
         self._on_learning_updated: Callable[[], None] | None = None
+        self._on_save: Callable[[], None] | None = None
 
         # VIN -> bool for PHEV detection (has both HV battery and fuel system)
         # PHEVs need special handling: sync predicted SOC down when actual is lower
@@ -98,10 +99,20 @@ class SOCPredictor:
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
 
+        Called when efficiency actually changes (dispatches signal + saves).
+
         Args:
-            callback: Function to call after learning updates (e.g., for persistence)
+            callback: Function to call after learning updates (e.g., for persistence + sensor dispatch)
         """
         self._on_learning_updated = callback
+
+    def set_save_callback(self, callback: Callable[[], None]) -> None:
+        """Set callback for periodic data persistence (save only, no sensor dispatch).
+
+        Args:
+            callback: Function to call for periodic saves during charging sessions
+        """
+        self._on_save = callback
 
     def load_learned_efficiency(self, data: dict[str, dict[str, Any]]) -> None:
         """Load learned efficiency data from storage."""
@@ -148,6 +159,14 @@ class SOCPredictor:
     def reset_learned_efficiency(self, vin: str, charging_method: str | None = None) -> bool:
         """Reset learned efficiency for a VIN."""
         return soc_learning.reset_learned_efficiency(self, vin, charging_method)
+
+    def get_learned_efficiency(self, vin: str) -> LearnedEfficiency | None:
+        """Get learned efficiency data for a VIN.
+
+        Returns:
+            LearnedEfficiency object if exists, None otherwise
+        """
+        return self._learned_efficiency.get(vin)
 
     def update_charging_status(self, vin: str, status: str | None) -> bool:
         """Update charging status and detect session start/end.
@@ -443,8 +462,18 @@ class SOCPredictor:
         if session.battery_capacity_kwh <= 0:
             return session.last_predicted_soc
 
-        # Get efficiency (learned or default)
-        efficiency = soc_learning.get_efficiency(self._learned_efficiency, vin, session.charging_method)
+        # Get efficiency (learned or default) with charging parameters
+        phases = session.phases
+        voltage = session.last_voltage if session.last_voltage else 230.0
+        current = session.last_current if session.last_current else 16.0
+        efficiency = soc_learning.get_efficiency(
+            self._learned_efficiency,
+            vin,
+            session.charging_method,
+            phases,
+            voltage,
+            current,
+        )
 
         # Use accumulated net energy (already has aux subtracted)
         energy_added_kwh = session.total_energy_kwh * efficiency
@@ -702,10 +731,12 @@ class SOCPredictor:
                 updated_vins.append(vin)
 
         # Periodic save: every 10 updates (~300s at 30s interval)
-        if updated_vins and self._on_learning_updated:
+        # Uses save-only callback (no sensor dispatch — no learning happened here)
+        save_cb = self._on_save or self._on_learning_updated
+        if updated_vins and save_cb:
             self._periodic_save_counter += 1
             if self._periodic_save_counter >= 10:
                 self._periodic_save_counter = 0
-                self._on_learning_updated()
+                save_cb()
 
         return updated_vins

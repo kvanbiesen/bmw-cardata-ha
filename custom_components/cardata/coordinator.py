@@ -163,6 +163,7 @@ class CardataCoordinator:
     _signal_diagnostics: str = field(default="", init=False)
     _signal_new_image: str = field(default="", init=False)
     _signal_metadata: str = field(default="", init=False)
+    _signal_efficiency_learning: str = field(default="", init=False)
 
     def __post_init__(self) -> None:
         """Initialize cached values after dataclass creation."""
@@ -172,6 +173,7 @@ class CardataCoordinator:
         self._signal_diagnostics = f"{DOMAIN}_{self.entry_id}_diagnostics"
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
+        self._signal_efficiency_learning = f"{DOMAIN}_{self.entry_id}_efficiency_learning"
 
     @property
     def signal_new_sensor(self) -> str:
@@ -196,6 +198,10 @@ class CardataCoordinator:
     @property
     def signal_metadata(self) -> str:
         return self._signal_metadata
+
+    @property
+    def signal_efficiency_learning(self) -> str:
+        return self._signal_efficiency_learning
 
     # --- Derived motion detection from GPS ---
 
@@ -357,6 +363,73 @@ class CardataCoordinator:
         vehicle_state = self.data.get(vin)
         if vehicle_state:
             _sw_end_driving(self._magic_soc, vin, vehicle_state)
+
+    # --- Efficiency learning ---
+
+    def get_efficiency_learning_attributes(self, vin: str) -> dict[str, Any]:
+        """Get efficiency learning attributes for diagnostic sensor.
+
+        Returns:
+            Dictionary with current_charging info and charging_profiles matrix
+        """
+        learned = self._soc_predictor.get_learned_efficiency(vin)
+        if not learned:
+            return {}
+
+        # Get current charging info if active
+        current_charging: dict[str, Any] = {"active": False}
+        if self._soc_predictor.is_charging(vin):
+            session = self._soc_predictor._sessions.get(vin)
+            if session:
+                current_charging = {
+                    "active": True,
+                    "anchor_soc": session.anchor_soc,
+                    "target_soc": session.target_soc if session.target_soc else "unknown",
+                    "phases": session.phases,
+                    "charging_method": session.charging_method,
+                }
+
+        # Build charging profiles matrix
+        charging_profiles = {}
+        for condition, entry in learned.efficiency_matrix.items():
+            key = f"{condition.phases}P/{condition.voltage_bracket}V/{condition.current_bracket}A"
+            charging_profiles[key] = {
+                "efficiency": round(entry.efficiency * 100, 2),
+                "sessions": entry.sample_count,
+                "std_dev": self._calculate_std(entry.history) if len(entry.history) >= 2 else 0.0,
+                "trend": self._get_trend(entry.history) if len(entry.history) >= 3 else "stable",
+            }
+
+        # DC efficiency (tracked separately, not condition-dependent)
+        dc_info = {
+            "efficiency": round(learned.dc_efficiency * 100, 2),
+            "sessions": learned.dc_session_count,
+        }
+
+        return {
+            "current_charging": current_charging,
+            "charging_profiles": charging_profiles,
+            "dc": dc_info,
+        }
+
+    def _calculate_std(self, values: list[float]) -> float:
+        """Calculate standard deviation of values."""
+        if len(values) < 2:
+            return 0.0
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        return round(variance**0.5 * 100, 2)  # Convert to percentage points
+
+    def _get_trend(self, history: list[float]) -> str:
+        """Get trend from recent history (last 3 values)."""
+        if len(history) < 3:
+            return "stable"
+        recent = history[-3:]
+        if all(recent[i] > recent[i - 1] for i in range(1, len(recent))):
+            return "increasing"
+        if all(recent[i] < recent[i - 1] for i in range(1, len(recent))):
+            return "decreasing"
+        return "stable"
 
     # --- Dispatcher ---
 

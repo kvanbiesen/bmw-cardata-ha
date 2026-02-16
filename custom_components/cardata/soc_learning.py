@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 from .const import (
     AC_SESSION_FINALIZE_MINUTES,
     DC_SESSION_FINALIZE_MINUTES,
-    LEARNING_RATE,
     MAX_VALID_EFFICIENCY,
     MIN_LEARNING_SOC_GAIN,
     MIN_VALID_EFFICIENCY,
@@ -124,13 +123,13 @@ def reset_learned_efficiency(predictor: SOCPredictor, vin: str, charging_method:
         return False
 
     if charging_method is None:
-        # Reset both
+        # Reset both AC matrix and DC
         del predictor._learned_efficiency[vin]
         _LOGGER.info("Reset all learned efficiency for %s", redact_vin(vin))
     elif charging_method.upper() == "AC":
-        learned.ac_efficiency = predictor.AC_EFFICIENCY
-        learned.ac_session_count = 0
-        _LOGGER.info("Reset AC learned efficiency for %s", redact_vin(vin))
+        # Clear the entire efficiency matrix for AC
+        learned.efficiency_matrix.clear()
+        _LOGGER.info("Reset AC learned efficiency matrix for %s", redact_vin(vin))
     elif charging_method.upper() == "DC":
         learned.dc_efficiency = predictor.DC_EFFICIENCY
         learned.dc_session_count = 0
@@ -203,6 +202,9 @@ def end_session(
             total_energy_kwh=session.total_energy_kwh,
             charging_method=session.charging_method,
             battery_capacity_kwh=session.battery_capacity_kwh,
+            phases=session.phases,
+            voltage=session.last_voltage if session.last_voltage else 230.0,
+            current=session.last_current if session.last_current else 16.0,
         )
 
     # Clear active session and charging method
@@ -306,8 +308,22 @@ def _finalize_learning(
         )
         return
 
-    # Apply learning
-    _apply_learning(learned_efficiency, on_learning_updated, vin, session.charging_method, true_efficiency)
+    # Extract charging parameters from session for matrix learning
+    phases = session.phases
+    voltage = session.last_voltage if session.last_voltage else 230.0
+    current = session.last_current if session.last_current else 16.0
+
+    # Apply learning with charging condition details
+    _apply_learning(
+        learned_efficiency,
+        on_learning_updated,
+        vin,
+        session.charging_method,
+        true_efficiency,
+        phases=phases,
+        voltage=voltage,
+        current=current,
+    )
 
 
 def _finalize_learning_from_pending(
@@ -348,8 +364,17 @@ def _finalize_learning_from_pending(
         )
         return
 
-    # Apply learning
-    _apply_learning(learned_efficiency, on_learning_updated, vin, pending.charging_method, true_efficiency)
+    # Apply learning with charging condition details from pending session
+    _apply_learning(
+        learned_efficiency,
+        on_learning_updated,
+        vin,
+        pending.charging_method,
+        true_efficiency,
+        phases=pending.phases,
+        voltage=pending.voltage,
+        current=pending.current,
+    )
 
 
 def _apply_learning(
@@ -358,58 +383,77 @@ def _apply_learning(
     vin: str,
     charging_method: str,
     true_efficiency: float,
+    phases: int = 1,
+    voltage: float = 230.0,
+    current: float = 16.0,
 ) -> None:
-    """Apply EMA learning update."""
+    """Apply learned efficiency with charging condition tracking."""
     learned = learned_efficiency.setdefault(vin, LearnedEfficiency())
 
-    if charging_method == "DC":
-        old = learned.dc_efficiency
-        learned.dc_efficiency = old * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
-        learned.dc_session_count += 1
-        _LOGGER.info(
-            "SOC: Learned DC efficiency for %s: %.3f -> %.3f (session %d, measured %.3f)",
+    is_dc = charging_method == "DC"
+
+    accepted = learned.update_efficiency(phases, voltage, current, is_dc, true_efficiency)
+
+    if accepted:
+        if is_dc:
+            _LOGGER.info(
+                "%s: Learned DC efficiency: %.2f%% (session %d)",
+                redact_vin(vin),
+                learned.dc_efficiency * 100,
+                learned.dc_session_count,
+            )
+        else:
+            condition = learned.get_condition(phases, voltage, current)
+            entry = learned.efficiency_matrix[condition]
+            _LOGGER.info(
+                "%s: Learned AC efficiency [%dP, %dV, %dA]: %.2f%% (session %d for this config)",
+                redact_vin(vin),
+                condition.phases,
+                condition.voltage_bracket,
+                condition.current_bracket,
+                entry.efficiency * 100,
+                entry.sample_count,
+            )
+
+        # Trigger persistence callback
+        if on_learning_updated:
+            on_learning_updated()
+    else:
+        condition = learned.get_condition(phases, voltage, current)
+        _LOGGER.warning(
+            "%s: Rejected efficiency outlier [%dP, %dV, %dA]: %.2f%%",
             redact_vin(vin),
-            old,
-            learned.dc_efficiency,
-            learned.dc_session_count,
-            true_efficiency,
-        )
-    elif charging_method == "AC":
-        old = learned.ac_efficiency
-        learned.ac_efficiency = old * (1 - LEARNING_RATE) + true_efficiency * LEARNING_RATE
-        learned.ac_session_count += 1
-        _LOGGER.info(
-            "SOC: Learned AC efficiency for %s: %.3f -> %.3f (session %d, measured %.3f)",
-            redact_vin(vin),
-            old,
-            learned.ac_efficiency,
-            learned.ac_session_count,
-            true_efficiency,
+            condition.phases,
+            condition.voltage_bracket,
+            condition.current_bracket,
+            true_efficiency * 100,
         )
 
-    # Trigger persistence callback
-    if on_learning_updated:
-        on_learning_updated()
 
-
-def get_efficiency(learned_efficiency: dict[str, LearnedEfficiency], vin: str, charging_method: str) -> float:
+def get_efficiency(
+    learned_efficiency: dict[str, LearnedEfficiency],
+    vin: str,
+    charging_method: str,
+    phases: int = 1,
+    voltage: float = 230.0,
+    current: float = 16.0,
+) -> float:
     """Get efficiency for prediction, using learned value if available.
 
     Args:
         learned_efficiency: Dictionary mapping VIN to LearnedEfficiency
         vin: Vehicle identification number
         charging_method: "AC" or "DC"
+        phases: Number of phases (1 or 3)
+        voltage: Voltage in volts
+        current: Current in amps
 
     Returns:
         Efficiency to use for prediction
     """
     learned = learned_efficiency.get(vin)
+    if not learned:
+        learned = _DEFAULT_EFFICIENCY
 
-    if charging_method == "DC":
-        if learned and learned.dc_session_count > 0:
-            return learned.dc_efficiency
-        return _DEFAULT_EFFICIENCY.dc_efficiency
-    else:
-        if learned and learned.ac_session_count > 0:
-            return learned.ac_efficiency
-        return _DEFAULT_EFFICIENCY.ac_efficiency
+    is_dc = charging_method == "DC"
+    return learned.get_efficiency(phases, voltage, current, is_dc, vin)

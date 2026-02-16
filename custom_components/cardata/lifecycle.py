@@ -224,7 +224,13 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             """Trigger async save from sync context."""
             hass.async_create_task(_save_learning_data())
 
-        coordinator._soc_predictor.set_learning_callback(_trigger_save)
+        def _trigger_save_and_dispatch() -> None:
+            """Trigger async save and dispatch efficiency signal for sensor updates."""
+            hass.async_create_task(_save_learning_data())
+            coordinator._safe_dispatcher_send(coordinator.signal_efficiency_learning)
+
+        coordinator._soc_predictor.set_learning_callback(_trigger_save_and_dispatch)
+        coordinator._soc_predictor.set_save_callback(_trigger_save)
         coordinator._magic_soc.set_learning_callback(_trigger_save)
 
         # Restore stored vehicle metadata

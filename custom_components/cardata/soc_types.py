@@ -2,40 +2,254 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .const import MAX_ENERGY_GAP_SECONDS
+from .const import LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
+from .utils import redact_vin
+
+_LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class ChargingCondition:
+    """Key for identifying charging conditions."""
+
+    phases: int  # 1 or 3
+    voltage_bracket: int  # 230, 400, etc.
+    current_bracket: int  # 6, 11, 16, 32, etc.
+
+    def __hash__(self):
+        return hash((self.phases, self.voltage_bracket, self.current_bracket))
+
+    def __eq__(self, other):
+        if not isinstance(other, ChargingCondition):
+            return NotImplemented
+        return (
+            self.phases == other.phases
+            and self.voltage_bracket == other.voltage_bracket
+            and self.current_bracket == other.current_bracket
+        )
+
+
+@dataclass
+class EfficiencyEntry:
+    """Efficiency data for a specific charging condition."""
+
+    efficiency: float  # Current learned efficiency
+    sample_count: int = 0  # Number of sessions
+    history: list[float] = field(default_factory=list)  # Last N measurements
+    max_history: int = 10  # Keep last 10 sessions per condition
 
 
 @dataclass
 class LearnedEfficiency:
-    """Learned charging efficiency per vehicle."""
+    """Vehicle-specific efficiency learning with detailed charging profile matrix."""
 
-    ac_efficiency: float = 0.90  # Default AC efficiency
-    dc_efficiency: float = 0.93  # Default DC efficiency
-    ac_session_count: int = 0  # Number of AC sessions used for learning
-    dc_session_count: int = 0  # Number of DC sessions used for learning
+    # Efficiency matrix indexed by charging conditions (primary storage)
+    efficiency_matrix: dict[ChargingCondition, EfficiencyEntry] = field(default_factory=dict)
+
+    # Voltage/current bracketing configuration
+    voltage_brackets: list[int] = field(default_factory=lambda: [250, 410, 810])
+    current_brackets: list[int] = field(default_factory=lambda: [6, 11, 16, 32, 64])
+
+    # DC efficiency tracked separately (not condition-dependent)
+    dc_efficiency: float = 0.93
+    dc_session_count: int = 0
+
+    def _get_bracket(self, value: float, brackets: list[int]) -> int:
+        """Find closest bracket for voltage or current."""
+        if not brackets:
+            return int(value)
+        return min(brackets, key=lambda x: abs(x - value))
+
+    def get_condition(self, phases: int, voltage: float, current: float) -> ChargingCondition:
+        """Convert charging parameters to a ChargingCondition key."""
+        voltage_bracket = self._get_bracket(voltage, self.voltage_brackets)
+        current_bracket = self._get_bracket(current, self.current_brackets)
+        return ChargingCondition(phases, voltage_bracket, current_bracket)
+
+    def get_efficiency(self, phases: int, voltage: float, current: float, is_dc: bool, vin: str | None = None) -> float:
+        """Get efficiency for specific charging conditions."""
+        if is_dc:
+            if vin:
+                _LOGGER.debug(
+                    "[EFFICIENCY] VIN %s: Using DC efficiency: %.2f%%",
+                    redact_vin(vin),
+                    self.dc_efficiency * 100,
+                )
+            return self.dc_efficiency
+
+        condition = self.get_condition(phases, voltage, current)
+        entry = self.efficiency_matrix.get(condition)
+
+        if entry and entry.sample_count >= 1:
+            if vin:
+                _LOGGER.debug(
+                    "[EFFICIENCY] VIN %s: Using MATRIX for %dP/%dV/%dA: %.2f%% (%d sessions)",
+                    redact_vin(vin),
+                    phases,
+                    condition.voltage_bracket,
+                    condition.current_bracket,
+                    entry.efficiency * 100,
+                    entry.sample_count,
+                )
+            return entry.efficiency
+
+        # No matrix data yet: use weighted average from all AC conditions, or default
+        ac_avg = self._calculate_ac_average()
+        if vin:
+            _LOGGER.debug(
+                "[EFFICIENCY] VIN %s: Using AC AVERAGE for %dP/%dV/%dA: %.2f%% (no matrix data for this condition)",
+                redact_vin(vin),
+                phases,
+                condition.voltage_bracket,
+                condition.current_bracket,
+                ac_avg * 100,
+            )
+        return ac_avg
+
+    def update_efficiency(
+        self, phases: int, voltage: float, current: float, is_dc: bool, true_efficiency: float
+    ) -> bool:
+        """Update efficiency with new measurement.
+        Returns True if accepted, False if rejected as outlier.
+        """
+        if is_dc:
+            # DC: adaptive EMA (converges fast early, settles to LEARNING_RATE after ~5 sessions)
+            rate = max(LEARNING_RATE, 1.0 / (self.dc_session_count + 1))
+            old = self.dc_efficiency
+            self.dc_efficiency = old * (1 - rate) + true_efficiency * rate
+            self.dc_session_count += 1
+            return True
+
+        condition = self.get_condition(phases, voltage, current)
+        entry = self.efficiency_matrix.get(condition)
+
+        if entry is None:
+            # First time seeing this condition
+            entry = EfficiencyEntry(efficiency=true_efficiency, sample_count=1)
+            entry.history.append(true_efficiency)
+            self.efficiency_matrix[condition] = entry
+            return True
+
+        # Outlier detection using condition-specific history
+        is_outlier = False
+        if len(entry.history) >= 3:
+            mean = sum(entry.history) / len(entry.history)
+            variance = sum((x - mean) ** 2 for x in entry.history) / len(entry.history)
+            std_dev = variance**0.5
+
+            if abs(true_efficiency - mean) > 2 * std_dev:
+                is_outlier = True
+
+        # Always add to history so the window adapts over time
+        # (without this, a genuine efficiency shift would be rejected forever)
+        entry.history.append(true_efficiency)
+        if len(entry.history) > entry.max_history:
+            entry.history.pop(0)
+
+        if is_outlier:
+            return False
+
+        # Adaptive EMA: converges fast early, settles to LEARNING_RATE after ~5 sessions
+        rate = max(LEARNING_RATE, 1.0 / (entry.sample_count + 1))
+        old_eff = entry.efficiency
+        entry.efficiency = old_eff * (1 - rate) + true_efficiency * rate
+        entry.sample_count += 1
+
+        return True
+
+    def _calculate_ac_average(self) -> float:
+        """Calculate weighted average AC efficiency from all learned conditions.
+
+        Returns weighted average based on sample counts, or default 0.90 if no data.
+        """
+        if not self.efficiency_matrix:
+            return 0.90  # Default AC efficiency
+
+        total_efficiency_weighted = 0.0
+        total_samples = 0
+
+        for entry in self.efficiency_matrix.values():
+            total_efficiency_weighted += entry.efficiency * entry.sample_count
+            total_samples += entry.sample_count
+
+        if total_samples == 0:
+            return 0.90
+
+        return total_efficiency_weighted / total_samples
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for persistence."""
+        """Convert to dictionary for persistence (matrix-only storage)."""
+        matrix_serialized = {
+            f"{k.phases}_{k.voltage_bracket}_{k.current_bracket}": {
+                "efficiency": v.efficiency,
+                "sample_count": v.sample_count,
+                "history": v.history,
+            }
+            for k, v in self.efficiency_matrix.items()
+        }
         return {
-            "ac_efficiency": self.ac_efficiency,
+            "efficiency_matrix": matrix_serialized,
+            "voltage_brackets": self.voltage_brackets,
+            "current_brackets": self.current_brackets,
             "dc_efficiency": self.dc_efficiency,
-            "ac_session_count": self.ac_session_count,
             "dc_session_count": self.dc_session_count,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> LearnedEfficiency:
-        """Create from dictionary."""
-        return cls(
-            ac_efficiency=data.get("ac_efficiency", 0.90),
-            dc_efficiency=data.get("dc_efficiency", 0.93),
-            ac_session_count=data.get("ac_session_count", 0),
-            dc_session_count=data.get("dc_session_count", 0),
-        )
+        """Create from dictionary (backward compatible with old format)."""
+        try:
+            learned = cls(
+                voltage_brackets=data.get("voltage_brackets", [250, 410, 810]),
+                current_brackets=data.get("current_brackets", [6, 11, 16, 32, 64]),
+                dc_efficiency=data.get("dc_efficiency", 0.93),
+                dc_session_count=data.get("dc_session_count", 0),
+            )
+
+            # Deserialize matrix (new format)
+            matrix_data = data.get("efficiency_matrix", {})
+            if matrix_data:
+                for key, entry_data in matrix_data.items():
+                    try:
+                        parts = key.split("_")
+                        if len(parts) != 3:
+                            continue
+                        phases, voltage_bracket, current_bracket = map(int, parts)
+                        condition = ChargingCondition(phases, voltage_bracket, current_bracket)
+                        entry = EfficiencyEntry(
+                            efficiency=entry_data["efficiency"],
+                            sample_count=entry_data["sample_count"],
+                            history=entry_data.get("history", []),
+                        )
+                        learned.efficiency_matrix[condition] = entry
+                    except (ValueError, KeyError) as err:
+                        _LOGGER.warning("Failed to deserialize efficiency entry %s: %s", key, err)
+
+            # Backward compatibility: migrate old flat AC efficiency to matrix
+            elif "ac_efficiency" in data and data.get("ac_session_count", 0) > 0:
+                # Create a default condition for migrated data (1-phase, 250V, 16A)
+                _LOGGER.info(
+                    "Migrating legacy AC efficiency %.2f%% (%d sessions) to matrix format",
+                    data["ac_efficiency"] * 100,
+                    data["ac_session_count"],
+                )
+                default_condition = learned.get_condition(1, 230.0, 16.0)
+                learned.efficiency_matrix[default_condition] = EfficiencyEntry(
+                    efficiency=data["ac_efficiency"],
+                    sample_count=data["ac_session_count"],
+                    history=[data["ac_efficiency"]],  # Initialize history with migrated value
+                )
+
+            return learned
+        except Exception as err:
+            _LOGGER.error("Failed to deserialize LearnedEfficiency: %s. Using defaults.", err)
+            # Return default instance instead of crashing
+            return cls()
 
 
 @dataclass
@@ -47,6 +261,10 @@ class PendingSession:
     total_energy_kwh: float  # Total energy input during session
     charging_method: str  # "AC" or "DC"
     battery_capacity_kwh: float  # Battery capacity for calculations
+    # Charging condition data for learning
+    phases: int = 1
+    voltage: float = 230.0
+    current: float = 16.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -56,6 +274,9 @@ class PendingSession:
             "total_energy_kwh": self.total_energy_kwh,
             "charging_method": self.charging_method,
             "battery_capacity_kwh": self.battery_capacity_kwh,
+            "phases": self.phases,
+            "voltage": self.voltage,
+            "current": self.current,
         }
 
     @classmethod
@@ -67,6 +288,9 @@ class PendingSession:
             total_energy_kwh=data["total_energy_kwh"],
             charging_method=data["charging_method"],
             battery_capacity_kwh=data["battery_capacity_kwh"],
+            phases=data.get("phases", 1),
+            voltage=data.get("voltage", 230.0),
+            current=data.get("current", 16.0),
         )
 
 
