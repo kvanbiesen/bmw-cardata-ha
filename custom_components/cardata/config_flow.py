@@ -686,6 +686,10 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             for entity in entities:
                 is_orphaned = False
 
+                # Skip disabled entities — they have no state in HA by design
+                if entity.disabled_by is not None:
+                    continue
+
                 # Check 1: Entity is not currently loaded (no state in HA)
                 state = self.hass.states.get(entity.entity_id)
                 if state is None:

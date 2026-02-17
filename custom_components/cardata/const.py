@@ -151,6 +151,8 @@ HV_BATTERY_DESCRIPTORS = [
 MIN_TELEMETRY_DESCRIPTORS = 5
 
 # SOC Learning parameters
+# Default DC charging efficiency (used before learning)
+DEFAULT_DC_EFFICIENCY = 0.93
 # Learning rate for Exponential Moving Average (0.2 = 20% new, 80% old)
 LEARNING_RATE = 0.2
 # Minimum SOC gain required to learn from a session (percentage)
