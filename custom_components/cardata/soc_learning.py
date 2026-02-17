@@ -127,12 +127,16 @@ def reset_learned_efficiency(predictor: SOCPredictor, vin: str, charging_method:
         del predictor._learned_efficiency[vin]
         _LOGGER.info("Reset all learned efficiency for %s", redact_vin(vin))
     elif charging_method.upper() == "AC":
-        # Clear the entire efficiency matrix for AC
-        learned.efficiency_matrix.clear()
+        # Clear AC entries from matrix (phases > 0)
+        ac_keys = [c for c in learned.efficiency_matrix if c.phases > 0]
+        for key in ac_keys:
+            del learned.efficiency_matrix[key]
         _LOGGER.info("Reset AC learned efficiency matrix for %s", redact_vin(vin))
     elif charging_method.upper() == "DC":
-        learned.dc_efficiency = predictor.DC_EFFICIENCY
-        learned.dc_session_count = 0
+        # Clear DC entries from matrix (phases == 0)
+        dc_keys = [c for c in learned.efficiency_matrix if c.phases == 0]
+        for key in dc_keys:
+            del learned.efficiency_matrix[key]
         _LOGGER.info("Reset DC learned efficiency for %s", redact_vin(vin))
     else:
         _LOGGER.warning("Invalid charging method for reset: %s", charging_method)
@@ -392,42 +396,50 @@ def _apply_learning(
 
     is_dc = charging_method == "DC"
 
+    condition = learned.get_dc_condition() if is_dc else learned.get_condition(phases, voltage, current)
     accepted = learned.update_efficiency(phases, voltage, current, is_dc, true_efficiency)
 
+    entry = learned.efficiency_matrix.get(condition)
     if accepted:
         if is_dc:
             _LOGGER.info(
-                "%s: Learned DC efficiency: %.2f%% (session %d)",
+                "%s: Learned DC efficiency [DC/%dV]: %.2f%% (session %d)",
                 redact_vin(vin),
-                learned.dc_efficiency * 100,
-                learned.dc_session_count,
+                condition.voltage_bracket,
+                entry.efficiency * 100 if entry else 0,
+                entry.sample_count if entry else 0,
             )
         else:
-            condition = learned.get_condition(phases, voltage, current)
-            entry = learned.efficiency_matrix[condition]
             _LOGGER.info(
                 "%s: Learned AC efficiency [%dP, %dV, %dA]: %.2f%% (session %d for this config)",
                 redact_vin(vin),
                 condition.phases,
                 condition.voltage_bracket,
                 condition.current_bracket,
-                entry.efficiency * 100,
-                entry.sample_count,
+                entry.efficiency * 100 if entry else 0,
+                entry.sample_count if entry else 0,
             )
 
         # Trigger persistence callback
         if on_learning_updated:
             on_learning_updated(vin)
     else:
-        condition = learned.get_condition(phases, voltage, current)
-        _LOGGER.warning(
-            "%s: Rejected efficiency outlier [%dP, %dV, %dA]: %.2f%%",
-            redact_vin(vin),
-            condition.phases,
-            condition.voltage_bracket,
-            condition.current_bracket,
-            true_efficiency * 100,
-        )
+        if is_dc:
+            _LOGGER.warning(
+                "%s: Rejected DC efficiency outlier [DC/%dV]: %.2f%%",
+                redact_vin(vin),
+                condition.voltage_bracket,
+                true_efficiency * 100,
+            )
+        else:
+            _LOGGER.warning(
+                "%s: Rejected efficiency outlier [%dP, %dV, %dA]: %.2f%%",
+                redact_vin(vin),
+                condition.phases,
+                condition.voltage_bracket,
+                condition.current_bracket,
+                true_efficiency * 100,
+            )
 
 
 def get_efficiency(

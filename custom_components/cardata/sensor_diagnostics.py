@@ -304,14 +304,24 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
             self._attr_native_value = "no data"
             return
 
-        # Count actual sessions and unique conditions
-        num_conditions = len(learned.efficiency_matrix)
-        total_ac_sessions = sum(entry.sample_count for entry in learned.efficiency_matrix.values())
+        # Count AC sessions and conditions (phases > 0), DC separately (phases == 0)
+        ac_conditions = 0
+        total_ac_sessions = 0
+        total_dc_sessions = 0
+        for condition, entry in learned.efficiency_matrix.items():
+            if condition.phases == 0:
+                total_dc_sessions += entry.sample_count
+            else:
+                ac_conditions += 1
+                total_ac_sessions += entry.sample_count
 
-        if num_conditions == 0:
-            self._attr_native_value = "0 AC sessions, 0 conditions"
-        else:
-            self._attr_native_value = f"{total_ac_sessions} AC sessions, {num_conditions} conditions"
+        parts = []
+        if ac_conditions > 0 or total_ac_sessions > 0:
+            parts.append(f"{total_ac_sessions} AC sessions ({ac_conditions} conditions)")
+        if total_dc_sessions > 0:
+            parts.append(f"{total_dc_sessions} DC sessions")
+
+        self._attr_native_value = ", ".join(parts) if parts else "0 sessions"
 
     def _handle_learning_update(self, vin: str | None = None) -> None:
         """Handle efficiency learning updates."""

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .const import LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
+from .const import DEFAULT_DC_EFFICIENCY, LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,10 +55,6 @@ class LearnedEfficiency:
     voltage_brackets: list[int] = field(default_factory=lambda: [250, 410, 810])
     current_brackets: list[int] = field(default_factory=lambda: [6, 11, 16, 32, 64])
 
-    # DC efficiency tracked separately (not condition-dependent)
-    dc_efficiency: float = 0.93
-    dc_session_count: int = 0
-
     def _get_bracket(self, value: float, brackets: list[int]) -> int:
         """Find closest bracket for voltage or current."""
         if not brackets:
@@ -71,16 +67,36 @@ class LearnedEfficiency:
         current_bracket = self._get_bracket(current, self.current_brackets)
         return ChargingCondition(phases, voltage_bracket, current_bracket)
 
+    def get_dc_condition(self, voltage_class: int = 400) -> ChargingCondition:
+        """Get charging condition key for DC charging.
+
+        DC uses phases=0 as sentinel, voltage bracketed normally, current=0 (not meaningful for DC).
+        """
+        voltage_bracket = self._get_bracket(float(voltage_class), self.voltage_brackets)
+        return ChargingCondition(0, voltage_bracket, 0)
+
     def get_efficiency(self, phases: int, voltage: float, current: float, is_dc: bool, vin: str | None = None) -> float:
         """Get efficiency for specific charging conditions."""
         if is_dc:
+            condition = self.get_dc_condition()
+            entry = self.efficiency_matrix.get(condition)
+            if entry and entry.sample_count >= 1:
+                if vin:
+                    _LOGGER.debug(
+                        "[EFFICIENCY] VIN %s: Using DC MATRIX for DC/%dV: %.2f%% (%d sessions)",
+                        redact_vin(vin),
+                        condition.voltage_bracket,
+                        entry.efficiency * 100,
+                        entry.sample_count,
+                    )
+                return entry.efficiency
             if vin:
                 _LOGGER.debug(
-                    "[EFFICIENCY] VIN %s: Using DC efficiency: %.2f%%",
+                    "[EFFICIENCY] VIN %s: Using DC DEFAULT: %.2f%%",
                     redact_vin(vin),
-                    self.dc_efficiency * 100,
+                    DEFAULT_DC_EFFICIENCY * 100,
                 )
-            return self.dc_efficiency
+            return DEFAULT_DC_EFFICIENCY
 
         condition = self.get_condition(phases, voltage, current)
         entry = self.efficiency_matrix.get(condition)
@@ -117,15 +133,7 @@ class LearnedEfficiency:
         """Update efficiency with new measurement.
         Returns True if accepted, False if rejected as outlier.
         """
-        if is_dc:
-            # DC: adaptive EMA (converges fast early, settles to LEARNING_RATE after ~5 sessions)
-            rate = max(LEARNING_RATE, 1.0 / (self.dc_session_count + 1))
-            old = self.dc_efficiency
-            self.dc_efficiency = old * (1 - rate) + true_efficiency * rate
-            self.dc_session_count += 1
-            return True
-
-        condition = self.get_condition(phases, voltage, current)
+        condition = self.get_dc_condition() if is_dc else self.get_condition(phases, voltage, current)
         entry = self.efficiency_matrix.get(condition)
 
         if entry is None:
@@ -166,6 +174,7 @@ class LearnedEfficiency:
         """Calculate weighted average AC efficiency from all learned conditions.
 
         Returns weighted average based on sample counts, or default 0.90 if no data.
+        Excludes DC entries (phases == 0) from the average.
         """
         if not self.efficiency_matrix:
             return 0.90  # Default AC efficiency
@@ -173,7 +182,9 @@ class LearnedEfficiency:
         total_efficiency_weighted = 0.0
         total_samples = 0
 
-        for entry in self.efficiency_matrix.values():
+        for condition, entry in self.efficiency_matrix.items():
+            if condition.phases == 0:
+                continue  # Skip DC entries
             total_efficiency_weighted += entry.efficiency * entry.sample_count
             total_samples += entry.sample_count
 
@@ -196,8 +207,6 @@ class LearnedEfficiency:
             "efficiency_matrix": matrix_serialized,
             "voltage_brackets": self.voltage_brackets,
             "current_brackets": self.current_brackets,
-            "dc_efficiency": self.dc_efficiency,
-            "dc_session_count": self.dc_session_count,
         }
 
     @classmethod
@@ -207,8 +216,6 @@ class LearnedEfficiency:
             learned = cls(
                 voltage_brackets=data.get("voltage_brackets", [250, 410, 810]),
                 current_brackets=data.get("current_brackets", [6, 11, 16, 32, 64]),
-                dc_efficiency=data.get("dc_efficiency", 0.93),
-                dc_session_count=data.get("dc_session_count", 0),
             )
 
             # Deserialize matrix (new format)
@@ -243,6 +250,22 @@ class LearnedEfficiency:
                     efficiency=data["ac_efficiency"],
                     sample_count=data["ac_session_count"],
                     history=[data["ac_efficiency"]],  # Initialize history with migrated value
+                )
+
+            # Migrate legacy flat DC efficiency into matrix
+            old_dc_eff = data.get("dc_efficiency")
+            old_dc_count = data.get("dc_session_count", 0)
+            dc_condition = learned.get_dc_condition()
+            if old_dc_eff is not None and old_dc_count > 0 and dc_condition not in learned.efficiency_matrix:
+                _LOGGER.info(
+                    "Migrating legacy DC efficiency %.2f%% (%d sessions) to matrix format",
+                    old_dc_eff * 100,
+                    old_dc_count,
+                )
+                learned.efficiency_matrix[dc_condition] = EfficiencyEntry(
+                    efficiency=old_dc_eff,
+                    sample_count=old_dc_count,
+                    history=[],  # No history tracked before
                 )
 
             return learned

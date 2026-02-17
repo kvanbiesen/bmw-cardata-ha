@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from . import soc_learning
-from .const import MAX_ENERGY_GAP_SECONDS
+from .const import DEFAULT_DC_EFFICIENCY, MAX_ENERGY_GAP_SECONDS
 from .soc_types import ChargingSession, LearnedEfficiency, PendingSession
 from .utils import redact_vin
 
@@ -40,7 +40,7 @@ class SOCPredictor:
 
     # Default charging efficiency by method (used before learning)
     AC_EFFICIENCY: ClassVar[float] = 0.90  # 90% for AC charging
-    DC_EFFICIENCY: ClassVar[float] = 0.93  # 93% for DC fast charging
+    DC_EFFICIENCY: ClassVar[float] = DEFAULT_DC_EFFICIENCY  # 93% for DC fast charging
 
     # Staleness thresholds
     BMW_SOC_STALE_MINUTES: ClassVar[float] = 30.0  # BMW SOC considered stale

@@ -392,7 +392,10 @@ class CardataCoordinator:
         # Build charging profiles matrix
         charging_profiles = {}
         for condition, entry in learned.efficiency_matrix.items():
-            key = f"{condition.phases}P/{condition.voltage_bracket}V/{condition.current_bracket}A"
+            if condition.phases == 0:
+                key = f"DC/{condition.voltage_bracket}V"
+            else:
+                key = f"{condition.phases}P/{condition.voltage_bracket}V/{condition.current_bracket}A"
             charging_profiles[key] = {
                 "efficiency": round(entry.efficiency * 100, 2),
                 "sessions": entry.sample_count,
@@ -400,16 +403,9 @@ class CardataCoordinator:
                 "trend": self._get_trend(entry.history) if len(entry.history) >= 3 else "stable",
             }
 
-        # DC efficiency (tracked separately, not condition-dependent)
-        dc_info = {
-            "efficiency": round(learned.dc_efficiency * 100, 2),
-            "sessions": learned.dc_session_count,
-        }
-
         return {
             "current_charging": current_charging,
             "charging_profiles": charging_profiles,
-            "dc": dc_info,
         }
 
     def _calculate_std(self, values: list[float]) -> float:
