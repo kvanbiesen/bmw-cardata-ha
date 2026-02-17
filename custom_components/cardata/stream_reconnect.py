@@ -53,7 +53,8 @@ async def async_reconnect(manager: CardataStreamManager) -> None:
     manager._intentional_disconnect = False
 
     # Phase 2: Token refresh (no lock needed - client is stopped)
-    if manager._entry_id:
+    # Skip token refresh when using a custom MQTT broker (no BMW auth needed)
+    if manager._entry_id and not getattr(manager, "_custom_broker", False):
         try:
             from .auth import refresh_tokens_for_entry
             from .const import DOMAIN

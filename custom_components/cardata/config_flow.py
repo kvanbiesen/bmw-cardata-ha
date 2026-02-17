@@ -42,7 +42,19 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
-from .const import DOMAIN, OPTION_ENABLE_MAGIC_SOC
+from .const import (
+    DEFAULT_CUSTOM_MQTT_PORT,
+    DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
+    DOMAIN,
+    OPTION_CUSTOM_MQTT_ENABLED,
+    OPTION_CUSTOM_MQTT_HOST,
+    OPTION_CUSTOM_MQTT_PASSWORD,
+    OPTION_CUSTOM_MQTT_PORT,
+    OPTION_CUSTOM_MQTT_TLS,
+    OPTION_CUSTOM_MQTT_TOPIC_PREFIX,
+    OPTION_CUSTOM_MQTT_USERNAME,
+    OPTION_ENABLE_MAGIC_SOC,
+)
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
@@ -354,6 +366,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 "action_fetch_telematic": "Get telematics data (API)",
                 "action_reset_container": "Reset telemetry container",
                 "action_cleanup_entities": "Clean up orphaned entities",
+                "action_mqtt_broker": "MQTT Broker",
                 "action_settings": "Settings",
             },
         )
@@ -386,6 +399,106 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(OPTION_ENABLE_MAGIC_SOC, default=current): bool,
                 }
             ),
+        )
+
+    async def async_step_action_mqtt_broker(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Configure a custom MQTT broker (e.g. for bmw-mqtt-bridge)."""
+        options = dict(self._config_entry.options)
+
+        if user_input is not None:
+            enabled = user_input.get(OPTION_CUSTOM_MQTT_ENABLED, False)
+            options[OPTION_CUSTOM_MQTT_ENABLED] = enabled
+
+            if enabled:
+                host = user_input.get(OPTION_CUSTOM_MQTT_HOST, "").strip()
+                if not host:
+                    return self.async_show_form(
+                        step_id="action_mqtt_broker",
+                        data_schema=self._mqtt_broker_schema(user_input),
+                        errors={OPTION_CUSTOM_MQTT_HOST: "mqtt_host_required"},
+                    )
+                options[OPTION_CUSTOM_MQTT_HOST] = host
+                options[OPTION_CUSTOM_MQTT_PORT] = user_input.get(
+                    OPTION_CUSTOM_MQTT_PORT, DEFAULT_CUSTOM_MQTT_PORT
+                )
+                options[OPTION_CUSTOM_MQTT_USERNAME] = user_input.get(
+                    OPTION_CUSTOM_MQTT_USERNAME, ""
+                )
+                options[OPTION_CUSTOM_MQTT_PASSWORD] = user_input.get(
+                    OPTION_CUSTOM_MQTT_PASSWORD, ""
+                )
+                options[OPTION_CUSTOM_MQTT_TLS] = user_input.get(
+                    OPTION_CUSTOM_MQTT_TLS, "off"
+                )
+                options[OPTION_CUSTOM_MQTT_TOPIC_PREFIX] = user_input.get(
+                    OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX
+                )
+            else:
+                # Clear custom broker settings when disabled
+                for key in (
+                    OPTION_CUSTOM_MQTT_HOST,
+                    OPTION_CUSTOM_MQTT_PORT,
+                    OPTION_CUSTOM_MQTT_USERNAME,
+                    OPTION_CUSTOM_MQTT_PASSWORD,
+                    OPTION_CUSTOM_MQTT_TLS,
+                    OPTION_CUSTOM_MQTT_TOPIC_PREFIX,
+                ):
+                    options.pop(key, None)
+
+            return self.async_create_entry(title="", data=options)
+
+        return self.async_show_form(
+            step_id="action_mqtt_broker",
+            data_schema=self._mqtt_broker_schema(),
+        )
+
+    def _mqtt_broker_schema(self, defaults: dict[str, Any] | None = None) -> vol.Schema:
+        """Build the schema for the MQTT broker configuration form."""
+        options = self._config_entry.options
+        if defaults is None:
+            defaults = {}
+
+        enabled = defaults.get(
+            OPTION_CUSTOM_MQTT_ENABLED,
+            options.get(OPTION_CUSTOM_MQTT_ENABLED, False),
+        )
+        host = defaults.get(
+            OPTION_CUSTOM_MQTT_HOST,
+            options.get(OPTION_CUSTOM_MQTT_HOST, ""),
+        )
+        port = defaults.get(
+            OPTION_CUSTOM_MQTT_PORT,
+            options.get(OPTION_CUSTOM_MQTT_PORT, DEFAULT_CUSTOM_MQTT_PORT),
+        )
+        username = defaults.get(
+            OPTION_CUSTOM_MQTT_USERNAME,
+            options.get(OPTION_CUSTOM_MQTT_USERNAME, ""),
+        )
+        password = defaults.get(
+            OPTION_CUSTOM_MQTT_PASSWORD,
+            options.get(OPTION_CUSTOM_MQTT_PASSWORD, ""),
+        )
+        tls = defaults.get(
+            OPTION_CUSTOM_MQTT_TLS,
+            options.get(OPTION_CUSTOM_MQTT_TLS, "off"),
+        )
+        topic_prefix = defaults.get(
+            OPTION_CUSTOM_MQTT_TOPIC_PREFIX,
+            options.get(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX),
+        )
+
+        return vol.Schema(
+            {
+                vol.Optional(OPTION_CUSTOM_MQTT_ENABLED, default=enabled): bool,
+                vol.Optional(OPTION_CUSTOM_MQTT_HOST, default=host): str,
+                vol.Optional(OPTION_CUSTOM_MQTT_PORT, default=port): int,
+                vol.Optional(OPTION_CUSTOM_MQTT_USERNAME, default=username): str,
+                vol.Optional(OPTION_CUSTOM_MQTT_PASSWORD, default=password): str,
+                vol.Optional(OPTION_CUSTOM_MQTT_TLS, default=tls): vol.In(
+                    {"off": "Off (plain TCP)", "tls": "TLS (verified)", "tls_insecure": "TLS (self-signed)"}
+                ),
+                vol.Optional(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, default=topic_prefix): str,
+            }
         )
 
     def _finish(self) -> FlowResult:
