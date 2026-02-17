@@ -82,7 +82,7 @@ class SOCPredictor:
         self._pending_sessions: dict[str, PendingSession] = {}
 
         # Callback for when learning data is updated (for persistence)
-        self._on_learning_updated: Callable[[], None] | None = None
+        self._on_learning_updated: Callable[..., None] | None = None
         self._on_save: Callable[[], None] | None = None
 
         # VIN -> bool for PHEV detection (has both HV battery and fuel system)

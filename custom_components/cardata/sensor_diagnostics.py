@@ -313,8 +313,10 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
         else:
             self._attr_native_value = f"{total_ac_sessions} AC sessions, {num_conditions} conditions"
 
-    def _handle_learning_update(self) -> None:
-        """Handle efficiency learning updates for all VINs."""
+    def _handle_learning_update(self, vin: str | None = None) -> None:
+        """Handle efficiency learning updates."""
+        if vin is not None and vin != self._vin:
+            return
         self._load_current_value()
         self.schedule_update_ha_state()
 

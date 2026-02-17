@@ -139,7 +139,7 @@ def reset_learned_efficiency(predictor: SOCPredictor, vin: str, charging_method:
         return False
 
     if predictor._on_learning_updated:
-        predictor._on_learning_updated()
+        predictor._on_learning_updated(vin)
     return True
 
 
@@ -174,7 +174,7 @@ def end_session(
         )
         del predictor._sessions[vin]
         if predictor._on_learning_updated:
-            predictor._on_learning_updated()
+            predictor._on_learning_updated(vin)
         return
 
     # Check if target was reached (within tolerance)
@@ -213,7 +213,7 @@ def end_session(
 
     # Persist updated state (pending session added or session removed)
     if predictor._on_learning_updated:
-        predictor._on_learning_updated()
+        predictor._on_learning_updated(vin)
 
 
 def try_finalize_pending_session(predictor: SOCPredictor, vin: str, bmw_soc: float, soc_timestamp: float) -> bool:
@@ -249,7 +249,7 @@ def try_finalize_pending_session(predictor: SOCPredictor, vin: str, bmw_soc: flo
         )
         del predictor._pending_sessions[vin]
         if predictor._on_learning_updated:
-            predictor._on_learning_updated()
+            predictor._on_learning_updated(vin)
         return False
 
     # Finalize learning with this SOC
@@ -259,7 +259,7 @@ def try_finalize_pending_session(predictor: SOCPredictor, vin: str, bmw_soc: flo
     del predictor._pending_sessions[vin]
     # Persist removal of pending session (even if learning was rejected)
     if predictor._on_learning_updated:
-        predictor._on_learning_updated()
+        predictor._on_learning_updated(vin)
     return True
 
 
@@ -417,7 +417,7 @@ def _apply_learning(
 
         # Trigger persistence callback
         if on_learning_updated:
-            on_learning_updated()
+            on_learning_updated(vin)
     else:
         condition = learned.get_condition(phases, voltage, current)
         _LOGGER.warning(
