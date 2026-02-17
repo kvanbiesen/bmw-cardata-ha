@@ -137,7 +137,7 @@ class LearnedEfficiency:
 
         # Outlier detection using condition-specific history
         is_outlier = False
-        if len(entry.history) >= 3:
+        if len(entry.history) >= 5:
             mean = sum(entry.history) / len(entry.history)
             variance = sum((x - mean) ** 2 for x in entry.history) / len(entry.history)
             std_dev = variance**0.5
