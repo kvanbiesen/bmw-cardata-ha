@@ -198,10 +198,10 @@ The integration includes a predicted SOC (State of Charge) sensor that estimates
 
 The predicted SOC sensor automatically learns your vehicle's charging efficiency:
 
-- **AC charging efficiency**: Starts at 90%, learns from actual charging sessions
-- **DC charging efficiency**: Starts at 93%, learns from actual charging sessions
-- Uses **Exponential Moving Average (EMA)** with 20% learning rate
-- Separate learning for AC and DC charging
+- **AC charging efficiency**: Starts at 90%, learns per charging condition (phases, voltage, current)
+- **DC charging efficiency**: Starts at 93%, learns from actual DC sessions
+- Both AC and DC use the same **efficiency matrix** with per-condition outlier detection, history tracking, and trend analysis
+- Uses **Exponential Moving Average (EMA)** with adaptive learning rate (converges fast initially, settles to 20%)
 - Learning data persists across Home Assistant restarts
 - Active charging sessions and pending sessions survive HA restarts (restored sessions skip learning to avoid polluted data from energy gaps)
 
@@ -234,8 +234,8 @@ This ensures the predicted SOC stays accurate for PHEVs even when the hybrid sys
 ### Reset Buttons
 
 Each EV/PHEV vehicle gets two button entities to reset learned efficiency:
-- **Reset AC Learning**: Resets AC efficiency to default (90%)
-- **Reset DC Learning**: Resets DC efficiency to default (93%)
+- **Reset AC Learning**: Clears all AC entries from the efficiency matrix (resets to default 90%)
+- **Reset DC Learning**: Clears all DC entries from the efficiency matrix (resets to default 93%)
 
 These buttons appear in the vehicle's device page under Configuration entities.
 
