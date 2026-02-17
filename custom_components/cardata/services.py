@@ -456,7 +456,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                 if isinstance(payload, dict):
                     return get_first_key(payload, "containers", "items") or []
                 return []
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error(
                 "clean_hv_containers: network error listing containers: %s",
                 redact_sensitive_data(str(err)),
@@ -479,7 +479,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
                     text,
                 )
                 return False, resp.status, text
-        except aiohttp.ClientError as err:
+        except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.error(
                 "clean_hv_containers: network error deleting container %s: %s",
                 cid,
