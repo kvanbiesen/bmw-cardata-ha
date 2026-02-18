@@ -321,7 +321,8 @@ The integration is organized into focused modules:
 
 - Only one BMW stream per GCID: make sure no other clients are connected simultaneously.
 - The CarData API is read-only; sending commands remains outside this integration.
-- **Premature Continue in auth flow: If you hit Continue before authorizing on BMW’s site, the device-code flow gets stuck. Cancel the flow and restart the integration (or Home Assistant) once you’ve completed the BMW login.**
+- **Premature Continue in auth flow: If you hit Continue before authorizing on BMW's site, the device-code flow gets stuck. Cancel the flow and restart the integration (or Home Assistant) once you've completed the BMW login.**
+- **Older models (i3, i3s, iDrive 6 cars, older F-series)**: These vehicles send telemetry very infrequently — typically only when the car is stopped/turned off and when charging reaches 100%. There are no real-time MQTT updates while charging or driving, so most sensors will appear stale between events. The Predicted SOC sensor can help during charging, but accuracy depends on receiving at least an initial SOC value. This is a BMW platform limitation, not a bug in the integration.
 
 ## Stale Issue Policy
 
