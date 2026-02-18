@@ -43,6 +43,28 @@
         "data": {
           "enable_magic_soc": "Activer Magic SOC (prédiction de consommation en conduite)"
         }
+      },
+      "action_mqtt_broker": {
+        "title": "Broker MQTT",
+        "description": "Configurez un broker MQTT personnalisé au lieu du point de terminaison BMW. Utilisez-le avec bmw-mqtt-bridge pour relayer les données BMW depuis un broker local, permettant à plusieurs consommateurs de partager une seule connexion MQTT BMW.",
+        "data": {
+          "custom_mqtt_enabled": "Utiliser un broker MQTT personnalisé",
+          "custom_mqtt_host": "Hôte du broker",
+          "custom_mqtt_port": "Port du broker",
+          "custom_mqtt_username": "Nom d'utilisateur (optionnel)",
+          "custom_mqtt_password": "Mot de passe (optionnel)",
+          "custom_mqtt_tls": "Mode TLS",
+          "custom_mqtt_topic_prefix": "Préfixe de topic (ex. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Lorsqu'activé, se connecte à votre broker personnalisé au lieu du point de terminaison MQTT de BMW.",
+          "custom_mqtt_host": "Nom d'hôte ou adresse IP de votre broker MQTT.",
+          "custom_mqtt_port": "Numéro de port (par défaut : 1883 pour TCP, 8883 pour TLS).",
+          "custom_mqtt_username": "Laisser vide pour un accès anonyme.",
+          "custom_mqtt_password": "Laisser vide pour un accès anonyme.",
+          "custom_mqtt_tls": "Désactivé = TCP non chiffré, TLS = certificat vérifié, TLS (auto-signé) = ignorer la validation du certificat.",
+          "custom_mqtt_topic_prefix": "Le préfixe de topic du bridge. Les messages sont attendus à {prefix}{vin}. Par défaut : bmw/"
+        }
       }
     },
     "error": {
@@ -50,7 +72,8 @@
       "runtime_missing": "L'environnement d'exécution de l'intégration n'est pas prêt. Réessayez une fois la configuration terminée.",
       "no_vins": "Aucun VIN n'est encore connu. Attendez que le flux découvre un véhicule ou déclenchez-le une fois manuellement.",
       "invalid_int": "Entrez un nombre entier positif",
-      "invalid_client_id": "Entrez l'identifiant client BMW CarData."
+      "invalid_client_id": "Entrez l'identifiant client BMW CarData.",
+      "mqtt_host_required": "L'hôte du broker est requis lorsque le broker MQTT personnalisé est activé."
     },
     "abort": {
       "auth_failed": "La réponse d'autorisation BMW était incomplète (jetons manquants). Veuillez réessayer.",

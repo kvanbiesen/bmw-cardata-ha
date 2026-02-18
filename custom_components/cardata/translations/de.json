@@ -43,6 +43,28 @@
         "data": {
           "enable_magic_soc": "Magic SOC aktivieren (Fahrverbrauchsvorhersage)"
         }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT-Broker",
+        "description": "Konfigurieren Sie einen eigenen MQTT-Broker anstelle des BMW-Endpunkts. Verwenden Sie dies mit bmw-mqtt-bridge, um BMW-Daten von einem lokalen Broker wiederzugeben, sodass mehrere Verbraucher eine einzige BMW-MQTT-Verbindung teilen können.",
+        "data": {
+          "custom_mqtt_enabled": "Eigenen MQTT-Broker verwenden",
+          "custom_mqtt_host": "Broker-Host",
+          "custom_mqtt_port": "Broker-Port",
+          "custom_mqtt_username": "Benutzername (optional)",
+          "custom_mqtt_password": "Passwort (optional)",
+          "custom_mqtt_tls": "TLS-Modus",
+          "custom_mqtt_topic_prefix": "Topic-Präfix (z.B. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Wenn aktiviert, wird eine Verbindung zu Ihrem eigenen Broker anstelle des BMW-MQTT-Endpunkts hergestellt.",
+          "custom_mqtt_host": "Hostname oder IP-Adresse Ihres MQTT-Brokers.",
+          "custom_mqtt_port": "Portnummer (Standard: 1883 für TCP, 8883 für TLS).",
+          "custom_mqtt_username": "Leer lassen für anonymen Zugang.",
+          "custom_mqtt_password": "Leer lassen für anonymen Zugang.",
+          "custom_mqtt_tls": "Aus = unverschlüsselt (TCP), TLS = verifiziertes Zertifikat, TLS (selbstsigniert) = Zertifikatsprüfung überspringen.",
+          "custom_mqtt_topic_prefix": "Das Bridge-Topic-Präfix. Nachrichten werden unter {prefix}{vin} erwartet. Standard: bmw/"
+        }
       }
     },
     "error": {
@@ -50,7 +72,8 @@
       "runtime_missing": "Die Integrationslaufzeit ist nicht bereit. Versuchen Sie es erneut, nachdem die Einrichtung abgeschlossen ist.",
       "no_vins": "Es sind noch keine VINs bekannt. Warten Sie, bis der Stream ein Fahrzeug erkennt, oder lösen Sie es einmal manuell aus.",
       "invalid_int": "Geben Sie eine positive Ganzzahl ein",
-      "invalid_client_id": "Geben Sie die BMW CarData Client-ID ein."
+      "invalid_client_id": "Geben Sie die BMW CarData Client-ID ein.",
+      "mqtt_host_required": "Broker-Host ist erforderlich, wenn der eigene MQTT-Broker aktiviert ist."
     },
     "abort": {
       "auth_failed": "Die BMW-Autorisierungsantwort war unvollständig (fehlende Token). Bitte versuchen Sie es erneut.",

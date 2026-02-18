@@ -98,6 +98,17 @@ TRIP_POLL_COOLDOWN_SECONDS = 600  # Min seconds between trip-end polls per VIN
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
+
+# Custom MQTT broker options
+OPTION_CUSTOM_MQTT_ENABLED = "custom_mqtt_enabled"
+OPTION_CUSTOM_MQTT_HOST = "custom_mqtt_host"
+OPTION_CUSTOM_MQTT_PORT = "custom_mqtt_port"
+OPTION_CUSTOM_MQTT_USERNAME = "custom_mqtt_username"
+OPTION_CUSTOM_MQTT_PASSWORD = "custom_mqtt_password"
+OPTION_CUSTOM_MQTT_TLS = "custom_mqtt_tls"  # "off", "tls", "tls_insecure"
+OPTION_CUSTOM_MQTT_TOPIC_PREFIX = "custom_mqtt_topic_prefix"
+DEFAULT_CUSTOM_MQTT_PORT = 1883
+DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX = "bmw/"
 OPTION_DIAGNOSTIC_INTERVAL = "diagnostic_log_interval"
 OPTION_ENABLE_MAGIC_SOC = "enable_magic_soc"
 

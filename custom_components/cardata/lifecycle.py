@@ -46,6 +46,8 @@ from .const import (
     ALLOWED_VINS_KEY,
     BOOTSTRAP_COMPLETE,
     DEBUG_LOG,
+    DEFAULT_CUSTOM_MQTT_PORT,
+    DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
     DESC_FUEL_LEVEL,
@@ -55,6 +57,13 @@ from .const import (
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
     MQTT_KEEPALIVE,
+    OPTION_CUSTOM_MQTT_ENABLED,
+    OPTION_CUSTOM_MQTT_HOST,
+    OPTION_CUSTOM_MQTT_PASSWORD,
+    OPTION_CUSTOM_MQTT_PORT,
+    OPTION_CUSTOM_MQTT_TLS,
+    OPTION_CUSTOM_MQTT_TOPIC_PREFIX,
+    OPTION_CUSTOM_MQTT_USERNAME,
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
     OPTION_ENABLE_MAGIC_SOC,
@@ -324,16 +333,32 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def handle_stream_error_callback(reason: str) -> None:
             await handle_stream_error(hass, entry, reason)
 
+        # Check for custom MQTT broker configuration
+        options = entry.options
+        custom_mqtt_enabled = options.get(OPTION_CUSTOM_MQTT_ENABLED, False)
+
+        if custom_mqtt_enabled:
+            mqtt_host = options.get(OPTION_CUSTOM_MQTT_HOST, "")
+            mqtt_port = options.get(OPTION_CUSTOM_MQTT_PORT, DEFAULT_CUSTOM_MQTT_PORT)
+        else:
+            mqtt_host = data.get("mqtt_host", DEFAULT_STREAM_HOST)
+            mqtt_port = data.get("mqtt_port", DEFAULT_STREAM_PORT)
+
         manager = CardataStreamManager(
             hass=hass,
             client_id=client_id,
             gcid=gcid,
             id_token=id_token,
-            host=data.get("mqtt_host", DEFAULT_STREAM_HOST),
-            port=data.get("mqtt_port", DEFAULT_STREAM_PORT),
+            host=mqtt_host,
+            port=mqtt_port,
             keepalive=mqtt_keepalive,
             error_callback=handle_stream_error_callback,
             entry_id=entry.entry_id,
+            custom_broker=custom_mqtt_enabled,
+            custom_mqtt_username=options.get(OPTION_CUSTOM_MQTT_USERNAME),
+            custom_mqtt_password=options.get(OPTION_CUSTOM_MQTT_PASSWORD),
+            custom_mqtt_tls=options.get(OPTION_CUSTOM_MQTT_TLS, "off"),
+            custom_mqtt_topic_prefix=options.get(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX),
         )
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)

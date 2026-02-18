@@ -70,6 +70,9 @@ class ConnectionState(Enum):
 class CardataStreamManager:
     """Manage the MQTT connection to BMW CarData."""
 
+    # Prevent endless auth hammering on misconfigured custom broker credentials.
+    _CUSTOM_BROKER_MAX_AUTH_RETRIES = 6
+
     def __init__(
         self,
         *,
@@ -82,6 +85,11 @@ class CardataStreamManager:
         keepalive: int,
         error_callback: Callable[[str], Awaitable[None]] | None = None,
         entry_id: str | None = None,
+        custom_broker: bool = False,
+        custom_mqtt_username: str | None = None,
+        custom_mqtt_password: str | None = None,
+        custom_mqtt_tls: str = "off",
+        custom_mqtt_topic_prefix: str = "bmw/",
     ) -> None:
         self.hass = hass
         self._entry_id = entry_id
@@ -96,6 +104,12 @@ class CardataStreamManager:
         self._error_callback = error_callback
         self._reauth_notified = False
         self._unauthorized_retry_in_progress = False
+        # Custom MQTT broker settings
+        self._custom_broker = custom_broker
+        self._custom_mqtt_username = custom_mqtt_username
+        self._custom_mqtt_password = custom_mqtt_password
+        self._custom_mqtt_tls = custom_mqtt_tls  # "off", "tls", "tls_insecure"
+        self._custom_mqtt_topic_prefix = custom_mqtt_topic_prefix
         # Protects _unauthorized_retry_in_progress
         self._unauthorized_lock = asyncio.Lock()
         self._awaiting_new_credentials = False
@@ -118,6 +132,8 @@ class CardataStreamManager:
         self._consecutive_reconnect_failures = 0
         self._extended_backoff_threshold = 10  # After this many failures, use extended backoff
         self._extended_backoff = 600  # 10 minutes extended backoff (reduced from 30 min)
+        self._custom_auth_failures = 0
+        self._custom_auth_retry_blocked = False
         # Flag to prevent MQTT start during bootstrap
         self._bootstrap_in_progress: bool = False
         # Event signaled when bootstrap completes (for efficient waiting)
@@ -361,7 +377,22 @@ class CardataStreamManager:
         # Redact sensitive token - show only first 10 chars for debugging
         redacted_token = f"{self._password[:10]}..." if self._password else ""
 
+        if self._custom_broker:
+            prefix = self._custom_mqtt_topic_prefix or "bmw/"
+            return {
+                "custom_broker": True,
+                "host": self._host,
+                "port": self._port,
+                "keepalive": self._keepalive,
+                "topic": f"{prefix}+",
+                "tls": self._custom_mqtt_tls,
+                "username": self._custom_mqtt_username or "(anonymous)",
+                "clean_session": True,
+                "protocol": "MQTTv311",
+            }
+
         return {
+            "custom_broker": False,
             "client_id": self._client_id,
             "gcid": self._gcid,
             "host": self._host,
@@ -374,45 +405,83 @@ class CardataStreamManager:
         }
 
     def _start_client(self) -> None:
-        client_id = self._gcid
+        if self._custom_broker:
+            # Custom broker: use prefix-based topic (e.g. "bmw/+")
+            prefix = self._custom_mqtt_topic_prefix or "bmw/"
+            topic = f"{prefix}+"
+            client_id = f"cardata-ha-{self._entry_id or 'default'}"
+        else:
+            # BMW broker: use GCID-based topic
+            topic = f"{self._gcid}/+"
+            client_id = self._gcid
+
         client = mqtt.Client(
             client_id=client_id,
             clean_session=True,
-            # Subscribe only to direct VIN topics.
-            # Do not modify unless BMW changes the stream contract.
-            userdata={"topic": f"{self._gcid}/+"},
+            userdata={"topic": topic},
             protocol=mqtt.MQTTv311,
             transport="tcp",
         )
         if debug_enabled():
             _LOGGER.debug(
-                "Initializing MQTT client: client_id=%s host=%s port=%s",
+                "Initializing MQTT client: client_id=%s host=%s port=%s custom_broker=%s",
                 client_id,
                 self._host,
                 self._port,
+                self._custom_broker,
             )
-        client.username_pw_set(username=self._gcid, password=self._password)
-        if debug_enabled():
-            _LOGGER.debug(
-                "MQTT credentials set for GCID %s (token length=%s)",
-                self._gcid,
-                len(self._password or ""),
-            )
+
+        if self._custom_broker:
+            # Custom broker: use configured username/password (if any)
+            if self._custom_mqtt_username:
+                client.username_pw_set(
+                    username=self._custom_mqtt_username,
+                    password=self._custom_mqtt_password or "",
+                )
+                if debug_enabled():
+                    _LOGGER.debug("Custom MQTT credentials set for user %s", self._custom_mqtt_username)
+        else:
+            # BMW broker: use GCID + id_token
+            client.username_pw_set(username=self._gcid, password=self._password)
+            if debug_enabled():
+                _LOGGER.debug(
+                    "MQTT credentials set for GCID %s (token length=%s)",
+                    self._gcid,
+                    len(self._password or ""),
+                )
+
         client.on_connect = self._handle_connect
         client.on_subscribe = self._handle_subscribe
         client.on_message = self._handle_message
         client.on_disconnect = self._handle_disconnect
-        context = ssl.create_default_context()
-        if not hasattr(ssl, "TLSVersion") or not hasattr(ssl.TLSVersion, "TLSv1_3"):
-            ssl_lib = getattr(ssl, "OPENSSL_VERSION", "unknown SSL library")
-            raise ConnectionError(
-                f"BMW CarData MQTT requires TLS 1.3 but your SSL library "
-                f"({ssl_lib}) does not support it. Upgrade to OpenSSL 1.1.1+, "
-                f"LibreSSL 3.2.0+, or use a newer Home Assistant OS image."
-            )
-        context.minimum_version = ssl.TLSVersion.TLSv1_3
-        client.tls_set_context(context)
-        client.tls_insecure_set(False)
+
+        if self._custom_broker:
+            # Custom broker: configure TLS based on user setting
+            if self._custom_mqtt_tls == "tls":
+                context = ssl.create_default_context()
+                client.tls_set_context(context)
+                client.tls_insecure_set(False)
+            elif self._custom_mqtt_tls == "tls_insecure":
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                client.tls_set_context(context)
+                client.tls_insecure_set(True)
+            # else: "off" — no TLS, plain TCP
+        else:
+            # BMW broker: require TLS 1.3 with full certificate validation
+            context = ssl.create_default_context()
+            if not hasattr(ssl, "TLSVersion") or not hasattr(ssl.TLSVersion, "TLSv1_3"):
+                ssl_lib = getattr(ssl, "OPENSSL_VERSION", "unknown SSL library")
+                raise ConnectionError(
+                    f"BMW CarData MQTT requires TLS 1.3 but your SSL library "
+                    f"({ssl_lib}) does not support it. Upgrade to OpenSSL 1.1.1+, "
+                    f"LibreSSL 3.2.0+, or use a newer Home Assistant OS image."
+                )
+            context.minimum_version = ssl.TLSVersion.TLSv1_3
+            client.tls_set_context(context)
+            client.tls_insecure_set(False)
+
         client.reconnect_delay_set(min_delay=5, max_delay=60)
 
         # Use connect_async() with threading.Event to avoid modifying global socket timeout
@@ -478,6 +547,8 @@ class CardataStreamManager:
         if rc == 0:
             self._connection_state = ConnectionState.CONNECTED
             self._circuit_breaker.record_success()
+            self._custom_auth_failures = 0
+            self._custom_auth_retry_blocked = False
 
             if self._entry_id:
                 from .const import DOMAIN
@@ -502,6 +573,38 @@ class CardataStreamManager:
         elif rc in (4, 5):  # bad credentials / not authorized
             self._connection_state = ConnectionState.FAILED
             self._circuit_breaker.record_failure()
+
+            if self._custom_broker:
+                # Custom broker: don't trigger BMW reauth.
+                # Limit retries to avoid hammering on wrong credentials.
+                self._custom_auth_failures += 1
+                attempts = self._custom_auth_failures
+                _LOGGER.warning(
+                    "Custom MQTT broker authentication failed (rc=%s, attempt %d/%d); check username/password",
+                    rc,
+                    attempts,
+                    self._CUSTOM_BROKER_MAX_AUTH_RETRIES,
+                )
+                self._safe_loop_stop(client)
+                self._client = None
+
+                if attempts >= self._CUSTOM_BROKER_MAX_AUTH_RETRIES:
+                    self._custom_auth_retry_blocked = True
+                    reason = "Custom MQTT auth failed repeatedly; automatic retries stopped"
+                    _LOGGER.error(
+                        "%s (entry %s). Update custom broker credentials and reload integration.",
+                        reason,
+                        self._entry_id,
+                    )
+                    if self._status_callback:
+                        self._run_coro_safe(
+                            cast(Coroutine[Any, Any, None], self._status_callback("unauthorized_blocked", reason))
+                        )
+                    return
+
+                stream_reconnect.schedule_retry(self, 10)
+                return
+
             now = time.monotonic()
             if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
                 if debug_enabled():
@@ -626,6 +729,22 @@ class CardataStreamManager:
             userdata["reconnect"] = True
 
         if rc in (4, 5):
+            if self._custom_broker:
+                # Custom broker: just reconnect, don't trigger BMW reauth
+                if self._custom_auth_retry_blocked:
+                    reason = "Custom MQTT auth failed repeatedly; automatic retries stopped"
+                    if self._status_callback:
+                        self._run_coro_safe(
+                            cast(Coroutine[Any, Any, None], self._status_callback("unauthorized_blocked", reason))
+                        )
+                    return
+                if should_reconnect and not self._circuit_breaker.check():
+                    self._run_coro_safe(stream_reconnect.async_reconnect(self))
+                if self._status_callback:
+                    self._run_coro_safe(
+                        cast(Coroutine[Any, Any, None], self._status_callback("connection_failed", reason))
+                    )
+                return
             now = time.monotonic()
             if rc == 5 and previous_disconnect is not None and now - previous_disconnect < 10:
                 if debug_enabled():

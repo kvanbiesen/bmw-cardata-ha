@@ -43,6 +43,28 @@
         "data": {
           "enable_magic_soc": "Magic SOC inschakelen (rijverbruiksvoorspelling)"
         }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT-broker",
+        "description": "Configureer een aangepaste MQTT-broker in plaats van het BMW-eindpunt. Gebruik dit met bmw-mqtt-bridge om BMW-gegevens vanaf een lokale broker af te spelen, zodat meerdere consumenten één BMW MQTT-verbinding kunnen delen.",
+        "data": {
+          "custom_mqtt_enabled": "Aangepaste MQTT-broker gebruiken",
+          "custom_mqtt_host": "Broker-host",
+          "custom_mqtt_port": "Broker-poort",
+          "custom_mqtt_username": "Gebruikersnaam (optioneel)",
+          "custom_mqtt_password": "Wachtwoord (optioneel)",
+          "custom_mqtt_tls": "TLS-modus",
+          "custom_mqtt_topic_prefix": "Topic-prefix (bijv. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Wanneer ingeschakeld, maakt verbinding met uw aangepaste broker in plaats van het BMW MQTT-eindpunt.",
+          "custom_mqtt_host": "Hostnaam of IP-adres van uw MQTT-broker.",
+          "custom_mqtt_port": "Poortnummer (standaard: 1883 voor TCP, 8883 voor TLS).",
+          "custom_mqtt_username": "Leeg laten voor anonieme toegang.",
+          "custom_mqtt_password": "Leeg laten voor anonieme toegang.",
+          "custom_mqtt_tls": "Uit = onversleuteld TCP, TLS = geverifieerd certificaat, TLS (zelfondertekend) = certificaatvalidatie overslaan.",
+          "custom_mqtt_topic_prefix": "Het bridge topic-prefix. Berichten worden verwacht op {prefix}{vin}. Standaard: bmw/"
+        }
       }
     },
     "error": {
@@ -50,7 +72,8 @@
       "runtime_missing": "De integratie-runtime is niet gereed. Probeer het opnieuw nadat de installatie is voltooid.",
       "no_vins": "Er zijn nog geen VIN's bekend. Wacht tot de stream een voertuig ontdekt of activeer het eenmalig handmatig.",
       "invalid_int": "Voer een positief geheel getal in",
-      "invalid_client_id": "Voer de BMW CarData client-ID in."
+      "invalid_client_id": "Voer de BMW CarData client-ID in.",
+      "mqtt_host_required": "Broker-host is vereist wanneer de aangepaste MQTT-broker is ingeschakeld."
     },
     "abort": {
       "auth_failed": "De BMW-goedkeuring was onvolledig (ontbrekende tokens). Probeer het opnieuw.",

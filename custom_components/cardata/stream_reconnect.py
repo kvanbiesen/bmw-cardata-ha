@@ -53,7 +53,8 @@ async def async_reconnect(manager: CardataStreamManager) -> None:
     manager._intentional_disconnect = False
 
     # Phase 2: Token refresh (no lock needed - client is stopped)
-    if manager._entry_id:
+    # Skip token refresh when using a custom MQTT broker (no BMW auth needed)
+    if manager._entry_id and not getattr(manager, "_custom_broker", False):
         try:
             from .auth import refresh_tokens_for_entry
             from .const import DOMAIN
@@ -254,6 +255,10 @@ def schedule_retry(manager: CardataStreamManager, delay: float) -> None:
     """Schedule a retry connection attempt after a delay."""
     if manager._retry_task is not None and not manager._retry_task.done():
         return
+    if manager._circuit_breaker.check():
+        if debug_enabled():
+            _LOGGER.debug("Skipping scheduled MQTT retry because circuit breaker is open")
+        return
 
     delay = max(delay, manager._retry_backoff, manager._min_reconnect_interval)
     manager._retry_backoff = min(manager._retry_backoff * 2, 30)
@@ -262,6 +267,10 @@ def schedule_retry(manager: CardataStreamManager, delay: float) -> None:
     async def _retry() -> None:
         try:
             await asyncio.sleep(delay)
+            if manager._circuit_breaker.check():
+                if debug_enabled():
+                    _LOGGER.debug("Skipping MQTT retry attempt because circuit breaker is open")
+                return
             if manager._client is None:
                 if manager._disconnect_future is not None and not manager._disconnect_future.done():
                     try:

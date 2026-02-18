@@ -43,6 +43,28 @@
         "data": {
           "enable_magic_soc": "Enable Magic SOC (driving consumption prediction)"
         }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT Broker",
+        "description": "Configure a custom MQTT broker instead of the BMW endpoint. Use this with bmw-mqtt-bridge to replay BMW data from a local broker, allowing multiple consumers to share a single BMW MQTT connection.",
+        "data": {
+          "custom_mqtt_enabled": "Use custom MQTT broker",
+          "custom_mqtt_host": "Broker host",
+          "custom_mqtt_port": "Broker port",
+          "custom_mqtt_username": "Username (optional)",
+          "custom_mqtt_password": "Password (optional)",
+          "custom_mqtt_tls": "TLS mode",
+          "custom_mqtt_topic_prefix": "Topic prefix (e.g. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "When enabled, connects to your custom broker instead of BMW's MQTT endpoint.",
+          "custom_mqtt_host": "Hostname or IP address of your MQTT broker.",
+          "custom_mqtt_port": "Port number (default: 1883 for plain TCP, 8883 for TLS).",
+          "custom_mqtt_username": "Leave empty for anonymous access.",
+          "custom_mqtt_password": "Leave empty for anonymous access.",
+          "custom_mqtt_tls": "Off = plain TCP, TLS = verified certificate, TLS (self-signed) = skip certificate validation.",
+          "custom_mqtt_topic_prefix": "The bridge topic prefix. Messages are expected at {prefix}{vin}. Default: bmw/"
+        }
       }
     },
     "error": {
@@ -50,7 +72,8 @@
       "runtime_missing": "Integration runtime is not ready. Try again after setup completes.",
       "no_vins": "No VINs are known yet. Wait for the stream to discover a vehicle or trigger it once manually.",
       "invalid_int": "Enter a positive integer",
-      "invalid_client_id": "Enter the BMW CarData client ID."
+      "invalid_client_id": "Enter the BMW CarData client ID.",
+      "mqtt_host_required": "Broker host is required when custom MQTT is enabled."
     },
     "abort": {
       "auth_failed": "BMW authorization response was incomplete (missing tokens). Please try again.",
