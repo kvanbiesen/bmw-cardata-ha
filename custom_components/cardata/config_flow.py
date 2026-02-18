@@ -418,18 +418,10 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                         errors={OPTION_CUSTOM_MQTT_HOST: "mqtt_host_required"},
                     )
                 options[OPTION_CUSTOM_MQTT_HOST] = host
-                options[OPTION_CUSTOM_MQTT_PORT] = user_input.get(
-                    OPTION_CUSTOM_MQTT_PORT, DEFAULT_CUSTOM_MQTT_PORT
-                )
-                options[OPTION_CUSTOM_MQTT_USERNAME] = user_input.get(
-                    OPTION_CUSTOM_MQTT_USERNAME, ""
-                )
-                options[OPTION_CUSTOM_MQTT_PASSWORD] = user_input.get(
-                    OPTION_CUSTOM_MQTT_PASSWORD, ""
-                )
-                options[OPTION_CUSTOM_MQTT_TLS] = user_input.get(
-                    OPTION_CUSTOM_MQTT_TLS, "off"
-                )
+                options[OPTION_CUSTOM_MQTT_PORT] = user_input.get(OPTION_CUSTOM_MQTT_PORT, DEFAULT_CUSTOM_MQTT_PORT)
+                options[OPTION_CUSTOM_MQTT_USERNAME] = user_input.get(OPTION_CUSTOM_MQTT_USERNAME, "")
+                options[OPTION_CUSTOM_MQTT_PASSWORD] = user_input.get(OPTION_CUSTOM_MQTT_PASSWORD, "")
+                options[OPTION_CUSTOM_MQTT_TLS] = user_input.get(OPTION_CUSTOM_MQTT_TLS, "off")
                 options[OPTION_CUSTOM_MQTT_TOPIC_PREFIX] = user_input.get(
                     OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX
                 )

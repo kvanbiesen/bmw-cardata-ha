@@ -358,9 +358,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             custom_mqtt_username=options.get(OPTION_CUSTOM_MQTT_USERNAME),
             custom_mqtt_password=options.get(OPTION_CUSTOM_MQTT_PASSWORD),
             custom_mqtt_tls=options.get(OPTION_CUSTOM_MQTT_TLS, "off"),
-            custom_mqtt_topic_prefix=options.get(
-                OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX
-            ),
+            custom_mqtt_topic_prefix=options.get(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX),
         )
         manager.set_message_callback(coordinator.async_handle_message)
         manager.set_status_callback(coordinator.async_handle_connection_event)

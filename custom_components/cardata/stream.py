@@ -70,6 +70,9 @@ class ConnectionState(Enum):
 class CardataStreamManager:
     """Manage the MQTT connection to BMW CarData."""
 
+    # Prevent endless auth hammering on misconfigured custom broker credentials.
+    _CUSTOM_BROKER_MAX_AUTH_RETRIES = 6
+
     def __init__(
         self,
         *,
@@ -129,6 +132,8 @@ class CardataStreamManager:
         self._consecutive_reconnect_failures = 0
         self._extended_backoff_threshold = 10  # After this many failures, use extended backoff
         self._extended_backoff = 600  # 10 minutes extended backoff (reduced from 30 min)
+        self._custom_auth_failures = 0
+        self._custom_auth_retry_blocked = False
         # Flag to prevent MQTT start during bootstrap
         self._bootstrap_in_progress: bool = False
         # Event signaled when bootstrap completes (for efficient waiting)
@@ -542,6 +547,8 @@ class CardataStreamManager:
         if rc == 0:
             self._connection_state = ConnectionState.CONNECTED
             self._circuit_breaker.record_success()
+            self._custom_auth_failures = 0
+            self._custom_auth_retry_blocked = False
 
             if self._entry_id:
                 from .const import DOMAIN
@@ -568,12 +575,33 @@ class CardataStreamManager:
             self._circuit_breaker.record_failure()
 
             if self._custom_broker:
-                # Custom broker: don't trigger BMW reauth, just log and retry
+                # Custom broker: don't trigger BMW reauth.
+                # Limit retries to avoid hammering on wrong credentials.
+                self._custom_auth_failures += 1
+                attempts = self._custom_auth_failures
                 _LOGGER.warning(
-                    "Custom MQTT broker authentication failed (rc=%s); check username/password", rc
+                    "Custom MQTT broker authentication failed (rc=%s, attempt %d/%d); check username/password",
+                    rc,
+                    attempts,
+                    self._CUSTOM_BROKER_MAX_AUTH_RETRIES,
                 )
                 self._safe_loop_stop(client)
                 self._client = None
+
+                if attempts >= self._CUSTOM_BROKER_MAX_AUTH_RETRIES:
+                    self._custom_auth_retry_blocked = True
+                    reason = "Custom MQTT auth failed repeatedly; automatic retries stopped"
+                    _LOGGER.error(
+                        "%s (entry %s). Update custom broker credentials and reload integration.",
+                        reason,
+                        self._entry_id,
+                    )
+                    if self._status_callback:
+                        self._run_coro_safe(
+                            cast(Coroutine[Any, Any, None], self._status_callback("unauthorized_blocked", reason))
+                        )
+                    return
+
                 stream_reconnect.schedule_retry(self, 10)
                 return
 
@@ -703,6 +731,13 @@ class CardataStreamManager:
         if rc in (4, 5):
             if self._custom_broker:
                 # Custom broker: just reconnect, don't trigger BMW reauth
+                if self._custom_auth_retry_blocked:
+                    reason = "Custom MQTT auth failed repeatedly; automatic retries stopped"
+                    if self._status_callback:
+                        self._run_coro_safe(
+                            cast(Coroutine[Any, Any, None], self._status_callback("unauthorized_blocked", reason))
+                        )
+                    return
                 if should_reconnect and not self._circuit_breaker.check():
                     self._run_coro_safe(stream_reconnect.async_reconnect(self))
                 if self._status_callback:
