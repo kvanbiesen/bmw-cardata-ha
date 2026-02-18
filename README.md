@@ -45,7 +45,7 @@
 
 # BMW CarData for Home Assistant
 
-Turn your BMW CarData stream into native Home Assistant entities. This integration subscribes directly to the BMW CarData MQTT stream, keeps the token fresh automatically, and creates sensors/binary sensors for every descriptor that emits data.
+Turn your BMW CarData stream into native Home Assistant entities. This integration subscribes to the BMW CarData MQTT stream (or an optional custom MQTT broker), keeps the token fresh automatically, and creates sensors/binary sensors for every descriptor that emits data.
 
 > **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
 
@@ -64,6 +64,7 @@ Please try to post only issues relevant to the integration itself on the [Issues
 On the integration main page, there is now "Configure" button. You can use it to:
 - Refresh authentication tokens (will reload integration, might also need HA restart in some problem cases)
 - Start device authorization again (redo the whole auth flow. Not tested yet but should work ™️)
+- MQTT Broker (switch stream source to a custom broker, including TLS mode and topic prefix)
 
 And manual API calls, these should be automatically called when needed, but if it seems that your device names aren't being updated, it might be worth it to run these manually. 
 - Initiate Vehicles API call (Fetch all Vehicle VINS on your account and create entities out of them)
@@ -181,6 +182,13 @@ document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l
 ### Reauthorization
 If BMW rejects the token (e.g. because the portal revoked it), please use the Configure > Start Device Authorization Again tool
 
+### Custom MQTT Broker (optional)
+
+You can switch the live stream from BMW's MQTT endpoint to your own broker (for example via [bmw-mqtt-bridge](https://dj0abr.github.io/bmw-mqtt-bridge/)).
+BMW authorization is still required; only stream transport changes.
+Expected topic format is `<topic_prefix><VIN>` (default prefix `bmw/`) and payload JSON must include `vin` and `data`.
+Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarData -> Configure -> MQTT Broker**.
+
 ## Entity Naming & Structure
 
 - Each VIN becomes a device in HA (`VIN` pulled from CarData).
@@ -252,7 +260,7 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 
 BMW imposes a **50 calls/day** limit on the CarData API. This integration does not enforce the limit client-side — BMW's own 429 response is respected via backoff. API usage is minimized through MQTT freshness gating and rate limiting:
 
-- **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages. Token refresh during MQTT reconnection is lock-free to avoid blocking the connection. After each token refresh, the MQTT connection is proactively reconnected with the fresh credentials to prevent BMW from dropping the session when the old token expires (~1 hour).
+- **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages. In direct BMW mode, token refresh during MQTT reconnection is lock-free to avoid blocking the connection, and the MQTT connection is proactively reconnected with fresh credentials to prevent session expiry (~1 hour).
 - **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state. This ensures SOC is updated even when the MQTT stream only delivers GPS/mileage but not SOC (common on some models). A per-VIN 10-minute cooldown prevents GPS burst flapping from burning API quota.
 - **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor, subject to the same per-VIN cooldown.
 - **Fallback polling**: The integration polls every 12 hours as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
@@ -264,7 +272,7 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - BMW CarData account with streaming access (CarData API + CarData Streaming subscribed in the portal).
 - Client ID created in the BMW portal (see "BMW Portal Setup").
 - Home Assistant 2025.3+.
-- TLS 1.3 capable SSL library: OpenSSL 1.1.1+, LibreSSL 3.2.0+, or equivalent (BMW's MQTT server requires TLS 1.3).
+- TLS 1.3 capable SSL library (required for direct BMW MQTT mode): OpenSSL 1.1.1+, LibreSSL 3.2.0+, or equivalent.
 - Familiarity with BMW's CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
 ## !! Recommended setup with people on multiple bmw's (not required, its working as iss but you limiting yourself in accuracy since the harcode 50 limites a day !!
@@ -319,7 +327,7 @@ The integration is organized into focused modules:
 
 ## Known Limitations
 
-- Only one BMW stream per GCID: make sure no other clients are connected simultaneously.
+- Direct BMW MQTT has one-stream-per-GCID behavior: make sure no other direct clients are connected simultaneously. To share one upstream stream, use a bridge + custom MQTT broker mode.
 - The CarData API is read-only; sending commands remains outside this integration.
 - **Premature Continue in auth flow: If you hit Continue before authorizing on BMW's site, the device-code flow gets stuck. Cancel the flow and restart the integration (or Home Assistant) once you've completed the BMW login.**
 - **Older models (i3, i3s, iDrive 6 cars, older F-series)**: These vehicles send telemetry very infrequently — typically only when the car is stopped/turned off and when charging reaches 100%. There are no real-time MQTT updates while charging or driving, so most sensors will appear stale between events. The Predicted SOC sensor can help during charging, but accuracy depends on receiving at least an initial SOC value. This is a BMW platform limitation, not a bug in the integration.
