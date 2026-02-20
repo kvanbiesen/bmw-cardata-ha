@@ -47,7 +47,7 @@ class MotionDetector:
     # Minimum time span (seconds) for the 3 park-confirming readings.
     # BMW sends GPS in bursts (3 readings within <1s at the same position).
     # Without this guard the burst immediately parks the car while driving.
-    MIN_PARK_SPAN_SECONDS: ClassVar[float] = 30.0
+    MIN_PARK_SPAN_SECONDS: ClassVar[float] = 90.0
 
     # Minutes without GPS update to consider GPS unavailable (switch to mileage fallback)
     # Longer than MOTION_ACTIVE_WINDOW to handle BMW's bursty GPS (every 2-3 min)
@@ -208,24 +208,31 @@ class MotionDetector:
                         for r in park_readings[-3:]
                     )
                     if all_within_park:
-                        # Require readings to span a minimum time window to avoid
-                        # treating a single GPS burst as parking
-                        first_park_time = park_readings[-3][2]
-                        time_span = (now - first_park_time).total_seconds()
-                        if time_span < self.MIN_PARK_SPAN_SECONDS:
+                        # Require readings from at least 2 distinct MQTT bursts
+                        # separated by MIN_PARK_SPAN_SECONDS.  BMW sends GPS in
+                        # tight bursts (3-6 readings in <1s), so park_readings[-3]
+                        # is always from the current burst.  Instead, find the
+                        # latest reading that preceded the current burst by at
+                        # least MIN_PARK_SPAN_SECONDS — proving the car was already
+                        # in the park zone that long ago.
+                        has_old_reading = any(
+                            (now - r[2]).total_seconds() >= self.MIN_PARK_SPAN_SECONDS for r in park_readings
+                        )
+                        if not has_old_reading:
                             # Burst detection: readings too close together, not real parking
                             # Stay in driving mode
                             return True
 
                         # Vehicle has stopped - exit driving mode
                         # Backdate last movement to when the car first entered the park zone
+                        time_in_zone = (now - park_readings[0][2]).total_seconds()
                         _LOGGER.debug(
-                            "Motion: %s stopped (3 readings within park radius over %.0fs) - NOW PARKED",
+                            "Motion: %s stopped (readings in park zone for %.0fs) - NOW PARKED",
                             redact_vin(vin),
-                            time_span,
+                            time_in_zone,
                         )
                         self._is_driving[vin] = False
-                        self._last_location_change[vin] = first_park_time
+                        self._last_location_change[vin] = park_readings[0][2]
                         self._park_anchor[vin] = self._calculate_centroid(park_readings)
                         return False
             else:
