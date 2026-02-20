@@ -335,6 +335,14 @@ class MagicSOCPredictor:
                     current_soc,
                 )
 
+        # Smooth display: avoid saw-tooth from BMW integer rounding.
+        # If the last displayed value is within 0.5pp of BMW SOC, use it
+        # as anchor to prevent jumps (same threshold as re-anchor and passthrough).
+        if anchor_soc == current_soc:
+            existing = self._last_magic_soc.get(vin)
+            if existing is not None and abs(current_soc - existing) < 0.5:
+                anchor_soc = existing
+
         consumption = self._get_consumption(vin)
 
         # Use preserved baseline from _last_reported_mileage (parked value)
