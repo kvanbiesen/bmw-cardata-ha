@@ -359,7 +359,7 @@ class MagicSOCPredictor:
             consumption_kwh_per_km=consumption,
             last_predicted_soc=anchor_soc,
             created_at=time.time(),
-            trip_start_soc=anchor_soc,
+            trip_start_soc=current_soc,
             trip_start_mileage=trip_start,
         )
 
@@ -381,7 +381,13 @@ class MagicSOCPredictor:
         if session is None:
             return
         # Skip no-op re-anchors (duplicate SOC/mileage from MQTT bursts).
-        if session.anchor_soc == new_soc and session.anchor_mileage == current_mileage:
+        # Pre-compute what anchor would become after smoothing to detect true no-ops
+        # (smoothed anchor_soc won't match BMW integer, so raw comparison always fails).
+        if abs(new_soc - session.last_predicted_soc) < 0.5:
+            effective_anchor = session.last_predicted_soc
+        else:
+            effective_anchor = new_soc
+        if effective_anchor == session.anchor_soc and current_mileage == session.anchor_mileage:
             return
         old_anchor = session.anchor_soc
         # BMW sends integer SOC. If our sub-integer prediction rounds to that
