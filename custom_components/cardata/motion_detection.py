@@ -47,7 +47,7 @@ class MotionDetector:
     # Minimum time span (seconds) for the 3 park-confirming readings.
     # BMW sends GPS in bursts (3 readings within <1s at the same position).
     # Without this guard the burst immediately parks the car while driving.
-    MIN_PARK_SPAN_SECONDS: ClassVar[float] = 30.0
+    MIN_PARK_SPAN_SECONDS: ClassVar[float] = 90.0
 
     # Minutes without GPS update to consider GPS unavailable (switch to mileage fallback)
     # Longer than MOTION_ACTIVE_WINDOW to handle BMW's bursty GPS (every 2-3 min)
