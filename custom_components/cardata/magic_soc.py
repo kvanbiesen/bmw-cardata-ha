@@ -335,7 +335,23 @@ class MagicSOCPredictor:
                     current_soc,
                 )
 
+        # Smooth display: avoid saw-tooth from BMW integer rounding.
+        # If the last displayed value is within 0.5pp of BMW SOC, use it
+        # as anchor to prevent jumps (same threshold as re-anchor and passthrough).
+        if anchor_soc == current_soc:
+            existing = self._last_magic_soc.get(vin)
+            if existing is not None and abs(current_soc - existing) < 0.5:
+                anchor_soc = existing
+
         consumption = self._get_consumption(vin)
+
+        # Use preserved baseline from _last_reported_mileage (parked value)
+        # when mileage advanced before anchor fired (path 2: travelledDistance).
+        # For other paths (GPS/isMoving/header), baseline == current_mileage.
+        baseline = self._last_reported_mileage.get(vin)
+        trip_start = baseline if baseline is not None and baseline < current_mileage else current_mileage
+        self._last_reported_mileage[vin] = current_mileage
+
         self._driving_sessions[vin] = DrivingSession(
             anchor_soc=anchor_soc,
             anchor_mileage=current_mileage,
@@ -344,14 +360,19 @@ class MagicSOCPredictor:
             last_predicted_soc=anchor_soc,
             created_at=time.time(),
             trip_start_soc=anchor_soc,
-            trip_start_mileage=current_mileage,
+            trip_start_mileage=trip_start,
         )
+
+        baseline_note = ""
+        if trip_start < current_mileage:
+            baseline_note = f", baseline={trip_start:.1f} km"
         _LOGGER.debug(
-            "Magic SOC: Anchored driving session for %s at %.1f%% / %.1f km (consumption=%.3f kWh/km)",
+            "Magic SOC: Anchored driving session for %s at %.1f%% / %.1f km (consumption=%.3f kWh/km%s)",
             redact_vin(vin),
             anchor_soc,
             current_mileage,
             consumption,
+            baseline_note,
         )
 
     def reanchor_driving_session(self, vin: str, new_soc: float, current_mileage: float) -> None:
@@ -461,8 +482,8 @@ class MagicSOCPredictor:
             self._last_reported_mileage[vin] = mileage
             return False
         prev = self._last_reported_mileage.get(vin)
-        self._last_reported_mileage[vin] = mileage
         if prev is not None and mileage > prev:
+            # Don't update _last_reported_mileage — preserve baseline for anchor
             return True
         if prev is None:
             _LOGGER.debug(
@@ -470,6 +491,7 @@ class MagicSOCPredictor:
                 redact_vin(vin),
                 mileage,
             )
+        self._last_reported_mileage[vin] = mileage
         return False
 
     def update_driving_gps(self, vin: str, lat: float, lon: float) -> None:

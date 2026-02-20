@@ -567,7 +567,7 @@ def process_soc_descriptors(
                                 pass
                     else:
                         bmw_moving = coordinator._last_derived_is_moving.get(f"{vin}_bmw")
-                        gps_moving = coordinator.get_derived_is_moving(vin)
+                        gps_moving = coordinator._last_derived_is_moving.get(vin)
                         if bmw_moving is True or gps_moving is True:
                             manual_cap = coordinator.get_manual_battery_capacity(vin)
                             anchor_driving_session(magic_soc_pred, soc_predictor, vin, vehicle_state, manual_cap)
@@ -604,15 +604,13 @@ def process_soc_descriptors(
                     mileage = float(value)
                     coordinator._motion_detector.update_mileage(vin, mileage)
                     needs_anchor = magic_soc_pred.update_driving_mileage(vin, mileage)
-                    if needs_anchor:
+                    if needs_anchor or vin not in magic_soc_pred._driving_sessions:
+                        # Use CACHED isMoving state (not live) to avoid orphaned sessions.
+                        # Live is_moving() can transiently return True via mileage fallback
+                        # then immediately revert when GPS/door-lock arrives in the same batch,
+                        # creating a session that isMoving tracking never sees and can't clean up.
                         bmw_moving = coordinator._last_derived_is_moving.get(f"{vin}_bmw")
-                        gps_moving = coordinator.get_derived_is_moving(vin)
-                        if bmw_moving is True or gps_moving is True:
-                            manual_cap = coordinator.get_manual_battery_capacity(vin)
-                            anchor_driving_session(magic_soc_pred, soc_predictor, vin, vehicle_state, manual_cap)
-                    elif vin not in magic_soc_pred._driving_sessions:
-                        bmw_moving = coordinator._last_derived_is_moving.get(f"{vin}_bmw")
-                        gps_moving = coordinator.get_derived_is_moving(vin)
+                        gps_moving = coordinator._last_derived_is_moving.get(vin)
                         if bmw_moving is True or gps_moving is True:
                             manual_cap = coordinator.get_manual_battery_capacity(vin)
                             anchor_driving_session(magic_soc_pred, soc_predictor, vin, vehicle_state, manual_cap)

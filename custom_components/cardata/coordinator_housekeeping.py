@@ -129,6 +129,17 @@ async def async_log_diagnostics(coordinator: CardataCoordinator) -> None:
                         _anchor_driving_session_from_state(coordinator, vin)
                         if coordinator._magic_soc.has_signaled_magic_soc_entity(vin):
                             coordinator._safe_dispatcher_send(coordinator.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
+                elif current_derived is False and vin in coordinator._magic_soc._driving_sessions:
+                    # Safety net: session exists but isMoving is consistently False.
+                    # This catches orphaned sessions (e.g. anchored by travelledDistance
+                    # mileage fallback but isMoving never confirmed True).
+                    _LOGGER.debug(
+                        "Cleaning up orphaned driving session for %s (isMoving=False, no transition)",
+                        redact_vin(vin),
+                    )
+                    _end_driving_session_from_state(coordinator, vin)
+                    if coordinator._magic_soc.has_signaled_magic_soc_entity(vin):
+                        coordinator._safe_dispatcher_send(coordinator.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
     # Periodic AC energy accumulation
     schedule_soc_debounce = False
