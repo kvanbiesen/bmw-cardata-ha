@@ -247,6 +247,26 @@ Each EV/PHEV vehicle gets two button entities to reset learned efficiency:
 
 These buttons appear in the vehicle's device page under Configuration entities.
 
+## Charging History (Optional)
+
+The integration can fetch your BMW charging session history from the past 30 days. This is **disabled by default** to conserve your API quota.
+
+- **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Enable Charging History
+- **API cost**: 1 call per vehicle per day (from your 50-call daily quota)
+- **Sensor**: Creates a diagnostic sensor per vehicle showing session count and last charge date
+- **Attributes**: Full session data including start/end SOC, energy consumed, duration, location, and cost information
+- **Manual trigger**: Use `cardata.fetch_charging_history` service in Developer Tools
+
+## Tyre Diagnosis (Optional)
+
+The integration can fetch tyre health and wear data from BMW's Smart Maintenance system. This is **disabled by default** to conserve your API quota.
+
+- **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Enable Tyre Diagnosis
+- **API cost**: 1 call per vehicle per day (from your 50-call daily quota)
+- **Sensor**: Creates a diagnostic sensor per vehicle showing aggregate tyre status
+- **Attributes**: Per-wheel data including dimension, wear, season, manufacturer, defect status, and production date
+- **Manual trigger**: Use `cardata.fetch_tyre_diagnosis` service in Developer Tools
+
 ## Developer Tools Services
 
 Home Assistant's Developer Tools expose helper services for manual API checks:
@@ -254,6 +274,8 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload.
 - `cardata.fetch_vehicle_mappings` calls `GET /customers/vehicles/mappings` and logs the mapping details (including PRIMARY or SECONDARY status). Only primary mappings return data; some vehicles do not support secondary users, in which case the mapped user is considered the primary one.
 - `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN.
+- `cardata.fetch_charging_history` fetches the last 30 days of charging sessions for a VIN. Uses 1 API call per vehicle.
+- `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
 - `migrations` call for proper renaming the sensors from old installations
 
 ## API Quota and MQTT Streaming
@@ -263,8 +285,9 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages. In direct BMW mode, token refresh during MQTT reconnection is lock-free to avoid blocking the connection, and the MQTT connection is proactively reconnected with fresh credentials to prevent session expiry (~1 hour).
 - **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state. This ensures SOC is updated even when the MQTT stream only delivers GPS/mileage but not SOC (common on some models). A per-VIN 10-minute cooldown prevents GPS burst flapping from burning API quota.
 - **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor, subject to the same per-VIN cooldown.
-- **Fallback polling**: The integration polls every 12 hours as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
-- **Multi-VIN setups**: All vehicles share the same 50 call/day limit.
+- **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
+- **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each adds 1 API call per vehicle per day. The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
+- **Multi-VIN setups**: All vehicles share the same 50 call/day limit. The poll interval scales with VIN count plus any enabled daily features. Each VIN is guaranteed at least 1 poll per day; BMW's 429 backoff handles actual quota enforcement.
 - **Rate limiting**: If BMW returns a 429 (rate limited) response, the integration backs off automatically with exponential delay.
 
 ## Requirements
@@ -318,6 +341,7 @@ The integration is organized into focused modules:
 | `stream_circuit_breaker.py` | Circuit breaker for reconnection rate limiting |
 | `stream_reconnect.py` | Reconnection, unauthorized handling, retry scheduling |
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
+| `sensor_diagnostics.py` | Diagnostic sensors: connection, metadata, efficiency, charging history, tyre diagnosis |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
 | `config_flow.py` | Setup, reauthorization, and options UI flows |
 | `bootstrap.py` | VIN discovery, metadata fetch, container creation |

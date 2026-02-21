@@ -41,9 +41,10 @@ from .api_parsing import extract_telematic_payload, try_parse_json
 from .const import (
     API_BASE_URL,
     API_VERSION,
+    DAILY_FETCH_INTERVAL,
     DOMAIN,
     MIN_TELEMETRY_DESCRIPTORS,
-    STALE_THRESHOLD_PER_VIN,
+    TARGET_DAILY_POLLS,
     VEHICLE_METADATA,
 )
 from .http_retry import async_request_with_retry
@@ -299,8 +300,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     if runtime is None:
         return
 
-    # Staleness threshold scales with VIN count: 1 car = 1h, 2 cars = 2h, etc.
-    # This keeps worst-case API usage around 24 calls/day regardless of car count
+    # Staleness threshold scales with VIN count and daily feature overhead.
+    # Targets ~24 total scheduled API calls/day, including daily optional fetches.
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
     # Skip immediate poll on restart if last poll was recent (saves quota)
@@ -356,8 +357,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             now = time.time()
 
-            # Calculate stale threshold based on VIN count (1h per VIN)
-            # This keeps API usage around 24 calls/day regardless of car count
+            # Calculate stale threshold — targets ~24 total API calls/day including
+            # daily optional features (charging history, tyre diagnosis).
             # Only count "real" VINs with sufficient telemetry data (not ghost/shared VINs)
             real_vins = [
                 vin for vin, data in runtime.coordinator.data.items() if len(data) >= MIN_TELEMETRY_DESCRIPTORS
@@ -373,7 +374,15 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 )
 
             num_vins = max(1, len(real_vins))
-            stale_threshold = STALE_THRESHOLD_PER_VIN * num_vins
+
+            # Account for daily optional API calls in the polling budget
+            daily_calls_per_vin = (1 if runtime.coordinator.enable_charging_history else 0) + (
+                1 if runtime.coordinator.enable_tyre_diagnosis else 0
+            )
+            daily_extra = daily_calls_per_vin * num_vins
+            target_polls = max(TARGET_DAILY_POLLS - daily_extra, num_vins)
+            stale_threshold = int(86400.0 * num_vins / target_polls)
+
             check_interval = min(stale_threshold, 30 * 60)  # Check at most every 30 min
             max_backoff = stale_threshold * 2
 
@@ -485,7 +494,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                         )
 
             if not stale_vins_to_poll:
-                # No stale VINs - all data is fresh, continue waiting
+                # No stale VINs - all data is fresh
                 if len(real_vins) == 0:
                     _LOGGER.debug(
                         "No real VINs to poll (coordinator has %d VINs, none with >=%d descriptors)",
@@ -494,6 +503,12 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                     )
                 else:
                     _LOGGER.debug("All %d real VINs were polled recently, skipping", len(real_vins))
+
+                # Still run daily fetches even when all VINs are fresh
+                try:
+                    await _async_daily_fetches(hass, entry, runtime, real_vins)
+                except Exception as err:
+                    _LOGGER.debug("Daily fetch error: %s", err)
                 continue
 
             _LOGGER.info(
@@ -535,6 +550,13 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 consecutive_auth_failures = 0
                 await async_update_last_telematic_poll(hass, entry, now)
                 _LOGGER.debug("Stale VIN poll succeeded for entry %s", entry_id)
+
+                # Piggyback daily optional fetches after successful poll
+                try:
+                    await _async_daily_fetches(hass, entry, runtime, real_vins)
+                except Exception as err:
+                    _LOGGER.debug("Daily fetch error: %s", err)
+
                 continue
 
             # All failed
@@ -578,6 +600,135 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     except asyncio.CancelledError:
         _LOGGER.debug("Telematic poll loop cancelled for entry %s", entry_id)
         return
+
+
+async def async_fetch_charging_history(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    runtime: CardataRuntimeData,
+    vin: str,
+) -> bool:
+    """Fetch charging history for a single VIN. Returns True on success."""
+    from datetime import datetime as dt, timedelta
+
+    if not is_valid_vin(vin):
+        return False
+
+    access_token = entry.data.get("access_token")
+    if not access_token:
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "x-version": API_VERSION,
+        "Accept": "application/json",
+    }
+    now = dt.now(UTC)
+    params = {
+        "from": (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "to": now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+    }
+    url = f"{API_BASE_URL}/customers/vehicles/{vin}/chargingHistory"
+    redacted = redact_vin(vin)
+
+    response, error = await async_request_with_retry(
+        runtime.session,
+        "GET",
+        url,
+        headers=headers,
+        params=params,
+        context=f"Charging history for {redacted}",
+        rate_limiter=runtime.rate_limit_tracker,
+    )
+
+    if error or response is None or not response.is_success:
+        _LOGGER.warning("Failed to fetch charging history for %s", redacted)
+        return False
+
+    ok, payload = try_parse_json(response.text)
+    if not ok or not isinstance(payload, dict):
+        _LOGGER.warning("Invalid charging history response for %s", redacted)
+        return False
+
+    sessions = payload.get("data", [])
+    if not isinstance(sessions, list):
+        sessions = []
+
+    runtime.coordinator.update_charging_history(vin, sessions)
+    _LOGGER.info("Fetched %d charging history sessions for %s", len(sessions), redacted)
+    return True
+
+
+async def async_fetch_tyre_diagnosis(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    runtime: CardataRuntimeData,
+    vin: str,
+) -> bool:
+    """Fetch tyre diagnosis for a single VIN. Returns True on success."""
+    if not is_valid_vin(vin):
+        return False
+
+    access_token = entry.data.get("access_token")
+    if not access_token:
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "x-version": API_VERSION,
+        "Accept": "application/json",
+    }
+    url = f"{API_BASE_URL}/customers/vehicles/{vin}/smartMaintenanceTyreDiagnosis"
+    redacted = redact_vin(vin)
+
+    response, error = await async_request_with_retry(
+        runtime.session,
+        "GET",
+        url,
+        headers=headers,
+        context=f"Tyre diagnosis for {redacted}",
+        rate_limiter=runtime.rate_limit_tracker,
+    )
+
+    if error or response is None or not response.is_success:
+        _LOGGER.warning("Failed to fetch tyre diagnosis for %s", redacted)
+        return False
+
+    ok, payload = try_parse_json(response.text)
+    if not ok or not isinstance(payload, dict):
+        _LOGGER.warning("Invalid tyre diagnosis response for %s", redacted)
+        return False
+
+    runtime.coordinator.update_tyre_diagnosis(vin, payload)
+    _LOGGER.info("Fetched tyre diagnosis for %s", redacted)
+    return True
+
+
+async def _async_daily_fetches(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    runtime: CardataRuntimeData,
+    vins: list[str],
+) -> None:
+    """Run daily optional API fetches (charging history, tyre diagnosis) if due."""
+    coordinator = runtime.coordinator
+    now = time.time()
+
+    for vin in vins:
+        if coordinator.enable_charging_history:
+            last = coordinator._last_charging_history_fetch.get(vin, 0.0)
+            if now - last >= DAILY_FETCH_INTERVAL:
+                # Re-fetch entry for fresh token
+                fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
+                if fresh_entry:
+                    await async_fetch_charging_history(hass, fresh_entry, runtime, vin)
+
+        if coordinator.enable_tyre_diagnosis:
+            last = coordinator._last_tyre_diagnosis_fetch.get(vin, 0.0)
+            if now - last >= DAILY_FETCH_INTERVAL:
+                fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
+                if fresh_entry:
+                    await async_fetch_tyre_diagnosis(hass, fresh_entry, runtime, vin)
 
 
 async def async_update_last_telematic_poll(hass: HomeAssistant, entry: ConfigEntry, timestamp: float) -> None:

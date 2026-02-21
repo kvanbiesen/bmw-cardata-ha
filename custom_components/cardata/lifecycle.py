@@ -66,7 +66,9 @@ from .const import (
     OPTION_CUSTOM_MQTT_USERNAME,
     OPTION_DEBUG_LOG,
     OPTION_DIAGNOSTIC_INTERVAL,
+    OPTION_ENABLE_CHARGING_HISTORY,
     OPTION_ENABLE_MAGIC_SOC,
+    OPTION_ENABLE_TYRE_DIAGNOSIS,
     OPTION_MQTT_KEEPALIVE,
     SOC_LEARNING_STORAGE_KEY,
     SOC_LEARNING_STORAGE_VERSION,
@@ -197,6 +199,8 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = CardataCoordinator(hass=hass, entry_id=entry.entry_id)
         coordinator.diagnostic_interval = diagnostic_interval
         coordinator.enable_magic_soc = bool(options.get(OPTION_ENABLE_MAGIC_SOC, False))
+        coordinator.enable_charging_history = bool(options.get(OPTION_ENABLE_CHARGING_HISTORY, False))
+        coordinator.enable_tyre_diagnosis = bool(options.get(OPTION_ENABLE_TYRE_DIAGNOSIS, False))
 
         # Store session start time for ghost cleanup
         # This prevents removing devices that existed before this HA restart
