@@ -247,6 +247,20 @@ Each EV/PHEV vehicle gets two button entities to reset learned efficiency:
 
 These buttons appear in the vehicle's device page under Configuration entities.
 
+## Magic SOC — Driving Consumption Prediction (Experimental)
+
+Magic SOC predicts battery drain during driving using real-time odometer distance and learned consumption rates. It provides a sub-integer SOC estimate that updates more frequently than BMW's native integer SOC. **Disabled by default** — enable via Settings.
+
+- **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Enable Magic SOC
+- **Sensor**: `vehicle.magic_soc` per vehicle (BEV only; PHEVs get passthrough BMW SOC)
+- **How it works**: Anchors on BMW's reported SOC at trip start, then subtracts `distance × learned_consumption / capacity` as the vehicle drives. Re-anchors when BMW sends a fresh SOC mid-drive — if the drift is < 0.5pp, keeps the sub-integer prediction for smoother display.
+- **Consumption learning**: Uses EMA (Exponential Moving Average) with adaptive rate. Default 0.21 kWh/km globally, with per-model defaults (e.g. i4 eDrive40 = 0.18 kWh/km). Learns from completed trips where both SOC drop and distance are available. Requires at least 5 trips before the learning rate settles to 20%.
+- **Trip detection**: Combines BMW's `isMoving` signal, GPS-derived motion, and odometer changes. Handles MQTT bursts and GPS gaps gracefully.
+- **Capacity**: Uses live `maxEnergy` from BMW (reflects real degradation), falls back to `batterySizeMax`, then to per-model defaults.
+- **Reset**: A "Reset Consumption Learning" button appears under Configuration entities for each BEV.
+
+**Limitations**: This is experimental. Accuracy depends on BMW sending timely SOC and mileage data. Preheating, extended idle with accessories, and firmware glitches can cause temporary inaccuracy. PHEVs are excluded from prediction (hybrid powertrain makes distance-based estimation unreliable).
+
 ## Charging History (Optional)
 
 The integration can fetch your BMW charging session history from the past 30 days. This is **disabled by default** to conserve your API quota.
