@@ -53,7 +53,9 @@ from .const import (
     OPTION_CUSTOM_MQTT_TLS,
     OPTION_CUSTOM_MQTT_TOPIC_PREFIX,
     OPTION_CUSTOM_MQTT_USERNAME,
+    OPTION_ENABLE_CHARGING_HISTORY,
     OPTION_ENABLE_MAGIC_SOC,
+    OPTION_ENABLE_TYRE_DIAGNOSIS,
 )
 from .utils import redact_vin
 
@@ -373,13 +375,14 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_action_settings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
-            # If Magic SOC is being disabled, remove its entities from the registry
-            was_enabled = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
-            now_enabled = user_input[OPTION_ENABLE_MAGIC_SOC]
-            if was_enabled and not now_enabled:
-                from homeassistant.helpers import entity_registry as er
+            from homeassistant.helpers import entity_registry as er
 
-                entity_reg = er.async_get(self.hass)
+            entity_reg = er.async_get(self.hass)
+
+            # If Magic SOC is being disabled, remove its entities from the registry
+            was_magic = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
+            now_magic = user_input[OPTION_ENABLE_MAGIC_SOC]
+            if was_magic and not now_magic:
                 for entity in er.async_entries_for_config_entry(entity_reg, self._config_entry.entry_id):
                     if entity.unique_id and (
                         entity.unique_id.endswith("_vehicle.magic_soc")
@@ -388,15 +391,40 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                         _LOGGER.info("Removing Magic SOC entity %s", entity.entity_id)
                         entity_reg.async_remove(entity.entity_id)
 
+            # If Charging History is being disabled, remove its entities
+            was_ch = self._config_entry.options.get(OPTION_ENABLE_CHARGING_HISTORY, False)
+            now_ch = user_input[OPTION_ENABLE_CHARGING_HISTORY]
+            if was_ch and not now_ch:
+                for entity in er.async_entries_for_config_entry(entity_reg, self._config_entry.entry_id):
+                    if entity.unique_id and entity.unique_id.endswith("_diagnostics_charging_history"):
+                        _LOGGER.info("Removing Charging History entity %s", entity.entity_id)
+                        entity_reg.async_remove(entity.entity_id)
+
+            # If Tyre Diagnosis is being disabled, remove its entities
+            was_td = self._config_entry.options.get(OPTION_ENABLE_TYRE_DIAGNOSIS, False)
+            now_td = user_input[OPTION_ENABLE_TYRE_DIAGNOSIS]
+            if was_td and not now_td:
+                for entity in er.async_entries_for_config_entry(entity_reg, self._config_entry.entry_id):
+                    if entity.unique_id and entity.unique_id.endswith("_diagnostics_tyre_diagnosis"):
+                        _LOGGER.info("Removing Tyre Diagnosis entity %s", entity.entity_id)
+                        entity_reg.async_remove(entity.entity_id)
+
             options = dict(self._config_entry.options)
-            options[OPTION_ENABLE_MAGIC_SOC] = user_input[OPTION_ENABLE_MAGIC_SOC]
+            options[OPTION_ENABLE_MAGIC_SOC] = now_magic
+            options[OPTION_ENABLE_CHARGING_HISTORY] = now_ch
+            options[OPTION_ENABLE_TYRE_DIAGNOSIS] = now_td
             return self.async_create_entry(title="", data=options)
-        current = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
+
+        current_magic = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
+        current_ch = self._config_entry.options.get(OPTION_ENABLE_CHARGING_HISTORY, False)
+        current_td = self._config_entry.options.get(OPTION_ENABLE_TYRE_DIAGNOSIS, False)
         return self.async_show_form(
             step_id="action_settings",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(OPTION_ENABLE_MAGIC_SOC, default=current): bool,
+                    vol.Optional(OPTION_ENABLE_MAGIC_SOC, default=current_magic): bool,
+                    vol.Optional(OPTION_ENABLE_CHARGING_HISTORY, default=current_ch): bool,
+                    vol.Optional(OPTION_ENABLE_TYRE_DIAGNOSIS, default=current_td): bool,
                 }
             ),
         )

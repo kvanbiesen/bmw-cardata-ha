@@ -339,3 +339,204 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return efficiency learning matrix as attributes."""
         return self._coordinator.get_efficiency_learning_attributes(self._vin)
+
+
+class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
+    """Diagnostic sensor for charging history data (daily API poll)."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:ev-station"
+
+    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin, "diagnostics_charging_history")
+        self._base_name = "Charging History"
+        self._update_name(write_state=False)
+        self._unsubscribe = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore state and subscribe to updates."""
+        await super().async_added_to_hass()
+
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in ("unknown", "unavailable"):
+            self._attr_native_value = last_state.state
+
+        self._unsubscribe = async_dispatcher_connect(
+            self.hass,
+            self._coordinator.signal_charging_history,
+            self._handle_update,
+        )
+
+        self._load_current_value()
+        self.schedule_update_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from updates."""
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+        await super().async_will_remove_from_hass()
+
+    def _load_current_value(self) -> None:
+        """Load current charging history summary from coordinator."""
+        sessions = self._coordinator.get_charging_history(self._vin)
+        if not sessions:
+            self._attr_native_value = "no data"
+            return
+
+        last_time = None
+        for s in sessions:
+            end_time = s.get("endTime")
+            if isinstance(end_time, (int, float)) and end_time > 0 and (last_time is None or end_time > last_time):
+                last_time = end_time
+
+        if last_time is not None:
+            last_dt = datetime.fromtimestamp(last_time, tz=dt_util.UTC)
+            last_str = last_dt.strftime("%Y-%m-%d")
+            self._attr_native_value = f"{len(sessions)} sessions (last: {last_str})"
+        else:
+            self._attr_native_value = f"{len(sessions)} sessions"
+
+    def _handle_update(self, vin: str) -> None:
+        """Handle charging history updates."""
+        if vin != self._vin:
+            return
+        self._load_current_value()
+        self.schedule_update_ha_state()
+
+    @property
+    def native_value(self) -> str | None:
+        """Return charging history summary."""
+        return self._attr_native_value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return charging history sessions as attributes."""
+        sessions = self._coordinator.get_charging_history(self._vin)
+        if not sessions:
+            return {}
+        return {"sessions": sessions}
+
+
+class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
+    """Diagnostic sensor for tyre diagnosis data (daily API poll)."""
+
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:tire"
+
+    def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin, "diagnostics_tyre_diagnosis")
+        self._base_name = "Tyre Diagnosis"
+        self._update_name(write_state=False)
+        self._unsubscribe = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore state and subscribe to updates."""
+        await super().async_added_to_hass()
+
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in ("unknown", "unavailable"):
+            self._attr_native_value = last_state.state
+
+        self._unsubscribe = async_dispatcher_connect(
+            self.hass,
+            self._coordinator.signal_tyre_diagnosis,
+            self._handle_update,
+        )
+
+        self._load_current_value()
+        self.schedule_update_ha_state()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from updates."""
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+        await super().async_will_remove_from_hass()
+
+    def _load_current_value(self) -> None:
+        """Load current tyre diagnosis summary from coordinator."""
+        data = self._coordinator.get_tyre_diagnosis(self._vin)
+        if not data:
+            self._attr_native_value = "no data"
+            return
+
+        # Check for errors from the API
+        errors = data.get("errors", [])
+        if errors:
+            self._attr_native_value = f"{len(errors)} error(s)"
+            return
+
+        # Summarise from mounted tyres
+        passenger_car = data.get("passengerCar")
+        if not isinstance(passenger_car, dict):
+            self._attr_native_value = "no tyre data"
+            return
+        mounted = passenger_car.get("mountedTyres")
+        if not isinstance(mounted, dict):
+            self._attr_native_value = "no tyre data"
+            return
+        agg_status = mounted.get("aggregatedQualityStatus", {})
+        status_value = agg_status.get("value") if isinstance(agg_status, dict) else None
+
+        if status_value:
+            self._attr_native_value = status_value
+        else:
+            # Count warnings from individual wheels
+            warnings = 0
+            for pos in ("frontLeft", "frontRight", "rearLeft", "rearRight"):
+                wheel = mounted.get(pos, {})
+                if isinstance(wheel, dict):
+                    defect = wheel.get("tyreDefect", {})
+                    if isinstance(defect, dict) and defect.get("value"):
+                        warnings += 1
+            if warnings > 0:
+                self._attr_native_value = f"{warnings} warning(s)"
+            else:
+                self._attr_native_value = "OK"
+
+    def _handle_update(self, vin: str) -> None:
+        """Handle tyre diagnosis updates."""
+        if vin != self._vin:
+            return
+        self._load_current_value()
+        self.schedule_update_ha_state()
+
+    @property
+    def native_value(self) -> str | None:
+        """Return tyre diagnosis summary."""
+        return self._attr_native_value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return tyre diagnosis data as attributes."""
+        data = self._coordinator.get_tyre_diagnosis(self._vin)
+        if not data:
+            return {}
+
+        attrs: dict[str, Any] = {}
+        passenger_car = data.get("passengerCar")
+        if not isinstance(passenger_car, dict):
+            return attrs
+
+        for tyre_set_key in ("mountedTyres", "unmountedTyres"):
+            tyre_set = passenger_car.get(tyre_set_key, {})
+            if not isinstance(tyre_set, dict):
+                continue
+            set_data: dict[str, Any] = {}
+            if label := tyre_set.get("label"):
+                set_data["label"] = label
+            for pos in ("frontLeft", "frontRight", "rearLeft", "rearRight"):
+                wheel = tyre_set.get(pos)
+                if isinstance(wheel, dict):
+                    set_data[pos] = wheel
+            if set_data:
+                attrs[tyre_set_key] = set_data
+
+        errors = data.get("errors", [])
+        if errors:
+            attrs["errors"] = errors
+
+        return attrs

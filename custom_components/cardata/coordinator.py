@@ -136,6 +136,18 @@ class CardataCoordinator:
     # Whether Magic SOC sensor creation is enabled (off by default)
     enable_magic_soc: bool = field(default=False, init=False)
 
+    # Whether optional daily-poll features are enabled (off by default)
+    enable_charging_history: bool = field(default=False, init=False)
+    enable_tyre_diagnosis: bool = field(default=False, init=False)
+
+    # Storage for daily-poll data (VIN → parsed response)
+    _charging_history: dict[str, list[dict[str, Any]]] = field(default_factory=dict, init=False)
+    _tyre_diagnosis: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
+
+    # Per-VIN timestamp of last daily fetch (unix time)
+    _last_charging_history_fetch: dict[str, float] = field(default_factory=dict, init=False)
+    _last_tyre_diagnosis_fetch: dict[str, float] = field(default_factory=dict, init=False)
+
     # Callback set by sensor.py to create virtual sensors after platform setup
     _create_sensor_callback: Callable[[str, str], None] | None = field(default=None, init=False, repr=False)
 
@@ -164,6 +176,8 @@ class CardataCoordinator:
     _signal_new_image: str = field(default="", init=False)
     _signal_metadata: str = field(default="", init=False)
     _signal_efficiency_learning: str = field(default="", init=False)
+    _signal_charging_history: str = field(default="", init=False)
+    _signal_tyre_diagnosis: str = field(default="", init=False)
 
     def __post_init__(self) -> None:
         """Initialize cached values after dataclass creation."""
@@ -174,6 +188,8 @@ class CardataCoordinator:
         self._signal_new_image = f"{DOMAIN}_{self.entry_id}_new_image"
         self._signal_metadata = f"{DOMAIN}_{self.entry_id}_metadata"
         self._signal_efficiency_learning = f"{DOMAIN}_{self.entry_id}_efficiency_learning"
+        self._signal_charging_history = f"{DOMAIN}_{self.entry_id}_charging_history"
+        self._signal_tyre_diagnosis = f"{DOMAIN}_{self.entry_id}_tyre_diagnosis"
 
     @property
     def signal_new_sensor(self) -> str:
@@ -202,6 +218,36 @@ class CardataCoordinator:
     @property
     def signal_efficiency_learning(self) -> str:
         return self._signal_efficiency_learning
+
+    @property
+    def signal_charging_history(self) -> str:
+        return self._signal_charging_history
+
+    @property
+    def signal_tyre_diagnosis(self) -> str:
+        return self._signal_tyre_diagnosis
+
+    # --- Daily-poll data access ---
+
+    def update_charging_history(self, vin: str, sessions: list[dict[str, Any]]) -> None:
+        """Store charging history and dispatch signal."""
+        self._charging_history[vin] = sessions
+        self._last_charging_history_fetch[vin] = time.time()
+        self._safe_dispatcher_send(self.signal_charging_history, vin)
+
+    def get_charging_history(self, vin: str) -> list[dict[str, Any]]:
+        """Return stored charging history for a VIN."""
+        return self._charging_history.get(vin, [])
+
+    def update_tyre_diagnosis(self, vin: str, data: dict[str, Any]) -> None:
+        """Store tyre diagnosis and dispatch signal."""
+        self._tyre_diagnosis[vin] = data
+        self._last_tyre_diagnosis_fetch[vin] = time.time()
+        self._safe_dispatcher_send(self.signal_tyre_diagnosis, vin)
+
+    def get_tyre_diagnosis(self, vin: str) -> dict[str, Any]:
+        """Return stored tyre diagnosis for a VIN."""
+        return self._tyre_diagnosis.get(vin, {})
 
     # --- Derived motion detection from GPS ---
 

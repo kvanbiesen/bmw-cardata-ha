@@ -62,3 +62,23 @@ clean_hv_containers:
 fetch_vehicle_images:
   name: Fetch Vehicle Images
   description: Manually fetch vehicle images for all configured vehicles.
+fetch_charging_history:
+  name: Fetch Charging History
+  description: Fetch charging session history for a VIN (last 30 days). Uses 1 API call per vehicle.
+  fields:
+    entry_id:
+      description: Optional config entry id to target. Required if multiple entries are configured.
+      example: 01K65NKFESKBQZ78PBW6V9BCCX
+    vin:
+      description: Optional VIN to query. If omitted, fetches for all known VINs.
+      example: WBY31AW090FP15359
+fetch_tyre_diagnosis:
+  name: Fetch Tyre Diagnosis
+  description: Fetch tyre health and wear data for a VIN. Uses 1 API call per vehicle.
+  fields:
+    entry_id:
+      description: Optional config entry id to target. Required if multiple entries are configured.
+      example: 01K65NKFESKBQZ78PBW6V9BCCX
+    vin:
+      description: Optional VIN to query. If omitted, fetches for all known VINs.
+      example: WBY31AW090FP15359

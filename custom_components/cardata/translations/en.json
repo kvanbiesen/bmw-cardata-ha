@@ -41,7 +41,13 @@
       "action_settings": {
         "title": "Settings",
         "data": {
-          "enable_magic_soc": "Enable Magic SOC (driving consumption prediction)"
+          "enable_magic_soc": "Enable Magic SOC (driving consumption prediction)",
+          "enable_charging_history": "Enable Charging History (daily API poll)",
+          "enable_tyre_diagnosis": "Enable Tyre Diagnosis (daily API poll)"
+        },
+        "data_description": {
+          "enable_charging_history": "Fetches charging session history from BMW once per day. Uses 1 additional API call per vehicle per day from your 50-call daily quota.",
+          "enable_tyre_diagnosis": "Fetches tyre health and wear data from BMW once per day. Uses 1 additional API call per vehicle per day from your 50-call daily quota."
         }
       },
       "action_mqtt_broker": {
