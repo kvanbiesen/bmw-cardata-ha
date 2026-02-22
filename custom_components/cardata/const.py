@@ -90,9 +90,11 @@ MQTT_KEEPALIVE = 30
 DEBUG_LOG = False
 DIAGNOSTIC_LOG_INTERVAL = 30  # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
-# Staleness threshold per VIN - scales with number of cars to stay within API quota
-# 1 car = 1h, 2 cars = 2h, etc. → worst case ~24 API calls/day regardless of car count
-STALE_THRESHOLD_PER_VIN = 60 * 60  # 1 hour per VIN
+# Telematic polling budget — target ~24 scheduled API polls/day, leaving headroom
+# for bootstrap, trip-end events, etc. within BMW's 50-call daily quota.
+# When daily optional features (charging history, tyre diagnosis) are enabled,
+# the polling budget is reduced to keep total calls constant.
+TARGET_DAILY_POLLS = 24
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 TRIP_POLL_COOLDOWN_SECONDS = 600  # Min seconds between trip-end polls per VIN
 VEHICLE_METADATA = "vehicle_metadata"
@@ -111,6 +113,8 @@ DEFAULT_CUSTOM_MQTT_PORT = 1883
 DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX = "bmw/"
 OPTION_DIAGNOSTIC_INTERVAL = "diagnostic_log_interval"
 OPTION_ENABLE_MAGIC_SOC = "enable_magic_soc"
+OPTION_ENABLE_CHARGING_HISTORY = "enable_charging_history"
+OPTION_ENABLE_TYRE_DIAGNOSIS = "enable_tyre_diagnosis"
 
 # Error message constants (for consistent error detection)
 ERR_TOKEN_REFRESH_IN_PROGRESS = "Token refresh already in progress"
@@ -259,6 +263,9 @@ DEFAULT_CAPACITY_BY_MODEL: dict[str, float] = {
     "i7 eDrive50": 101.7,
     "i7": 101.7,
 }
+
+# Daily fetch interval for optional endpoints (charging history, tyre diagnosis)
+DAILY_FETCH_INTERVAL = 86400  # 24 hours
 
 # Key for storing deduplicated allowed VINs in entry data
 ALLOWED_VINS_KEY = "allowed_vins"

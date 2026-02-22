@@ -557,6 +557,18 @@ def async_register_services(hass: HomeAssistant) -> None:
         async_fetch_vehicle_images_service,
         schema=vol.Schema({}),
     )
+    hass.services.async_register(
+        DOMAIN,
+        "fetch_charging_history",
+        async_handle_fetch_charging_history,
+        schema=DAILY_FETCH_SERVICE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "fetch_tyre_diagnosis",
+        async_handle_fetch_tyre_diagnosis,
+        schema=DAILY_FETCH_SERVICE_SCHEMA,
+    )
 
     # Developer migration service
     if not hass.services.has_service(DOMAIN, "migrate_entity_ids"):
@@ -587,10 +599,76 @@ def async_unregister_services(hass: HomeAssistant) -> None:
         "migrate_entity_ids",
         "clean_hv_containers",
         "fetch_vehicle_images",
+        "fetch_charging_history",
+        "fetch_tyre_diagnosis",
     ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
             _LOGGER.debug("Unregistered service %s.%s", DOMAIN, service)
+
+
+DAILY_FETCH_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): str,
+        vol.Optional("vin"): str,
+    }
+)
+
+
+async def async_handle_fetch_charging_history(call: ServiceCall) -> None:
+    """Handle fetch_charging_history service call."""
+    from .telematics import async_fetch_charging_history
+
+    hass = call.hass
+    resolved = _resolve_target(hass, call.data)
+    if not resolved:
+        return
+
+    _, target_entry, runtime = resolved
+    vin = call.data.get("vin")
+
+    if vin:
+        if not is_valid_vin(vin):
+            _LOGGER.error("Cardata fetch_charging_history: invalid VIN format")
+            return
+        vins = [vin]
+    else:
+        vins = list(runtime.coordinator.data.keys())
+
+    if not vins:
+        _LOGGER.error("Cardata fetch_charging_history: no VINs available")
+        return
+
+    for v in vins:
+        await async_fetch_charging_history(hass, target_entry, runtime, v)
+
+
+async def async_handle_fetch_tyre_diagnosis(call: ServiceCall) -> None:
+    """Handle fetch_tyre_diagnosis service call."""
+    from .telematics import async_fetch_tyre_diagnosis
+
+    hass = call.hass
+    resolved = _resolve_target(hass, call.data)
+    if not resolved:
+        return
+
+    _, target_entry, runtime = resolved
+    vin = call.data.get("vin")
+
+    if vin:
+        if not is_valid_vin(vin):
+            _LOGGER.error("Cardata fetch_tyre_diagnosis: invalid VIN format")
+            return
+        vins = [vin]
+    else:
+        vins = list(runtime.coordinator.data.keys())
+
+    if not vins:
+        _LOGGER.error("Cardata fetch_tyre_diagnosis: no VINs available")
+        return
+
+    for v in vins:
+        await async_fetch_tyre_diagnosis(hass, target_entry, runtime, v)
 
 
 async def async_fetch_vehicle_images_service(call) -> None:
