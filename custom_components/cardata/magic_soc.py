@@ -381,30 +381,16 @@ class MagicSOCPredictor:
         if session is None:
             return
         # Skip no-op re-anchors (duplicate SOC/mileage from MQTT bursts).
-        # Pre-compute what anchor would become after smoothing to detect true no-ops
-        # (smoothed anchor_soc won't match BMW integer, so raw comparison always fails).
-        if abs(new_soc - session.last_predicted_soc) < 0.5:
-            effective_anchor = session.last_predicted_soc
-        else:
-            effective_anchor = new_soc
-        if effective_anchor == session.anchor_soc and current_mileage == session.anchor_mileage:
+        # Anchor is always set to new_soc (BMW integer), so compare directly.
+        if new_soc == session.anchor_soc and current_mileage == session.anchor_mileage:
             return
         old_anchor = session.anchor_soc
-        # BMW sends integer SOC. If our sub-integer prediction rounds to that
-        # integer (abs < 0.5), keep prediction as anchor to avoid cosmetic jumps.
-        # Otherwise BMW disagrees and we correct to their value.
-        #
-        # P=pred  N=bmw  |diff| branch   anchor  display
-        # 54.7    55     0.3   keep      54.7    54.7  (rounding, smooth)
-        # 54.1    54     0.1   keep      54.1    54.1  (rounding, smooth)
-        # 54.0    55     1.0   correct   55      55.0  (real drift up)
-        # 54.0    54     0.0   keep      54.0    54.0  (exact match)
-        # 54.7    54     0.7   correct   54      54.0  (real drift down)
-        # 54.7    57     2.3   correct   57      57.0  (real drift up)
-        # 54.4    54     0.4   keep      54.4    54.4  (rounding, smooth)
-        # 54.4    55     0.6   correct   55      55.0  (54.4 != round(55))
+        # Anchor always tracks BMW integer (authoritative). Display stays at
+        # sub-integer when within rounding range (< 0.5pp) to avoid cosmetic
+        # jumps. Monotonicity cap in get_magic_soc handles the anchor > display
+        # gap (~1 km catchup).
         if abs(new_soc - session.last_predicted_soc) < 0.5:
-            session.anchor_soc = session.last_predicted_soc
+            session.anchor_soc = new_soc
         else:
             session.anchor_soc = new_soc
             session.last_predicted_soc = new_soc
