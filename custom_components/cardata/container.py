@@ -264,7 +264,10 @@ class CardataContainerManager:
                 container_id = container.get("containerId")
                 if not isinstance(container_id, str):
                     continue
-                if not self._matches_hv_container(container):
+                # Use name+purpose match (not strict signature) so reset also
+                # cleans up containers with older/different descriptor sets,
+                # including loosely-reused ones.
+                if not self._matches_hv_container_name_purpose(container):
                     continue
                 try:
                     await self._delete_container(access_token, container_id)
@@ -315,47 +318,33 @@ class CardataContainerManager:
         response = await self._request("GET", "/customers/containers", access_token)
         return extract_container_items(response)
 
-    def _matches_hv_container(self, container: dict[str, Any]) -> bool:
-        """Check if container matches HV battery container criteria.
+    def _matches_hv_container_name_purpose(self, container: dict[str, Any]) -> bool:
+        """Loose match: name and purpose match, descriptor signature may differ."""
 
-        CRITICAL: ALL conditions must match (not just any one)!
-        - Purpose must match
-        - Name must match
-        - Signature must match
-        """
         if not isinstance(container, dict):
             return False
-
         purpose = container.get("purpose")
         name = container.get("name")
+        return (
+            isinstance(purpose, str)
+            and purpose == HV_BATTERY_CONTAINER_PURPOSE
+            and isinstance(name, str)
+            and name == HV_BATTERY_CONTAINER_NAME
+        )
+
+    def _matches_hv_container(self, container: dict[str, Any]) -> bool:
+        """Strict match: name, purpose, and descriptor signature must all match."""
+
+        if not self._matches_hv_container_name_purpose(container):
+            return False
+
         descriptors = container.get("technicalDescriptors")
         signature = None
 
         if isinstance(descriptors, list):
             signature = self.compute_signature([item for item in descriptors if isinstance(item, str)])
 
-        # ALL conditions must be true (not any)!
-        return (
-            isinstance(purpose, str)
-            and purpose == HV_BATTERY_CONTAINER_PURPOSE
-            and isinstance(name, str)
-            and name == HV_BATTERY_CONTAINER_NAME
-            and signature == self._descriptor_signature
-        )
-
-    def _matches_hv_container_name_purpose(self, container: dict[str, Any]) -> bool:
-        """Loose match: name+purpose match, descriptor signature may differ."""
-
-        if not isinstance(container, dict):
-            return False
-        purpose = container.get("purpose")
-        name = container.get("name")
-        return (
-            isinstance(purpose, str)
-            and purpose == HV_BATTERY_CONTAINER_PURPOSE
-            and isinstance(name, str)
-            and name == HV_BATTERY_CONTAINER_NAME
-        )
+        return signature == self._descriptor_signature
 
     async def _delete_container(self, access_token: str, container_id: str) -> None:
         try:
