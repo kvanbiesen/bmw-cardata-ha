@@ -197,7 +197,9 @@ class CardataContainerManager:
                             descriptors = container.get("technicalDescriptors")
                             signature = None
                             if isinstance(descriptors, list):
-                                signature = self.compute_signature([item for item in descriptors if isinstance(item, str)])
+                                signature = self.compute_signature(
+                                    [item for item in descriptors if isinstance(item, str)]
+                                )
                             self._container_id = found_id
                             self._container_signature = signature
                             _LOGGER.warning(
