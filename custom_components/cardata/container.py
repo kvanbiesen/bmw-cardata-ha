@@ -75,6 +75,7 @@ class CardataContainerManager:
         self._session = session
         self._entry_id = entry_id
         self._container_id: str | None = initial_container_id
+        self._container_signature: str | None = None
         self._lock = asyncio.Lock()
         descriptors = list(dict.fromkeys(HV_BATTERY_DESCRIPTORS))
         self._desired_descriptors = tuple(descriptors)
@@ -85,6 +86,12 @@ class CardataContainerManager:
         """Return the currently known container identifier."""
 
         return self._container_id
+
+    @property
+    def container_signature(self) -> str | None:
+        """Return the signature of the last ensured/reused container, if known."""
+
+        return self._container_signature
 
     @property
     def descriptor_signature(self) -> str:
@@ -100,10 +107,11 @@ class CardataContainerManager:
         joined = "|".join(normalized)
         return hashlib.sha1(joined.encode("utf-8")).hexdigest()
 
-    def sync_from_entry(self, container_id: str | None) -> None:
-        """Synchronize the known container id with stored config data."""
+    def sync_from_entry(self, container_id: str | None, signature: str | None = None) -> None:
+        """Synchronize the known container id (and optional signature) with stored config data."""
 
         self._container_id = container_id
+        self._container_signature = signature
 
     async def async_ensure_hv_container(
         self,
@@ -169,12 +177,36 @@ class CardataContainerManager:
                             found_id = container.get("containerId")
                             if found_id:
                                 self._container_id = found_id
+                                self._container_signature = self._descriptor_signature
                                 _LOGGER.info(
                                     "[%s] Found existing matching HV container %s - reusing to prevent accumulation",
                                     self._entry_id,
                                     found_id,
                                 )
                                 return self._container_id
+
+                    # No strict match: fall back to reusing an existing container with the same
+                    # name/purpose even if descriptors differ. This avoids hitting BMW's
+                    # container limits after reinstalls/updates while still allowing telematics
+                    # to work (some newer descriptors may be missing until a manual reset).
+                    for container in containers:
+                        if self._matches_hv_container_name_purpose(container):
+                            found_id = container.get("containerId")
+                            if not found_id:
+                                continue
+                            descriptors = container.get("technicalDescriptors")
+                            signature = None
+                            if isinstance(descriptors, list):
+                                signature = self.compute_signature([item for item in descriptors if isinstance(item, str)])
+                            self._container_id = found_id
+                            self._container_signature = signature
+                            _LOGGER.warning(
+                                "[%s] Found existing HV container %s with different descriptors; reusing it. "
+                                "If some sensors are missing, use 'Reset HV Battery Container' to recreate it.",
+                                self._entry_id,
+                                found_id,
+                            )
+                            return self._container_id
 
                     _LOGGER.debug(
                         "[%s] No matching container found, will create new one",
@@ -200,6 +232,7 @@ class CardataContainerManager:
                 rate_limiter.record_creation()
 
             self._container_id = created_id
+            self._container_signature = self._descriptor_signature
             _LOGGER.info("[%s] Created new HV battery container %s", self._entry_id, created_id)
             return self._container_id
 
@@ -306,6 +339,20 @@ class CardataContainerManager:
             and isinstance(name, str)
             and name == HV_BATTERY_CONTAINER_NAME
             and signature == self._descriptor_signature
+        )
+
+    def _matches_hv_container_name_purpose(self, container: dict[str, Any]) -> bool:
+        """Loose match: name+purpose match, descriptor signature may differ."""
+
+        if not isinstance(container, dict):
+            return False
+        purpose = container.get("purpose")
+        name = container.get("name")
+        return (
+            isinstance(purpose, str)
+            and purpose == HV_BATTERY_CONTAINER_PURPOSE
+            and isinstance(name, str)
+            and name == HV_BATTERY_CONTAINER_NAME
         )
 
     async def _delete_container(self, access_token: str, container_id: str) -> None:

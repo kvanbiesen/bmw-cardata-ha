@@ -520,15 +520,19 @@ async def async_ensure_container_for_entry(
     if runtime and runtime.container_manager:
         runtime.container_manager.sync_from_entry(container_id)
 
+    # If we reused an existing container (e.g. descriptor signature mismatch), preserve its
+    # signature so we can still prompt the user to reset the container if needed.
+    stored_signature = container_manager.container_signature or desired_signature
+
     await async_update_entry_data(
         hass,
         entry,
         {
             "hv_container_id": container_id,
-            "hv_descriptor_signature": desired_signature,
+            "hv_descriptor_signature": stored_signature,
         },
     )
-    _LOGGER.info("Created HV container %s for entry %s", container_id, entry.entry_id)
+    _LOGGER.info("Ensured HV container %s for entry %s", container_id, entry.entry_id)
 
     return True
 
