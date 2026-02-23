@@ -133,6 +133,34 @@ async def async_perform_telematic_fetch(
 
     container_id = entry.data.get("hv_container_id")
     if not container_id:
+        # Auto-heal: a missing container prevents ALL telematics polling.
+        # This can happen if entry data was restored without the container id,
+        # or bootstrap was skipped due to BOOTSTRAP_COMPLETE already set.
+        _LOGGER.warning(
+            "Cardata fetch_telematic_data: no container_id stored for entry %s; attempting to create it",
+            target_entry_id,
+        )
+        try:
+            from .auth import async_ensure_container_for_entry
+
+            ok = await async_ensure_container_for_entry(
+                entry,
+                hass,
+                runtime.session,
+                runtime.container_manager,
+                force=False,
+            )
+            if ok:
+                container_id = entry.data.get("hv_container_id")
+        except Exception as err:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: failed ensuring container for entry %s: %s",
+                target_entry_id,
+                err,
+            )
+            return TelematicFetchResult(None, "missing_container")
+
+    if not container_id:
         _LOGGER.error(
             "Cardata fetch_telematic_data: no container_id stored for entry %s",
             target_entry_id,
