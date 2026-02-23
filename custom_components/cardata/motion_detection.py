@@ -478,12 +478,18 @@ class MotionDetector:
         # Door lock overrides: if doors changed from locked → unlocked, car stopped.
         if self._is_driving.get(vin, False) and gps_update_age is not None:
             if gps_update_age < self.GPS_UPDATE_STALE_MINUTES:
-                # Door lock override: if doors changed from driving state, car stopped
+                # Door lock override: doors transitioned from driving state
+                # (locked/selectiveLocked) to parked state during this trip.
+                # The flag is self-cleaning: cleared when doors auto-lock at
+                # speed, so no risk of false parking from brief stops.
+                # Note: we only check presence, not timing vs last_gps_update,
+                # because BMW MQTT bundles door state and GPS in the same burst
+                # — the old `door_unlocked_at > last_gps_update` never fired.
                 door_unlocked_at = self._door_unlocked_at.get(vin)
-                if door_unlocked_at is not None and last_gps_update is not None and door_unlocked_at > last_gps_update:
+                if door_unlocked_at is not None:
                     door_state = self._door_lock_state.get(vin, "unknown")
                     _LOGGER.debug(
-                        "Motion: %s door state changed to '%s' after GPS stale - NOT MOVING",
+                        "Motion: %s door unlocked during GPS gap (doors '%s') - NOT MOVING",
                         redact_vin(vin),
                         door_state,
                     )
@@ -498,9 +504,10 @@ class MotionDetector:
                 return True
 
         # 4. DOOR LOCK FALLBACK - GPS stale, doors changed from driving to parked state
-        # This catches the case where GPS is >5 min stale but door state signals arrival
+        # This catches the case where GPS is >5 min stale but door state signals arrival.
+        # Same rationale as the gap handler: check presence, not timing vs GPS.
         door_unlocked_at = self._door_unlocked_at.get(vin)
-        if door_unlocked_at is not None and last_gps_update is not None and door_unlocked_at > last_gps_update:
+        if door_unlocked_at is not None:
             door_state = self._door_lock_state.get(vin, "unknown")
             _LOGGER.debug(
                 "Motion: %s door lock fallback - doors '%s' after GPS stale - NOT MOVING",
