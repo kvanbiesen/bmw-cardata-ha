@@ -508,13 +508,13 @@ class MotionDetector:
         # Same rationale as the gap handler: check presence, not timing vs GPS.
         door_unlocked_at = self._door_unlocked_at.get(vin)
         if door_unlocked_at is not None:
-            door_state = self._door_lock_state.get(vin, "unknown")
-            _LOGGER.debug(
-                "Motion: %s door lock fallback - doors '%s' after GPS stale - NOT MOVING",
-                redact_vin(vin),
-                door_state,
-            )
             if self._is_driving.get(vin, False):
+                door_state = self._door_lock_state.get(vin, "unknown")
+                _LOGGER.debug(
+                    "Motion: %s door lock fallback - doors '%s' after GPS stale - NOT MOVING",
+                    redact_vin(vin),
+                    door_state,
+                )
                 self._is_driving[vin] = False
             return False
 
