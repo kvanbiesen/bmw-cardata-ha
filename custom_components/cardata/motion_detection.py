@@ -447,6 +447,21 @@ class MotionDetector:
 
             # In confirmed driving mode with fresh GPS → trust it
             if self._is_driving.get(vin, False):
+                # Door lock override: if doors transitioned locked → unlocked,
+                # the car has stopped even though GPS is still arriving.
+                # Without this, fresh GPS keeps returning MOVING for up to 2 min
+                # after the door unlock, delaying trip end.
+                door_unlocked_at = self._door_unlocked_at.get(vin)
+                if door_unlocked_at is not None:
+                    door_state = self._door_lock_state.get(vin, "unknown")
+                    _LOGGER.debug(
+                        "Motion: %s door unlocked with fresh GPS (doors '%s') - NOT MOVING",
+                        redact_vin(vin),
+                        door_state,
+                    )
+                    self._is_driving[vin] = False
+                    return False
+
                 _LOGGER.debug(
                     "Motion: %s in driving mode, GPS active (%.1f min old) - MOVING",
                     redact_vin(vin),
