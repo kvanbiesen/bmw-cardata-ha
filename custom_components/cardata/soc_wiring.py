@@ -8,6 +8,7 @@ reference for access to broader state.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from .const import (
@@ -70,6 +71,27 @@ def _get_aux_kw(vehicle_state: dict[str, DescriptorState]) -> float:
     return 0.0
 
 
+def _is_descriptor_fresh_for_session(
+    descriptor: DescriptorState,
+    session_anchor: datetime,
+) -> bool:
+    """Check if a descriptor's BMW timestamp is at or after the session anchor.
+
+    Uses the BMW-provided timestamp (not wall-clock last_seen) to detect
+    stale data from previous sessions that may arrive after HA restart.
+    After restart, last_seen is always current (set on receipt), but the
+    BMW timestamp reveals the data is actually hours old.
+    Falls back to last_seen if BMW timestamp is unavailable.
+    """
+    if descriptor.timestamp is not None:
+        try:
+            bmw_ts = datetime.fromisoformat(descriptor.timestamp)
+            return bmw_ts >= session_anchor
+        except (ValueError, TypeError):
+            pass
+    return descriptor.last_seen >= session_anchor.timestamp()
+
+
 def get_predicted_soc(
     soc_predictor: SOCPredictor,
     vin: str,
@@ -84,11 +106,11 @@ def get_predicted_soc(
         return None
 
     bmw_soc = None
-    if soc_predictor.is_charging(vin):
-        session = soc_predictor._sessions.get(vin)
+    session = soc_predictor._sessions.get(vin) if soc_predictor.is_charging(vin) else None
+    if session is not None:
         cl = vehicle_data.get(DESC_CHARGING_LEVEL)
-        if cl and cl.value is not None and session is not None:
-            if cl.last_seen >= session.anchor_timestamp.timestamp():
+        if cl and cl.value is not None:
+            if _is_descriptor_fresh_for_session(cl, session.anchor_timestamp):
                 try:
                     bmw_soc = float(cl.value)
                 except (TypeError, ValueError):
@@ -97,7 +119,13 @@ def get_predicted_soc(
         soc_state = vehicle_data.get(DESC_SOC_HEADER)
         if soc_state and soc_state.value is not None:
             try:
-                bmw_soc = float(soc_state.value)
+                candidate = float(soc_state.value)
+                # During charging, also check header freshness to avoid
+                # stale data from before the session causing a false re-anchor
+                if session is not None and not _is_descriptor_fresh_for_session(soc_state, session.anchor_timestamp):
+                    pass
+                else:
+                    bmw_soc = candidate
             except (TypeError, ValueError):
                 pass
 
@@ -124,11 +152,12 @@ def get_magic_soc(
 
     bmw_soc = None
     is_charging = soc_predictor.is_charging(vin)
+    session = None
     if is_charging and not soc_predictor.is_phev(vin):
         session = soc_predictor._sessions.get(vin)
         cl = vehicle_data.get(DESC_CHARGING_LEVEL)
         if cl and cl.value is not None and session is not None:
-            if cl.last_seen >= session.anchor_timestamp.timestamp():
+            if _is_descriptor_fresh_for_session(cl, session.anchor_timestamp):
                 try:
                     bmw_soc = float(cl.value)
                 except (TypeError, ValueError):
@@ -137,7 +166,11 @@ def get_magic_soc(
         soc_state = vehicle_data.get(DESC_SOC_HEADER)
         if soc_state and soc_state.value is not None:
             try:
-                bmw_soc = float(soc_state.value)
+                candidate = float(soc_state.value)
+                if session is not None and not _is_descriptor_fresh_for_session(soc_state, session.anchor_timestamp):
+                    pass
+                else:
+                    bmw_soc = candidate
             except (TypeError, ValueError):
                 pass
 
@@ -534,16 +567,30 @@ def process_soc_descriptors(
                 try:
                     soc_val = float(value)
                     skip_stale_header = False
-                    if soc_predictor.is_phev(vin) and soc_predictor.is_charging(vin):
+                    if soc_predictor.is_charging(vin):
                         session = soc_predictor._sessions.get(vin)
-                        cl = vehicle_state.get(DESC_CHARGING_LEVEL)
-                        if (
-                            session is not None
-                            and cl is not None
-                            and cl.value is not None
-                            and cl.last_seen >= session.anchor_timestamp.timestamp()
-                        ):
-                            skip_stale_header = True
+                        if session is not None:
+                            # Skip header when its BMW timestamp is from before
+                            # the current session (prevents stale data after restart)
+                            header_state = vehicle_state.get(DESC_SOC_HEADER)
+                            if header_state is not None and not _is_descriptor_fresh_for_session(
+                                header_state,
+                                session.anchor_timestamp,
+                            ):
+                                skip_stale_header = True
+                            # PHEV: also skip header when charging.level is fresh
+                            # (header frozen at pre-charge value while level is current)
+                            if not skip_stale_header and soc_predictor.is_phev(vin):
+                                cl = vehicle_state.get(DESC_CHARGING_LEVEL)
+                                if (
+                                    cl is not None
+                                    and cl.value is not None
+                                    and _is_descriptor_fresh_for_session(
+                                        cl,
+                                        session.anchor_timestamp,
+                                    )
+                                ):
+                                    skip_stale_header = True
                     if not skip_stale_header:
                         soc_predictor.update_bmw_soc(vin, soc_val)
                         magic_soc_pred.update_bmw_soc(vin, soc_val)
@@ -579,24 +626,37 @@ def process_soc_descriptors(
 
         elif descriptor == DESC_CHARGING_LEVEL:
             if value is not None and soc_predictor.is_charging(vin):
-                try:
-                    level_val = float(value)
-                    soc_predictor.update_bmw_soc(vin, level_val)
-                    if not soc_predictor.has_active_session(vin):
-                        _LOGGER.debug(
-                            "Late anchor attempt for %s (charging.level arrived after charging started)",
-                            redact_vin(vin),
-                        )
-                        manual_cap = coordinator.get_manual_battery_capacity(vin)
-                        anchor_soc_session(soc_predictor, magic_soc_pred, vin, vehicle_state, manual_cap)
-                    if soc_predictor.has_signaled_entity(vin):
-                        if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
-                            schedule_debounce = True
-                    if magic_soc_pred.has_signaled_magic_soc_entity(vin):
-                        if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
-                            schedule_debounce = True
-                except (TypeError, ValueError):
-                    pass
+                # Check BMW timestamp freshness to avoid stale data
+                # from previous sessions arriving after HA restart
+                session = soc_predictor._sessions.get(vin)
+                cl_state = vehicle_state.get(DESC_CHARGING_LEVEL)
+                skip_stale_level = (
+                    session is not None
+                    and cl_state is not None
+                    and not _is_descriptor_fresh_for_session(
+                        cl_state,
+                        session.anchor_timestamp,
+                    )
+                )
+                if not skip_stale_level:
+                    try:
+                        level_val = float(value)
+                        soc_predictor.update_bmw_soc(vin, level_val)
+                        if not soc_predictor.has_active_session(vin):
+                            _LOGGER.debug(
+                                "Late anchor attempt for %s (charging.level arrived after charging started)",
+                                redact_vin(vin),
+                            )
+                            manual_cap = coordinator.get_manual_battery_capacity(vin)
+                            anchor_soc_session(soc_predictor, magic_soc_pred, vin, vehicle_state, manual_cap)
+                        if soc_predictor.has_signaled_entity(vin):
+                            if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                        if magic_soc_pred.has_signaled_magic_soc_entity(vin):
+                            if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                    except (TypeError, ValueError):
+                        pass
 
         elif descriptor == DESC_TRAVELLED_DISTANCE:
             if value is not None:
