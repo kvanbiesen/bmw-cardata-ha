@@ -477,6 +477,17 @@ class MotionDetector:
                 )
                 return False
 
+            # Door unlock override: if doors transitioned to unlocked,
+            # GPS movement is residual from the trip that just ended.
+            # When the car starts again, doors auto-lock and clear this flag.
+            door_unlocked_at = self._door_unlocked_at.get(vin)
+            if door_unlocked_at is not None:
+                _LOGGER.debug(
+                    "Motion: %s GPS movement recent but door unlocked - NOT MOVING",
+                    redact_vin(vin),
+                )
+                return False
+
             gps_change_age = (now - last_gps_change).total_seconds() / 60.0
             result = gps_change_age < self.MOTION_ACTIVE_WINDOW_MINUTES
             _LOGGER.debug(
