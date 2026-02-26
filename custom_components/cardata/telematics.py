@@ -667,6 +667,7 @@ async def async_fetch_charging_history(
         params=params,
         context=f"Charging history for {redacted}",
         rate_limiter=runtime.rate_limit_tracker,
+        max_retries=0,
     )
 
     if error or response is None or not response.is_success:
@@ -716,6 +717,7 @@ async def async_fetch_tyre_diagnosis(
         headers=headers,
         context=f"Tyre diagnosis for {redacted}",
         rate_limiter=runtime.rate_limit_tracker,
+        max_retries=0,
     )
 
     if error or response is None or not response.is_success:
@@ -746,7 +748,8 @@ async def _async_daily_fetches(
         if coordinator.enable_charging_history:
             last = coordinator._last_charging_history_fetch.get(vin, 0.0)
             if now - last >= DAILY_FETCH_INTERVAL:
-                # Re-fetch entry for fresh token
+                # Record attempt upfront so failures don't retry every cycle
+                coordinator._last_charging_history_fetch[vin] = now
                 fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
                 if fresh_entry:
                     await async_fetch_charging_history(hass, fresh_entry, runtime, vin)
@@ -754,6 +757,8 @@ async def _async_daily_fetches(
         if coordinator.enable_tyre_diagnosis:
             last = coordinator._last_tyre_diagnosis_fetch.get(vin, 0.0)
             if now - last >= DAILY_FETCH_INTERVAL:
+                # Record attempt upfront so failures don't retry every cycle
+                coordinator._last_tyre_diagnosis_fetch[vin] = now
                 fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
                 if fresh_entry:
                     await async_fetch_tyre_diagnosis(hass, fresh_entry, runtime, vin)
