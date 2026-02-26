@@ -202,6 +202,10 @@ Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT
 
 The integration includes a predicted SOC (State of Charge) sensor that estimates battery charge during charging sessions. This sensor uses real-time accumulated energy (trapezoidal integration of charging power minus auxiliary consumption) to calculate charging progress more frequently than BMW's native SOC updates. This handles varying power levels naturally (DC taper above 80%, cold-battery ramp-up, grid fluctuations).
 
+### Vehicles Without Power Telemetry
+
+Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or voltage/current via MQTT. For these vehicles, the integration derives an implied charging power from BMW SOC changes: when an API poll delivers a higher SOC than the previous anchor and no real power data exists, the average power is back-calculated from the SOC delta, elapsed time, and default efficiency. The heartbeat then extrapolates between polls using this derived value, giving smooth SOC progression instead of staircase jumps every 30 minutes. Real power data (if it arrives later) overwrites the derived value automatically.
+
 ### How Learning Works
 
 The predicted SOC sensor automatically learns your vehicle's charging efficiency:
