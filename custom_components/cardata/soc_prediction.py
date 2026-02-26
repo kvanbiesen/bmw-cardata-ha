@@ -356,11 +356,14 @@ class SOCPredictor:
                     # consistent state (prevents race with SyncWorker reads)
                     session = self._sessions.get(vin)
                     if session is not None:
+                        old_anchor = session.anchor_soc
+                        ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
                         session.anchor_soc = soc
                         session.last_predicted_soc = soc
                         session.total_energy_kwh = 0.0
                         session.last_energy_update = time.time()
                         # Keep last_power_kw + reset gap to now for extrapolation continuity
+                        self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
         elif is_charging:
             # BEV charging: only sync up (never down during charge)
             if current_predicted is None or soc > current_predicted:
@@ -375,17 +378,68 @@ class SOCPredictor:
                 # consistent state (prevents race with SyncWorker reads)
                 session = self._sessions.get(vin)
                 if session is not None:
+                    old_anchor = session.anchor_soc
+                    ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
                     session.anchor_soc = soc
                     session.last_predicted_soc = soc
                     session.total_energy_kwh = 0.0
                     session.last_energy_update = time.time()
                     # Keep last_power_kw + reset gap to now for extrapolation continuity
+                    self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
         else:
             # BEV not charging: snap to actual BMW SOC
             self._last_predicted_soc[vin] = soc
 
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())
+
+    def _derive_power_from_soc_change(
+        self,
+        vin: str,
+        session: ChargingSession,
+        old_anchor_soc: float,
+        new_soc: float,
+        ref_time: float,
+    ) -> None:
+        """Derive implied charging power from SOC change for vehicles without power telemetry.
+
+        When BMW SOC re-anchors upward and no real power data exists, compute the
+        average power from the SOC delta and set it as last_power_kw so the heartbeat
+        can extrapolate between BMW polls. Real power data overwrites this if it
+        arrives later via accumulate_energy().
+
+        Args:
+            vin: Vehicle identification number
+            session: Active charging session (already re-anchored)
+            old_anchor_soc: Anchor SOC before re-anchor
+            new_soc: New BMW SOC that triggered re-anchor
+            ref_time: Unix timestamp of the reference point (old last_energy_update or anchor)
+        """
+        if session.last_power_kw > 0:
+            return
+        if new_soc <= old_anchor_soc:
+            return
+        if session.battery_capacity_kwh <= 0:
+            return
+
+        elapsed_seconds = time.time() - ref_time
+        if elapsed_seconds < 300:
+            return
+
+        efficiency = self.DC_EFFICIENCY if session.charging_method == "DC" else self.AC_EFFICIENCY
+        energy_in_battery = (new_soc - old_anchor_soc) / 100.0 * session.battery_capacity_kwh
+        implied_power = energy_in_battery / (elapsed_seconds / 3600.0 * efficiency)
+
+        session.last_power_kw = implied_power
+
+        _LOGGER.debug(
+            "SOC: Derived charging power for %s: %.2f kW (%.1f%% -> %.1f%% over %.0f min)",
+            redact_vin(vin),
+            implied_power,
+            old_anchor_soc,
+            new_soc,
+            elapsed_seconds / 60.0,
+        )
 
     def end_session(
         self,
