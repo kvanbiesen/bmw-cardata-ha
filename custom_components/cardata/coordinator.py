@@ -587,6 +587,10 @@ class CardataCoordinator:
             timestamp = sanitize_timestamp_string(raw_timestamp)
             if value is None:
                 continue
+
+            if descriptor == "vehicle.vehicle.preConditioning.activity":
+                _LOGGER.debug("Preconditioning activity for %s: %s", redacted_vin, value)
+
             is_new = descriptor not in vehicle_state
 
             if is_new and len(vehicle_state) >= self._MAX_DESCRIPTORS_PER_VIN:
