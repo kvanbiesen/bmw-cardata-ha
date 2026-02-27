@@ -213,16 +213,35 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 await coordinator.async_apply_basic_data(vin, metadata["raw_data"])
                 _LOGGER.debug("Bootstrap populated name for VIN %s: %s", redact_vin(vin), coordinator.names.get(vin))
 
-        # NOW seed telematic data (entities will be created with complete metadata)
+        # NOW seed telematic data (entities will be created with complete metadata).
+        # Reuse cached container IDs if available; otherwise discover from API.
         created_entities = False
-        container_id = entry.data.get("hv_container_id")
-        if container_id:
+        cached_ids = entry.data.get("container_ids")
+        if isinstance(cached_ids, list) and cached_ids:
+            seed_container_ids = list(cached_ids)
+            _LOGGER.debug(
+                "Bootstrap reusing %d cached container(s) for entry %s",
+                len(seed_container_ids),
+                entry.entry_id,
+            )
+        else:
+            seed_container_ids = await async_fetch_all_container_ids(
+                runtime.session, headers, entry.entry_id, rate_limiter
+            )
+            if seed_container_ids:
+                await async_update_entry_data(hass, entry, {"container_ids": seed_container_ids})
+                _LOGGER.debug(
+                    "Bootstrap discovered and cached %d container(s) for entry %s",
+                    len(seed_container_ids),
+                    entry.entry_id,
+                )
+        if seed_container_ids:
             created_entities = await async_seed_telematic_data(
-                runtime, entry.entry_id, headers, container_id, vins, rate_limiter
+                runtime, entry.entry_id, headers, seed_container_ids, vins, rate_limiter
             )
         else:
             _LOGGER.debug(
-                "Bootstrap skipping telematic seed for entry %s due to missing container id",
+                "Bootstrap skipping telematic seed for entry %s: no containers found",
                 entry.entry_id,
             )
 
@@ -354,99 +373,175 @@ async def async_fetch_primary_vins(
     return vins, None
 
 
+async def async_fetch_all_container_ids(
+    session: aiohttp.ClientSession,
+    headers: dict[str, str],
+    entry_id: str,
+    rate_limiter: Any | None = None,
+) -> list[str]:
+    """Return all ACTIVE container IDs visible to this account.
+
+    Used during bootstrap to seed telematic data from every container the user
+    has configured in the BMW portal.  Returns an empty list on any error so the
+    caller can fall back gracefully.
+    """
+    url = f"{API_BASE_URL}/customers/containers"
+
+    response, error = await async_request_with_retry(
+        session,
+        "GET",
+        url,
+        headers=headers,
+        context=f"Bootstrap container list for entry {entry_id}",
+        rate_limiter=rate_limiter,
+    )
+
+    if error or response is None or not response.is_success:
+        _LOGGER.debug(
+            "Bootstrap could not list containers for entry %s: %s",
+            entry_id,
+            error or (response.status if response else "no response"),
+        )
+        return []
+
+    ok, payload = try_parse_json(response.text)
+    if not ok:
+        return []
+
+    # API returns {"containers": [...]}
+    if isinstance(payload, dict):
+        containers = payload.get("containers", [])
+    elif isinstance(payload, list):
+        containers = payload
+    else:
+        return []
+
+    ids = [
+        c["containerId"]
+        for c in containers
+        if isinstance(c, dict) and c.get("state") == "ACTIVE" and c.get("containerId")
+    ]
+    _LOGGER.debug(
+        "Bootstrap found %d active container(s) for entry %s: %s",
+        len(ids),
+        entry_id,
+        ids,
+    )
+    return ids
+
+
 async def async_seed_telematic_data(
     runtime: CardataRuntimeData,
     entry_id: str,
     headers: dict[str, str],
-    container_id: str,
+    container_ids: list[str],
     vins: list[str],
     rate_limiter: Any | None = None,
 ) -> bool:
-    """Fetch initial telematic data for each VIN to seed descriptors."""
+    """Fetch initial telematic data for each VIN from all containers to seed descriptors.
+
+    Queries every container in *container_ids* for each VIN and merges the results
+    into a single coordinator message.  This ensures all configured descriptors
+    become Home Assistant entities immediately at startup rather than waiting for
+    the first MQTT stream update.
+    """
     session = runtime.session
     coordinator = runtime.coordinator
     created = False
-    params = {"containerId": container_id}
 
     for vin in vins:
         redacted_vin = redact_vin(vin)
-        # Validate VIN format before using in URL to prevent injection
         if not is_valid_vin(vin):
             _LOGGER.warning(
                 "Bootstrap telematic request skipped for invalid VIN format %s",
                 redacted_vin,
             )
             continue
-        if coordinator.data.get(vin):
-            continue
 
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+        merged_data: dict[str, Any] = {}
+        rate_limited = False
 
-        response, error = await async_request_with_retry(
-            session,
-            "GET",
-            url,
-            headers=headers,
-            params=params,
-            context=f"Bootstrap telematic request for {redacted_vin}",
-            rate_limiter=rate_limiter,
-        )
-
-        if error:
-            _LOGGER.warning(
-                "Bootstrap telematic request errored for %s: %s",
-                redacted_vin,
-                error,
+        for container_id in container_ids:
+            response, error = await async_request_with_retry(
+                session,
+                "GET",
+                url,
+                headers=headers,
+                params={"containerId": container_id},
+                context=f"Bootstrap telematic request for {redacted_vin}",
+                rate_limiter=rate_limiter,
             )
-            continue
 
-        if response is None:
+            if error:
+                _LOGGER.warning(
+                    "Bootstrap telematic request errored for %s (container %s): %s",
+                    redacted_vin,
+                    container_id,
+                    error,
+                )
+                continue
+
+            if response is None:
+                _LOGGER.debug(
+                    "Bootstrap telematic request returned no response for %s (container %s)",
+                    redacted_vin,
+                    container_id,
+                )
+                continue
+
+            if response.is_rate_limited:
+                error_excerpt = redact_vin_in_text(response.text[:200])
+                _LOGGER.error(
+                    "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
+                    "BMW's daily quota (typically 50 calls/day) has been reached. "
+                    "The limit resets at midnight UTC. Stopping container seed. "
+                    "Error details: %s",
+                    redacted_vin,
+                    error_excerpt,
+                )
+                rate_limited = True
+                break
+
+            if not response.is_success:
+                error_excerpt = redact_vin_in_text(response.text[:200])
+                _LOGGER.debug(
+                    "Bootstrap telematic request failed for %s (container %s, status=%s): %s",
+                    redacted_vin,
+                    container_id,
+                    response.status,
+                    error_excerpt,
+                )
+                continue
+
+            ok, payload = try_parse_json(response.text)
+            if not ok:
+                error_excerpt = redact_vin_in_text(response.text[:200])
+                _LOGGER.debug(
+                    "Bootstrap telematic payload invalid for %s (container %s): %s",
+                    redacted_vin,
+                    container_id,
+                    error_excerpt,
+                )
+                continue
+
+            telematic_data = extract_telematic_payload(payload)
+            if isinstance(telematic_data, dict):
+                # Merge all containers equally — last value wins on duplicate keys
+                merged_data.update(telematic_data)
+
+        if rate_limited:
+            break
+
+        if merged_data:
+            await coordinator.async_handle_message({"vin": vin, "data": merged_data})
+            created = True
             _LOGGER.debug(
-                "Bootstrap telematic request failed for %s: no response",
+                "Bootstrap seeded %d descriptor(s) for VIN %s from %d container(s)",
+                len(merged_data),
                 redacted_vin,
+                len(container_ids),
             )
-            continue
-
-        if response.is_rate_limited:
-            error_excerpt = redact_vin_in_text(response.text[:200])
-            _LOGGER.error(
-                "BMW API rate limit exceeded! Bootstrap telematic request blocked for %s. "
-                "BMW's daily quota (typically 50 calls/day) has been reached. "
-                "The limit resets at midnight UTC. Skipping remaining vehicles. "
-                "Error details: %s",
-                redacted_vin,
-                error_excerpt,
-            )
-            break  # Stop trying other VINs if we hit rate limit
-
-        if not response.is_success:
-            error_excerpt = redact_vin_in_text(response.text[:200])
-            _LOGGER.debug(
-                "Bootstrap telematic request failed for %s (status=%s): %s",
-                redacted_vin,
-                response.status,
-                error_excerpt,
-            )
-            continue
-
-        ok, payload = try_parse_json(response.text)
-        if not ok:
-            error_excerpt = redact_vin_in_text(response.text[:200])
-            _LOGGER.debug(
-                "Bootstrap telematic payload invalid for %s: %s",
-                redacted_vin,
-                error_excerpt,
-            )
-            continue
-
-        telematic_data = extract_telematic_payload(payload)
-
-        if not telematic_data:
-            continue
-
-        message = {"vin": vin, "data": telematic_data}
-        await coordinator.async_handle_message(message)
-        created = True
 
     return created
 

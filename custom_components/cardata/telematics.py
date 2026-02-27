@@ -131,41 +131,22 @@ async def async_perform_telematic_fetch(
         # Fatal: cannot proceed without VIN
         return TelematicFetchResult(None, "no_vin")
 
-    container_id = entry.data.get("hv_container_id")
-    if not container_id:
-        # Auto-heal: a missing container prevents ALL telematics polling.
-        # This can happen if entry data was restored without the container id,
-        # or bootstrap was skipped due to BOOTSTRAP_COMPLETE already set.
-        _LOGGER.warning(
-            "Cardata fetch_telematic_data: no container_id stored for entry %s; attempting to create it",
-            target_entry_id,
-        )
-        try:
-            from .auth import async_ensure_container_for_entry
+    # Use all cached container IDs discovered during bootstrap.
+    # Falls back to hv_container_id for legacy entries that haven't been re-bootstrapped.
+    container_ids: list[str] = []
+    cached_ids = entry.data.get("container_ids")
+    if isinstance(cached_ids, list) and cached_ids:
+        container_ids = list(cached_ids)
+    else:
+        hv_cid = entry.data.get("hv_container_id")
+        if hv_cid:
+            container_ids = [hv_cid]
 
-            ok = await async_ensure_container_for_entry(
-                entry,
-                hass,
-                runtime.session,
-                runtime.container_manager,
-                force=False,
-            )
-            if ok:
-                container_id = entry.data.get("hv_container_id")
-        except Exception as err:
-            _LOGGER.error(
-                "Cardata fetch_telematic_data: failed ensuring container for entry %s: %s",
-                target_entry_id,
-                err,
-            )
-            return TelematicFetchResult(None, "missing_container")
-
-    if not container_id:
+    if not container_ids:
         _LOGGER.error(
-            "Cardata fetch_telematic_data: no container_id stored for entry %s",
+            "Cardata fetch_telematic_data: no container_ids stored for entry %s",
             target_entry_id,
         )
-        # Fatal: missing container
         return TelematicFetchResult(None, "missing_container")
 
     # Proactively check and refresh token only if expired or about to expire
@@ -194,12 +175,12 @@ async def async_perform_telematic_fetch(
         "x-version": API_VERSION,
         "Accept": "application/json",
     }
-    params = {"containerId": container_id}
     rate_limiter = runtime.rate_limit_tracker
 
     any_success = False
     any_attempt = False
     auth_failure = False
+    rate_limited = False
     all_skipped = True  # Track if we skipped all VINs due to fresh MQTT
 
     for vin in vins:
@@ -227,70 +208,82 @@ async def async_perform_telematic_fetch(
         all_skipped = False
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
         any_attempt = True
+        merged_data: dict = {}
 
-        response, error = await async_request_with_retry(
-            runtime.session,
-            "GET",
-            url,
-            headers=headers,
-            params=params,
-            context=f"Telematic data fetch for {redacted_vin}",
-            rate_limiter=rate_limiter,
-        )
-
-        if error:
-            _LOGGER.error(
-                "Cardata fetch_telematic_data: network error for %s: %s",
-                redacted_vin,
-                error,
+        for cid in container_ids:
+            response, error = await async_request_with_retry(
+                runtime.session,
+                "GET",
+                url,
+                headers=headers,
+                params={"containerId": cid},
+                context=f"Telematic data fetch for {redacted_vin}",
+                rate_limiter=rate_limiter,
             )
-            continue
 
-        if response is None:
-            _LOGGER.error(
-                "Cardata fetch_telematic_data: no response for %s",
-                redacted_vin,
-            )
-            continue
+            if error:
+                _LOGGER.error(
+                    "Cardata fetch_telematic_data: network error for %s (container %s): %s",
+                    redacted_vin,
+                    cid,
+                    error,
+                )
+                continue
 
-        # Check for auth errors - these are fatal and require reauth
-        if response.is_auth_error:
-            _LOGGER.error(
-                "Cardata fetch_telematic_data: auth error (%s) for %s - token may be expired",
-                response.status,
-                redacted_vin,
-            )
-            auth_failure = True
-            break  # Stop trying other VINs, auth is broken
+            if response is None:
+                _LOGGER.error(
+                    "Cardata fetch_telematic_data: no response for %s (container %s)",
+                    redacted_vin,
+                    cid,
+                )
+                continue
 
-        # Check for rate limiting
-        if response.is_rate_limited:
-            _LOGGER.warning(
-                "Cardata fetch_telematic_data: rate limited for %s",
-                redacted_vin,
-            )
+            # Check for auth errors - these are fatal and require reauth
+            if response.is_auth_error:
+                _LOGGER.error(
+                    "Cardata fetch_telematic_data: auth error (%s) for %s - token may be expired",
+                    response.status,
+                    redacted_vin,
+                )
+                auth_failure = True
+                break  # Stop trying other containers
+
+            # Check for rate limiting
+            if response.is_rate_limited:
+                _LOGGER.warning(
+                    "Cardata fetch_telematic_data: rate limited for %s",
+                    redacted_vin,
+                )
+                rate_limited = True
+                break  # Stop trying other containers
+
+            if not response.is_success:
+                error_excerpt = redact_vin_in_text(response.text[:200])
+                _LOGGER.error(
+                    "Cardata fetch_telematic_data: request failed (status=%s) for %s (container %s): %s",
+                    response.status,
+                    redacted_vin,
+                    cid,
+                    error_excerpt,
+                )
+                continue
+
+            ok, payload = try_parse_json(response.text)
+            if not ok:
+                payload = response.text
+            safe_payload = redact_vin_payload(payload)
+
+            _LOGGER.debug("Cardata telematic data for %s (container %s): %s", redacted_vin, cid, safe_payload)
+            telematic_payload = extract_telematic_payload(payload)
+
+            if isinstance(telematic_payload, dict):
+                merged_data.update(telematic_payload)
+
+        if auth_failure or rate_limited:
             break  # Stop trying other VINs
 
-        if not response.is_success:
-            error_excerpt = redact_vin_in_text(response.text[:200])
-            _LOGGER.error(
-                "Cardata fetch_telematic_data: request failed (status=%s) for %s: %s",
-                response.status,
-                redacted_vin,
-                error_excerpt,
-            )
-            continue
-
-        ok, payload = try_parse_json(response.text)
-        if not ok:
-            payload = response.text
-        safe_payload = redact_vin_payload(payload)
-
-        _LOGGER.debug("Cardata telematic data for %s: %s", redacted_vin, safe_payload)
-        telematic_payload = extract_telematic_payload(payload)
-
-        if isinstance(telematic_payload, dict):
-            await runtime.coordinator.async_handle_message({"vin": vin, "data": telematic_payload}, is_telematic=True)
+        if merged_data:
+            await runtime.coordinator.async_handle_message({"vin": vin, "data": merged_data}, is_telematic=True)
             runtime.coordinator.record_telematic_poll(vin)
             any_success = True
 
