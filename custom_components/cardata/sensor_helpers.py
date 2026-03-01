@@ -92,7 +92,7 @@ def map_unit_to_ha(unit: str | None) -> str | None:
         return None
 
     unit_mapping = {
-        "l": UnitOfVolume.LITERS,
+        "L": UnitOfVolume.LITERS,
         "celsius": UnitOfTemperature.CELSIUS,
         "weeks": UnitOfTime.DAYS,
         # Note: "w" is NOT mapped here - it's ambiguous (could be watts or weeks)
