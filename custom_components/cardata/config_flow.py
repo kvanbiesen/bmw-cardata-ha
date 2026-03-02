@@ -881,7 +881,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             return self._show_confirm(
                 step_id="action_cleanup_entities",
                 errors={"base": "cleanup_failed"},
-                placeholders={"error": str(err)},
+                placeholders={"error": _sanitize_error_for_user(err)},
             )
 
     async def _handle_reauth(self) -> FlowResult:
