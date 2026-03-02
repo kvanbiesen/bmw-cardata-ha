@@ -568,6 +568,7 @@ class CardataStreamManager:
             stream_reconnect.cancel_retry(self)
             self._last_disconnect = None
             self._retry_backoff = 3
+            self._consecutive_reconnect_failures = 0
             if self._status_callback:
                 self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("connected", None)))
         elif rc in (4, 5):  # bad credentials / not authorized
