@@ -401,7 +401,9 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 1 if runtime.coordinator.enable_tyre_diagnosis else 0
             )
             daily_extra = daily_calls_per_vin * num_vins
-            target_polls = max(TARGET_DAILY_POLLS - daily_extra, num_vins)
+            cached_cids = entry.data.get("container_ids")
+            num_containers = max(1, len(cached_cids) if isinstance(cached_cids, list) else 1)
+            target_polls = max((TARGET_DAILY_POLLS - daily_extra) // num_containers, num_vins)
             stale_threshold = int(86400.0 * num_vins / target_polls)
 
             check_interval = min(stale_threshold, 30 * 60)  # Check at most every 30 min
