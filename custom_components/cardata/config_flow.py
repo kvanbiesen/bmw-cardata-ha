@@ -43,6 +43,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult, FlowResultType
 
 from .const import (
+    BOOTSTRAP_COMPLETE,
     DEFAULT_CUSTOM_MQTT_PORT,
     DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
     DOMAIN,
@@ -750,6 +751,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
 
         updated = dict(entry.data)
+        updated.pop("container_ids", None)
+        updated[BOOTSTRAP_COMPLETE] = False
         if new_id:
             updated["hv_container_id"] = new_id
             updated["hv_descriptor_signature"] = runtime.container_manager.descriptor_signature
