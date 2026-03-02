@@ -235,6 +235,14 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                     len(seed_container_ids),
                     entry.entry_id,
                 )
+            else:
+                hv_cid = entry.data.get("hv_container_id")
+                if hv_cid:
+                    seed_container_ids = [hv_cid]
+                    _LOGGER.debug(
+                        "Bootstrap falling back to hv_container_id for entry %s",
+                        entry.entry_id,
+                    )
         if seed_container_ids:
             created_entities = await async_seed_telematic_data(
                 runtime, entry.entry_id, headers, seed_container_ids, vins, rate_limiter
