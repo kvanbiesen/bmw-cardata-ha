@@ -469,6 +469,7 @@ async def async_seed_telematic_data(
         url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
         merged_data: dict[str, Any] = {}
         rate_limited = False
+        auth_error = False
 
         for container_id in container_ids:
             response, error = await async_request_with_retry(
@@ -497,6 +498,15 @@ async def async_seed_telematic_data(
                     container_id,
                 )
                 continue
+
+            if response.is_auth_error:
+                _LOGGER.error(
+                    "Bootstrap telematic request: auth error (%s) for %s. Stopping seed.",
+                    response.status,
+                    redacted_vin,
+                )
+                auth_error = True
+                break
 
             if response.is_rate_limited:
                 error_excerpt = redact_vin_in_text(response.text[:200])
@@ -538,7 +548,7 @@ async def async_seed_telematic_data(
                 # Merge all containers equally — last value wins on duplicate keys
                 merged_data.update(telematic_data)
 
-        if rate_limited:
+        if rate_limited or auth_error:
             break
 
         if merged_data:
