@@ -41,6 +41,7 @@ from .api_parsing import extract_telematic_payload, try_parse_json
 from .const import (
     API_BASE_URL,
     API_VERSION,
+    BOOTSTRAP_COMPLETE,
     DAILY_FETCH_INTERVAL,
     DOMAIN,
     MIN_TELEMETRY_DESCRIPTORS,
@@ -143,10 +144,18 @@ async def async_perform_telematic_fetch(
             container_ids = [hv_cid]
 
     if not container_ids:
-        _LOGGER.error(
-            "Cardata fetch_telematic_data: no container_ids stored for entry %s",
-            target_entry_id,
-        )
+        if entry.data.get(BOOTSTRAP_COMPLETE):
+            _LOGGER.warning(
+                "Cardata fetch_telematic_data: no containers for entry %s. "
+                "Clearing bootstrap flag so next restart re-discovers.",
+                target_entry_id,
+            )
+            await async_update_entry_data(hass, entry, {BOOTSTRAP_COMPLETE: False})
+        else:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: no containers for entry %s and bootstrap not yet complete",
+                target_entry_id,
+            )
         return TelematicFetchResult(None, "missing_container")
 
     # Proactively check and refresh token only if expired or about to expire
