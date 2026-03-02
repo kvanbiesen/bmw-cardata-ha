@@ -177,6 +177,7 @@ def end_session(
             redact_vin(vin),
         )
         del predictor._sessions[vin]
+        predictor._charging_method.pop(vin, None)
         if predictor._on_learning_updated:
             predictor._on_learning_updated(vin)
         return
