@@ -25,17 +25,19 @@ jobs:
             const match = body.match(/### Debug logs\s*\n([\s\S]*?)(?=\n### |$)/);
             const logsSection = match ? match[1].trim() : '';
 
-            // Patterns that indicate real debug logs
+            // Must contain at least one DEBUG-level line.
+            // WARNING/INFO-only logs are not debug logs.
+            const hasDebugLevel = /\bDEBUG\b/.test(logsSection);
+
+            // Additional quality patterns
             const logPatterns = [
               /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/,  // timestamp
-              /\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b/,   // log level
               /custom_components\.cardata/,                 // integration logger
-              /\(MainThread\)/,                             // HA thread marker
             ];
 
             const hasLabel = context.payload.issue.labels.some(l => l.name === 'needs-debug-logs');
             const matchCount = logPatterns.filter(p => p.test(logsSection)).length;
-            const isValid = logsSection.length > 100 && matchCount >= 2;
+            const isValid = logsSection.length > 100 && hasDebugLevel && matchCount >= 1;
 
             if (!isValid) {
               // Add label if not present
@@ -110,16 +112,15 @@ jobs:
             const logAttachmentPattern = /github\.com\/user-attachments\/files\/\d+\/[^\s)]+\.log\b/i;
             const logPatterns = [
               /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/,  // timestamp
-              /\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b/,   // log level
               /custom_components\.cardata/,                 // integration logger
-              /\(MainThread\)/,                             // HA thread marker
             ];
 
             const hasLogs = comments.some(c => {
               const body = c.body || '';
               if (logAttachmentPattern.test(body)) return true;
+              const hasDebugLevel = /\bDEBUG\b/.test(body);
               const matchCount = logPatterns.filter(p => p.test(body)).length;
-              return body.length > 100 && matchCount >= 2;
+              return body.length > 100 && hasDebugLevel && matchCount >= 1;
             });
 
             if (hasLogs) {
