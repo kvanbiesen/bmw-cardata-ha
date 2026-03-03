@@ -641,7 +641,7 @@ def process_soc_descriptors(
                 if not skip_stale_level:
                     try:
                         level_val = float(value)
-                        soc_predictor.update_bmw_soc(vin, level_val)
+                        soc_predictor.update_bmw_soc(vin, level_val, from_charging_level=True)
                         if not soc_predictor.has_active_session(vin):
                             _LOGGER.debug(
                                 "Late anchor attempt for %s (charging.level arrived after charging started)",

@@ -296,7 +296,9 @@ class SOCPredictor:
                     session.last_predicted_soc,
                 )
 
-    def update_bmw_soc(self, vin: str, soc: float, timestamp: datetime | None = None) -> None:
+    def update_bmw_soc(
+        self, vin: str, soc: float, timestamp: datetime | None = None, *, from_charging_level: bool = False
+    ) -> None:
         """Record BMW SOC update for staleness tracking.
 
         Also updates last_predicted_soc when not charging (passthrough mode).
@@ -337,7 +339,15 @@ class SOCPredictor:
                         session.anchor_soc = soc
                         session.total_energy_kwh = 0.0
                         session.last_energy_update = time.time()
-                    # During charging: preserve anchor/energy for learning
+                    elif from_charging_level:
+                        # Charging, from trusted charging.level: full re-anchor downward
+                        old_anchor = session.anchor_soc
+                        ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
+                        session.anchor_soc = soc
+                        session.total_energy_kwh = 0.0
+                        session.last_energy_update = time.time()
+                        self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
+                    # During charging from header: preserve anchor/energy for learning
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
