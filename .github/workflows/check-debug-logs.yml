@@ -62,7 +62,7 @@ jobs:
                     'logger:',
                     '  default: info',
                     '  logs:',
-                    '    custom_components.bmw_cardata: debug',
+                    '    custom_components.cardata: debug',
                     '```',
                     '',
                     'Then reproduce the issue and paste the logs in the **Debug logs** field.',
