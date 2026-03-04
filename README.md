@@ -360,6 +360,7 @@ The integration is organized into focused modules:
 | `stream.py` | MQTT connection management, credential hot-swap |
 | `stream_circuit_breaker.py` | Circuit breaker for reconnection rate limiting |
 | `stream_reconnect.py` | Reconnection, unauthorized handling, retry scheduling |
+| `geo_utils.py` | Shared geographic utilities (Haversine distance) |
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
 | `sensor_diagnostics.py` | Diagnostic sensors: connection, metadata, efficiency, charging history, tyre diagnosis |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |

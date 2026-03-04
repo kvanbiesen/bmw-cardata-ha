@@ -612,6 +612,19 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await session.close()
 
 
+async def _cancel_task_with_timeout(task: asyncio.Task, name: str, timeout: float = 5.0) -> None:
+    """Cancel an asyncio task and wait for it to finish, with timeout protection."""
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=timeout)
+    except asyncio.CancelledError:
+        pass
+    except TimeoutError:
+        _LOGGER.warning("%s task did not cancel within timeout (%.0fs). Proceeding with unload anyway.", name, timeout)
+    except Exception as err:
+        _LOGGER.error("Error stopping %s task: %s", name, err)
+
+
 async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     domain_data = hass.data.get(DOMAIN)
@@ -640,38 +653,13 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     # Cancel tasks with timeout protection
-    if data.refresh_task:
-        data.refresh_task.cancel()
-        try:
-            await asyncio.wait_for(data.refresh_task, timeout=5.0)
-        except asyncio.CancelledError:
-            pass  # Expected
-        except TimeoutError:
-            _LOGGER.warning("Refresh task did not cancel within timeout (5s). Proceeding with unload anyway.")
-        except Exception as err:
-            _LOGGER.error("Error stopping refresh task: %s", err)
-
-    if data.bootstrap_task:
-        data.bootstrap_task.cancel()
-        try:
-            await asyncio.wait_for(data.bootstrap_task, timeout=5.0)
-        except asyncio.CancelledError:
-            pass  # Expected
-        except TimeoutError:
-            _LOGGER.warning("Bootstrap task did not cancel within timeout (5s). Proceeding with unload anyway.")
-        except Exception as err:
-            _LOGGER.error("Error stopping bootstrap task: %s", err)
-
-    if data.telematic_task:
-        data.telematic_task.cancel()
-        try:
-            await asyncio.wait_for(data.telematic_task, timeout=5.0)
-        except asyncio.CancelledError:
-            pass  # Expected
-        except TimeoutError:
-            _LOGGER.warning("Telematic task did not cancel within timeout (5s). Proceeding with unload anyway.")
-        except Exception as err:
-            _LOGGER.error("Error stopping telematic task: %s", err)
+    for task, name in [
+        (data.refresh_task, "Refresh"),
+        (data.bootstrap_task, "Bootstrap"),
+        (data.telematic_task, "Telematic"),
+    ]:
+        if task:
+            await _cancel_task_with_timeout(task, name)
 
     # Stop MQTT stream with timeout protection
     try:

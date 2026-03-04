@@ -268,6 +268,62 @@ def try_finalize_pending_session(predictor: SOCPredictor, vin: str, bmw_soc: flo
     return True
 
 
+def _validate_and_learn(
+    learned_efficiency: dict[str, LearnedEfficiency],
+    on_learning_updated: Any,
+    vin: str,
+    anchor_soc: float,
+    total_energy_kwh: float,
+    battery_capacity_kwh: float,
+    charging_method: str,
+    phases: int,
+    voltage: float,
+    current: float,
+    end_soc: float,
+    label: str,
+) -> None:
+    """Validate a charging session and apply efficiency learning if valid."""
+    soc_gain = end_soc - anchor_soc
+    if soc_gain < MIN_LEARNING_SOC_GAIN:
+        _LOGGER.debug(
+            "SOC: Discarding %s for %s: SOC gain %.1f%% below minimum %.1f%%",
+            label,
+            redact_vin(vin),
+            soc_gain,
+            MIN_LEARNING_SOC_GAIN,
+        )
+        return
+
+    if total_energy_kwh <= 0:
+        _LOGGER.debug("SOC: Discarding %s for %s: no energy recorded", label, redact_vin(vin))
+        return
+
+    energy_stored_kwh = (soc_gain / 100.0) * battery_capacity_kwh
+    true_efficiency = energy_stored_kwh / total_energy_kwh
+
+    if not MIN_VALID_EFFICIENCY <= true_efficiency <= MAX_VALID_EFFICIENCY:
+        _LOGGER.debug(
+            "SOC: Discarding %s for %s: efficiency %.2f outside valid range [%.2f, %.2f]",
+            label,
+            redact_vin(vin),
+            true_efficiency,
+            MIN_VALID_EFFICIENCY,
+            MAX_VALID_EFFICIENCY,
+        )
+        return
+
+    _apply_learning(
+        learned_efficiency,
+        on_learning_updated,
+        vin,
+        charging_method,
+        true_efficiency,
+        phases=phases,
+        voltage=voltage,
+        current=current,
+    )
+
+
 def _finalize_learning(
     learned_efficiency: dict[str, LearnedEfficiency],
     on_learning_updated: Any,
@@ -283,51 +339,19 @@ def _finalize_learning(
         )
         return
 
-    # Validate session
-    soc_gain = end_soc - session.anchor_soc
-    if soc_gain < MIN_LEARNING_SOC_GAIN:
-        _LOGGER.debug(
-            "SOC: Discarding session for %s: SOC gain %.1f%% below minimum %.1f%%",
-            redact_vin(vin),
-            soc_gain,
-            MIN_LEARNING_SOC_GAIN,
-        )
-        return
-
-    if session.total_energy_kwh <= 0:
-        _LOGGER.debug("SOC: Discarding session for %s: no energy recorded", redact_vin(vin))
-        return
-
-    # Calculate true efficiency
-    energy_stored_kwh = (soc_gain / 100.0) * session.battery_capacity_kwh
-    true_efficiency = energy_stored_kwh / session.total_energy_kwh
-
-    # Reject outliers
-    if not MIN_VALID_EFFICIENCY <= true_efficiency <= MAX_VALID_EFFICIENCY:
-        _LOGGER.debug(
-            "SOC: Discarding session for %s: efficiency %.2f outside valid range [%.2f, %.2f]",
-            redact_vin(vin),
-            true_efficiency,
-            MIN_VALID_EFFICIENCY,
-            MAX_VALID_EFFICIENCY,
-        )
-        return
-
-    # Extract charging parameters from session for matrix learning
-    phases = session.phases
-    voltage = session.last_voltage if session.last_voltage else 230.0
-    current = session.last_current if session.last_current else 16.0
-
-    # Apply learning with charging condition details
-    _apply_learning(
+    _validate_and_learn(
         learned_efficiency,
         on_learning_updated,
         vin,
-        session.charging_method,
-        true_efficiency,
-        phases=phases,
-        voltage=voltage,
-        current=current,
+        anchor_soc=session.anchor_soc,
+        total_energy_kwh=session.total_energy_kwh,
+        battery_capacity_kwh=session.battery_capacity_kwh,
+        charging_method=session.charging_method,
+        phases=session.phases,
+        voltage=session.last_voltage if session.last_voltage else 230.0,
+        current=session.last_current if session.last_current else 16.0,
+        end_soc=end_soc,
+        label="session",
     )
 
 
@@ -339,46 +363,19 @@ def _finalize_learning_from_pending(
     end_soc: float,
 ) -> None:
     """Finalize learning from a pending session."""
-    # Validate session
-    soc_gain = end_soc - pending.anchor_soc
-    if soc_gain < MIN_LEARNING_SOC_GAIN:
-        _LOGGER.debug(
-            "SOC: Discarding pending session for %s: SOC gain %.1f%% below minimum %.1f%%",
-            redact_vin(vin),
-            soc_gain,
-            MIN_LEARNING_SOC_GAIN,
-        )
-        return
-
-    if pending.total_energy_kwh <= 0:
-        _LOGGER.debug("SOC: Discarding pending session for %s: no energy recorded", redact_vin(vin))
-        return
-
-    # Calculate true efficiency
-    energy_stored_kwh = (soc_gain / 100.0) * pending.battery_capacity_kwh
-    true_efficiency = energy_stored_kwh / pending.total_energy_kwh
-
-    # Reject outliers
-    if not MIN_VALID_EFFICIENCY <= true_efficiency <= MAX_VALID_EFFICIENCY:
-        _LOGGER.debug(
-            "SOC: Discarding pending session for %s: efficiency %.2f outside valid range [%.2f, %.2f]",
-            redact_vin(vin),
-            true_efficiency,
-            MIN_VALID_EFFICIENCY,
-            MAX_VALID_EFFICIENCY,
-        )
-        return
-
-    # Apply learning with charging condition details from pending session
-    _apply_learning(
+    _validate_and_learn(
         learned_efficiency,
         on_learning_updated,
         vin,
-        pending.charging_method,
-        true_efficiency,
+        anchor_soc=pending.anchor_soc,
+        total_energy_kwh=pending.total_energy_kwh,
+        battery_capacity_kwh=pending.battery_capacity_kwh,
+        charging_method=pending.charging_method,
         phases=pending.phases,
         voltage=pending.voltage,
         current=pending.current,
+        end_soc=end_soc,
+        label="pending session",
     )
 
 

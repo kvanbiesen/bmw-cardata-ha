@@ -21,6 +21,19 @@ _LOGGER = logging.getLogger(__name__)
 __all__ = ["ChargingSession", "LearnedEfficiency", "PendingSession", "SOCPredictor"]
 
 
+def _calc_ac_power_kw(session: ChargingSession) -> float | None:
+    """Calculate AC power in kW from session voltage, current, and phases.
+
+    Returns None if voltage or current are missing or non-positive.
+    """
+    if not session.last_voltage or not session.last_current or session.last_voltage <= 0 or session.last_current <= 0:
+        return None
+    power_kw = (session.last_voltage * session.last_current) / 1000.0
+    if session.phases and session.phases > 1:
+        power_kw *= 3.0 if session.last_voltage < 250 else 1.732
+    return power_kw
+
+
 class SOCPredictor:
     """Predict SOC during charging sessions with learning.
 
@@ -322,32 +335,41 @@ class SOCPredictor:
         # This handles battery recovery mode and other hybrid system behaviors
         if self._is_phev.get(vin, False) and current_predicted is not None:
             if soc < current_predicted:
-                _LOGGER.debug(
-                    "SOC: PHEV %s actual (%.1f%%) < predicted (%.1f%%), syncing down",
-                    redact_vin(vin),
-                    soc,
-                    current_predicted,
-                )
-                self._last_predicted_soc[vin] = soc
-                session = self._sessions.get(vin)
-                if session is not None:
-                    # Update display value so monotonicity guard doesn't
-                    # immediately override the sync-down on the next prediction.
-                    session.last_predicted_soc = soc
-                    if not is_charging:
-                        # Not charging: full reset — anchor + energy
-                        session.anchor_soc = soc
-                        session.total_energy_kwh = 0.0
-                        session.last_energy_update = time.time()
-                    elif from_charging_level:
-                        # Charging, from trusted charging.level: full re-anchor downward
-                        old_anchor = session.anchor_soc
-                        ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
-                        session.anchor_soc = soc
-                        session.total_energy_kwh = 0.0
-                        session.last_energy_update = time.time()
-                        self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
-                    # During charging from header: preserve anchor/energy for learning
+                if is_charging and from_charging_level:
+                    # charging.level is BMW's own prediction, not real battery.
+                    # Our energy-based prediction is more accurate. Ignore.
+                    _LOGGER.debug(
+                        "SOC: PHEV %s charging.level (%.1f%%) < predicted (%.1f%%), ignoring BMW prediction",
+                        redact_vin(vin),
+                        soc,
+                        current_predicted,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "SOC: PHEV %s actual (%.1f%%) < predicted (%.1f%%), syncing down",
+                        redact_vin(vin),
+                        soc,
+                        current_predicted,
+                    )
+                    self._last_predicted_soc[vin] = soc
+                    session = self._sessions.get(vin)
+                    if session is not None:
+                        # Update display value so monotonicity guard doesn't
+                        # immediately override the sync-down on the next prediction.
+                        session.last_predicted_soc = soc
+                        if not is_charging:
+                            # Not charging: full reset — anchor + energy
+                            session.anchor_soc = soc
+                            session.total_energy_kwh = 0.0
+                            session.last_energy_update = time.time()
+                        else:
+                            # Charging, from real battery (header): full re-anchor downward
+                            old_anchor = session.anchor_soc
+                            ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
+                            session.anchor_soc = soc
+                            session.total_energy_kwh = 0.0
+                            session.last_energy_update = time.time()
+                            self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
@@ -738,15 +760,8 @@ class SOCPredictor:
             session.last_aux_power = aux_power_kw
 
         # Calculate power if we have both voltage and current
-        if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:
-            # Raw input Power calculation without phase multiplier, for logging and energy tracking
-            power_kw = (session.last_voltage * session.last_current) / 1000.0
-
-            # phase multiplier
-            if session.phases and session.phases > 1:
-                power_kw *= (
-                    3.0 if session.last_voltage < 250 else 1.732
-                )  # 3x for 3-phase low-voltage, √3 for 3-phase high-voltage
+        power_kw = _calc_ac_power_kw(session)
+        if power_kw is not None:
             _LOGGER.debug(
                 "Calculated AC power for %s: %.2f kW (%.1fV × %.1fA, %d phases)",
                 redact_vin(vin),
@@ -755,7 +770,6 @@ class SOCPredictor:
                 session.last_current,
                 session.phases,
             )
-            # Update power reading (accumulates energy)
             self.update_power_reading(vin, power_kw, aux_power_kw or 0.0)
             return True
 
@@ -778,12 +792,8 @@ class SOCPredictor:
                 continue
 
             # Prefer V×A recalculation for AC sessions
-            if session.last_voltage and session.last_current and session.last_voltage > 0 and session.last_current > 0:
-                power_kw = (session.last_voltage * session.last_current) / 1000.0
-
-                if session.phases and session.phases > 1:
-                    power_kw *= 3.0 if session.last_voltage < 250 else 1.732
-
+            power_kw = _calc_ac_power_kw(session)
+            if power_kw is not None:
                 self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_power or 0.0)
                 updated_vins.append(vin)
 

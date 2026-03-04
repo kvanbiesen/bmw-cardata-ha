@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from math import atan2, cos, radians, sin, sqrt
 from typing import ClassVar
 
+from .geo_utils import haversine_m
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,20 +105,6 @@ class MotionDetector:
         # VIN -> datetime when door state changed from driving (locked/selectiveLocked) to parked
         self._door_unlocked_at: dict[str, datetime] = {}
 
-    @staticmethod
-    def _calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate distance between two GPS coordinates in meters using Haversine formula."""
-        R = 6371000  # Earth's radius in meters
-
-        lat1_rad = radians(lat1)
-        lat2_rad = radians(lat2)
-        delta_lat = radians(lat2 - lat1)
-        delta_lon = radians(lon2 - lon1)
-
-        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
-        c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return R * c
-
     def _calculate_centroid(self, readings: list[tuple[float, float, datetime]]) -> tuple[float, float]:
         """Calculate centroid (average position) of GPS readings.
 
@@ -178,7 +164,7 @@ class MotionDetector:
             return False
 
         # Calculate distance from park anchor
-        distance_from_anchor = self._calculate_distance(park_anchor[0], park_anchor[1], lat, lon)
+        distance_from_anchor = haversine_m(park_anchor[0], park_anchor[1], lat, lon)
 
         _LOGGER.debug(
             "Motion: %s moved %.1fm from anchor (park=%.0fm, escape=%.0fm)",
@@ -210,7 +196,7 @@ class MotionDetector:
                 if len(park_readings) >= 3:
                     # Check if ALL recent readings are within park radius
                     all_within_park = all(
-                        self._calculate_distance(park_anchor[0], park_anchor[1], r[0], r[1]) <= self.PARK_RADIUS_M
+                        haversine_m(park_anchor[0], park_anchor[1], r[0], r[1]) <= self.PARK_RADIUS_M
                         for r in park_readings[-3:]
                     )
                     if all_within_park:

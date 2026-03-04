@@ -58,6 +58,18 @@ def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
     return bool(voltage and current)
 
 
+def _parse_power_kw(value: Any, unit: str) -> float | None:
+    """Parse a power value to kW, converting from W if needed.
+
+    Returns None on parse failure.
+    """
+    try:
+        power_val = float(value)
+        return power_val / 1000.0 if unit.lower() == "w" else power_val
+    except (TypeError, ValueError):
+        return None
+
+
 def _get_aux_kw() -> float:
     """Get auxiliary power in kW (fixed override)."""
     return float(_OVERRIDE_AUX_POWER)
@@ -84,6 +96,36 @@ def _is_descriptor_fresh_for_session(
     return descriptor.last_seen >= session_anchor.timestamp()
 
 
+def _resolve_bmw_soc(
+    vehicle_data: dict[str, DescriptorState],
+    session_anchor: datetime | None,
+) -> float | None:
+    """Resolve BMW SOC from charging.level (preferred) or header (fallback).
+
+    When session_anchor is provided, both sources are checked for freshness
+    to avoid stale data from before the session causing a false re-anchor.
+    """
+    cl = vehicle_data.get(DESC_CHARGING_LEVEL)
+    if cl and cl.value is not None and session_anchor is not None:
+        if _is_descriptor_fresh_for_session(cl, session_anchor):
+            try:
+                return float(cl.value)
+            except (TypeError, ValueError):
+                pass
+
+    soc_state = vehicle_data.get(DESC_SOC_HEADER)
+    if soc_state and soc_state.value is not None:
+        try:
+            candidate = float(soc_state.value)
+            if session_anchor is not None and not _is_descriptor_fresh_for_session(soc_state, session_anchor):
+                return None
+            return candidate
+        except (TypeError, ValueError):
+            pass
+
+    return None
+
+
 def get_predicted_soc(
     soc_predictor: SOCPredictor,
     vin: str,
@@ -97,29 +139,9 @@ def get_predicted_soc(
     if not vehicle_data:
         return None
 
-    bmw_soc = None
     session = soc_predictor._sessions.get(vin) if soc_predictor.is_charging(vin) else None
-    if session is not None:
-        cl = vehicle_data.get(DESC_CHARGING_LEVEL)
-        if cl and cl.value is not None:
-            if _is_descriptor_fresh_for_session(cl, session.anchor_timestamp):
-                try:
-                    bmw_soc = float(cl.value)
-                except (TypeError, ValueError):
-                    pass
-    if bmw_soc is None:
-        soc_state = vehicle_data.get(DESC_SOC_HEADER)
-        if soc_state and soc_state.value is not None:
-            try:
-                candidate = float(soc_state.value)
-                # During charging, also check header freshness to avoid
-                # stale data from before the session causing a false re-anchor
-                if session is not None and not _is_descriptor_fresh_for_session(soc_state, session.anchor_timestamp):
-                    pass
-                else:
-                    bmw_soc = candidate
-            except (TypeError, ValueError):
-                pass
+    anchor = session.anchor_timestamp if session is not None else None
+    bmw_soc = _resolve_bmw_soc(vehicle_data, anchor)
 
     predicted = soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
     if predicted is not None:
@@ -142,29 +164,12 @@ def get_magic_soc(
     if not vehicle_data:
         return None
 
-    bmw_soc = None
     is_charging = soc_predictor.is_charging(vin)
     session = None
     if is_charging and not soc_predictor.is_phev(vin):
         session = soc_predictor._sessions.get(vin)
-        cl = vehicle_data.get(DESC_CHARGING_LEVEL)
-        if cl and cl.value is not None and session is not None:
-            if _is_descriptor_fresh_for_session(cl, session.anchor_timestamp):
-                try:
-                    bmw_soc = float(cl.value)
-                except (TypeError, ValueError):
-                    pass
-    if bmw_soc is None:
-        soc_state = vehicle_data.get(DESC_SOC_HEADER)
-        if soc_state and soc_state.value is not None:
-            try:
-                candidate = float(soc_state.value)
-                if session is not None and not _is_descriptor_fresh_for_session(soc_state, session.anchor_timestamp):
-                    pass
-                else:
-                    bmw_soc = candidate
-            except (TypeError, ValueError):
-                pass
+    anchor = session.anchor_timestamp if session is not None else None
+    bmw_soc = _resolve_bmw_soc(vehicle_data, anchor)
 
     if is_charging:
         return soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
@@ -283,13 +288,9 @@ def _seed_power_after_anchor(
     if charging_method == "DC":
         power_state = vehicle_state.get(DESC_CHARGING_POWER)
         if power_state and power_state.value is not None:
-            try:
-                power_val = float(power_state.value)
-                unit = (power_state.unit or "").lower()
-                power_kw = power_val / 1000.0 if unit == "w" else power_val
+            power_kw = _parse_power_kw(power_state.value, power_state.unit or "")
+            if power_kw is not None:
                 soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
-            except (TypeError, ValueError):
-                pass
     else:
         voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
         current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
@@ -299,13 +300,9 @@ def _seed_power_after_anchor(
         else:
             power_state = vehicle_state.get(DESC_CHARGING_POWER)
             if power_state and power_state.value is not None:
-                try:
-                    power_val = float(power_state.value)
-                    unit = (power_state.unit or "").lower()
-                    power_kw = power_val / 1000.0 if unit == "w" else power_val
+                power_kw = _parse_power_kw(power_state.value, power_state.unit or "")
+                if power_kw is not None:
                     soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
-                except (TypeError, ValueError):
-                    pass
 
 
 def end_soc_session(
@@ -514,17 +511,7 @@ def process_soc_descriptors(
         elif descriptor == DESC_CHARGING_POWER:
             method = soc_predictor.get_charging_method(vin)
             if method == "DC" or (method is not None and not _has_ac_power_data(vehicle_state)):
-                power_kw = None
-                if value is not None:
-                    try:
-                        power_val = float(value)
-                        unit = descriptor_payload.get("unit", "").lower()
-                        if unit == "w":
-                            power_kw = power_val / 1000.0
-                        else:
-                            power_kw = power_val
-                    except (TypeError, ValueError):
-                        pass
+                power_kw = _parse_power_kw(value, descriptor_payload.get("unit", "")) if value is not None else None
                 aux_kw = _get_aux_kw()
                 soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
                 if soc_predictor.is_charging(vin):
