@@ -244,7 +244,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                     )
         if seed_container_ids:
             created_entities = await async_seed_telematic_data(
-                runtime, entry.entry_id, headers, seed_container_ids, vins, rate_limiter
+                runtime, headers, seed_container_ids, vins, rate_limiter
             )
         else:
             _LOGGER.debug(
@@ -439,7 +439,6 @@ async def async_fetch_all_container_ids(
 
 async def async_seed_telematic_data(
     runtime: CardataRuntimeData,
-    entry_id: str,
     headers: dict[str, str],
     container_ids: list[str],
     vins: list[str],
