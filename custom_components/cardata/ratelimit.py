@@ -31,7 +31,6 @@ import logging
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -177,25 +176,6 @@ class RateLimitTracker:
         self._last_429_time = None
         self._successful_calls = 0
 
-    def get_status(self) -> dict[str, Any]:
-        """Get current rate limit status.
-
-        Returns:
-            Dictionary with status information
-        """
-        if self._rate_limited_until:
-            remaining = max(0, int(self._rate_limited_until - time.time()))
-            return {
-                "limited": True,
-                "429_count": self._429_count,
-                "cooldown_remaining_seconds": remaining,
-                "cooldown_expires": datetime.fromtimestamp(self._rate_limited_until).isoformat(),
-            }
-        return {
-            "limited": False,
-            "429_count": self._429_count,
-            "successful_calls": self._successful_calls,
-        }
 
 
 class UnauthorizedLoopProtection:
@@ -284,26 +264,6 @@ class UnauthorizedLoopProtection:
         self._blocked_until = None
         self._first_attempt_time = None
 
-    def get_status(self) -> dict[str, Any]:
-        """Get current protection status.
-
-        Returns:
-            Dictionary with status information
-        """
-        if self._blocked_until:
-            remaining = max(0, int(self._blocked_until - time.time()))
-            return {
-                "blocked": True,
-                "attempts": self._attempts,
-                "max_attempts": self._max_attempts,
-                "cooldown_remaining_seconds": remaining,
-                "unblock_time": datetime.fromtimestamp(self._blocked_until).isoformat(),
-            }
-        return {
-            "blocked": False,
-            "attempts": self._attempts,
-            "max_attempts": self._max_attempts,
-        }
 
 
 class ContainerRateLimiter:
@@ -388,16 +348,3 @@ class ContainerRateLimiter:
             len(self._operations_day),
         )
 
-    def get_status(self) -> dict[str, Any]:
-        """Get current limiter status.
-
-        Returns:
-            Dictionary with status information
-        """
-        self._cleanup_expired()
-        return {
-            "creations_last_hour": len(self._operations_hour),
-            "creations_last_day": len(self._operations_day),
-            "hourly_limit": self._max_per_hour,
-            "daily_limit": self._max_per_day,
-        }
