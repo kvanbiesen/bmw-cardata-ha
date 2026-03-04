@@ -97,7 +97,6 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         container_ready = await async_ensure_container_for_entry(
             entry,
             hass,
-            runtime.session,
             runtime.container_manager,
             force=False,  # Don't force recreation
         )

@@ -413,7 +413,6 @@ async def async_manual_refresh_tokens(hass: HomeAssistant, entry: ConfigEntry) -
 async def async_ensure_container_for_entry(
     entry: ConfigEntry,
     hass: HomeAssistant,
-    session: aiohttp.ClientSession,
     container_manager: CardataContainerManager | None,
     force: bool = False,
 ) -> bool:
