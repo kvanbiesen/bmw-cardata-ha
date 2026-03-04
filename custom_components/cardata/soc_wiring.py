@@ -466,8 +466,6 @@ def process_soc_descriptors(
     vin: str,
     data: dict[str, Any],
     vehicle_state: dict[str, DescriptorState],
-    *,
-    is_telematic: bool,
 ) -> bool:
     """Process all SOC-related descriptors from a message.
 
