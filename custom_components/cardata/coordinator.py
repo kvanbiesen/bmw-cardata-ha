@@ -545,7 +545,7 @@ class CardataCoordinator:
 
         async with self._lock:
             immediate_updates, schedule_debounce = await self._async_handle_message_locked(
-                payload, vin, data, is_telematic=is_telematic
+                vin, data, is_telematic=is_telematic
             )
 
         for update_vin, descriptor in immediate_updates:
@@ -555,7 +555,7 @@ class CardataCoordinator:
             await self._async_schedule_debounced_update()
 
     async def _async_handle_message_locked(
-        self, payload: dict[str, Any], vin: str, data: dict[str, Any], *, is_telematic: bool = False
+        self, vin: str, data: dict[str, Any], *, is_telematic: bool = False
     ) -> tuple[list[tuple[str, str]], bool]:
         """Handle message while holding the lock."""
         redacted_vin = redact_vin(vin)
@@ -665,7 +665,7 @@ class CardataCoordinator:
                         schedule_debounce = True
 
         # Delegate all SOC-related descriptor processing
-        if process_soc_descriptors(self, vin, data, vehicle_state, is_telematic=is_telematic):
+        if process_soc_descriptors(self, vin, data, vehicle_state):
             schedule_debounce = True
 
         return immediate_updates, schedule_debounce

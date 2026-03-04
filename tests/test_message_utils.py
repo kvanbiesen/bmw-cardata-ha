@@ -29,8 +29,6 @@ from custom_components.cardata.message_utils import (
     BOOLEAN_DESCRIPTORS,
     BOOLEAN_VALUE_MAP,
     MAX_TIMESTAMP_STRING_LENGTH,
-    TIMESTAMPED_SOC_DESCRIPTORS,
-    is_significant_numeric_change,
     normalize_boolean_value,
     sanitize_timestamp_string,
 )
@@ -136,50 +134,8 @@ class TestNormalizeBooleanValue:
             assert normalize_boolean_value(descriptor, "\tfalse\n") is False
 
 
-class TestIsSignificantNumericChange:
-    """Tests for is_significant_numeric_change function."""
-
-    def test_non_numeric_values_significant(self):
-        """Test that non-numeric values are always considered significant."""
-        assert is_significant_numeric_change("a", "b") is True
-        assert is_significant_numeric_change(None, 1) is True
-        assert is_significant_numeric_change(1, None) is True
-        assert is_significant_numeric_change("1", 1) is True
-
-    def test_significant_change(self):
-        """Test that changes above threshold are significant."""
-        assert is_significant_numeric_change(1.0, 1.02) is True
-        assert is_significant_numeric_change(0, 0.01) is True
-        assert is_significant_numeric_change(100, 100.02) is True
-
-    def test_insignificant_change(self):
-        """Test that changes below threshold are not significant."""
-        assert is_significant_numeric_change(1.0, 1.005) is False
-        assert is_significant_numeric_change(100, 100.005) is False
-        assert is_significant_numeric_change(0, 0.005) is False
-
-    def test_custom_threshold(self):
-        """Test custom threshold values."""
-        assert is_significant_numeric_change(1.0, 1.05, threshold=0.1) is False
-        assert is_significant_numeric_change(1.0, 1.15, threshold=0.1) is True
-
-    def test_integer_values(self):
-        """Test with integer values."""
-        assert is_significant_numeric_change(100, 101) is True
-        assert is_significant_numeric_change(100, 100) is False
-
-    def test_negative_values(self):
-        """Test with negative values."""
-        assert is_significant_numeric_change(-1.0, -1.02) is True
-        assert is_significant_numeric_change(-1.0, -1.005) is False
-
-
 class TestConstants:
     """Tests for module constants."""
-
-    def test_timestamped_soc_descriptors_not_empty(self):
-        """Test that TIMESTAMPED_SOC_DESCRIPTORS is not empty."""
-        assert len(TIMESTAMPED_SOC_DESCRIPTORS) > 0
 
     def test_boolean_descriptors_contains_is_moving(self):
         """Test that vehicle.isMoving is in BOOLEAN_DESCRIPTORS."""

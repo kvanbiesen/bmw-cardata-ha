@@ -640,7 +640,7 @@ async def async_handle_fetch_charging_history(call: ServiceCall) -> None:
         return
 
     for v in vins:
-        await async_fetch_charging_history(hass, target_entry, runtime, v)
+        await async_fetch_charging_history(target_entry, runtime, v)
 
 
 async def async_handle_fetch_tyre_diagnosis(call: ServiceCall) -> None:
@@ -668,7 +668,7 @@ async def async_handle_fetch_tyre_diagnosis(call: ServiceCall) -> None:
         return
 
     for v in vins:
-        await async_fetch_tyre_diagnosis(hass, target_entry, runtime, v)
+        await async_fetch_tyre_diagnosis(target_entry, runtime, v)
 
 
 async def async_fetch_vehicle_images_service(call) -> None:

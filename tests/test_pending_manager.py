@@ -38,7 +38,6 @@ class TestPendingManagerBasic:
         pm = UpdateBatcher()
         assert pm.add_update("VIN123", "descriptor.a") is True
         assert pm.get_total_count() == 1
-        assert pm.has_pending() is True
 
     def test_add_update_multiple_same_vin(self):
         """Test adding multiple updates for same VIN."""
@@ -75,19 +74,6 @@ class TestPendingManagerBasic:
         pm.add_new_binary("VIN123", "binary.door")
         assert pm.get_total_count() == 3
 
-    def test_started_at_tracked(self):
-        """Test that started_at is set on first add."""
-        pm = UpdateBatcher()
-        assert pm.started_at is None
-        pm.add_update("VIN123", "descriptor.a")
-        assert pm.started_at is not None
-
-    def test_has_pending_empty(self):
-        """Test has_pending returns False when empty."""
-        pm = UpdateBatcher()
-        assert pm.has_pending() is False
-
-
 class TestPendingManagerSnapshot:
     """Tests for snapshot_and_clear functionality."""
 
@@ -118,8 +104,6 @@ class TestPendingManagerSnapshot:
         pm.snapshot_and_clear()
 
         assert pm.get_total_count() == 0
-        assert pm.has_pending() is False
-        assert pm.started_at is None
 
     def test_snapshot_empty(self):
         """Test snapshot on empty manager."""
@@ -181,7 +165,6 @@ class TestPendingManagerStaleClearing:
 
         assert cleared == 2
         assert pm.get_total_count() == 0
-        assert pm.started_at is None
 
     def test_clear_stale_no_pending(self):
         """Test clearing stale when nothing pending."""

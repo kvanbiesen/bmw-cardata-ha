@@ -110,7 +110,6 @@ asyncio.set_event_loop(_LOOP)
 with atheris.instrument_imports():
     from cardata import const
     from cardata import coordinator as coordinator_module
-    from cardata import message_utils
     from homeassistant.core import HomeAssistant
 
 
@@ -122,8 +121,6 @@ KNOWN_DESCRIPTORS = list(const.HV_BATTERY_DESCRIPTORS) + [
     "vehicle.vehicleIdentification.basicVehicleData",
     "vehicle.isMoving",
 ]
-SOC_DESCRIPTORS = list(message_utils.TIMESTAMPED_SOC_DESCRIPTORS)
-KNOWN_DESCRIPTORS.extend(SOC_DESCRIPTORS)
 
 
 def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
@@ -213,7 +210,7 @@ def _consume_descriptor_payload(
         payload["value"] = _consume_value(fdp)
     if fdp.ConsumeBool():
         payload["unit"] = _consume_unit(fdp)
-    if fdp.ConsumeBool() or descriptor in SOC_DESCRIPTORS:
+    if fdp.ConsumeBool():
         payload["timestamp"] = _consume_timestamp(fdp)
     return payload
 

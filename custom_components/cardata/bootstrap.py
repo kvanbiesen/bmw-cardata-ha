@@ -97,7 +97,6 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         container_ready = await async_ensure_container_for_entry(
             entry,
             hass,
-            runtime.session,
             runtime.container_manager,
             force=False,  # Don't force recreation
         )
@@ -244,9 +243,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                         entry.entry_id,
                     )
         if seed_container_ids:
-            created_entities = await async_seed_telematic_data(
-                runtime, entry.entry_id, headers, seed_container_ids, vins, rate_limiter
-            )
+            created_entities = await async_seed_telematic_data(runtime, headers, seed_container_ids, vins, rate_limiter)
         else:
             _LOGGER.debug(
                 "Bootstrap skipping telematic seed for entry %s: no containers found",
@@ -440,7 +437,6 @@ async def async_fetch_all_container_ids(
 
 async def async_seed_telematic_data(
     runtime: CardataRuntimeData,
-    entry_id: str,
     headers: dict[str, str],
     container_ids: list[str],
     vins: list[str],

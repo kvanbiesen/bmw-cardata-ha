@@ -80,7 +80,6 @@ async def async_setup_entry(
                     coordinator=coordinator,
                     vin=vin,
                     vehicle_name=vehicle_name,
-                    entry_id=entry.entry_id,
                 )
             )
             created_vins.add(vin)
@@ -114,7 +113,6 @@ async def async_setup_entry(
                 coordinator=coordinator,
                 vin=vin,
                 vehicle_name=vehicle_name,
-                entry_id=entry.entry_id,
             )
         )
         created_vins.add(vin)
@@ -147,7 +145,6 @@ class ManualBatteryCapacityNumber(NumberEntity, RestoreEntity):
         coordinator: CardataCoordinator,
         vin: str,
         vehicle_name: str,
-        entry_id: str,
     ) -> None:
         """Initialize the number entity."""
         self._coordinator = coordinator

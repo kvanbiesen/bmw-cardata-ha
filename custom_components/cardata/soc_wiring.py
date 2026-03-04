@@ -58,17 +58,9 @@ def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
     return bool(voltage and current)
 
 
-def _get_aux_kw(vehicle_state: dict[str, DescriptorState]) -> float:
-    """Get auxiliary power in kW from vehicle state, with override."""
-    if _OVERRIDE_AUX_POWER > 0:
-        return float(_OVERRIDE_AUX_POWER)
-    aux_state = vehicle_state.get("vehicle.vehicle.avgAuxPower")
-    if aux_state and aux_state.value is not None:
-        try:
-            return float(aux_state.value) / 1000.0
-        except (TypeError, ValueError):
-            pass
-    return 0.0
+def _get_aux_kw() -> float:
+    """Get auxiliary power in kW (fixed override)."""
+    return float(_OVERRIDE_AUX_POWER)
 
 
 def _is_descriptor_fresh_for_session(
@@ -286,7 +278,7 @@ def _seed_power_after_anchor(
     charging_method: str,
 ) -> None:
     """Seed session with current power reading after anchoring."""
-    aux_kw = _get_aux_kw(vehicle_state)
+    aux_kw = _get_aux_kw()
 
     if charging_method == "DC":
         power_state = vehicle_state.get(DESC_CHARGING_POWER)
@@ -474,8 +466,6 @@ def process_soc_descriptors(
     vin: str,
     data: dict[str, Any],
     vehicle_state: dict[str, DescriptorState],
-    *,
-    is_telematic: bool,
 ) -> bool:
     """Process all SOC-related descriptors from a message.
 
@@ -535,7 +525,7 @@ def process_soc_descriptors(
                             power_kw = power_val
                     except (TypeError, ValueError):
                         pass
-                aux_kw = _get_aux_kw(vehicle_state)
+                aux_kw = _get_aux_kw()
                 soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
                 if soc_predictor.is_charging(vin):
                     if soc_predictor.has_signaled_entity(vin):
@@ -553,7 +543,7 @@ def process_soc_descriptors(
                 voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
                 current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
                 phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
-                aux_kw = _get_aux_kw(vehicle_state)
+                aux_kw = _get_aux_kw()
                 if soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw):
                     if soc_predictor.has_signaled_entity(vin):
                         if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):

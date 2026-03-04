@@ -90,15 +90,11 @@ def TestOneInput(data: bytes) -> None:
             tracker.record_success()
         elif action == 2:
             tracker.can_make_request()
-        elif action == 3:
-            tracker.get_status()
-        elif action == 4:
+        elif action == 3 or action == 4:
             limiter.can_create_container()
         elif action == 5:
             limiter.record_creation()
-        elif action == 6:
-            limiter.get_status()
-        elif action == 7:
+        elif action == 6 or action == 7:
             protector.can_retry()
         elif action == 8:
             protector.record_attempt()
