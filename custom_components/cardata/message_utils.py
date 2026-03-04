@@ -29,31 +29,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .const import (
-    DESC_CHARGING_AC_AMPERE,
-    DESC_CHARGING_AC_VOLTAGE,
-    DESC_CHARGING_PHASES,
-    DESC_CHARGING_POWER,
-    DESC_CHARGING_STATUS,
-    DESC_MAX_ENERGY,
-    DESC_SOC_HEADER,
-)
-
-# Descriptors that require parsed timestamps for SOC/charging tracking
-TIMESTAMPED_SOC_DESCRIPTORS = frozenset(
-    {
-        DESC_SOC_HEADER,
-        DESC_MAX_ENERGY,
-        DESC_CHARGING_POWER,
-        DESC_CHARGING_STATUS,
-        "vehicle.powertrain.electric.battery.stateOfCharge.target",
-        "vehicle.vehicle.avgAuxPower",
-        DESC_CHARGING_AC_VOLTAGE,
-        DESC_CHARGING_AC_AMPERE,
-        DESC_CHARGING_PHASES,
-    }
-)
-
 # Descriptors that should be interpreted as boolean values
 BOOLEAN_DESCRIPTORS = frozenset(
     {
@@ -136,18 +111,3 @@ def normalize_boolean_value(descriptor: str, value: Any) -> Any:
             return BOOLEAN_VALUE_MAP[normalized]
 
     return value
-
-
-def is_significant_numeric_change(old_value: Any, new_value: Any, threshold: float = 0.01) -> bool:
-    """Check if a numeric value has changed significantly.
-
-    Returns True if:
-    - Values are not both numeric (can't compare)
-    - The absolute difference exceeds the threshold
-
-    Returns False if:
-    - Both values are numeric and the difference is below threshold
-    """
-    if not isinstance(old_value, int | float) or not isinstance(new_value, int | float):
-        return True  # Non-numeric values always count as significant
-    return abs(new_value - old_value) >= threshold
