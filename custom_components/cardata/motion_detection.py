@@ -53,6 +53,12 @@ class MotionDetector:
     # Longer than MOTION_ACTIVE_WINDOW to handle BMW's bursty GPS (every 2-3 min)
     GPS_UPDATE_STALE_MINUTES: ClassVar[float] = 5.0
 
+    # Grace period (seconds) after door unlock before ending a trip.
+    # Brief stops (picking up passengers) cause door unlock + re-lock within seconds.
+    # Without grace, the trip fragments into two sub-trips, wasting a rate-limited
+    # API poll and preventing consumption learning on the combined distance.
+    DOOR_UNLOCK_GRACE_SECONDS: ClassVar[float] = 30.0
+
     def __init__(self) -> None:
         """Initialize motion detector."""
         # VIN -> (latitude, longitude) of last known position
@@ -449,10 +455,19 @@ class MotionDetector:
             if self._is_driving.get(vin, False):
                 # Door lock override: if doors transitioned locked → unlocked,
                 # the car has stopped even though GPS is still arriving.
-                # Without this, fresh GPS keeps returning MOVING for up to 2 min
-                # after the door unlock, delaying trip end.
+                # Grace period: brief stops (passenger pickup) cause unlock + re-lock
+                # within seconds. Wait before ending the trip.
                 door_unlocked_at = self._door_unlocked_at.get(vin)
                 if door_unlocked_at is not None:
+                    grace_elapsed = (now - door_unlocked_at).total_seconds()
+                    if grace_elapsed < self.DOOR_UNLOCK_GRACE_SECONDS:
+                        _LOGGER.debug(
+                            "Motion: %s door unlock grace (%.0fs / %.0fs) - MOVING",
+                            redact_vin(vin),
+                            grace_elapsed,
+                            self.DOOR_UNLOCK_GRACE_SECONDS,
+                        )
+                        return True
                     door_state = self._door_lock_state.get(vin, "unknown")
                     _LOGGER.debug(
                         "Motion: %s door unlocked with fresh GPS (doors '%s') - NOT MOVING",
@@ -506,13 +521,19 @@ class MotionDetector:
             if gps_update_age < self.GPS_UPDATE_STALE_MINUTES:
                 # Door lock override: doors transitioned from driving state
                 # (locked/selectiveLocked) to parked state during this trip.
-                # The flag is self-cleaning: cleared when doors auto-lock at
-                # speed, so no risk of false parking from brief stops.
-                # Note: we only check presence, not timing vs last_gps_update,
-                # because BMW MQTT bundles door state and GPS in the same burst
-                # — the old `door_unlocked_at > last_gps_update` never fired.
+                # Grace period: brief stops (passenger pickup) cause unlock + re-lock
+                # within seconds. Wait before ending the trip.
                 door_unlocked_at = self._door_unlocked_at.get(vin)
                 if door_unlocked_at is not None:
+                    grace_elapsed = (now - door_unlocked_at).total_seconds()
+                    if grace_elapsed < self.DOOR_UNLOCK_GRACE_SECONDS:
+                        _LOGGER.debug(
+                            "Motion: %s door unlock grace (%.0fs / %.0fs) - MOVING",
+                            redact_vin(vin),
+                            grace_elapsed,
+                            self.DOOR_UNLOCK_GRACE_SECONDS,
+                        )
+                        return True
                     door_state = self._door_lock_state.get(vin, "unknown")
                     _LOGGER.debug(
                         "Motion: %s door unlocked during GPS gap (doors '%s') - NOT MOVING",
@@ -531,10 +552,19 @@ class MotionDetector:
 
         # 4. DOOR LOCK FALLBACK - GPS stale, doors changed from driving to parked state
         # This catches the case where GPS is >5 min stale but door state signals arrival.
-        # Same rationale as the gap handler: check presence, not timing vs GPS.
+        # Grace period applies when still in driving mode.
         door_unlocked_at = self._door_unlocked_at.get(vin)
         if door_unlocked_at is not None:
             if self._is_driving.get(vin, False):
+                grace_elapsed = (now - door_unlocked_at).total_seconds()
+                if grace_elapsed < self.DOOR_UNLOCK_GRACE_SECONDS:
+                    _LOGGER.debug(
+                        "Motion: %s door unlock grace (%.0fs / %.0fs) - MOVING",
+                        redact_vin(vin),
+                        grace_elapsed,
+                        self.DOOR_UNLOCK_GRACE_SECONDS,
+                    )
+                    return True
                 door_state = self._door_lock_state.get(vin, "unknown")
                 _LOGGER.debug(
                     "Motion: %s door lock fallback - doors '%s' after GPS stale - NOT MOVING",
