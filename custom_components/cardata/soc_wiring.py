@@ -96,6 +96,36 @@ def _is_descriptor_fresh_for_session(
     return descriptor.last_seen >= session_anchor.timestamp()
 
 
+def _resolve_bmw_soc(
+    vehicle_data: dict[str, DescriptorState],
+    session_anchor: datetime | None,
+) -> float | None:
+    """Resolve BMW SOC from charging.level (preferred) or header (fallback).
+
+    When session_anchor is provided, both sources are checked for freshness
+    to avoid stale data from before the session causing a false re-anchor.
+    """
+    cl = vehicle_data.get(DESC_CHARGING_LEVEL)
+    if cl and cl.value is not None and session_anchor is not None:
+        if _is_descriptor_fresh_for_session(cl, session_anchor):
+            try:
+                return float(cl.value)
+            except (TypeError, ValueError):
+                pass
+
+    soc_state = vehicle_data.get(DESC_SOC_HEADER)
+    if soc_state and soc_state.value is not None:
+        try:
+            candidate = float(soc_state.value)
+            if session_anchor is not None and not _is_descriptor_fresh_for_session(soc_state, session_anchor):
+                return None
+            return candidate
+        except (TypeError, ValueError):
+            pass
+
+    return None
+
+
 def get_predicted_soc(
     soc_predictor: SOCPredictor,
     vin: str,
@@ -109,29 +139,9 @@ def get_predicted_soc(
     if not vehicle_data:
         return None
 
-    bmw_soc = None
     session = soc_predictor._sessions.get(vin) if soc_predictor.is_charging(vin) else None
-    if session is not None:
-        cl = vehicle_data.get(DESC_CHARGING_LEVEL)
-        if cl and cl.value is not None:
-            if _is_descriptor_fresh_for_session(cl, session.anchor_timestamp):
-                try:
-                    bmw_soc = float(cl.value)
-                except (TypeError, ValueError):
-                    pass
-    if bmw_soc is None:
-        soc_state = vehicle_data.get(DESC_SOC_HEADER)
-        if soc_state and soc_state.value is not None:
-            try:
-                candidate = float(soc_state.value)
-                # During charging, also check header freshness to avoid
-                # stale data from before the session causing a false re-anchor
-                if session is not None and not _is_descriptor_fresh_for_session(soc_state, session.anchor_timestamp):
-                    pass
-                else:
-                    bmw_soc = candidate
-            except (TypeError, ValueError):
-                pass
+    anchor = session.anchor_timestamp if session is not None else None
+    bmw_soc = _resolve_bmw_soc(vehicle_data, anchor)
 
     predicted = soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
     if predicted is not None:
@@ -154,29 +164,12 @@ def get_magic_soc(
     if not vehicle_data:
         return None
 
-    bmw_soc = None
     is_charging = soc_predictor.is_charging(vin)
     session = None
     if is_charging and not soc_predictor.is_phev(vin):
         session = soc_predictor._sessions.get(vin)
-        cl = vehicle_data.get(DESC_CHARGING_LEVEL)
-        if cl and cl.value is not None and session is not None:
-            if _is_descriptor_fresh_for_session(cl, session.anchor_timestamp):
-                try:
-                    bmw_soc = float(cl.value)
-                except (TypeError, ValueError):
-                    pass
-    if bmw_soc is None:
-        soc_state = vehicle_data.get(DESC_SOC_HEADER)
-        if soc_state and soc_state.value is not None:
-            try:
-                candidate = float(soc_state.value)
-                if session is not None and not _is_descriptor_fresh_for_session(soc_state, session.anchor_timestamp):
-                    pass
-                else:
-                    bmw_soc = candidate
-            except (TypeError, ValueError):
-                pass
+    anchor = session.anchor_timestamp if session is not None else None
+    bmw_soc = _resolve_bmw_soc(vehicle_data, anchor)
 
     if is_charging:
         return soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
