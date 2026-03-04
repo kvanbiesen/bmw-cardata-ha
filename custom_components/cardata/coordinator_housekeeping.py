@@ -20,9 +20,7 @@ from .debug import debug_enabled
 from .soc_wiring import (
     _descriptor_float,
     _get_aux_kw,
-    anchor_driving_session,
     anchor_soc_session,
-    end_driving_session,
 )
 from .utils import redact_vin
 
@@ -121,12 +119,12 @@ async def async_log_diagnostics(coordinator: CardataCoordinator) -> None:
                         runtime = coordinator.hass.data.get(DOMAIN, {}).get(coordinator.entry_id)
                         if runtime is not None:
                             runtime.request_trip_poll(vin)
-                        _end_driving_session_from_state(coordinator, vin)
+                        coordinator._end_driving_session_from_state(vin)
                         if coordinator._magic_soc.has_signaled_magic_soc_entity(vin):
                             coordinator._safe_dispatcher_send(coordinator.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
                     if last_sent is not True and current_derived is True:
-                        _anchor_driving_session_from_state(coordinator, vin)
+                        coordinator._anchor_driving_session_from_state(vin)
                         if coordinator._magic_soc.has_signaled_magic_soc_entity(vin):
                             coordinator._safe_dispatcher_send(coordinator.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
                 elif current_derived is False and vin in coordinator._magic_soc._driving_sessions:
@@ -137,7 +135,7 @@ async def async_log_diagnostics(coordinator: CardataCoordinator) -> None:
                         "Cleaning up orphaned driving session for %s (isMoving=False, no transition)",
                         redact_vin(vin),
                     )
-                    _end_driving_session_from_state(coordinator, vin)
+                    coordinator._end_driving_session_from_state(vin)
                     if coordinator._magic_soc.has_signaled_magic_soc_entity(vin):
                         coordinator._safe_dispatcher_send(coordinator.signal_update, vin, MAGIC_SOC_DESCRIPTOR)
 
@@ -261,18 +259,3 @@ async def async_cleanup_old_descriptors(coordinator: CardataCoordinator) -> None
             total_evicted,
             max_age // 86400,
         )
-
-
-def _anchor_driving_session_from_state(coordinator: CardataCoordinator, vin: str) -> None:
-    """Anchor driving session from stored vehicle state."""
-    vehicle_state = coordinator.data.get(vin)
-    if vehicle_state:
-        manual_cap = coordinator.get_manual_battery_capacity(vin)
-        anchor_driving_session(coordinator._magic_soc, coordinator._soc_predictor, vin, vehicle_state, manual_cap)
-
-
-def _end_driving_session_from_state(coordinator: CardataCoordinator, vin: str) -> None:
-    """End driving session from stored vehicle state."""
-    vehicle_state = coordinator.data.get(vin)
-    if vehicle_state:
-        end_driving_session(coordinator._magic_soc, vin, vehicle_state)
