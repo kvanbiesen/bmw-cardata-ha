@@ -61,14 +61,6 @@ class PendingManager(Generic[T]):
         self._pending: set[T] = set()
         self._lock = asyncio.Lock()
 
-    def is_pending(self, key: T) -> bool:
-        """Check if operation is pending (not thread-safe, use for diagnostics only)."""
-        return key in self._pending
-
-    def get_pending_keys(self) -> set[T]:
-        """Get copy of pending keys (not thread-safe, use for diagnostics only)."""
-        return set(self._pending)
-
     async def acquire(self, key: T) -> bool:
         """Try to acquire exclusive right to perform operation.
 
@@ -306,11 +298,3 @@ class UpdateBatcher:
         self._new_sensors.pop(vin, None)
         self._new_binary.pop(vin, None)
 
-    def has_pending(self) -> bool:
-        """Check if there are any pending updates."""
-        return bool(self._updates or self._new_sensors or self._new_binary)
-
-    @property
-    def started_at(self) -> datetime | None:
-        """When pending updates started accumulating."""
-        return self._started_at
