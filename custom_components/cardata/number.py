@@ -113,7 +113,6 @@ async def async_setup_entry(
                 coordinator=coordinator,
                 vin=vin,
                 vehicle_name=vehicle_name,
-                entry_id=entry.entry_id,
             )
         )
         created_vins.add(vin)

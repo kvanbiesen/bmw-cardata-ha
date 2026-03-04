@@ -297,4 +297,3 @@ class UpdateBatcher:
         self._updates.pop(vin, None)
         self._new_sensors.pop(vin, None)
         self._new_binary.pop(vin, None)
-

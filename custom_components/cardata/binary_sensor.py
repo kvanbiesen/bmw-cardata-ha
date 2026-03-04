@@ -201,7 +201,6 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
         return getattr(self, "_attr_icon", None)
 
 
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
     """Set up binary sensors for a config entry."""
     runtime: CardataRuntimeData = hass.data[DOMAIN][entry.entry_id]

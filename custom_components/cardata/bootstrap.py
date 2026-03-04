@@ -243,9 +243,7 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
                         entry.entry_id,
                     )
         if seed_container_ids:
-            created_entities = await async_seed_telematic_data(
-                runtime, headers, seed_container_ids, vins, rate_limiter
-            )
+            created_entities = await async_seed_telematic_data(runtime, headers, seed_container_ids, vins, rate_limiter)
         else:
             _LOGGER.debug(
                 "Bootstrap skipping telematic seed for entry %s: no containers found",

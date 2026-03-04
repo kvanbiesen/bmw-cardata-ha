@@ -75,7 +75,7 @@ async def async_handle_connection_event(
                         phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
 
                         if voltage and current:
-                            aux_kw = _get_aux_kw(vehicle_state)
+                            aux_kw = _get_aux_kw()
                             coordinator._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
                             _LOGGER.info(
                                 "Reconnection: restored AC charging data for %s (%.1fV × %.1fA)",

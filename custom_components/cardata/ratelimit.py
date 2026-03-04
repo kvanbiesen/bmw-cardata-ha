@@ -177,7 +177,6 @@ class RateLimitTracker:
         self._successful_calls = 0
 
 
-
 class UnauthorizedLoopProtection:
     """Protect against repeated unauthorized retry loops."""
 
@@ -265,7 +264,6 @@ class UnauthorizedLoopProtection:
         self._first_attempt_time = None
 
 
-
 class ContainerRateLimiter:
     """Rate limiter specifically for container operations."""
 
@@ -347,4 +345,3 @@ class ContainerRateLimiter:
             len(self._operations_hour),
             len(self._operations_day),
         )
-
