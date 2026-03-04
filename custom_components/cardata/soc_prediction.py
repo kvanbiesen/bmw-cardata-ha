@@ -336,14 +336,30 @@ class SOCPredictor:
         if self._is_phev.get(vin, False) and current_predicted is not None:
             if soc < current_predicted:
                 if is_charging and from_charging_level:
-                    # charging.level is BMW's own prediction, not real battery.
-                    # Our energy-based prediction is more accurate. Ignore.
+                    # charging.level is BMW's prediction. Apply dampened correction
+                    # instead of full sync (avoids staircase) or full ignore (drifts).
+                    damping = 0.5
+                    correction = (current_predicted - soc) * damping
+                    dampened_soc = current_predicted - correction
                     _LOGGER.debug(
-                        "SOC: PHEV %s charging.level (%.1f%%) < predicted (%.1f%%), ignoring BMW prediction",
+                        "SOC: PHEV %s charging.level (%.1f%%) < predicted (%.1f%%), "
+                        "dampened sync to %.1f%% (factor %.1f)",
                         redact_vin(vin),
                         soc,
                         current_predicted,
+                        dampened_soc,
+                        damping,
                     )
+                    self._last_predicted_soc[vin] = dampened_soc
+                    session = self._sessions.get(vin)
+                    if session is not None:
+                        old_anchor = session.anchor_soc
+                        ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
+                        session.anchor_soc = dampened_soc
+                        session.last_predicted_soc = dampened_soc
+                        session.total_energy_kwh = 0.0
+                        session.last_energy_update = time.time()
+                        self._derive_power_from_soc_change(vin, session, old_anchor, dampened_soc, ref_time)
                 else:
                     _LOGGER.debug(
                         "SOC: PHEV %s actual (%.1f%%) < predicted (%.1f%%), syncing down",
