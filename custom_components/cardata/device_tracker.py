@@ -49,6 +49,7 @@ from .const import (
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
+from .geo_utils import haversine_m
 from .runtime import CardataRuntimeData
 from .utils import async_wait_for_bootstrap, redact_vin
 
@@ -393,7 +394,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         distance = 0.0
         position_changed = False
         if self._current_lat is not None and self._current_lon is not None:
-            distance = self._calculate_distance(self._current_lat, self._current_lon, lat, lon)
+            distance = haversine_m(self._current_lat, self._current_lon, lat, lon)
             position_changed = distance >= self._MIN_MOVEMENT_DISTANCE
 
         update_reason = (
@@ -405,26 +406,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # Only update HA device tracker position when movement exceeds threshold
         # or vehicle is confirmed moving (mileage fallback for sparse GPS)
         await self._apply_new_coordinates(lat, lon, update_reason, position_changed)
-
-    def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate distance between two GPS coordinates in meters using Haversine formula."""
-        from math import atan2, cos, radians, sin, sqrt
-
-        # Earth radius in meters
-        R = 6371000
-
-        # Convert to radians
-        lat1_rad = radians(lat1)
-        lat2_rad = radians(lat2)
-        delta_lat = radians(lat2 - lat1)
-        delta_lon = radians(lon2 - lon1)
-
-        # Haversine formula
-        a = sin(delta_lat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
-        c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        distance = R * c
-
-        return distance
 
     async def _apply_new_coordinates(self, lat: float, lon: float, reason: str, position_changed: bool = False) -> None:
         """Apply paired GPS coordinates.

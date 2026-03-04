@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -20,6 +19,7 @@ from .const import (
     MIN_VALID_CONSUMPTION,
     REFERENCE_LEARNING_TRIP_KM,
 )
+from .geo_utils import haversine_m
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -118,16 +118,6 @@ class DrivingSession:
             trip_start_soc=data.get("trip_start_soc", anchor_soc),
             trip_start_mileage=data.get("trip_start_mileage", anchor_mileage),
         )
-
-
-def _haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate haversine distance in meters between two GPS coordinates."""
-    r = 6371000  # Earth radius in meters
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 class MagicSOCPredictor:
@@ -500,7 +490,7 @@ class MagicSOCPredictor:
             return
 
         if session.last_gps_lat is not None and session.last_gps_lon is not None:
-            dist_m = _haversine_distance_m(session.last_gps_lat, session.last_gps_lon, lat, lon)
+            dist_m = haversine_m(session.last_gps_lat, session.last_gps_lon, lat, lon)
             if dist_m <= 0:
                 pass
             elif dist_m > GPS_MAX_STEP_DISTANCE_M:
