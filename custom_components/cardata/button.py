@@ -150,6 +150,7 @@ class ResetLearningButton(ButtonEntity):
         """Initialize the button."""
         self._coordinator = coordinator
         self._vin = vin
+        self._kind = kind
         self._reset_fn = reset_fn
         self._success_msg = success_msg
         self._empty_msg = empty_msg
@@ -163,7 +164,7 @@ class ResetLearningButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle button press."""
-        _LOGGER.info("Resetting %s learning for VIN %s", self._attr_name, redact_vin(self._vin))
+        _LOGGER.info("Resetting %s learning for VIN %s", self._kind, redact_vin(self._vin))
         result = self._reset_fn(self._vin)
         vehicle_name = self._coordinator.names.get(self._vin, redact_vin(self._vin))
         msg = self._success_msg.format(name=vehicle_name) if result else self._empty_msg.format(name=vehicle_name)
@@ -171,7 +172,7 @@ class ResetLearningButton(ButtonEntity):
             self.hass,
             msg,
             title="BMW CarData",
-            notification_id=f"{DOMAIN}_reset_{self._vin}_{self._attr_unique_id}",
+            notification_id=f"{DOMAIN}_reset_{self._vin}_{self._kind}",
         )
 
 
