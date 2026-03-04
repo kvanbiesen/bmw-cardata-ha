@@ -273,7 +273,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if self.descriptor == MAGIC_SOC_DESCRIPTOR:
             return "mdi:battery"
 
-        if self.descriptor and self.descriptor == "vehicle.cabin.door.status":
+        if self.descriptor == "vehicle.cabin.door.status":
             value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "unlocked" in value:
                 return "mdi:lock-open-variant-outline"
@@ -281,7 +281,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
                 return "mdi:lock-outline"
 
         # Window sensors - dynamic icon based on state
-        if self.descriptor and self.descriptor in WINDOW_DESCRIPTORS:
+        if self.descriptor in WINDOW_DESCRIPTORS:
             value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "open" in value:
                 return "mdi:window-open-variant"

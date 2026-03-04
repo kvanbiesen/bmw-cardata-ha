@@ -116,7 +116,7 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
         if descriptor in FUEL_VOLUME_DESCRIPTORS:
             return getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME)
         # Check if this is a battery-related descriptor with % unit
-        if descriptor and descriptor in BATTERY_DESCRIPTORS:
+        if descriptor in BATTERY_DESCRIPTORS:
             # Only apply battery class if unit is % (percentage)
             normalized_unit = map_unit_to_ha(unit)
             if normalized_unit == "%":
