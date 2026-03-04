@@ -335,32 +335,41 @@ class SOCPredictor:
         # This handles battery recovery mode and other hybrid system behaviors
         if self._is_phev.get(vin, False) and current_predicted is not None:
             if soc < current_predicted:
-                _LOGGER.debug(
-                    "SOC: PHEV %s actual (%.1f%%) < predicted (%.1f%%), syncing down",
-                    redact_vin(vin),
-                    soc,
-                    current_predicted,
-                )
-                self._last_predicted_soc[vin] = soc
-                session = self._sessions.get(vin)
-                if session is not None:
-                    # Update display value so monotonicity guard doesn't
-                    # immediately override the sync-down on the next prediction.
-                    session.last_predicted_soc = soc
-                    if not is_charging:
-                        # Not charging: full reset — anchor + energy
-                        session.anchor_soc = soc
-                        session.total_energy_kwh = 0.0
-                        session.last_energy_update = time.time()
-                    elif from_charging_level:
-                        # Charging, from trusted charging.level: full re-anchor downward
-                        old_anchor = session.anchor_soc
-                        ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
-                        session.anchor_soc = soc
-                        session.total_energy_kwh = 0.0
-                        session.last_energy_update = time.time()
-                        self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
-                    # During charging from header: preserve anchor/energy for learning
+                if is_charging and from_charging_level:
+                    # charging.level is BMW's own prediction, not real battery.
+                    # Our energy-based prediction is more accurate. Ignore.
+                    _LOGGER.debug(
+                        "SOC: PHEV %s charging.level (%.1f%%) < predicted (%.1f%%), ignoring BMW prediction",
+                        redact_vin(vin),
+                        soc,
+                        current_predicted,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "SOC: PHEV %s actual (%.1f%%) < predicted (%.1f%%), syncing down",
+                        redact_vin(vin),
+                        soc,
+                        current_predicted,
+                    )
+                    self._last_predicted_soc[vin] = soc
+                    session = self._sessions.get(vin)
+                    if session is not None:
+                        # Update display value so monotonicity guard doesn't
+                        # immediately override the sync-down on the next prediction.
+                        session.last_predicted_soc = soc
+                        if not is_charging:
+                            # Not charging: full reset — anchor + energy
+                            session.anchor_soc = soc
+                            session.total_energy_kwh = 0.0
+                            session.last_energy_update = time.time()
+                        else:
+                            # Charging, from real battery (header): full re-anchor downward
+                            old_anchor = session.anchor_soc
+                            ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
+                            session.anchor_soc = soc
+                            session.total_energy_kwh = 0.0
+                            session.last_energy_update = time.time()
+                            self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
             elif not is_charging:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
