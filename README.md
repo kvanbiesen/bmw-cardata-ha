@@ -101,7 +101,7 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 5. Request access to **CarData API** first:
    - Click "Request access to CarData API"
    - ⏱️ **Wait 60 seconds** (BMW needs time to propagate permissions)
-   Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for 120 seconds, then select the another one and wait agin.
+   Note, BMW portal seems to have some problems with scope selection. If you see an error on the top of the page, reload it, select one scope and wait for 120 seconds, then select another one and wait again.
 6. Then request access to **CarData Stream**:
    - Click "Request access to CarData Stream"  
    - ⏱️ **Wait another 60 seconds**
@@ -113,13 +113,13 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 ```js
 document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l => l.click());
 ```
-   - If you want the "Predicted SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the predicted state of charge and calculate the charging slope between stream updates. It seems like the `vehicle.drivetrain.batteryManagement.maxEnergy` always get sended even tho its not explicitly set, but check it anyways.
+   - If you want the "Predicted SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the predicted state of charge and calculate the charging slope between stream updates. It seems like the `vehicle.drivetrain.batteryManagement.maxEnergy` always gets sent even though it's not explicitly set, but check it anyway.
 
 9. Save the selection.
 10. Repeat for all the cars you want to support
 11. In Home Assistant, install this integration via HACS (see below under Installation (HACS)) and still in Home Assistant, step trough the Configuration Flow also described here below.
 12. During the Home Assistant config flow, paste the client ID, visit the provided verification URL, enter the code (if asked), and approve. **Do not click Continue/Submit in Home Assistant until the BMW page confirms the approval**; submitting early leaves the flow stuck and requires a restart.
-13. *If you get Error 500 during setup:**
+13. **If you get Error 500 during setup:**
     
     **Immediate actions:**
     - ❌ Remove the integration from Home Assistant
@@ -131,7 +131,7 @@ document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l
     
     **If error persists after 2-3 attempts:**
     - ⏱️ Wait 24 hours (you may have hit daily rate limit)
-    - Try during different time of day (BMW servers less loaded
+    - Try during different time of day (BMW servers less loaded)
 14. Wait for the car to send data—triggering an action via the MyBMW app (lock/unlock doors) usually produces updates immediately. (older cars might need a drive before sensors start popping up, idrive6)
 
 ## Troubleshooting Setup Errors:
@@ -320,12 +320,12 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - TLS 1.3 capable SSL library (required for direct BMW MQTT mode): OpenSSL 1.1.1+, LibreSSL 3.2.0+, or equivalent.
 - Familiarity with BMW's CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
-## !! Recommended setup with people on multiple bmw's (not required, its working as iss but you limiting yourself in accuracy since the harcode 50 limites a day !!
+## !! Recommended setup with people on multiple BMWs (not required, it's working as is but you're limiting yourself in accuracy since the hardcoded 50 limits a day) !!
 - Car 1 -> email_1
 - Car 2 -> mail_2
 - .....
-- Use those seperate accounts in the the integration
-- Use mail_x+1 with has all the cars merged for the bmmw app
+- Use those separate accounts in the integration
+- Use mail_x+1 which has all the cars merged for the BMW app
 - As said, not needed but then you live with outdated data (Hour x amount of cars on single account).
 
 ## Translations
@@ -366,7 +366,8 @@ The integration is organized into focused modules:
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
 | `sensor_diagnostics.py` | Diagnostic sensors: connection, metadata, efficiency, charging history, tyre diagnosis |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
-| `config_flow.py` | Setup, reauthorization, and options UI flows |
+| `config_flow.py` | Setup and reauthorization UI flows |
+| `options_flow.py` | Options menu: settings, MQTT broker, API actions, entity cleanup |
 | `bootstrap.py` | VIN discovery, metadata fetch, container creation |
 | `auth.py` | Token refresh loop, reauth flow, stream error handling |
 | `telematics.py` | Scheduled API polling, trip-end/charge-end triggers |
@@ -389,5 +390,4 @@ This project is licensed under the BSD 2-Clause License - see the [LICENSE](LICE
 
 ### Attribution
 
-This software was created by [Kris Van Biesen](https://github.com/kvanbiesen). Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha). Please keep this notice if you redistribute or modify the co
-de.
+This software was created by [Kris Van Biesen](https://github.com/kvanbiesen). Taken over since no response for original developper (https://github.com/JjyKsi/bmw-cardata-ha). Please keep this notice if you redistribute or modify the code.
