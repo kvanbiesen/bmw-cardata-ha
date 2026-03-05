@@ -172,7 +172,7 @@ async def refresh_tokens_for_entry(
 
         # Lock is now acquired - use try/finally immediately to ensure release
         try:
-            # double check if token still needs refesh
+            # double check if token still needs refresh
             expired, seconds_left = is_token_expired(entry, buffer_seconds)
             if not expired:
                 _LOGGER.debug("Token was refreshed by another caller; skipping (valid for %s seconds)", seconds_left)
