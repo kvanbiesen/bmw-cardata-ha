@@ -608,6 +608,12 @@ class CardataCoordinator:
             else:
                 value_changed = is_new or self._is_significant_change(vin, descriptor, value)
 
+            # Preserve existing unit when new message doesn't include one
+            if unit is None and not is_new:
+                existing = vehicle_state.get(descriptor)
+                if existing is not None and existing.unit is not None:
+                    unit = existing.unit
+
             vehicle_state[descriptor] = DescriptorState(
                 value=value, unit=unit, timestamp=timestamp, last_seen=time.time()
             )
