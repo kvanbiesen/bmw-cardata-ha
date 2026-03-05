@@ -240,10 +240,12 @@ For Plug-in Hybrid Electric Vehicles (PHEVs), the predicted SOC has special hand
 - **Automatic PHEV detection**: Vehicles with both an HV battery and fuel system are detected as PHEVs, unless metadata (driveTrain/propulsionType) or the model name (e.g. i4, iX, i5) identifies them as a known BEV
 - **Sync down on battery depletion**: If the actual BMW SOC is lower than the predicted value, the prediction syncs down immediately. This handles scenarios where the hybrid system depletes the battery (e.g., battery recovery mode, engine-priority driving)
 - **Stale header filtering during charging**: When `charging.level` is available and fresh, the stale `batteryManagement.header` value is skipped to avoid corrupting the predicted SOC display
-- **Charging level re-anchor**: During charging, `charging.level` can re-anchor the prediction downward (correcting overshoot). Stale header values are still blocked from doing this, preserving session integrity
+- **Charging level ignored for sync-down**: During charging, `charging.level` (BMW's own prediction) is ignored when lower than our energy-based prediction, which tracks the real battery more accurately
 - **BEVs**: For pure electric vehicles, the predicted SOC only syncs when not actively charging (standard behavior)
 
 This ensures the predicted SOC stays accurate for PHEVs even when the hybrid system uses battery power in ways that don't register as "discharging" in the BMW API.
+
+**Charging prediction accuracy**: On PHEVs with small batteries, you may notice a small step (typically 2-3 percentage points) at the end of charge when BMW's real SOC arrives and syncs up with the energy-based prediction. Small batteries amplify any efficiency estimation error because each kWh represents a larger percentage of total capacity. This is normal. Charging efficiency varies between sessions due to temperature, charge depth, and grid voltage fluctuations, so the learned EMA efficiency cannot perfectly predict each individual session. The step is largest during the first 5-10 sessions for a given charging configuration (phases, voltage, current) and shrinks as the EMA converges, but some residual variation is expected even after 20+ sessions. On BEVs with larger batteries the same absolute error translates to a much smaller percentage step. The prediction tracks the real battery closely throughout charging and the sync-up at the end ensures the final value is always accurate.
 
 ### Reset Buttons
 
