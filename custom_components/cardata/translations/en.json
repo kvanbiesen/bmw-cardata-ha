@@ -7,7 +7,7 @@
       },
       "authorize": {
         "title": "Authorize BMW CarData",
-        "description": "Open {verification_url} and enter the user code {user_code} if asked. Once you've approved the device, click Submit. If approval already completed, click Submit again to continue."
+        "description": "Open {verification_url} and enter the user code {user_code} if asked. Once you've approved the device, click Submit. If approval is already completed, click Submit again to continue."
       },
       "blocked": {
         "title": "Bootstrap disabled due to API rate limit",
