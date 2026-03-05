@@ -60,14 +60,12 @@ _MAX_PATH_LENGTH = 255
 
 
 def get_images_directory(hass: HomeAssistant) -> Path:
-    """Get the directory for storing vehicle images.
+    """Get the path for storing vehicle images.
 
     Returns Path to: /config/www/community/cardata/
-    Creates directory if it doesn't exist.
+    Does NOT create the directory. Callers that write files must ensure it exists.
     """
-    images_dir = Path(hass.config.path("www/community/cardata"))
-    images_dir.mkdir(parents=True, exist_ok=True)
-    return images_dir
+    return Path(hass.config.path("www/community/cardata"))
 
 
 def get_image_path(hass: HomeAssistant, vin: str) -> Path | None:
@@ -208,6 +206,10 @@ async def async_fetch_and_store_vehicle_images(
     runtime = hass.data[DOMAIN][entry.entry_id]
     coordinator = runtime.coordinator
 
+    # Ensure images directory exists (non-blocking)
+    images_dir = get_images_directory(hass)
+    await hass.async_add_executor_job(lambda: images_dir.mkdir(parents=True, exist_ok=True))
+
     # Get pending manager from runtime
     pending_manager = runtime.image_fetch_pending
 
@@ -226,8 +228,8 @@ async def async_fetch_and_store_vehicle_images(
 
         try:
             # CRITICAL: Check if file already exists
-            if image_path.exists():
-                file_size = image_path.stat().st_size
+            file_size = await hass.async_add_executor_job(lambda p: p.stat().st_size if p.exists() else -1, image_path)
+            if file_size >= 0:
                 _LOGGER.debug(
                     "Vehicle image file already exists for %s (%d bytes) - skipping API call", redacted_vin, file_size
                 )
@@ -255,7 +257,7 @@ async def async_fetch_and_store_vehicle_images(
                         _LOGGER.debug("No vehicle image available for %s (404)", redacted_vin)
                         # Create empty marker file to prevent repeated 404 attempts
                         try:
-                            image_path.touch()
+                            await hass.async_add_executor_job(image_path.touch)
                             _LOGGER.debug("Created empty marker file for %s (no image available)", redacted_vin)
                         except Exception as err:
                             safe_err = redact_vin_in_text(str(err))
@@ -327,6 +329,19 @@ async def async_fetch_and_store_vehicle_images(
                 await pending_manager.release(vin)
 
 
+def _scan_image_files(images_dir: Path) -> list[tuple[Path, int]]:
+    """Scan image directory for PNG files with their sizes (blocking I/O)."""
+    if not images_dir.exists():
+        return []
+    result = []
+    for f in images_dir.glob("*.png"):
+        try:
+            result.append((f, f.stat().st_size))
+        except OSError:
+            pass
+    return result
+
+
 async def async_restore_vehicle_images(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -341,22 +356,23 @@ async def async_restore_vehicle_images(
     """
     images_dir = get_images_directory(hass)
 
-    if not images_dir.exists():
-        _LOGGER.debug("Vehicle images directory doesn't exist yet")
+    image_files = await hass.async_add_executor_job(_scan_image_files, images_dir)
+    if not image_files:
+        _LOGGER.debug("Vehicle images directory doesn't exist yet or is empty")
         return
 
     restored_count = 0
     migrated_vins = []
 
     # Load all PNG files from images directory
-    for image_file in images_dir.glob("*.png"):
+    for image_file, file_size in image_files:
         vin = image_file.stem  # Filename without .png extension
         redacted_vin = redact_vin(vin)
         safe_image_file = redact_vin_in_text(str(image_file))
 
         try:
             # Skip empty marker files (0 bytes = 404)
-            if image_file.stat().st_size == 0:
+            if file_size == 0:
                 _LOGGER.debug("Skipping empty marker file for %s (no image available)", redacted_vin)
                 continue
 
