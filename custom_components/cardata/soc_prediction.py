@@ -331,13 +331,19 @@ class SOCPredictor:
         is_charging = self._is_charging.get(vin, False)
         current_predicted = self._last_predicted_soc.get(vin)
 
-        # For PHEVs: sync down if actual is lower than predicted, even during charging
-        # This handles battery recovery mode and other hybrid system behaviors
-        if self._is_phev.get(vin, False) and current_predicted is not None:
+        # For PHEVs during AC charging: the real HV battery header is authoritative
+        # and may move both up and down (battery recovery mode, hybrid management, etc).
+        # charging.level is BMW's own SOC prediction — ignored in both directions for PHEVs.
+        # DC charging falls through to the BEV path (up-only sync).
+        _phev_ac = (
+            self._is_phev.get(vin, False)
+            and current_predicted is not None
+            and self._charging_method.get(vin, "AC") != "DC"
+        )
+        if _phev_ac:
             if soc < current_predicted:
                 if is_charging and from_charging_level:
-                    # charging.level is BMW's own prediction, not real battery.
-                    # Our energy-based prediction is more accurate. Ignore.
+                    # charging.level is BMW's own prediction — ignore for PHEVs.
                     _LOGGER.debug(
                         "SOC: PHEV %s charging.level (%.1f%%) < predicted (%.1f%%), ignoring BMW prediction",
                         redact_vin(vin),
@@ -374,18 +380,15 @@ class SOCPredictor:
                 # Not charging: snap to actual BMW SOC
                 self._last_predicted_soc[vin] = soc
             else:
-                # Charging: if BMW SOC is higher than prediction, sync up
-                # This handles telematic poll updates during charging
-                if soc > current_predicted:
+                # AC charging: sync up from real header only — charging.level ignored.
+                if soc > current_predicted and not from_charging_level:
                     _LOGGER.debug(
-                        "SOC: PHEV %s charging, BMW SOC %.1f%% > predicted %.1f%%, syncing up",
+                        "SOC: PHEV %s AC charging, real SOC %.1f%% > predicted %.1f%%, syncing up",
                         redact_vin(vin),
                         soc,
                         current_predicted,
                     )
                     self._last_predicted_soc[vin] = soc
-                    # Also re-anchor the session so get_predicted_soc() sees
-                    # consistent state (prevents race with SyncWorker reads)
                     session = self._sessions.get(vin)
                     if session is not None:
                         old_anchor = session.anchor_soc
@@ -394,7 +397,6 @@ class SOCPredictor:
                         session.last_predicted_soc = soc
                         session.total_energy_kwh = 0.0
                         session.last_energy_update = time.time()
-                        # Keep last_power_kw + reset gap to now for extrapolation continuity
                         self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
         elif is_charging:
             # BEV charging: only sync up (never down during charge)
