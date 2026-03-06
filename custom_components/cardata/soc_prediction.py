@@ -335,12 +335,11 @@ class SOCPredictor:
         # and may move both up and down (battery recovery mode, hybrid management, etc).
         # charging.level is BMW's own SOC prediction — ignored in both directions for PHEVs.
         # DC charging falls through to the BEV path (up-only sync).
-        _phev_ac = (
+        if (
             self._is_phev.get(vin, False)
             and current_predicted is not None
             and self._charging_method.get(vin, "AC") != "DC"
-        )
-        if _phev_ac:
+        ):
             if soc < current_predicted:
                 if is_charging and from_charging_level:
                     # charging.level is BMW's own prediction — ignore for PHEVs.
