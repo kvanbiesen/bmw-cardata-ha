@@ -651,6 +651,12 @@ def process_soc_descriptors(
                         if bmw_moving is True or gps_moving is True:
                             manual_cap = coordinator.get_manual_battery_capacity(vin)
                             anchor_driving_session(magic_soc_pred, soc_predictor, vin, vehicle_state, manual_cap)
+                        elif needs_anchor:
+                            # Mileage increased but car not in driving mode.
+                            # Likely a completed trip whose data arrived post-trip
+                            # (door already unlocked). Acknowledge the mileage so
+                            # it doesn't inflate the next trip's baseline distance.
+                            magic_soc_pred._last_reported_mileage[vin] = mileage
                     if magic_soc_pred.has_signaled_magic_soc_entity(vin):
                         if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                             schedule_debounce = True
