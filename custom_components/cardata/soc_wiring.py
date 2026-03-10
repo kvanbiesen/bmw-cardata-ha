@@ -555,8 +555,11 @@ def process_soc_descriptors(
                                 session.anchor_timestamp,
                             ):
                                 skip_stale_header = True
-                            # PHEV: also skip header when charging.level is fresh
-                            # (header frozen at pre-charge value while level is current)
+                            # PHEV: skip header sync-down when charging.level is fresh.
+                            # Stale header (frozen at pre-charge value) is always below
+                            # prediction — blocking sync-down catches it.  Fresh header
+                            # above prediction is a legitimate mid-charge update and must
+                            # be allowed through for re-anchoring.
                             if not skip_stale_header and soc_predictor.is_phev(vin):
                                 cl = vehicle_state.get(DESC_CHARGING_LEVEL)
                                 if (
@@ -567,7 +570,9 @@ def process_soc_descriptors(
                                         session.anchor_timestamp,
                                     )
                                 ):
-                                    skip_stale_header = True
+                                    current_predicted = soc_predictor._last_predicted_soc.get(vin)
+                                    if current_predicted is not None and soc_val < current_predicted:
+                                        skip_stale_header = True
                     if not skip_stale_header:
                         soc_predictor.update_bmw_soc(vin, soc_val)
                         magic_soc_pred.update_bmw_soc(vin, soc_val)
