@@ -525,6 +525,7 @@ def process_soc_descriptors(
         elif descriptor in (
             DESC_CHARGING_AC_AMPERE,
             DESC_CHARGING_AC_VOLTAGE,
+            DESC_CHARGING_PHASES,
         ):
             if soc_predictor.is_charging(vin) and soc_predictor.get_charging_method(vin) != "DC":
                 voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
