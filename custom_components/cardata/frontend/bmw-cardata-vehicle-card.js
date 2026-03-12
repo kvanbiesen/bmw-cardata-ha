@@ -830,10 +830,11 @@ class BmwCardataVehicleCard extends HTMLElement {
         ? tireEntries.find((t) => t.value < tireAvg * 0.8)
         : null;
       const tireAlert = lowTire !== null && lowTire !== undefined;
+      const formatPressure = (v) => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
       const tireValue = tireAlert
-        ? `${lowTire.value.toFixed(2)} ${tireUnit}`.trim()
+        ? `${formatPressure(lowTire.value)} ${tireUnit}`.trim()
         : tireAvg > 0
-          ? `${tireAvg.toFixed(2)} ${tireUnit}`.trim()
+          ? `${formatPressure(tireAvg)} ${tireUnit}`.trim()
           : "—";
       const tireEntity = tireAlert
         ? (entities[lowTire.key] || "")
