@@ -815,26 +815,40 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (showButtons) {
       const tireKeys = ["tire_fl", "tire_fr", "tire_rl", "tire_rr"];
       const tireLabels = { tire_fl: "FL", tire_fr: "FR", tire_rl: "RL", tire_rr: "RR" };
+      const pressureToKpa = (v, u) => {
+        const ul = (u || "").toLowerCase().trim();
+        if (ul === "bar") return v * 100;
+        if (ul === "psi") return v * 6.895;
+        return v;
+      };
+      const kpaTo = (kpa, u) => {
+        const ul = (u || "").toLowerCase().trim();
+        if (ul === "bar") return kpa / 100;
+        if (ul === "psi") return kpa / 6.895;
+        return kpa;
+      };
       const tireEntries = tireKeys
-        .map((key) => ({ key, value: toNumberOrZero(read(key)) }))
+        .map((key) => {
+          const obj = read(key);
+          const value = toNumberOrZero(obj);
+          const unit = obj?.attributes?.unit_of_measurement || "";
+          return { key, value, unit, kpa: pressureToKpa(value, unit) };
+        })
         .filter((t) => t.value > 0);
-      const tireUnit = read("tire_fl")?.attributes?.unit_of_measurement
-        || read("tire_fr")?.attributes?.unit_of_measurement
-        || read("tire_rl")?.attributes?.unit_of_measurement
-        || read("tire_rr")?.attributes?.unit_of_measurement
-        || "";
-      const tireAvg = tireEntries.length
-        ? tireEntries.reduce((a, b) => a + b.value, 0) / tireEntries.length
+      const displayUnit = tireEntries.length ? tireEntries[0].unit : "";
+      const tireAvgKpa = tireEntries.length
+        ? tireEntries.reduce((a, b) => a + b.kpa, 0) / tireEntries.length
         : 0;
       const lowTire = tireEntries.length >= 2
-        ? tireEntries.find((t) => t.value < tireAvg * 0.8)
+        ? tireEntries.find((t) => t.kpa < tireAvgKpa * 0.8)
         : null;
       const tireAlert = lowTire !== null && lowTire !== undefined;
       const formatPressure = (v) => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+      const tireAvgDisplay = kpaTo(tireAvgKpa, displayUnit);
       const tireValue = tireAlert
-        ? `${formatPressure(lowTire.value)} ${tireUnit}`.trim()
-        : tireAvg > 0
-          ? `${formatPressure(tireAvg)} ${tireUnit}`.trim()
+        ? `${formatPressure(lowTire.value)} ${lowTire.unit}`.trim()
+        : tireAvgDisplay > 0
+          ? `${formatPressure(tireAvgDisplay)} ${displayUnit}`.trim()
           : "—";
       const tireEntity = tireAlert
         ? (entities[lowTire.key] || "")
