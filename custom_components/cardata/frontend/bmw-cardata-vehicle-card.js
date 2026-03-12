@@ -314,11 +314,9 @@ class BmwCardataVehicleCard extends HTMLElement {
           .image img {
             width: 100%;
             display: block;
-            object-fit: contain;
+            object-fit: cover;
             object-position: center;
-            height: 170px;
             background: transparent;
-            transform: scale(1);
             transform-origin: center center;
           }
           .image.charging img {
