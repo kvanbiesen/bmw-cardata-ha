@@ -694,6 +694,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       doorsOverallRaw.includes("secured");
     const chargingActive =
       hasCharging &&
+      chargingState !== "nocharging" &&
       (
         chargingState.includes("charging") ||
         chargingState.includes("vehicle2grid") ||
