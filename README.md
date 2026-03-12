@@ -195,6 +195,29 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 - Sensors/binary sensors are auto-created and named from descriptors (e.g. `Cabin Door Row1 Driver Is Open`).
 - Additional attributes include the source timestamp.
 
+## Vehicle Dashboard Card (Lovelace)
+
+The integration automatically registers a built-in Lovelace vehicle card — no manual YAML or HACS frontend install needed.
+
+In Home Assistant:
+- Go to a dashboard → **Edit dashboard** → **Add card**
+- Search for **BMW CarData Vehicle**
+- In the card editor, select which vehicle to display
+
+<p align="center">
+  <img src="images/card-preview.png" alt="BMW CarData vehicle card preview" width="720" />
+</p>
+
+Available configuration options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm) |
+| `show_range` | `true` | Battery / fuel level bar with range |
+| `show_image` | `true` | Vehicle image |
+| `show_map` | `true` | Inline location map |
+| `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
+
 ## Debug Logging
 Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (disabled by default). To reduce noise, change it to `False` and reload HA.
 
