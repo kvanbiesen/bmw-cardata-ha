@@ -525,6 +525,8 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (!target) return;
 
     if (!trackerEntityId) {
+      this._cachedMapCard = null;
+      this._cachedMapTracker = null;
       target.innerHTML = `
         <div class="map">
           <div class="map-fallback">No vehicle tracker entity available</div>
@@ -534,6 +536,8 @@ class BmwCardataVehicleCard extends HTMLElement {
     }
 
     if (!hass?.states?.[trackerEntityId]) {
+      this._cachedMapCard = null;
+      this._cachedMapTracker = null;
       target.innerHTML = `
         <div class="map">
           <div class="map-fallback">Tracker entity unavailable: ${escapeHtml(trackerEntityId)}</div>
@@ -541,6 +545,15 @@ class BmwCardataVehicleCard extends HTMLElement {
       `;
       return;
     }
+
+    // Reuse existing map card — just update hass.
+    if (this._cachedMapCard && this._cachedMapTracker === trackerEntityId) {
+      this._cachedMapCard.hass = hass;
+      return;
+    }
+
+    this._cachedMapCard = null;
+    this._cachedMapTracker = null;
 
     const renderToken = (this._mapRenderToken || 0) + 1;
     this._mapRenderToken = renderToken;
@@ -562,6 +575,8 @@ class BmwCardataVehicleCard extends HTMLElement {
         mapMount.innerHTML = `<div class="map-fallback">Unable to load Home Assistant map</div>`;
         return;
       }
+      this._cachedMapCard = mapCard;
+      this._cachedMapTracker = trackerEntityId;
       mapMount.replaceChildren(mapCard);
     });
   }

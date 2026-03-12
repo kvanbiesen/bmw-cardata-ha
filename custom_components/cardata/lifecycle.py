@@ -77,6 +77,7 @@ from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .debug import set_debug_enabled
 from .device_flow import CardataAuthError
+from .frontend_cards import async_setup_frontend_cards, async_unload_frontend_cards_if_last_entry
 from .metadata import async_restore_vehicle_images, async_restore_vehicle_metadata
 from .runtime import CardataRuntimeData, cleanup_entry_lock
 from .services import async_register_services, async_unregister_services
@@ -154,6 +155,8 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_data = hass.data.setdefault(DOMAIN, {})
 
     _LOGGER.debug("Setting up Bmw Cardata Streamline entry %s", entry.entry_id)
+
+    await async_setup_frontend_cards(hass)
 
     session: aiohttp.ClientSession | None = None
     refresh_task: asyncio.Task | None = None
@@ -678,6 +681,7 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
     if not remaining_entries:
         async_unregister_services(hass)
+        await async_unload_frontend_cards_if_last_entry(hass)
         domain_data.pop("_service_registered", None)
         domain_data.pop("_registered_services", None)
 

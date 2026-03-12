@@ -2,7 +2,7 @@
 
 It provides:
 - A websocket command returning discovered vehicles + a tiny entity mapping.
-- Automatic loading of the integration's custom card JS via frontend.extra_module_url.
+- Automatic registration of the card JS as a Lovelace resource.
 """
 
 from __future__ import annotations
@@ -12,21 +12,59 @@ from pathlib import Path
 from typing import Any
 
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 
 from .const import DESC_SOC_HEADER, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 _DATA_KEY = "_frontend_cards_setup"
-_JS_URL_KEY = "_frontend_cards_js_url"
+_RESOURCE_ID_KEY = "_frontend_cards_resource_id"
 
 _STATIC_BASE_URL = "/cardata/bmw-cardata-vehicle-card.js"
 _STATIC_RELATIVE_PATH = Path(__file__).parent / "frontend" / "bmw-cardata-vehicle-card.js"
 
 
+async def _async_register_lovelace_resource(hass: HomeAssistant) -> str | None:
+    """Register the card JS as a Lovelace resource. Returns the resource id."""
+    try:
+        lovelace_data = hass.data.get("lovelace")
+        if lovelace_data is None:
+            _LOGGER.debug("Lovelace data not available, skipping resource registration")
+            return None
+
+        resources = getattr(lovelace_data, "resources", None)
+        if resources is None:
+            _LOGGER.debug("Lovelace resources not available, skipping resource registration")
+            return None
+
+        for item in resources.async_items():
+            if item.get("url") == _STATIC_BASE_URL:
+                return item["id"]
+
+        item = await resources.async_create_item({"res_type": "module", "url": _STATIC_BASE_URL})
+        return item["id"]
+    except Exception as err:
+        _LOGGER.warning("Unable to register Lovelace resource: %s", err)
+        return None
+
+
+async def _async_unregister_lovelace_resource(hass: HomeAssistant, resource_id: str) -> None:
+    """Remove the Lovelace resource entry."""
+    try:
+        lovelace_data = hass.data.get("lovelace")
+        if lovelace_data is None:
+            return
+        resources = getattr(lovelace_data, "resources", None)
+        if resources is None:
+            return
+        await resources.async_delete_item(resource_id)
+    except Exception as err:
+        _LOGGER.debug("Unable to remove Lovelace resource %s: %s", resource_id, err)
+
+
 async def async_setup_frontend_cards(hass: HomeAssistant) -> None:
-    """Set up websocket API + auto-load the frontend JS module.
+    """Set up websocket API + register the card JS as a Lovelace resource.
 
     Safe to call multiple times across multiple config entries.
     """
@@ -55,20 +93,15 @@ async def async_setup_frontend_cards(hass: HomeAssistant) -> None:
     except Exception as err:  # pragma: no cover
         _LOGGER.debug("Unable to register static path for frontend cards: %s", err)
 
-    try:
-        from homeassistant.components.frontend import add_extra_js_url
-
-        add_extra_js_url(hass, _STATIC_BASE_URL)
-        domain_data[_JS_URL_KEY] = _STATIC_BASE_URL
-    except Exception as err:  # pragma: no cover
-        _LOGGER.debug("Unable to add extra JS module url for frontend cards: %s", err)
+    resource_id = await _async_register_lovelace_resource(hass)
+    if resource_id:
+        domain_data[_RESOURCE_ID_KEY] = resource_id
 
     domain_data[_DATA_KEY] = True
 
 
-@callback
-def async_unload_frontend_cards_if_last_entry(hass: HomeAssistant) -> None:
-    """Remove our extra module URL if no Cardata entries remain."""
+async def async_unload_frontend_cards_if_last_entry(hass: HomeAssistant) -> None:
+    """Remove the Lovelace resource if no Cardata entries remain."""
 
     domain_data: dict[str, Any] | None = hass.data.get(DOMAIN)
     if not domain_data:
@@ -78,16 +111,9 @@ def async_unload_frontend_cards_if_last_entry(hass: HomeAssistant) -> None:
     if remaining_entries:
         return
 
-    js_url = domain_data.get(_JS_URL_KEY)
-    if not isinstance(js_url, str) or not js_url:
-        return
-
-    try:
-        from homeassistant.components.frontend import remove_extra_js_url
-
-        remove_extra_js_url(hass, js_url)
-    except Exception as err:  # pragma: no cover
-        _LOGGER.debug("Unable to remove extra JS module url: %s", err)
+    resource_id = domain_data.get(_RESOURCE_ID_KEY)
+    if isinstance(resource_id, str) and resource_id:
+        await _async_unregister_lovelace_resource(hass, resource_id)
 
 
 # ---- Websocket API ----
