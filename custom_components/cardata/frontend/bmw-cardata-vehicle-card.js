@@ -374,6 +374,12 @@ class BmwCardataVehicleCard extends HTMLElement {
             transform: translateY(-1px);
             background: color-mix(in srgb, var(--secondary-background-color, #90909040) 74%, transparent);
           }
+          .btn-item.alert .btn-icon {
+            color: var(--error-color);
+          }
+          .btn-item.alert .btn-value {
+            color: var(--error-color);
+          }
           .btn-icon {
             width: 34px;
             height: 34px;
@@ -807,12 +813,31 @@ class BmwCardataVehicleCard extends HTMLElement {
     }
 
     if (showButtons) {
-      const tires = [read("tire_fl"), read("tire_fr"), read("tire_rl"), read("tire_rr")]
-        .map((obj) => toNumberOrZero(obj))
-        .filter((value) => value > 0);
-      const avgTirePressure = tires.length
-        ? `${(tires.reduce((a, b) => a + b, 0) / tires.length).toFixed(2)} ${read("tire_fl")?.attributes?.unit_of_measurement || ""}`.trim()
-        : "—";
+      const tireKeys = ["tire_fl", "tire_fr", "tire_rl", "tire_rr"];
+      const tireLabels = { tire_fl: "FL", tire_fr: "FR", tire_rl: "RL", tire_rr: "RR" };
+      const tireEntries = tireKeys
+        .map((key) => ({ key, value: toNumberOrZero(read(key)) }))
+        .filter((t) => t.value > 0);
+      const tireUnit = read("tire_fl")?.attributes?.unit_of_measurement
+        || read("tire_fr")?.attributes?.unit_of_measurement
+        || read("tire_rl")?.attributes?.unit_of_measurement
+        || read("tire_rr")?.attributes?.unit_of_measurement
+        || "";
+      const tireAvg = tireEntries.length
+        ? tireEntries.reduce((a, b) => a + b.value, 0) / tireEntries.length
+        : 0;
+      const lowTire = tireEntries.length >= 2
+        ? tireEntries.find((t) => t.value < tireAvg * 0.8)
+        : null;
+      const tireAlert = lowTire !== null && lowTire !== undefined;
+      const tireValue = tireAlert
+        ? `${lowTire.value.toFixed(2)} ${tireUnit}`.trim()
+        : tireAvg > 0
+          ? `${tireAvg.toFixed(2)} ${tireUnit}`.trim()
+          : "—";
+      const tireEntity = tireAlert
+        ? (entities[lowTire.key] || "")
+        : (entities.tire_fl || entities.tire_fr || entities.tire_rl || entities.tire_rr || "");
 
       const quickItems = [
         {
@@ -848,14 +873,10 @@ class BmwCardataVehicleCard extends HTMLElement {
             },
         {
           icon: "mdi:car-tire-alert",
-          label: "Tires",
-          value: avgTirePressure,
-          entity:
-            entities.tire_fl ||
-            entities.tire_fr ||
-            entities.tire_rl ||
-            entities.tire_rr ||
-            "",
+          label: tireAlert ? `Tire ${tireLabels[lowTire.key]}` : "Tires",
+          value: tireValue,
+          entity: tireEntity,
+          alert: tireAlert,
         },
         {
           icon: "mdi:counter",
@@ -870,7 +891,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           ${quickItems
             .map(
               (item) => `
-            <button class="btn-item" data-entity-id="${escapeHtml(item.entity)}" title="${escapeHtml(item.entity)}">
+            <button class="btn-item${item.alert ? " alert" : ""}" data-entity-id="${escapeHtml(item.entity)}" title="${escapeHtml(item.entity)}">
               <div class="btn-icon"><ha-icon icon="${item.icon}"></ha-icon></div>
               <div class="btn-text">
                 <div class="btn-title">${escapeHtml(item.label)}</div>
