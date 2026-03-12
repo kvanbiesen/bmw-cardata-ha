@@ -30,7 +30,7 @@ def _calc_ac_power_kw(session: ChargingSession) -> float | None:
         return None
     power_kw = (session.last_voltage * session.last_current) / 1000.0
     if session.phases and session.phases > 1:
-        power_kw *= 3
+        power_kw *= 3.0 if session.last_voltage < 250 else 1.732
     return power_kw
 
 
