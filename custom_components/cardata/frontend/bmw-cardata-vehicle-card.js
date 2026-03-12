@@ -731,7 +731,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           : "Alarm status unavailable",
       },
       {
-        icon: "mdi:car-side",
+        icon: openWindows > 0 ? "mdi:car-windshield-outline" : "mdi:car-windshield",
         stateClass: openWindows > 0 ? "alert" : "ok",
         entity: windowEntity,
         title: `Windows: ${openWindows > 0 ? `${openWindows} open` : "closed"}`,
