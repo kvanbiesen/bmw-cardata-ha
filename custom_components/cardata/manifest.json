@@ -1,6 +1,7 @@
 {
   "domain": "cardata",
   "name": "BMW Cardata",
+  "after_dependencies": ["http"],
   "codeowners": [
     "@kvanbiesen"
   ],
