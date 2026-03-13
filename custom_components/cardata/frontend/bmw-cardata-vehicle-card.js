@@ -134,6 +134,7 @@ class BmwCardataVehicleCard extends HTMLElement {
             device: { integration: "cardata" },
           },
         },
+        { name: "license_plate", selector: { text: {} } },
         { name: "show_indicators", selector: { boolean: {} } },
         { name: "show_range", selector: { boolean: {} } },
         { name: "show_image", selector: { boolean: {} } },
@@ -142,6 +143,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       ],
       computeLabel: (schema) => {
         if (schema.name === "device_id") return "Vehicle";
+        if (schema.name === "license_plate") return "License plate (shown instead of VIN)";
         if (schema.name === "show_indicators") return "Show indicator row";
         if (schema.name === "show_range") return "Show SOC and range bar";
         if (schema.name === "show_image") return "Show vehicle image";
@@ -626,7 +628,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const read = (key) => hass?.states?.[entities[key]];
 
     nameEl.textContent = name;
-    vinEl.textContent = vin;
+    vinEl.textContent = cfg.license_plate || vin;
 
     const showIndicators = boolConfig(cfg, "show_indicators", true);
     const showRange = boolConfig(cfg, "show_range", true);

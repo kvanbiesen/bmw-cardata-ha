@@ -212,6 +212,7 @@ Available configuration options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `license_plate` | *(empty)* | License plate number, shown instead of VIN when set |
 | `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm). Windows, tailgate, and hood only show red when the car is parked and locked with the item open (walked-away alert). |
 | `show_range` | `true` | Battery / fuel level bar with range |
 | `show_image` | `true` | Vehicle image |
