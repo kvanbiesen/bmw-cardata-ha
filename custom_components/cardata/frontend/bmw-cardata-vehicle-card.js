@@ -113,10 +113,10 @@ const humanizeStateValue = (rawState) => {
 
 class BmwCardataVehicleCard extends HTMLElement {
   setConfig(config) {
-    this._config = config || {};
-    if (this._config.license_plate) {
-      this._config.license_plate = sanitizePlate(this._config.license_plate);
-    }
+    const cfg = config || {};
+    this._config = cfg.license_plate
+      ? { ...cfg, license_plate: sanitizePlate(cfg.license_plate) }
+      : cfg;
     this._initialized = false;
     this._vehicles = null;
     this._vehiclesFetchedAt = 0;
