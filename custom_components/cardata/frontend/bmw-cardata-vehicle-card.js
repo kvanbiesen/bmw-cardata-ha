@@ -84,6 +84,11 @@ const compactStateLabel = (stateObj) => {
 
 const firstDefined = (...values) => values.find((value) => value !== undefined && value !== null && value !== "");
 
+const sanitizePlate = (raw) => {
+  if (typeof raw !== "string") return "";
+  return raw.trim().replace(/[^\p{L}\p{N}\s-]/gu, "").substring(0, 15).toUpperCase();
+};
+
 const humanizeLocationState = (rawState) => {
   if (rawState === undefined || rawState === null) return "Location unavailable";
   const normalized = String(rawState).trim().toLowerCase();
@@ -109,6 +114,9 @@ const humanizeStateValue = (rawState) => {
 class BmwCardataVehicleCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
+    if (this._config.license_plate) {
+      this._config.license_plate = sanitizePlate(this._config.license_plate);
+    }
     this._initialized = false;
     this._vehicles = null;
     this._vehiclesFetchedAt = 0;
