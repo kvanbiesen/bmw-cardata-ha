@@ -732,7 +732,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       },
       {
         icon: openWindows > 0 ? "mdi:car-windshield-outline" : "mdi:car-windshield",
-        stateClass: openWindows > 0 ? "alert" : "ok",
+        stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 ? "" : "ok",
         entity: windowEntity,
         title: `Windows: ${openWindows > 0 ? `${openWindows} open` : "closed"}`,
       },
@@ -745,7 +745,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           }
         : {
             icon: "mdi:car-back",
-            stateClass: tailgateOpen ? "alert" : "ok",
+            stateClass: tailgateOpen && !isMoving && isLocked ? "alert" : tailgateOpen ? "" : "ok",
             entity: tailgateEntity,
             title: `Tailgate: ${tailgateOpen ? "open" : "closed"}`,
           },
@@ -758,7 +758,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           }
         : {
             icon: "mdi:engine-outline",
-            stateClass: hoodOpen ? "alert" : "ok",
+            stateClass: hoodOpen && !isMoving && isLocked ? "alert" : hoodOpen ? "" : "ok",
             entity: hoodEntity,
             title: `Hood: ${hoodOpen ? "open" : "closed"}`,
           },
