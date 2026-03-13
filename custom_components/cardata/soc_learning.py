@@ -190,9 +190,7 @@ def end_session(
             current_soc,
             target_soc,
         )
-        _finalize_learning(
-            predictor._learned_efficiency, predictor._on_learning_updated, vin, session, end_soc=current_soc
-        )
+        _finalize_learning(predictor._learned_efficiency, None, vin, session, end_soc=current_soc)
     else:
         # Charge interrupted - wait for BMW SOC confirmation
         _LOGGER.debug(
@@ -258,9 +256,7 @@ def try_finalize_pending_session(predictor: SOCPredictor, vin: str, bmw_soc: flo
         return False
 
     # Finalize learning with this SOC
-    _finalize_learning_from_pending(
-        predictor._learned_efficiency, predictor._on_learning_updated, vin, pending, bmw_soc
-    )
+    _finalize_learning_from_pending(predictor._learned_efficiency, None, vin, pending, bmw_soc)
     del predictor._pending_sessions[vin]
     # Persist removal of pending session (even if learning was rejected)
     if predictor._on_learning_updated:

@@ -113,7 +113,10 @@ def _resolve_target(
             return None
         return target_entry_id, target_entry, runtime
 
-    if len(entries) != 1:
+    if len(entries) == 0:
+        _LOGGER.error("Cardata service: no entries configured")
+        return None
+    if len(entries) > 1:
         _LOGGER.error("Cardata service: multiple entries configured; specify entry_id")
         return None
 
