@@ -284,11 +284,11 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if self.descriptor in WINDOW_DESCRIPTORS:
             value = str(self._attr_native_value).lower() if self._attr_native_value else ""
             if "open" in value:
-                return "mdi:window-open-variant"
+                return "mdi:car-windshield-outline"
             elif "closed" in value:
-                return "mdi:window-closed-variant"
+                return "mdi:car-windshield"
             else:
-                return "mdi:window-shutter"  # intermediate or unknown
+                return "mdi:car-windshield-outline"  # intermediate or unknown
 
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)

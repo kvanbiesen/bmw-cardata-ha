@@ -84,6 +84,11 @@ const compactStateLabel = (stateObj) => {
 
 const firstDefined = (...values) => values.find((value) => value !== undefined && value !== null && value !== "");
 
+const sanitizePlate = (raw) => {
+  if (typeof raw !== "string") return "";
+  return raw.trim().replace(/[^\p{L}\p{N}\s-]/gu, "").substring(0, 15).toUpperCase();
+};
+
 const humanizeLocationState = (rawState) => {
   if (rawState === undefined || rawState === null) return "Location unavailable";
   const normalized = String(rawState).trim().toLowerCase();
@@ -108,7 +113,10 @@ const humanizeStateValue = (rawState) => {
 
 class BmwCardataVehicleCard extends HTMLElement {
   setConfig(config) {
-    this._config = config || {};
+    const cfg = config || {};
+    this._config = cfg.license_plate
+      ? { ...cfg, license_plate: sanitizePlate(cfg.license_plate) }
+      : cfg;
     this._initialized = false;
     this._vehicles = null;
     this._vehiclesFetchedAt = 0;
@@ -134,6 +142,7 @@ class BmwCardataVehicleCard extends HTMLElement {
             device: { integration: "cardata" },
           },
         },
+        { name: "license_plate", selector: { text: {} } },
         { name: "show_indicators", selector: { boolean: {} } },
         { name: "show_range", selector: { boolean: {} } },
         { name: "show_image", selector: { boolean: {} } },
@@ -142,6 +151,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       ],
       computeLabel: (schema) => {
         if (schema.name === "device_id") return "Vehicle";
+        if (schema.name === "license_plate") return "License plate (shown instead of VIN)";
         if (schema.name === "show_indicators") return "Show indicator row";
         if (schema.name === "show_range") return "Show SOC and range bar";
         if (schema.name === "show_image") return "Show vehicle image";
@@ -237,6 +247,11 @@ class BmwCardataVehicleCard extends HTMLElement {
           .indicator.alert {
             color: var(--error-color);
             border-color: transparent;
+          }
+          .indicator.placeholder {
+            opacity: 0;
+            pointer-events: none;
+            cursor: default;
           }
           .indicator.charging {
             animation: chargingBadgePulse 1.4s ease-in-out infinite;
@@ -443,8 +458,8 @@ class BmwCardataVehicleCard extends HTMLElement {
             <div class="vin" id="vin"></div>
             <main id="main-wrapper">
               <div id="indicators"></div>
-              <div id="range_info"></div>
               <div id="images"></div>
+              <div id="range_info"></div>
               <div id="mini_map"></div>
               <div id="buttons"></div>
             </main>
@@ -619,7 +634,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const read = (key) => hass?.states?.[entities[key]];
 
     nameEl.textContent = name;
-    vinEl.textContent = vin;
+    vinEl.textContent = cfg.license_plate || vin;
 
     const showIndicators = boolConfig(cfg, "show_indicators", true);
     const showRange = boolConfig(cfg, "show_range", true);
@@ -729,8 +744,8 @@ class BmwCardataVehicleCard extends HTMLElement {
           : "Alarm status unavailable",
       },
       {
-        icon: "mdi:car-side",
-        stateClass: openWindows > 0 ? "alert" : "ok",
+        icon: openWindows > 0 ? "mdi:car-windshield-outline" : "mdi:car-windshield",
+        stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 ? "" : "ok",
         entity: windowEntity,
         title: `Windows: ${openWindows > 0 ? `${openWindows} open` : "closed"}`,
       },
@@ -742,24 +757,17 @@ class BmwCardataVehicleCard extends HTMLElement {
             title: `Charging: ${chargingActive ? "active" : compactStateLabel(read("charging_state"))}`,
           }
         : {
-            icon: "mdi:car-back",
-            stateClass: tailgateOpen ? "alert" : "ok",
-            entity: tailgateEntity,
-            title: `Tailgate: ${tailgateOpen ? "open" : "closed"}`,
-          },
-      lightsEntity
-        ? {
             icon: "mdi:car-light-high",
-            stateClass: lightsOn ? "ok" : "",
+            stateClass: lightsOn ? "ok" : "placeholder",
             entity: lightsEntity,
-            title: `Lights: ${lightsOn ? "on" : "off"}`,
-          }
-        : {
-            icon: "mdi:engine-outline",
-            stateClass: hoodOpen ? "alert" : "ok",
-            entity: hoodEntity,
-            title: `Hood: ${hoodOpen ? "open" : "closed"}`,
+            title: lightsEntity ? `Lights: ${lightsOn ? "on" : "off"}` : "",
           },
+      {
+        icon: hoodOpen && tailgateOpen ? "mdi:car" : hoodOpen ? "mdi:engine-outline" : tailgateOpen ? "mdi:car-back" : "mdi:car",
+        stateClass: (hoodOpen || tailgateOpen) && !isMoving && isLocked ? "alert" : (hoodOpen || tailgateOpen) ? "" : "ok",
+        entity: hoodOpen ? (hoodEntity || tailgateEntity) : tailgateOpen ? (tailgateEntity || hoodEntity) : (hoodEntity || tailgateEntity),
+        title: hoodOpen && tailgateOpen ? "Hood and tailgate open" : hoodOpen ? "Hood open" : tailgateOpen ? "Tailgate open" : "Hood and tailgate: closed",
+      },
     ].filter(Boolean);
 
     if (showIndicators) {
@@ -813,25 +821,40 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (showButtons) {
       const tireKeys = ["tire_fl", "tire_fr", "tire_rl", "tire_rr"];
       const tireLabels = { tire_fl: "FL", tire_fr: "FR", tire_rl: "RL", tire_rr: "RR" };
+      const pressureToKpa = (v, u) => {
+        const ul = (u || "").toLowerCase().trim();
+        if (ul === "bar") return v * 100;
+        if (ul === "psi") return v * 6.895;
+        return v;
+      };
+      const kpaTo = (kpa, u) => {
+        const ul = (u || "").toLowerCase().trim();
+        if (ul === "bar") return kpa / 100;
+        if (ul === "psi") return kpa / 6.895;
+        return kpa;
+      };
       const tireEntries = tireKeys
-        .map((key) => ({ key, value: toNumberOrZero(read(key)) }))
+        .map((key) => {
+          const obj = read(key);
+          const value = toNumberOrZero(obj);
+          const unit = obj?.attributes?.unit_of_measurement || "";
+          return { key, value, unit, kpa: pressureToKpa(value, unit) };
+        })
         .filter((t) => t.value > 0);
-      const tireUnit = read("tire_fl")?.attributes?.unit_of_measurement
-        || read("tire_fr")?.attributes?.unit_of_measurement
-        || read("tire_rl")?.attributes?.unit_of_measurement
-        || read("tire_rr")?.attributes?.unit_of_measurement
-        || "";
-      const tireAvg = tireEntries.length
-        ? tireEntries.reduce((a, b) => a + b.value, 0) / tireEntries.length
+      const displayUnit = tireEntries.length ? tireEntries[0].unit : "";
+      const tireAvgKpa = tireEntries.length
+        ? tireEntries.reduce((a, b) => a + b.kpa, 0) / tireEntries.length
         : 0;
       const lowTire = tireEntries.length >= 2
-        ? tireEntries.find((t) => t.value < tireAvg * 0.8)
+        ? tireEntries.find((t) => t.kpa < tireAvgKpa * 0.8)
         : null;
       const tireAlert = lowTire !== null && lowTire !== undefined;
+      const formatPressure = (v) => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+      const tireAvgDisplay = kpaTo(tireAvgKpa, displayUnit);
       const tireValue = tireAlert
-        ? `${lowTire.value.toFixed(2)} ${tireUnit}`.trim()
-        : tireAvg > 0
-          ? `${tireAvg.toFixed(2)} ${tireUnit}`.trim()
+        ? `${formatPressure(lowTire.value)} ${lowTire.unit}`.trim()
+        : tireAvgDisplay > 0
+          ? `${formatPressure(tireAvgDisplay)} ${displayUnit}`.trim()
           : "—";
       const tireEntity = tireAlert
         ? (entities[lowTire.key] || "")
