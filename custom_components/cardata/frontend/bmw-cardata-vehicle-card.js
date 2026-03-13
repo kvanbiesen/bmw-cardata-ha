@@ -238,6 +238,11 @@ class BmwCardataVehicleCard extends HTMLElement {
             color: var(--error-color);
             border-color: transparent;
           }
+          .indicator.placeholder {
+            opacity: 0;
+            pointer-events: none;
+            cursor: default;
+          }
           .indicator.charging {
             animation: chargingBadgePulse 1.4s ease-in-out infinite;
           }
@@ -744,24 +749,17 @@ class BmwCardataVehicleCard extends HTMLElement {
             title: `Charging: ${chargingActive ? "active" : compactStateLabel(read("charging_state"))}`,
           }
         : {
-            icon: "mdi:car-back",
-            stateClass: tailgateOpen && !isMoving && isLocked ? "alert" : tailgateOpen ? "" : "ok",
-            entity: tailgateEntity,
-            title: `Tailgate: ${tailgateOpen ? "open" : "closed"}`,
-          },
-      lightsEntity
-        ? {
             icon: "mdi:car-light-high",
-            stateClass: lightsOn ? "ok" : "",
+            stateClass: lightsOn ? "ok" : "placeholder",
             entity: lightsEntity,
-            title: `Lights: ${lightsOn ? "on" : "off"}`,
-          }
-        : {
-            icon: "mdi:engine-outline",
-            stateClass: hoodOpen && !isMoving && isLocked ? "alert" : hoodOpen ? "" : "ok",
-            entity: hoodEntity,
-            title: `Hood: ${hoodOpen ? "open" : "closed"}`,
+            title: lightsEntity ? `Lights: ${lightsOn ? "on" : "off"}` : "",
           },
+      {
+        icon: hoodOpen && tailgateOpen ? "mdi:car" : hoodOpen ? "mdi:engine-outline" : tailgateOpen ? "mdi:car-back" : "mdi:car",
+        stateClass: (hoodOpen || tailgateOpen) && !isMoving && isLocked ? "alert" : (hoodOpen || tailgateOpen) ? "" : "ok",
+        entity: hoodOpen ? (hoodEntity || tailgateEntity) : tailgateOpen ? (tailgateEntity || hoodEntity) : (hoodEntity || tailgateEntity),
+        title: hoodOpen && tailgateOpen ? "Hood and tailgate open" : hoodOpen ? "Hood open" : tailgateOpen ? "Tailgate open" : "Hood and tailgate: closed",
+      },
     ].filter(Boolean);
 
     if (showIndicators) {
