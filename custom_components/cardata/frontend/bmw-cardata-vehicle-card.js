@@ -450,8 +450,8 @@ class BmwCardataVehicleCard extends HTMLElement {
             <div class="vin" id="vin"></div>
             <main id="main-wrapper">
               <div id="indicators"></div>
-              <div id="range_info"></div>
               <div id="images"></div>
+              <div id="range_info"></div>
               <div id="mini_map"></div>
               <div id="buttons"></div>
             </main>
