@@ -234,10 +234,9 @@ class BmwCardataVehicleCard extends HTMLElement {
             width: 100%;
             height: 34px;
             padding: 0;
-            transition: transform 0.15s ease, background 0.2s ease;
+            transition: background 0.2s ease;
           }
           .indicator:hover {
-            transform: translateY(-1px);
             background: color-mix(in srgb, var(--secondary-background-color, #90909040) 78%, transparent);
           }
           .indicator.ok {
@@ -381,10 +380,9 @@ class BmwCardataVehicleCard extends HTMLElement {
             min-width: 0;
             background: color-mix(in srgb, var(--secondary-background-color, #90909040) 52%, transparent);
             text-align: left;
-            transition: transform 0.15s ease, background 0.2s ease;
+            transition: background 0.2s ease;
           }
           .btn-item:hover {
-            transform: translateY(-1px);
             background: color-mix(in srgb, var(--secondary-background-color, #90909040) 74%, transparent);
           }
           .btn-item.alert .btn-icon {
@@ -600,6 +598,10 @@ class BmwCardataVehicleCard extends HTMLElement {
     });
   }
 
+  _setHtml(el, html) {
+    if (el && el.innerHTML !== html) el.innerHTML = html;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
 
@@ -771,20 +773,19 @@ class BmwCardataVehicleCard extends HTMLElement {
     ].filter(Boolean);
 
     if (showIndicators) {
-      indicatorsEl.innerHTML = `
+      this._setHtml(indicatorsEl, `
         <div class="box indicators">
           ${indicatorItems
             .map((item) => iconBadge(item.icon, item.stateClass, item.entity, item.title))
             .join("")}
         </div>
-      `;
+      `);
     } else {
-      indicatorsEl.innerHTML = "";
+      this._setHtml(indicatorsEl, "");
     }
 
     if (showRange && (primaryLevelState || primaryRangeState)) {
-
-      rangeEl.innerHTML = `
+      this._setHtml(rangeEl, `
         <div class="box range-box">
           <div class="range-top">
             <div class="bar-wrap ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(primaryLevelEntity)}" title="${escapeHtml(primaryLevelEntity)}">
@@ -797,25 +798,25 @@ class BmwCardataVehicleCard extends HTMLElement {
             </div>
           </div>
         </div>
-      `;
+      `);
     } else {
-      rangeEl.innerHTML = "";
+      this._setHtml(rangeEl, "");
     }
 
     if (showImage && entities.image && hass?.states) {
       const imgState = hass.states[entities.image];
       const pic = imgState?.attributes?.entity_picture;
-      imageEl.innerHTML = pic
+      this._setHtml(imageEl, pic
         ? `<div class="image ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(entities.image)}" title="${escapeHtml(entities.image)}"><img alt="${escapeHtml(vin)}" src="${escapeHtml(pic)}"></div>`
-        : "";
+        : "");
     } else {
-      imageEl.innerHTML = "";
+      this._setHtml(imageEl, "");
     }
 
     if (showMap) {
       this._renderMap(mapEl, hass, mapEntityId);
     } else {
-      mapEl.innerHTML = "";
+      this._setHtml(mapEl, "");
     }
 
     if (showButtons) {
@@ -907,7 +908,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
       ].filter((item) => item && firstDefined(item.entity, item.value) !== "");
 
-      buttonsEl.innerHTML = `
+      this._setHtml(buttonsEl, `
         <div class="buttons-grid">
           ${quickItems
             .map(
@@ -923,9 +924,9 @@ class BmwCardataVehicleCard extends HTMLElement {
             )
             .join("")}
         </div>
-      `;
+      `);
     } else {
-      buttonsEl.innerHTML = "";
+      this._setHtml(buttonsEl, "");
     }
   }
 
@@ -942,11 +943,11 @@ class BmwCardataVehicleCard extends HTMLElement {
 
     nameEl.textContent = "BMW CarData";
     vinEl.textContent = message;
-    indicatorsEl.innerHTML = "";
-    rangeEl.innerHTML = "";
-    imageEl.innerHTML = "";
-    mapEl.innerHTML = "";
-    buttonsEl.innerHTML = "";
+    this._setHtml(indicatorsEl, "");
+    this._setHtml(rangeEl, "");
+    this._setHtml(imageEl, "");
+    this._setHtml(mapEl, "");
+    this._setHtml(buttonsEl, "");
   }
 }
 
