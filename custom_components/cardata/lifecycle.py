@@ -50,6 +50,7 @@ from .const import (
     DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
     DEFAULT_STREAM_HOST,
     DEFAULT_STREAM_PORT,
+    DEFAULT_TRIP_POLL_COOLDOWN_MINUTES,
     DESC_FUEL_LEVEL,
     DESC_REMAINING_FUEL,
     DESC_SOC_HEADER,
@@ -68,8 +69,10 @@ from .const import (
     OPTION_DIAGNOSTIC_INTERVAL,
     OPTION_ENABLE_CHARGING_HISTORY,
     OPTION_ENABLE_MAGIC_SOC,
+    OPTION_ENABLE_TRIP_POLL,
     OPTION_ENABLE_TYRE_DIAGNOSIS,
     OPTION_MQTT_KEEPALIVE,
+    OPTION_TRIP_POLL_COOLDOWN,
     SOC_LEARNING_STORAGE_KEY,
     SOC_LEARNING_STORAGE_VERSION,
 )
@@ -439,6 +442,9 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             reauth_flow_id=None,
         )
         runtime_data.soc_store = soc_learning_store
+        runtime_data.enable_trip_poll = bool(options.get(OPTION_ENABLE_TRIP_POLL, True))
+        cooldown_min = options.get(OPTION_TRIP_POLL_COOLDOWN, DEFAULT_TRIP_POLL_COOLDOWN_MINUTES)
+        runtime_data.trip_poll_cooldown_seconds = max(1, int(cooldown_min)) * 60
         hass.data[DOMAIN][entry.entry_id] = runtime_data
 
         # Now create refresh loop (runtime is stored, task can read it after first sleep)

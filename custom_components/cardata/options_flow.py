@@ -39,6 +39,7 @@ from .const import (
     BOOTSTRAP_COMPLETE,
     DEFAULT_CUSTOM_MQTT_PORT,
     DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
+    DEFAULT_TRIP_POLL_COOLDOWN_MINUTES,
     DOMAIN,
     OPTION_CUSTOM_MQTT_ENABLED,
     OPTION_CUSTOM_MQTT_HOST,
@@ -49,7 +50,9 @@ from .const import (
     OPTION_CUSTOM_MQTT_USERNAME,
     OPTION_ENABLE_CHARGING_HISTORY,
     OPTION_ENABLE_MAGIC_SOC,
+    OPTION_ENABLE_TRIP_POLL,
     OPTION_ENABLE_TYRE_DIAGNOSIS,
+    OPTION_TRIP_POLL_COOLDOWN,
     VEHICLE_METADATA,
 )
 from .utils import redact_vin
@@ -160,15 +163,24 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                             _LOGGER.info("Removing entity %s (feature disabled)", entity.entity_id)
                             entity_reg.async_remove(entity.entity_id)
 
+            # Validate cooldown
+            cooldown = user_input.get(OPTION_TRIP_POLL_COOLDOWN, DEFAULT_TRIP_POLL_COOLDOWN_MINUTES)
+            if not isinstance(cooldown, int) or cooldown < 1:
+                cooldown = DEFAULT_TRIP_POLL_COOLDOWN_MINUTES
+
             options = dict(self._config_entry.options)
             options[OPTION_ENABLE_MAGIC_SOC] = user_input[OPTION_ENABLE_MAGIC_SOC]
             options[OPTION_ENABLE_CHARGING_HISTORY] = user_input[OPTION_ENABLE_CHARGING_HISTORY]
             options[OPTION_ENABLE_TYRE_DIAGNOSIS] = user_input[OPTION_ENABLE_TYRE_DIAGNOSIS]
+            options[OPTION_ENABLE_TRIP_POLL] = user_input[OPTION_ENABLE_TRIP_POLL]
+            options[OPTION_TRIP_POLL_COOLDOWN] = cooldown
             return self.async_create_entry(title="", data=options)
 
         current_magic = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
         current_ch = self._config_entry.options.get(OPTION_ENABLE_CHARGING_HISTORY, False)
         current_td = self._config_entry.options.get(OPTION_ENABLE_TYRE_DIAGNOSIS, False)
+        current_trip = self._config_entry.options.get(OPTION_ENABLE_TRIP_POLL, True)
+        current_cooldown = self._config_entry.options.get(OPTION_TRIP_POLL_COOLDOWN, DEFAULT_TRIP_POLL_COOLDOWN_MINUTES)
         return self.async_show_form(
             step_id="action_settings",
             data_schema=vol.Schema(
@@ -176,6 +188,8 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(OPTION_ENABLE_MAGIC_SOC, default=current_magic): bool,
                     vol.Optional(OPTION_ENABLE_CHARGING_HISTORY, default=current_ch): bool,
                     vol.Optional(OPTION_ENABLE_TYRE_DIAGNOSIS, default=current_td): bool,
+                    vol.Optional(OPTION_ENABLE_TRIP_POLL, default=current_trip): bool,
+                    vol.Optional(OPTION_TRIP_POLL_COOLDOWN, default=current_cooldown): int,
                 }
             ),
         )
