@@ -41,7 +41,9 @@
       "action_settings": {
         "title": "Definições",
         "data": {
-          "enable_magic_soc": "Ativar Magic SOC (previsão de consumo em condução)"
+          "enable_magic_soc": "Ativar Magic SOC (previsão de consumo em condução)",
+          "enable_trip_end_polling": "Ativar consulta no fim da viagem",
+          "trip_poll_cooldown_minutes": "Intervalo entre consultas de fim de viagem (minutos)"
         }
       },
       "action_mqtt_broker": {

@@ -41,7 +41,9 @@
       "action_settings": {
         "title": "Einstellungen",
         "data": {
-          "enable_magic_soc": "Magic SOC aktivieren (Fahrverbrauchsvorhersage)"
+          "enable_magic_soc": "Magic SOC aktivieren (Fahrverbrauchsvorhersage)",
+          "enable_trip_end_polling": "Fahrtende-Abfrage aktivieren",
+          "trip_poll_cooldown_minutes": "Fahrtende-Abfrage Abklingzeit (Minuten)"
         }
       },
       "action_mqtt_broker": {

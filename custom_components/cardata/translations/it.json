@@ -41,7 +41,9 @@
       "action_settings": {
         "title": "Impostazioni",
         "data": {
-          "enable_magic_soc": "Abilita Magic SOC (previsione consumo in guida)"
+          "enable_magic_soc": "Abilita Magic SOC (previsione consumo in guida)",
+          "enable_trip_end_polling": "Abilita polling fine viaggio",
+          "trip_poll_cooldown_minutes": "Attesa tra polling fine viaggio (minuti)"
         }
       },
       "action_mqtt_broker": {

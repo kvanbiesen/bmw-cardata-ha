@@ -90,6 +90,8 @@ class CardataRuntimeData:
     # Trip-end polling: signal immediate API poll when vehicle stops moving
     _trip_poll_event: asyncio.Event | None = None
     _trip_poll_vins: set | None = None
+    enable_trip_poll: bool = True
+    trip_poll_cooldown_seconds: int = 600
 
     def __post_init__(self):
         """Initialize rate limiters if not provided."""
@@ -118,23 +120,30 @@ class CardataRuntimeData:
         """Get the image fetch pending manager."""
         return self._image_fetch_pending
 
-    def request_trip_poll(self, vin: str) -> None:
-        """Request an immediate API poll for a VIN after trip ends.
+    def request_trip_poll(self, vin: str, *, force: bool = False) -> None:
+        """Request an immediate API poll for a VIN after trip or charge ends.
 
-        Called by coordinator when vehicle.isMoving transitions True -> False.
+        Called by coordinator when vehicle.isMoving transitions True -> False,
+        or when charging ends (force=True to bypass the trip-end toggle).
         Applies a per-VIN cooldown to prevent GPS burst flapping from burning
         API quota (BMW sends GPS in bursts that cause DRIVING→PARKED→NOT_MOVING
         flapping every ~3 min while parked).
         """
-        from .const import TRIP_POLL_COOLDOWN_SECONDS
+        if not force and not self.enable_trip_poll:
+            _LOGGER.debug(
+                "Trip-end polling disabled, skipping poll for VIN %s",
+                redact_vin(vin),
+            )
+            return
 
+        cooldown = self.trip_poll_cooldown_seconds
         age = self.coordinator.seconds_since_last_poll(vin)
-        if age is not None and age < TRIP_POLL_COOLDOWN_SECONDS:
+        if age is not None and age < cooldown:
             _LOGGER.debug(
                 "Skipping trip-end poll for VIN %s (polled %.0fs ago, cooldown %ds)",
                 redact_vin(vin),
                 age,
-                TRIP_POLL_COOLDOWN_SECONDS,
+                cooldown,
             )
             return
 

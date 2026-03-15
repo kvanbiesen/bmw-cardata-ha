@@ -96,7 +96,7 @@ BOOTSTRAP_COMPLETE = "bootstrap_complete"
 # the polling budget is reduced to keep total calls constant.
 TARGET_DAILY_POLLS = 24
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
-TRIP_POLL_COOLDOWN_SECONDS = 600  # Min seconds between trip-end polls per VIN
+DEFAULT_TRIP_POLL_COOLDOWN_MINUTES = 10  # Default cooldown between trip-end polls
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
@@ -115,6 +115,8 @@ OPTION_DIAGNOSTIC_INTERVAL = "diagnostic_log_interval"
 OPTION_ENABLE_MAGIC_SOC = "enable_magic_soc"
 OPTION_ENABLE_CHARGING_HISTORY = "enable_charging_history"
 OPTION_ENABLE_TYRE_DIAGNOSIS = "enable_tyre_diagnosis"
+OPTION_ENABLE_TRIP_POLL = "enable_trip_end_polling"
+OPTION_TRIP_POLL_COOLDOWN = "trip_poll_cooldown_minutes"
 
 # Error message constants (for consistent error detection)
 ERR_TOKEN_REFRESH_IN_PROGRESS = "Token refresh already in progress"

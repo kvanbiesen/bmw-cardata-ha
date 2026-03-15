@@ -41,7 +41,9 @@
       "action_settings": {
         "title": "Instellingen",
         "data": {
-          "enable_magic_soc": "Magic SOC inschakelen (rijverbruiksvoorspelling)"
+          "enable_magic_soc": "Magic SOC inschakelen (rijverbruiksvoorspelling)",
+          "enable_trip_end_polling": "Ritbeëindiging polling inschakelen",
+          "trip_poll_cooldown_minutes": "Ritbeëindiging polling wachttijd (minuten)"
         }
       },
       "action_mqtt_broker": {

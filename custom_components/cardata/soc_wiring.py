@@ -495,7 +495,7 @@ def process_soc_descriptors(
                     end_soc_session(soc_predictor, vin, vehicle_state, coordinator._last_predicted_soc_sent)
                     runtime = coordinator.hass.data.get(DOMAIN, {}).get(coordinator.entry_id)
                     if runtime is not None:
-                        runtime.request_trip_poll(vin)
+                        runtime.request_trip_poll(vin, force=True)
                         _LOGGER.debug(
                             "Charging ended for VIN %s, requesting API poll for SOC verification",
                             redact_vin(vin),
