@@ -120,9 +120,9 @@ async def async_unload_frontend_cards_if_last_entry(hass: HomeAssistant) -> None
 
 
 def _normalize_vin_from_identifiers(identifiers: set[tuple[str, str]]) -> str | None:
-    for domain, ident in identifiers:
-        if domain == DOMAIN and isinstance(ident, str) and ident:
-            return ident
+    for identifier in identifiers:
+        if identifier[0] == DOMAIN and isinstance(identifier[1], str) and identifier[1]:
+            return identifier[1]
     return None
 
 
