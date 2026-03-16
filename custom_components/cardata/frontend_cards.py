@@ -203,6 +203,13 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
         if total_range:
             entities["range_total"] = total_range
 
+        # PHEV support: Electric range and fuel range for split bar display
+        if ev_range := unique_id_map.get(f"{vin}_vehicle.drivetrain.electricEngine.kombiRemainingElectricRange"):
+            entities["range_electric"] = ev_range
+
+        if fuel_range := unique_id_map.get(f"{vin}_vehicle.drivetrain.fuelSystem.remainingFuelRange"):
+            entities["range_fuel"] = fuel_range
+
         # Battery SOC (basic implementation).
         if soc_entity := unique_id_map.get(f"{vin}_{DESC_SOC_HEADER}"):
             entities["soc"] = soc_entity

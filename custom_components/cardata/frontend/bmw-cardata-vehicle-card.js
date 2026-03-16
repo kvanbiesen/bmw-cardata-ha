@@ -318,6 +318,70 @@ class BmwCardataVehicleCard extends HTMLElement {
             cursor: pointer;
           }
 
+          /* PHEV unified bar styles */
+          .bar-wrap-unified {
+            position: relative;
+            display: flex;
+            flex: 1 1 auto;
+            height: 18px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 66%, transparent);
+            cursor: pointer;
+          }
+          .bar-wrap-unified.charging {
+            animation: chargingBarPulse 1.8s ease-in-out infinite;
+          }
+          .bar-segment-unified {
+            height: 100%;
+            transition: width 0.3s ease;
+          }
+          .bar-segment-unified.ev {
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+          }
+          .bar-segment-unified.fuel {
+            background: linear-gradient(90deg, #FF9800, #f57c00);
+          }
+          .bar-wrap-unified.charging .bar-segment-unified.ev::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(
+              110deg,
+              transparent 10%,
+              rgba(255, 255, 255, 0.3) 45%,
+              transparent 80%
+            );
+            transform: translateX(-120%);
+            animation: chargingSweep 2.3s linear infinite;
+            pointer-events: none;
+          }
+
+          /* PHEV range labels */
+          .range-split-labels {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 8px;
+          }
+          .range-split-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            flex: 1;
+          }
+          .range-split-label.ev {
+            color: #4CAF50;
+          }
+          .range-split-label.fuel {
+            color: #FF9800;
+          }
+          .range-split-label ha-icon {
+            --mdc-icon-size: 18px;
+          }
+
           .image {
             width: 100%;
             border-radius: 10px;
@@ -674,6 +738,8 @@ class BmwCardataVehicleCard extends HTMLElement {
     const fuelLevelEntity = entities.fuel_level || "";
     const rangeEntity = entities.range_total || "";
     const remainingFuelEntity = entities.remaining_fuel || "";
+    const rangeElectricEntity = entities.range_electric || "";
+    const rangeFuelEntity = entities.range_fuel || "";
 
     const openWindows = [
       read("window_front_driver"),
@@ -697,6 +763,9 @@ class BmwCardataVehicleCard extends HTMLElement {
     const hasSoc = Boolean(socEntity && hasUsableState(read("soc")));
     const hasFuelRemaining = Boolean(remainingFuelEntity && hasUsableState(read("remaining_fuel")));
     const hasRange = Boolean(rangeEntity && hasUsableState(read("range_total")));
+    const hasRangeElectric = Boolean(rangeElectricEntity && hasUsableState(read("range_electric")));
+    const hasRangeFuel = Boolean(rangeFuelEntity && hasUsableState(read("range_fuel")));
+    const isPHEV = hasRangeElectric && hasRangeFuel;
     const primaryLevelState = hasSoc ? read("soc") : hasFuelLevel ? read("fuel_level") : null;
     const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : "";
     const primaryLevelValue = clamp(toNumberOrZero(primaryLevelState), 0, 100);
@@ -785,20 +854,69 @@ class BmwCardataVehicleCard extends HTMLElement {
     }
 
     if (showRange && (primaryLevelState || primaryRangeState)) {
-      this._setHtml(rangeEl, `
-        <div class="box range-box">
-          <div class="range-top">
-            <div class="bar-wrap ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(primaryLevelEntity)}" title="${escapeHtml(primaryLevelEntity)}">
-              <div class="bar-level" style="width:${primaryLevelValue}%;"></div>
-              <div class="energy-text">${primaryLevelLabel}</div>
+      // PHEV support: Show split range bar if both electric and fuel ranges are available
+      if (isPHEV) {
+        const socValue = clamp(toNumberOrZero(read("soc")), 0, 100);
+        const fuelLevelValue = clamp(toNumberOrZero(read("fuel_level")), 0, 100);
+        const evRangeCurrent = toNumberOrZero(read("range_electric"));
+        const fuelRangeCurrent = toNumberOrZero(read("range_fuel"));
+        
+        // Calculate max possible ranges (when at 100%)
+        const evRangeMax = socValue > 0 ? (evRangeCurrent / socValue) * 100 : 0;
+        const fuelRangeMax = fuelLevelValue > 0 ? (fuelRangeCurrent / fuelLevelValue) * 100 : 0;
+        const totalMaxRange = evRangeMax + fuelRangeMax;
+        
+        // Calculate percentage of total max range that each current range represents
+        const evRangePercent = totalMaxRange > 0 ? (evRangeCurrent / totalMaxRange) * 100 : 0;
+        const fuelRangePercent = totalMaxRange > 0 ? (fuelRangeCurrent / totalMaxRange) * 100 : 0;
+        
+        const evRangeText = formatState(read("range_electric"));
+        const fuelRangeText = formatState(read("range_fuel"));
+        const totalRangeValue = evRangeCurrent + fuelRangeCurrent;
+        const totalRangeUnit = read("range_electric")?.attributes?.unit_of_measurement || "km";
+        const totalRangeText = totalRangeValue > 0 ? `${totalRangeValue} ${totalRangeUnit}` : "—";
+        
+        this._setHtml(rangeEl, `
+          <div class="box range-box phev">
+            <div class="range-top">
+              <div class="bar-wrap-unified ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(rangeEntity)}" title="Total Range: ${escapeHtml(totalRangeText)}">
+                <div class="bar-segment-unified ev" style="width:${evRangePercent}%;" data-entity-id="${escapeHtml(rangeElectricEntity)}" title="EV: ${escapeHtml(evRangeText)} (${socValue}%)"></div>
+                <div class="bar-segment-unified fuel" style="width:${fuelRangePercent}%;" data-entity-id="${escapeHtml(rangeFuelEntity)}" title="Fuel: ${escapeHtml(fuelRangeText)} (${fuelLevelValue}%)"></div>
+              </div>
+              <div class="range-value" data-entity-id="${escapeHtml(rangeEntity)}" title="Total Range">
+                <ha-icon icon="mdi:arrow-left-right"></ha-icon>
+                <span>${escapeHtml(totalRangeText)}</span>
+              </div>
             </div>
-            <div class="range-value" data-entity-id="${escapeHtml(primaryRangeEntity)}" title="${escapeHtml(primaryRangeEntity)}">
-              <ha-icon icon="${primaryRangeIcon}"></ha-icon>
-              <span>${escapeHtml(primaryRangeText)}</span>
+            <div class="range-split-labels">
+              <div class="range-split-label ev" data-entity-id="${escapeHtml(rangeElectricEntity)}" title="${escapeHtml(rangeElectricEntity)}">
+                <ha-icon icon="mdi:lightning-bolt"></ha-icon>
+                <span>${escapeHtml(evRangeText)} (${socValue}%)</span>
+              </div>
+              <div class="range-split-label fuel" data-entity-id="${escapeHtml(rangeFuelEntity)}" title="${escapeHtml(rangeFuelEntity)}">
+                <ha-icon icon="mdi:gas-station"></ha-icon>
+                <span>${escapeHtml(fuelRangeText)} (${fuelLevelValue}%)</span>
+              </div>
             </div>
           </div>
-        </div>
-      `);
+        `);
+      } else {
+        // Standard display for non-PHEV vehicles
+        this._setHtml(rangeEl, `
+          <div class="box range-box">
+            <div class="range-top">
+              <div class="bar-wrap ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(primaryLevelEntity)}" title="${escapeHtml(primaryLevelEntity)}">
+                <div class="bar-level" style="width:${primaryLevelValue}%;"></div>
+                <div class="energy-text">${primaryLevelLabel}</div>
+              </div>
+              <div class="range-value" data-entity-id="${escapeHtml(primaryRangeEntity)}" title="${escapeHtml(primaryRangeEntity)}">
+                <ha-icon icon="${primaryRangeIcon}"></ha-icon>
+                <span>${escapeHtml(primaryRangeText)}</span>
+              </div>
+            </div>
+          </div>
+        `);
+      }
     } else {
       this._setHtml(rangeEl, "");
     }
