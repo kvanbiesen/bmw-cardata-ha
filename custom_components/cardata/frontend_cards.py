@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, HomeAssistant
 
 from .const import DESC_SOC_HEADER, DOMAIN
 
@@ -102,9 +103,22 @@ async def async_setup_frontend_cards(hass: HomeAssistant) -> None:
     except Exception as err:  # pragma: no cover
         _LOGGER.debug("Unable to register static path for frontend cards: %s", err)
 
-    resource_id = await _async_register_lovelace_resource(hass)
-    if resource_id:
-        domain_data[_RESOURCE_ID_KEY] = resource_id
+    # Defer Lovelace resource registration until after HA is fully started.
+    # During startup, ResourceStorageCollection may not be loaded yet; another
+    # misbehaving integration calling async_create_item() on the unloaded
+    # collection would destroy all existing resources including ours.
+    # Deferring reduces the race window.  The async_load() guard inside
+    # _async_register_lovelace_resource() ensures the collection is loaded
+    # regardless of whether a browser has connected.
+    async def _register_resource(_event: Any = None) -> None:
+        resource_id = await _async_register_lovelace_resource(hass)
+        if resource_id:
+            domain_data[_RESOURCE_ID_KEY] = resource_id
+
+    if hass.state is CoreState.running:
+        await _register_resource()
+    else:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _register_resource)
 
     domain_data[_DATA_KEY] = True
 
