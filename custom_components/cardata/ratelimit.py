@@ -151,9 +151,12 @@ class RateLimitTracker:
             reason = f"Rate limit cooldown active. {hours}h {minutes}m remaining until retry."
             return (False, reason)
 
-        # Cooldown expired - reset
+        # Cooldown expired - clear the block but preserve _429_count so
+        # exponential backoff escalates if the next request also hits 429.
+        # Only record_success() resets the counter (after 10 healthy calls).
         _LOGGER.info("Rate limit cooldown expired after %d attempts. Resuming API calls.", self._429_count)
-        self.reset()
+        self._rate_limited_until = None
+        self._successful_calls = 0
         return (True, None)
 
     def record_success(self) -> None:

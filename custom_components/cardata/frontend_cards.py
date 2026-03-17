@@ -38,6 +38,15 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> str | None:
             _LOGGER.debug("Lovelace resources not available, skipping resource registration")
             return None
 
+        # ResourceStorageCollection defers loading from disk; async_items()
+        # returns empty on an unloaded collection and async_create_item()
+        # would then overwrite the storage file, destroying all existing
+        # Lovelace resources.  Mirror the lazy-load guard that the class
+        # itself uses in async_get_info() / _update_data().
+        if hasattr(resources, "loaded") and not resources.loaded:
+            await resources.async_load()
+            resources.loaded = True
+
         for item in resources.async_items():
             if item.get("url") == _STATIC_BASE_URL:
                 return item["id"]
