@@ -49,7 +49,7 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 > **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
 
-> **Tested Environment:** Home Assistant 2025.3+ is required
+> **Tested Environment:** Home Assistant 2025.3+ is required. Brand logos are included since HA 2026.3 via the `brand/` directory.
 
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
