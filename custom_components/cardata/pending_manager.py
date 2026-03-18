@@ -255,13 +255,13 @@ class UpdateBatcher:
         The internal state is reset after this call.
         """
         snapshot = PendingSnapshot(
-            updates=dict(self._updates),
-            new_sensors=dict(self._new_sensors),
-            new_binary=dict(self._new_binary),
+            updates=self._updates,
+            new_sensors=self._new_sensors,
+            new_binary=self._new_binary,
         )
-        self._updates.clear()
-        self._new_sensors.clear()
-        self._new_binary.clear()
+        self._updates = {}
+        self._new_sensors = {}
+        self._new_binary = {}
         self._started_at = None
         return snapshot
 

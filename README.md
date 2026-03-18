@@ -49,7 +49,7 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 > **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
 
-> **Tested Environment:** since I adopted the project, I used the latest ha 2025.12 (2025.3+ is required)
+> **Tested Environment:** Home Assistant 2025.3+ is required. Brand logos are included since HA 2026.3 via the `brand/` directory.
 
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
@@ -61,15 +61,18 @@ Not required but appreciated :)
 Please try to post only issues relevant to the integration itself on the [Issues](https://github.com/kvanbiesen/bmw-cardata-ha/issues) and keep all the outside discussion (problems with registration on BMWs side, asking for guidance, etc)
 
 ### Configure button actions
-On the integration main page, there is now "Configure" button. You can use it to:
-- Refresh authentication tokens (will reload integration, might also need HA restart in some problem cases)
-- Start device authorization again (redo the whole auth flow. Not tested yet but should work ™️)
-- MQTT Broker (switch stream source to a custom broker, including TLS mode and topic prefix)
+On the integration main page, there is now a "Configure" button. You can use it to:
+- **Refresh authentication tokens** (will reload integration, might also need HA restart in some problem cases)
+- **Start device authorization again** (redo the whole auth flow)
+- **MQTT Broker** (switch stream source to a custom broker, including TLS mode and topic prefix)
+- **Reset telemetry container** (delete and recreate the BMW telemetry container)
+- **Clean up orphaned entities** (remove stale entities that no longer receive data)
+- **Settings** (toggle optional features like Magic SOC, Charging History, Tyre Diagnosis, trip-end polling cooldown)
 
-And manual API calls, these should be automatically called when needed, but if it seems that your device names aren't being updated, it might be worth it to run these manually. 
-- Initiate Vehicles API call (Fetch all Vehicle VINS on your account and create entities out of them)
-- Get Basic Vehicle Information (Fetches vehicle details like model, etc. for all known VINS)
-- Get telematics data (Fetches a telematics data from the CarData API. This is a limited hardcoded subset compared to stream. I can add more if needed)
+And manual API calls, these should be automatically called when needed, but if it seems that your device names aren't being updated, it might be worth it to run these manually.
+- **Initiate vehicles (API)** (fetch all vehicle VINs on your account and create entities)
+- **Get basic vehicle information (API)** (fetches vehicle details like model, series, etc. for all known VINs)
+- **Get telematics data (API)** (fetches telematics data from the CarData API)
 
 Note that every API call here counts towards your 50/24h quota!
 
@@ -212,12 +215,48 @@ Available configuration options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `device_id` | *(required)* | Device ID of the BMW vehicle (from the cardata integration) |
 | `license_plate` | *(empty)* | License plate number, shown instead of VIN when set |
 | `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm). Windows, tailgate, and hood only show red when the car is parked and locked with the item open (walked-away alert). |
 | `show_range` | `true` | Battery / fuel level bar with range |
 | `show_image` | `true` | Vehicle image |
 | `show_map` | `true` | Inline location map |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
+
+### YAML Configuration
+
+You can also add the card manually in YAML. The card type is `custom:bmw-cardata-vehicle-card`.
+
+To find the `device_id`, go to **Settings → Devices & Services → BMW CarData**, click on a vehicle device, and copy the device ID from the URL (the hex string after `/config/devices/device/`).
+
+Minimal example:
+
+```yaml
+type: custom:bmw-cardata-vehicle-card
+device_id: abcdef1234567890abcdef1234567890
+```
+
+Full example with all options:
+
+```yaml
+type: custom:bmw-cardata-vehicle-card
+device_id: abcdef1234567890abcdef1234567890
+license_plate: AB 123 CD
+show_indicators: true
+show_range: true
+show_image: true
+show_map: true
+show_buttons: true
+```
+
+To hide the map and quick-info tiles:
+
+```yaml
+type: custom:bmw-cardata-vehicle-card
+device_id: abcdef1234567890abcdef1234567890
+show_map: false
+show_buttons: false
+```
 
 ## Debug Logging
 Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (disabled by default). To reduce noise, change it to `False` and reload HA.
@@ -246,7 +285,8 @@ The predicted SOC sensor automatically learns your vehicle's charging efficiency
 
 For learning to occur, a charging session must meet these criteria:
 - Minimum 5% SOC gain during the session
-- Calculated efficiency between 82% and 98% (outliers are rejected)
+- Calculated efficiency between 40% and 98% (outliers are rejected)
+- Per-condition outlier detection (2-sigma after 5+ history entries for the same charging condition)
 - Valid power data recorded throughout the session
 
 ### Session Finalization
@@ -273,11 +313,16 @@ This ensures the predicted SOC stays accurate for PHEVs even when the hybrid sys
 
 ### Reset Buttons
 
-Each EV/PHEV vehicle gets two button entities to reset learned efficiency:
+Each EV/PHEV vehicle gets button entities to reset learned data:
 - **Reset AC Learning**: Clears all AC entries from the efficiency matrix (resets to default 90%)
 - **Reset DC Learning**: Clears all DC entries from the efficiency matrix (resets to default 93%)
+- **Reset Magic Learning**: Clears driving consumption learning (resets to model default). Only appears when Magic SOC is enabled.
 
 These buttons appear in the vehicle's device page under Configuration entities.
+
+### Manual Battery Capacity
+
+Each EV/PHEV vehicle gets a **Manual Battery Capacity** number entity (disabled by default) under Configuration entities. When set to a value above 0, it overrides the automatic capacity detection (BMW `maxEnergy` / `batterySizeMax`) for both charging and driving SOC prediction. Useful when BMW reports incorrect capacity values. Set to 0 to return to automatic detection.
 
 ## Magic SOC — Driving Consumption Prediction (Experimental)
 
@@ -289,7 +334,7 @@ Magic SOC predicts battery drain during driving using real-time odometer distanc
 - **Consumption learning**: Uses EMA (Exponential Moving Average) with adaptive rate. Default 0.21 kWh/km globally, with per-model defaults (e.g. i4 eDrive40 = 0.18 kWh/km). Learns from completed trips where both SOC drop and distance are available. Requires at least 5 trips before the learning rate settles to 20%.
 - **Trip detection**: Combines BMW's `isMoving` signal, GPS-derived motion, and odometer changes. Handles MQTT bursts and GPS gaps gracefully.
 - **Capacity**: Uses live `maxEnergy` from BMW (reflects real degradation), falls back to `batterySizeMax`, then to per-model defaults.
-- **Reset**: A "Reset Consumption Learning" button appears under Configuration entities for each BEV.
+- **Reset**: A "Reset Magic Learning" button appears under Configuration entities for each BEV.
 
 **Limitations**: This is experimental. Accuracy depends on BMW sending timely SOC and mileage data. Preheating, extended idle with accessories, and firmware glitches can cause temporary inaccuracy. PHEVs are excluded from prediction (hybrid powertrain makes distance-based estimation unreliable).
 
@@ -322,7 +367,9 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN.
 - `cardata.fetch_charging_history` fetches the last 30 days of charging sessions for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
-- `migrations` call for proper renaming the sensors from old installations
+- `cardata.fetch_vehicle_images` manually fetches vehicle images for all configured vehicles.
+- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all_matching`).
+- `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them.
 
 ## API Quota and MQTT Streaming
 
@@ -390,12 +437,21 @@ The integration is organized into focused modules:
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
 | `sensor_diagnostics.py` | Diagnostic sensors: connection, metadata, efficiency, charging history, tyre diagnosis |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
+| `button.py` | Reset learning buttons (AC, DC, consumption) |
+| `number.py` | Manual battery capacity input entity |
 | `config_flow.py` | Setup and reauthorization UI flows |
 | `options_flow.py` | Options menu: settings, MQTT broker, API actions, entity cleanup |
 | `bootstrap.py` | VIN discovery, metadata fetch, container creation |
 | `auth.py` | Token refresh loop, reauth flow, stream error handling |
+| `runtime.py` | Per-entry runtime data, locks, session health |
 | `telematics.py` | Scheduled API polling, trip-end/charge-end triggers |
 | `container.py` | Telematic container CRUD, signature-based reuse |
+| `services.py` | HA service handlers (API calls, migrations, container management) |
+| `ratelimit.py` | Rate limiting: 429 backoff, unauthorized loop protection, container rate limiter |
+| `http_retry.py` | HTTP retry with exponential backoff and jitter |
+| `image.py` | Vehicle image fetching and caching |
+| `frontend_cards.py` | Lovelace card backend: websocket API, resource registration |
+| `migrations.py` | Entity ID format migration tool |
 
 ## Known Limitations
 
