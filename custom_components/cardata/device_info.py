@@ -23,6 +23,10 @@ from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
+# Pre-sorted prefix lists (longest-first) for model matching
+_CONSUMPTION_PREFIXES = sorted(DEFAULT_CONSUMPTION_BY_MODEL, key=len, reverse=True)
+_CAPACITY_PREFIXES = sorted(DEFAULT_CAPACITY_BY_MODEL, key=len, reverse=True)
+
 
 def build_device_metadata(vin: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Build device metadata dict from BMW basicData payload."""
@@ -92,7 +96,7 @@ def is_metadata_bev(device_metadata: dict[str, dict[str, Any]], vin: str) -> boo
     if any(kw in drive_train or kw in propulsion for kw in bev_keywords):
         return True
     model_name = raw.get("modelName") or raw.get("series") or ""
-    for prefix in sorted(DEFAULT_CONSUMPTION_BY_MODEL, key=len, reverse=True):
+    for prefix in _CONSUMPTION_PREFIXES:
         if model_name.startswith(prefix):
             return True
     return False
@@ -154,7 +158,7 @@ def apply_basic_data(
 
     raw_data = metadata.get("raw_data", {})
     model_name = raw_data.get("modelName") or raw_data.get("series") or ""
-    for prefix in sorted(DEFAULT_CONSUMPTION_BY_MODEL, key=len, reverse=True):
+    for prefix in _CONSUMPTION_PREFIXES:
         if model_name.startswith(prefix):
             magic_soc.set_default_consumption(vin, DEFAULT_CONSUMPTION_BY_MODEL[prefix])
             _LOGGER.debug(
@@ -165,7 +169,7 @@ def apply_basic_data(
             )
             break
 
-    for prefix in sorted(DEFAULT_CAPACITY_BY_MODEL, key=len, reverse=True):
+    for prefix in _CAPACITY_PREFIXES:
         if model_name.startswith(prefix):
             magic_soc.set_default_capacity(vin, DEFAULT_CAPACITY_BY_MODEL[prefix])
             _LOGGER.debug(

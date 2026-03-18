@@ -313,7 +313,7 @@ class ContainerRateLimiter:
 
         # Check hourly limit
         if len(self._operations_hour) >= self._max_per_hour:
-            oldest = min(self._operations_hour)
+            oldest = self._operations_hour[0]
             wait_seconds = int(oldest + 3600 - now)
             wait_minutes = wait_seconds // 60
             reason = (
@@ -325,7 +325,7 @@ class ContainerRateLimiter:
 
         # Check daily limit
         if len(self._operations_day) >= self._max_per_day:
-            oldest = min(self._operations_day)
+            oldest = self._operations_day[0]
             wait_seconds = int(oldest + 86400 - now)
             wait_hours = wait_seconds // 3600
             reason = (
