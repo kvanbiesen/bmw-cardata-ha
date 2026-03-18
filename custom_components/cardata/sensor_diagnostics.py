@@ -27,6 +27,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -39,6 +41,23 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
+
+_LOGGER = logging.getLogger(__name__)
+
+# HA recorder rejects attributes above this size
+_MAX_ATTRIBUTES_BYTES = 16384
+
+# Fields to keep when summarising charging sessions for state attributes
+_CHARGING_SESSION_KEYS = (
+    "startTime",
+    "endTime",
+    "startSoc",
+    "endSoc",
+    "energyConsumed",
+    "duration",
+    "chargingType",
+    "sessionId",
+)
 
 
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
@@ -412,11 +431,30 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return charging history sessions as attributes."""
+        """Return charging history sessions as attributes.
+
+        Sessions are summarised to key fields only.  If the result still
+        exceeds the HA recorder limit, the oldest sessions are dropped
+        until it fits.
+        """
         sessions = self._coordinator.get_charging_history(self._vin)
         if not sessions:
             return {}
-        return {"sessions": sessions}
+
+        summarised = [{k: s[k] for k in _CHARGING_SESSION_KEYS if k in s} for s in sessions]
+
+        attrs = {"sessions": summarised}
+        serialised_len = len(json.dumps(attrs, default=str))
+        while summarised and serialised_len > _MAX_ATTRIBUTES_BYTES:
+            summarised.pop(0)
+            attrs = {"sessions": summarised}
+            serialised_len = len(json.dumps(attrs, default=str))
+            if not summarised:
+                _LOGGER.debug(
+                    "Charging history attributes still exceed %d bytes after removing all sessions",
+                    _MAX_ATTRIBUTES_BYTES,
+                )
+        return attrs
 
 
 class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):

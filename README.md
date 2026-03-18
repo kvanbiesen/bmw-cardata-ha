@@ -345,7 +345,7 @@ The integration can fetch your BMW charging session history from the past 30 day
 - **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Enable Charging History
 - **API cost**: 1 call per vehicle per day (from your 50-call daily quota)
 - **Sensor**: Creates a diagnostic sensor per vehicle showing session count and last charge date
-- **Attributes**: Full session data including start/end SOC, energy consumed, duration, location, and cost information
+- **Attributes**: Summarised session data (start/end time, start/end SOC, energy consumed, duration, charging type). Full raw data available via the `cardata.fetch_charging_history` service
 - **Manual trigger**: Use `cardata.fetch_charging_history` service in Developer Tools
 
 ## Tyre Diagnosis (Optional)
