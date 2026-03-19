@@ -51,6 +51,31 @@ def _descriptor_float(state: DescriptorState | None) -> float | None:
         return None
 
 
+def _descriptor_phases(state: DescriptorState | None) -> int | None:
+    """Extract number of phases from a BMW phaseNumber descriptor state.
+
+    The BMW API returns string values such as '1-PHASES', '2-PHASES', '3-PHASES',
+    'NO_CHARGING', or 'INVALID' rather than plain numbers.  Falls back to numeric
+    parsing so that any future numeric representation also works.
+
+    Returns None when the value is absent, unparseable, or indicates no charging.
+    """
+    if state is None or state.value is None:
+        return None
+    value = str(state.value).strip()
+    # BMW string format: "1-PHASES", "2-PHASES", "3-PHASES"
+    if "-PHASES" in value:
+        try:
+            return int(value.split("-")[0])
+        except (ValueError, IndexError):
+            return None
+    # Numeric fallback
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
     """Check if AC voltage x current data is available."""
     voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
@@ -294,7 +319,7 @@ def _seed_power_after_anchor(
     else:
         voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
         current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-        phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
+        phases = _descriptor_phases(vehicle_state.get(DESC_CHARGING_PHASES))
         if voltage and current:
             soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
         else:
@@ -530,7 +555,7 @@ def process_soc_descriptors(
             if soc_predictor.is_charging(vin) and soc_predictor.get_charging_method(vin) != "DC":
                 voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
                 current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-                phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
+                phases = _descriptor_phases(vehicle_state.get(DESC_CHARGING_PHASES))
                 aux_kw = _get_aux_kw()
                 if soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw):
                     if soc_predictor.has_signaled_entity(vin):
