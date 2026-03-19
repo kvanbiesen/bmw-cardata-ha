@@ -19,6 +19,7 @@ from .const import (
 from .debug import debug_enabled
 from .soc_wiring import (
     _descriptor_float,
+    _descriptor_phases,
     _get_aux_kw,
     anchor_soc_session,
 )
@@ -70,7 +71,7 @@ async def async_handle_connection_event(
 
                         voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
                         current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-                        phases = _descriptor_float(vehicle_state.get(DESC_CHARGING_PHASES))
+                        phases = _descriptor_phases(vehicle_state.get(DESC_CHARGING_PHASES))
 
                         if voltage and current:
                             aux_kw = _get_aux_kw()
