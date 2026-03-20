@@ -743,6 +743,13 @@ async def _async_daily_fetches(
     vins: list[str],
 ) -> None:
     """Run daily optional API fetches (charging history, tyre diagnosis) if due."""
+    from .auth import async_ensure_valid_token
+
+    token_valid = await async_ensure_valid_token(entry, runtime.session, runtime.stream, runtime.container_manager)
+    if not token_valid:
+        _LOGGER.debug("Token refresh failed, skipping daily fetches")
+        return
+
     coordinator = runtime.coordinator
     now = time.time()
 
