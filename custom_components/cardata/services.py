@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Mapping
 from typing import Any
 
 import aiohttp
@@ -345,7 +346,7 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
 async def async_handle_migrate(call: ServiceCall) -> None:
     """Handle migrate_entity_ids service call (developer tool)."""
     hass = call.hass
-    data = call.data or {}
+    data: Mapping[str, Any] = call.data or {}
     entry_id = data.get("entry_id")
     force = bool(data.get("force", False))
     dry_run = bool(data.get("dry_run", False))
@@ -392,7 +393,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
       - container_id: required for action "delete"
     """
     hass = call.hass
-    data = call.data or {}
+    data: Mapping[str, Any] = call.data or {}
     entry_id = data.get("entry_id")
     action = data.get("action", "list")
     container_id = data.get("container_id")
