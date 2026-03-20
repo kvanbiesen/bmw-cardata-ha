@@ -690,9 +690,19 @@ async def async_fetch_vehicle_images_service(call) -> None:
         coordinator = runtime_data.coordinator
         session = runtime_data.session
         vins = list(coordinator.data.keys())
-        access_token = entry.data.get("access_token")
+        if not vins:
+            continue
 
-        if not access_token or not vins:
+        try:
+            from .auth import refresh_tokens_for_entry
+
+            await refresh_tokens_for_entry(entry, session, runtime_data.stream, runtime_data.container_manager)
+        except Exception as err:
+            _LOGGER.error("Cardata fetch_vehicle_images: token refresh failed for entry %s: %s", entry_id, err)
+            continue
+
+        access_token = entry.data.get("access_token")
+        if not access_token:
             continue
 
         headers = {
