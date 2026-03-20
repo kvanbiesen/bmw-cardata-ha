@@ -222,7 +222,7 @@ class CardataStreamManager:
             # Get the latest state while holding the lock
             state = self.get_circuit_breaker_state()
 
-            entry = self.hass.config_entries.async_get_entry(self._entry_id)
+            entry = self.hass.config_entries.async_get_entry(self._entry_id) if self._entry_id else None
             if entry:
                 await async_update_entry_data(self.hass, entry, {"circuit_breaker_state": state})
 

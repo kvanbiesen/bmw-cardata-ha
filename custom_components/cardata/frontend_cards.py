@@ -221,6 +221,7 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
             [
                 "vehicle.drivetrain.lastRemainingRange",
                 "vehicle.drivetrain.remainingRange",
+                "vehicle.drivetrain.electricEngine.remainingElectricRange",
             ],
         )
         if total_range:

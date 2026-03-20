@@ -363,7 +363,7 @@ async def handle_stream_error(
 
             if runtime.reauth_flow_id:
                 with suppress(Exception):
-                    await hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
+                    hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
                 runtime.reauth_flow_id = None
 
             persistent_notification.async_create(
@@ -390,7 +390,7 @@ async def handle_stream_error(
             persistent_notification.async_dismiss(hass, notification_id)
             if runtime.reauth_flow_id:
                 with suppress(Exception):
-                    await hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
+                    hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
                 runtime.reauth_flow_id = None
         runtime.reauth_pending = False
         runtime.last_reauth_attempt = 0.0

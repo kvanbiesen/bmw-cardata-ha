@@ -344,7 +344,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await handle_stream_error(hass, entry, reason)
 
         # Check for custom MQTT broker configuration
-        options = entry.options
+        options = dict(entry.options)
         custom_mqtt_enabled = options.get(OPTION_CUSTOM_MQTT_ENABLED, False)
 
         if custom_mqtt_enabled:
