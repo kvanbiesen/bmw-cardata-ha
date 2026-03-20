@@ -294,7 +294,7 @@ async def async_request_with_retry(
                         )
                         await asyncio.sleep(jittered)
                         backoff = min(backoff * backoff_multiplier, max_backoff)
-                        continue
+                    continue
 
                 # Unknown status - return as-is
                 return http_response, None
