@@ -309,7 +309,7 @@ async def async_fetch_and_store_vehicle_images(
                     coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
                     async_dispatcher_send(hass, coordinator.signal_new_image, vin)
 
-            except aiohttp.ClientError as err:
+            except (aiohttp.ClientError, TimeoutError) as err:
                 safe_err = redact_vin_in_text(str(err))
                 _LOGGER.debug(
                     "Vehicle image request errored for %s: %s (will retry on next bootstrap)",
