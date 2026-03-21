@@ -174,13 +174,33 @@ def _normalize_vin_from_identifiers(identifiers: set[tuple[str, str]]) -> str | 
     return None
 
 
-def _pick_first_entity(unique_id_to_entity_id: dict[str, str], vin: str, descriptors: list[str]) -> str | None:
+def _pick_first_entity(
+    hass: HomeAssistant,
+    unique_id_to_entity_id: dict[str, str],
+    vin: str,
+    descriptors: list[str],
+) -> str | None:
+    """Pick the best entity from a priority-ordered descriptor list.
+
+    Prefers the first entity with a non-zero state. Falls back to the first
+    existing entity if all are zero (genuinely empty battery/tank).
+    """
+    first_existing: str | None = None
     for descriptor in descriptors:
         unique_id = f"{vin}_{descriptor}"
         ent = unique_id_to_entity_id.get(unique_id)
-        if ent:
-            return ent
-    return None
+        if not ent:
+            continue
+        if first_existing is None:
+            first_existing = ent
+        state_obj = hass.states.get(ent)
+        if state_obj and state_obj.state not in ("unknown", "unavailable"):
+            try:
+                if float(state_obj.state) != 0.0:
+                    return ent
+            except (ValueError, TypeError):
+                return ent
+    return first_existing
 
 
 def _build_unique_id_map(hass: HomeAssistant) -> dict[str, str]:
@@ -241,11 +261,13 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
 
         # Range (basic implementation): include a couple of variants, pick first that exists.
         total_range = _pick_first_entity(
+            hass,
             unique_id_map,
             vin,
             [
                 "vehicle.drivetrain.lastRemainingRange",
                 "vehicle.drivetrain.remainingRange",
+                "vehicle.drivetrain.electricEngine.kombiRemainingElectricRange",
                 "vehicle.drivetrain.electricEngine.remainingElectricRange",
             ],
         )
