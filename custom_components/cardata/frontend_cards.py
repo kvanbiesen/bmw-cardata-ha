@@ -15,7 +15,7 @@ from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
 
-from .const import DESC_SOC_HEADER, DOMAIN
+from .const import DESC_SOC_HEADER, DOMAIN, MANUAL_TANK_CAPACITY_DESCRIPTOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -300,6 +300,10 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
             entities["remaining_fuel"] = fuel
         if fuel_level := unique_id_map.get(f"{vin}_vehicle.drivetrain.fuelSystem.level"):
             entities["fuel_level"] = fuel_level
+
+        # Manual tank capacity (user-configurable, disabled by default).
+        if tank_cap := unique_id_map.get(f"{vin}_{MANUAL_TANK_CAPACITY_DESCRIPTOR}"):
+            entities["manual_tank_capacity"] = tank_cap
 
         # Service / health summary (use real descriptor paths).
         for key, descriptor in [

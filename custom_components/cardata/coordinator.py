@@ -168,6 +168,11 @@ class CardataCoordinator:
     _manual_battery_capacity: dict[str, float | None] = field(default_factory=dict, init=False)
     _manual_capacity_disabled: dict[str, bool] = field(default_factory=dict, init=False)
 
+    # Manual tank capacity (user input, for computing fuel level percentage)
+    # Per-VIN storage: VIN -> capacity in litres (None = not set)
+    _manual_tank_capacity: dict[str, float | None] = field(default_factory=dict, init=False)
+    _manual_tank_capacity_disabled: dict[str, bool] = field(default_factory=dict, init=False)
+
     # Cached signal strings (initialized in __post_init__ for performance)
     _signal_new_sensor: str = field(default="", init=False)
     _signal_new_binary: str = field(default="", init=False)
@@ -372,6 +377,43 @@ class CardataCoordinator:
             self._manual_battery_capacity.pop(vin, None)
         else:
             self._manual_battery_capacity[vin] = capacity_kwh
+
+    def get_manual_tank_capacity(self, vin: str) -> float | None:
+        """Get manual tank capacity for a VIN (user input).
+
+        Returns None if not set, value is 0, or entity is disabled in the registry.
+        """
+        capacity = self._manual_tank_capacity.get(vin)
+        if capacity is None:
+            return None
+
+        if self._manual_tank_capacity_disabled.get(vin, False):
+            return None
+
+        return capacity
+
+    def refresh_manual_tank_capacity_cache(self, vin: str) -> None:
+        """Refresh the disabled-state cache for a VIN's manual tank capacity entity."""
+        from .const import MANUAL_TANK_CAPACITY_DESCRIPTOR
+
+        entity_registry = async_get_entity_registry(self.hass)
+        unique_id = f"{vin}_{MANUAL_TANK_CAPACITY_DESCRIPTOR}"
+        entity_id = entity_registry.async_get_entity_id("number", DOMAIN, unique_id)
+
+        disabled = False
+        if entity_id:
+            entity_entry = entity_registry.async_get(entity_id)
+            if entity_entry and entity_entry.disabled_by is not None:
+                disabled = True
+
+        self._manual_tank_capacity_disabled[vin] = disabled
+
+    def set_manual_tank_capacity(self, vin: str, capacity_litres: float | None) -> None:
+        """Set manual tank capacity for a VIN."""
+        if capacity_litres is None or capacity_litres <= 0:
+            self._manual_tank_capacity.pop(vin, None)
+        else:
+            self._manual_tank_capacity[vin] = capacity_litres
 
     # --- Delegates to device_info.py ---
 

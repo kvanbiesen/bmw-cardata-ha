@@ -76,6 +76,9 @@ MAGIC_SOC_DESCRIPTOR = "vehicle.magic_soc"
 # Manual battery capacity (user input, takes priority over automatic detection)
 MANUAL_CAPACITY_DESCRIPTOR = "vehicle.manual_battery_capacity"
 
+# Manual tank capacity (user input, for computing fuel level percentage)
+MANUAL_TANK_CAPACITY_DESCRIPTOR = "vehicle.manual_tank_capacity"
+
 DEFAULT_SCOPE = "authenticate_user openid cardata:api:read cardata:streaming:read"
 DEVICE_CODE_URL = "https://customer.bmwgroup.com/gcdm/oauth/device/code"
 TOKEN_URL = "https://customer.bmwgroup.com/gcdm/oauth/token"

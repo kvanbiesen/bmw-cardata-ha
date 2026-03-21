@@ -32,14 +32,20 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfEnergy
+from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DESC_SOC_HEADER, DOMAIN, MANUAL_CAPACITY_DESCRIPTOR
+from .const import (
+    DESC_REMAINING_FUEL,
+    DESC_SOC_HEADER,
+    DOMAIN,
+    MANUAL_CAPACITY_DESCRIPTOR,
+    MANUAL_TANK_CAPACITY_DESCRIPTOR,
+)
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -59,7 +65,6 @@ async def async_setup_entry(
     coordinator = runtime.coordinator
 
     entities: list[NumberEntity] = []
-    created_vins: set[str] = set()
 
     # Get all known VINs (both live MQTT data and restored metadata)
     all_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())
@@ -68,13 +73,15 @@ async def async_setup_entry(
     if coordinator._allowed_vins_initialized:
         all_vins = all_vins & coordinator._allowed_vins
 
-    # Create manual battery capacity input for each known EV/PHEV vehicle
-    for vin in all_vins:
-        # Check if this vehicle has HV battery (EV/PHEV)
-        vehicle_data = coordinator.data.get(vin, {})
-        if DESC_SOC_HEADER in vehicle_data:
-            vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+    created_battery_vins: set[str] = set()
+    created_tank_vins: set[str] = set()
 
+    for vin in all_vins:
+        vehicle_data = coordinator.data.get(vin, {})
+        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+
+        # Manual battery capacity for EV/PHEV vehicles
+        if DESC_SOC_HEADER in vehicle_data:
             entities.append(
                 ManualBatteryCapacityNumber(
                     coordinator=coordinator,
@@ -82,8 +89,20 @@ async def async_setup_entry(
                     vehicle_name=vehicle_name,
                 )
             )
-            created_vins.add(vin)
+            created_battery_vins.add(vin)
             _LOGGER.debug("Created manual battery capacity input for %s (%s)", vehicle_name, redact_vin(vin))
+
+        # Manual tank capacity for vehicles with fuel data
+        if DESC_REMAINING_FUEL in vehicle_data:
+            entities.append(
+                ManualTankCapacityNumber(
+                    coordinator=coordinator,
+                    vin=vin,
+                    vehicle_name=vehicle_name,
+                )
+            )
+            created_tank_vins.add(vin)
+            _LOGGER.debug("Created manual tank capacity input for %s (%s)", vehicle_name, redact_vin(vin))
 
     # Restore previously created entities from entity registry (for VINs not yet in coordinator data)
     entity_registry = async_get(hass)
@@ -95,32 +114,43 @@ async def async_setup_entry(
         if not unique_id or "_" not in unique_id:
             continue
 
-        # Check if this is a manual capacity entity
-        if not unique_id.endswith(f"_{MANUAL_CAPACITY_DESCRIPTOR}"):
-            continue
+        # Restore manual battery capacity entities
+        if unique_id.endswith(f"_{MANUAL_CAPACITY_DESCRIPTOR}"):
+            vin = unique_id.replace(f"_{MANUAL_CAPACITY_DESCRIPTOR}", "")
+            if vin not in created_battery_vins:
+                vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+                entities.append(
+                    ManualBatteryCapacityNumber(
+                        coordinator=coordinator,
+                        vin=vin,
+                        vehicle_name=vehicle_name,
+                    )
+                )
+                created_battery_vins.add(vin)
+                _LOGGER.debug(
+                    "Restored manual battery capacity input for %s (%s) from entity registry",
+                    vehicle_name,
+                    redact_vin(vin),
+                )
 
-        # Extract VIN from unique_id
-        vin = unique_id.replace(f"_{MANUAL_CAPACITY_DESCRIPTOR}", "")
-
-        # Skip if already created above
-        if vin in created_vins:
-            continue
-
-        # Restore entity even if vehicle is offline or not in coordinator.data yet
-        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
-        entities.append(
-            ManualBatteryCapacityNumber(
-                coordinator=coordinator,
-                vin=vin,
-                vehicle_name=vehicle_name,
-            )
-        )
-        created_vins.add(vin)
-        _LOGGER.debug(
-            "Restored manual battery capacity input for %s (%s) from entity registry",
-            vehicle_name,
-            redact_vin(vin),
-        )
+        # Restore manual tank capacity entities
+        if unique_id.endswith(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}"):
+            vin = unique_id.replace(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}", "")
+            if vin not in created_tank_vins:
+                vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+                entities.append(
+                    ManualTankCapacityNumber(
+                        coordinator=coordinator,
+                        vin=vin,
+                        vehicle_name=vehicle_name,
+                    )
+                )
+                created_tank_vins.add(vin)
+                _LOGGER.debug(
+                    "Restored manual tank capacity input for %s (%s) from entity registry",
+                    vehicle_name,
+                    redact_vin(vin),
+                )
 
     if entities:
         async_add_entities(entities)
@@ -205,6 +235,83 @@ class ManualBatteryCapacityNumber(NumberEntity, RestoreEntity):
             self._coordinator.set_manual_battery_capacity(self._vin, None)
             _LOGGER.info(
                 "Manual battery capacity cleared for %s (auto-detect enabled)",
+                redact_vin(self._vin),
+            )
+        self.async_write_ha_state()
+
+
+class ManualTankCapacityNumber(NumberEntity, RestoreEntity):
+    """Number entity for manual fuel tank capacity input."""
+
+    _attr_icon = "mdi:fuel"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_has_entity_name = True
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = 150.0
+    _attr_native_step = 1.0
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_mode = NumberMode.BOX
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        coordinator: CardataCoordinator,
+        vin: str,
+        vehicle_name: str,
+    ) -> None:
+        """Initialize the number entity."""
+        self._coordinator = coordinator
+        self._vin = vin
+        self._attr_unique_id = f"{vin}_{MANUAL_TANK_CAPACITY_DESCRIPTOR}"
+        self._attr_name = "Manual Tank Capacity"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, vin)},
+            name=vehicle_name,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore previous value when entity is added."""
+        await super().async_added_to_hass()
+
+        self._coordinator.refresh_manual_tank_capacity_cache(self._vin)
+
+        last_state = await self.async_get_last_state()
+
+        if last_state is not None and last_state.state not in ("unknown", "unavailable"):
+            try:
+                value = float(last_state.state)
+                if value > 0:
+                    self._coordinator.set_manual_tank_capacity(self._vin, value)
+                    _LOGGER.debug(
+                        "Restored manual tank capacity for %s: %.0f L",
+                        redact_vin(self._vin),
+                        value,
+                    )
+                self._attr_native_value = value
+            except (ValueError, TypeError):
+                self._attr_native_value = 0.0
+        else:
+            self._attr_native_value = 0.0
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value."""
+        return self._attr_native_value
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set new value."""
+        self._attr_native_value = value
+        if value > 0:
+            self._coordinator.set_manual_tank_capacity(self._vin, value)
+            _LOGGER.info(
+                "Manual tank capacity set for %s: %.0f L",
+                redact_vin(self._vin),
+                value,
+            )
+        else:
+            self._coordinator.set_manual_tank_capacity(self._vin, None)
+            _LOGGER.info(
+                "Manual tank capacity cleared for %s",
                 redact_vin(self._vin),
             )
         self.async_write_ha_state()
