@@ -1,3 +1,28 @@
+# Copyright (c) 2025, Renaud Allard <renaud@allard.it>, Kris Van Biesen <kvanbiesen@gmail.com>, Jonas Huberts <jonas.huberts@bmw.de>
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice,
+#    this list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
 """Frontend (Lovelace) helpers for the BMW CarData integration.
 
 It provides:
@@ -15,7 +40,7 @@ from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
 
-from .const import DESC_SOC_HEADER, DOMAIN
+from .const import DESC_SOC_HEADER, DOMAIN, MANUAL_TANK_CAPACITY_DESCRIPTOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -300,6 +325,10 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
             entities["remaining_fuel"] = fuel
         if fuel_level := unique_id_map.get(f"{vin}_vehicle.drivetrain.fuelSystem.level"):
             entities["fuel_level"] = fuel_level
+
+        # Manual tank capacity (user-configurable, disabled by default).
+        if tank_cap := unique_id_map.get(f"{vin}_{MANUAL_TANK_CAPACITY_DESCRIPTOR}"):
+            entities["manual_tank_capacity"] = tank_cap
 
         # Service / health summary (use real descriptor paths).
         for key, descriptor in [

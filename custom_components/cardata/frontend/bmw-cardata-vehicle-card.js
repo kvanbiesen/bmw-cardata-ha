@@ -766,10 +766,14 @@ class BmwCardataVehicleCard extends HTMLElement {
     const hasRangeElectric = Boolean(rangeElectricEntity && hasUsableState(read("range_electric")));
     const hasRangeFuel = Boolean(rangeFuelEntity && hasUsableState(read("range_fuel")));
     const isPHEV = hasRangeElectric && hasRangeFuel;
-    const primaryLevelState = hasSoc ? read("soc") : hasFuelLevel ? read("fuel_level") : null;
-    const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : "";
-    const primaryLevelValue = clamp(toNumberOrZero(primaryLevelState), 0, 100);
-    const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : "—";
+    const tankCapValue = toNumberOrZero(read("manual_tank_capacity"));
+    const fuelLitres = toNumberOrZero(read("remaining_fuel"));
+    const hasFuelWithCap = hasFuelRemaining && tankCapValue > 0;
+    const primaryLevelState = hasSoc ? read("soc") : hasFuelLevel ? read("fuel_level") : (hasFuelWithCap || hasFuelRemaining) ? read("remaining_fuel") : null;
+    const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : hasFuelRemaining ? remainingFuelEntity : "";
+    const primaryLevelValue = hasSoc ? clamp(toNumberOrZero(read("soc")), 0, 100) : hasFuelLevel ? clamp(toNumberOrZero(read("fuel_level")), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
+    const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : hasFuelWithCap ? `${primaryLevelValue}%` : hasFuelRemaining ? formatState(read("remaining_fuel")) : "—";
+    const primaryLevelHasBar = hasSoc || hasFuelLevel || hasFuelWithCap;
     const primaryRangeState = hasRange ? read("range_total") : hasFuelRemaining ? read("remaining_fuel") : null;
     const primaryRangeEntity = hasRange ? rangeEntity : hasFuelRemaining ? remainingFuelEntity : "";
     const primaryRangeIcon = hasRange ? "mdi:arrow-left-right" : "mdi:gas-station";
@@ -900,8 +904,8 @@ class BmwCardataVehicleCard extends HTMLElement {
             </div>
           </div>
         `);
-      } else {
-        // Standard display for non-PHEV vehicles
+      } else if (primaryLevelHasBar) {
+        // Standard display with progress bar (SOC, fuel %, or fuel litres with manual tank capacity)
         this._setHtml(rangeEl, `
           <div class="box range-box">
             <div class="range-top">
@@ -909,6 +913,18 @@ class BmwCardataVehicleCard extends HTMLElement {
                 <div class="bar-level" style="width:${primaryLevelValue}%;"></div>
                 <div class="energy-text">${primaryLevelLabel}</div>
               </div>
+              <div class="range-value" data-entity-id="${escapeHtml(primaryRangeEntity)}" title="${escapeHtml(primaryRangeEntity)}">
+                <ha-icon icon="${primaryRangeIcon}"></ha-icon>
+                <span>${escapeHtml(primaryRangeText)}</span>
+              </div>
+            </div>
+          </div>
+        `);
+      } else {
+        // No percentage available — show range value only (no progress bar)
+        this._setHtml(rangeEl, `
+          <div class="box range-box">
+            <div class="range-top">
               <div class="range-value" data-entity-id="${escapeHtml(primaryRangeEntity)}" title="${escapeHtml(primaryRangeEntity)}">
                 <ha-icon icon="${primaryRangeIcon}"></ha-icon>
                 <span>${escapeHtml(primaryRangeText)}</span>

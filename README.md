@@ -324,6 +324,10 @@ These buttons appear in the vehicle's device page under Configuration entities.
 
 Each EV/PHEV vehicle gets a **Manual Battery Capacity** number entity (disabled by default) under Configuration entities. When set to a value above 0, it overrides the automatic capacity detection (BMW `maxEnergy` / `batterySizeMax`) for both charging and driving SOC prediction. Useful when BMW reports incorrect capacity values. Set to 0 to return to automatic detection.
 
+### Manual Tank Capacity
+
+Vehicles with fuel data get a **Manual Tank Capacity** number entity (disabled by default) under Configuration entities. When set to a value above 0 (in litres), the vehicle card computes a fuel level percentage from the remaining fuel and displays a progress bar. Useful for vehicles where BMW does not send `fuelSystem.level` (the percentage descriptor) and only sends `remainingFuel` (absolute litres). Set to 0 to disable.
+
 ## Magic SOC — Driving Consumption Prediction (Experimental)
 
 Magic SOC predicts battery drain during driving using real-time odometer distance and learned consumption rates. It provides a sub-integer SOC estimate that updates more frequently than BMW's native integer SOC. **Disabled by default** — enable via Settings.
@@ -438,7 +442,7 @@ The integration is organized into focused modules:
 | `sensor_diagnostics.py` | Diagnostic sensors: connection, metadata, efficiency, charging history, tyre diagnosis |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |
 | `button.py` | Reset learning buttons (AC, DC, consumption) |
-| `number.py` | Manual battery capacity input entity |
+| `number.py` | Manual battery capacity and tank capacity input entities |
 | `config_flow.py` | Setup and reauthorization UI flows |
 | `options_flow.py` | Options menu: settings, MQTT broker, API actions, entity cleanup |
 | `bootstrap.py` | VIN discovery, metadata fetch, container creation |
