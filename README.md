@@ -209,6 +209,7 @@ In Home Assistant:
 
 <p align="center">
   <img src="images/card-preview.png" alt="BMW CarData vehicle card preview" width="720" />
+  <img src="https://private-user-images.githubusercontent.com/7585853/564375582-d6a50d42-5430-4b93-afaf-276d33aebc2c.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NzQxODE5MDQsIm5iZiI6MTc3NDE4MTYwNCwicGF0aCI6Ii83NTg1ODUzLzU2NDM3NTU4Mi1kNmE1MGQ0Mi01NDMwLTRiOTMtYWZhZi0yNzZkMzNhZWJjMmMucG5nP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9QUtJQVZDT0RZTFNBNTNQUUs0WkElMkYyMDI2MDMyMiUyRnVzLWVhc3QtMSUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjAzMjJUMTIxMzI0WiZYLUFtei1FeHBpcmVzPTMwMCZYLUFtei1TaWduYXR1cmU9ZmI3ZDNlNTE5ZjRmZTcxODJlZmU4MjI1NGQxYWJiYzA2NWM4NzFiYzY1MjRhZmY2NmYzZTUwMjZlNTdkOTg4YiZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QifQ.sfv3eyl075b0MQuU5Y6yJoG587LAqEx4KWYY8-agxr0  alt="BMW CarData vehicle card preview" width="720" />
 </p>
 
 Available configuration options:
