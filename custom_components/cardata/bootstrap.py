@@ -321,7 +321,7 @@ async def async_fetch_primary_vins(
 
     if response.is_rate_limited:
         error_excerpt = redact_vin_in_text(response.text[:200])
-        reason = f"rate limited (429): {error_excerpt}"
+        reason = f"rate limited ({response.status}): {error_excerpt}"
         _LOGGER.error(
             "BMW API rate limit exceeded! Bootstrap mapping request blocked for entry %s. "
             "BMW's daily quota (typically 50 calls/day) has been reached. "

@@ -260,8 +260,9 @@ async def async_request_with_retry(
                         retry_after = http_response.headers.get("retry-after")
                         rate_limiter.record_429(endpoint=context, retry_after=retry_after)
                     _LOGGER.warning(
-                        "%s rate limited (429): %s",
+                        "%s rate limited (%d): %s",
                         context,
+                        response.status,
                         log_excerpt,
                     )
                     return http_response, None
