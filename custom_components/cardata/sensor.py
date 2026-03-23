@@ -478,6 +478,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing"):
                 continue
 
+            # Remove fuel range entity for BEV vehicles (not applicable)
+            if descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
+                if coordinator._is_metadata_bev(vin):
+                    entity_registry.async_remove(entity_entry.entity_id)
+                    continue
+
             if descriptor == "diagnostics_vehicle_metadata":
                 ensure_metadata_sensor(vin)
                 continue
