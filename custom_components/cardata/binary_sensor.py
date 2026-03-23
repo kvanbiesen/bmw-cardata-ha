@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -77,7 +78,7 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
 
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
         if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR

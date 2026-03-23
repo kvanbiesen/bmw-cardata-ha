@@ -32,7 +32,8 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResult, FlowResultType
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.data_entry_flow import FlowResultType
 
 from .config_flow import _sanitize_error_for_user, _validate_client_id
 from .const import (
@@ -65,7 +66,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         self._config_entry = config_entry
         self._reauth_client_id: str | None = None
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
             menu_options={
@@ -83,7 +84,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
     # -- Helpers ---------------------------------------------------------------
 
-    def _finish(self) -> FlowResult:
+    def _finish(self) -> ConfigFlowResult:
         """Finish the options flow preserving existing options."""
         return self.async_create_entry(title="", data=dict(self._config_entry.options))
 
@@ -96,7 +97,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         step_id: str,
         errors: dict[str, str] | None = None,
         placeholders: dict[str, Any] | None = None,
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         return self.async_show_form(
             step_id=step_id,
             data_schema=self._confirm_schema(),
@@ -125,7 +126,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         service: str,
         user_input: dict[str, Any] | None,
         service_data: dict[str, Any] | None = None,
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Shared pattern: check runtime, confirm, call a service, finish."""
         runtime = self._get_runtime()
         if runtime is None:
@@ -142,7 +143,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
     # -- Settings --------------------------------------------------------------
 
-    async def async_step_action_settings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             from homeassistant.helpers import entity_registry as er
 
@@ -196,7 +197,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
     # -- MQTT Broker -----------------------------------------------------------
 
-    async def async_step_action_mqtt_broker(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_mqtt_broker(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Configure a custom MQTT broker (e.g. for bmw-mqtt-bridge)."""
         options = dict(self._config_entry.options)
 
@@ -271,7 +272,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
     # -- API Actions -----------------------------------------------------------
 
-    async def async_step_action_refresh_tokens(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_refresh_tokens(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is None:
             return self._show_confirm(step_id="action_refresh_tokens")
         if not user_input.get("confirm"):
@@ -291,7 +292,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
         return self._finish()
 
-    async def async_step_action_reauth(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_reauth(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         current_client_id = self._reauth_client_id or self._config_entry.data.get("client_id") or ""
         schema = vol.Schema(
             {
@@ -320,10 +321,10 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         self._reauth_client_id = client_id
         return await self._handle_reauth()
 
-    async def async_step_action_fetch_mappings(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_fetch_mappings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._confirm_and_call_service("action_fetch_mappings", "fetch_vehicle_mappings", user_input)
 
-    async def async_step_action_fetch_basic(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_fetch_basic(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         runtime = self._get_runtime()
         if runtime is None:
             return self._show_confirm(step_id="action_fetch_basic", errors={"base": "runtime_missing"})
@@ -343,12 +344,12 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             )
         return self._finish()
 
-    async def async_step_action_fetch_telematic(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_fetch_telematic(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return await self._confirm_and_call_service("action_fetch_telematic", "fetch_telematic_data", user_input)
 
     # -- Container Reset -------------------------------------------------------
 
-    async def async_step_action_reset_container(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_reset_container(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         from .container import CardataContainerError
 
         runtime = self._get_runtime()
@@ -413,7 +414,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
     # -- Entity Cleanup --------------------------------------------------------
 
-    async def async_step_action_cleanup_entities(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_action_cleanup_entities(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Clean up orphaned entities for this integration."""
         from homeassistant.helpers import entity_registry as er
 
@@ -502,7 +503,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
 
     # -- Reauth ----------------------------------------------------------------
 
-    async def _handle_reauth(self) -> FlowResult:
+    async def _handle_reauth(self) -> ConfigFlowResult:
         entry = self._config_entry
         if entry is None:
             return self.async_abort(reason="unknown")
