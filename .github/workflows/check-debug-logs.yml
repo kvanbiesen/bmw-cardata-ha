@@ -25,9 +25,10 @@ jobs:
             const match = body.match(/### Debug logs\s*\n([\s\S]*?)(?=\n### |$)/);
             const logsSection = match ? match[1].trim() : '';
 
-            // Must contain at least one DEBUG-level line.
-            // WARNING/INFO-only logs are not debug logs.
-            const hasDebugLevel = /\bDEBUG\b/.test(logsSection);
+            // Must contain at least one DEBUG-level line in an actual log entry.
+            // WARNING/INFO-only logs are not debug logs, and the word DEBUG
+            // appearing in yaml snippets or instructions should not match.
+            const hasDebugLevel = /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*\bDEBUG\b/.test(logsSection);
 
             // Additional quality patterns
             const logPatterns = [
@@ -118,7 +119,7 @@ jobs:
             const hasLogs = comments.some(c => {
               const body = c.body || '';
               if (logAttachmentPattern.test(body)) return true;
-              const hasDebugLevel = /\bDEBUG\b/.test(body);
+              const hasDebugLevel = /\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}.*\bDEBUG\b/.test(body);
               const matchCount = logPatterns.filter(p => p.test(body)).length;
               return body.length > 100 && hasDebugLevel && matchCount >= 1;
             });
