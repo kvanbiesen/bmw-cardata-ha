@@ -130,11 +130,18 @@ class HttpResponse:
     @property
     def is_rate_limited(self) -> bool:
         """Check if response indicates rate limiting."""
-        return self.status == RATE_LIMIT_CODE
+        if self.status == RATE_LIMIT_CODE:
+            return True
+        # BMW returns rate limiting as HTTP 403 with CU-429 in the body
+        if self.status == 403 and "CU-429" in self.text:
+            return True
+        return False
 
     @property
     def is_auth_error(self) -> bool:
         """Check if response indicates authentication error."""
+        if self.is_rate_limited:
+            return False
         return self.status in (401, 403)
 
 
