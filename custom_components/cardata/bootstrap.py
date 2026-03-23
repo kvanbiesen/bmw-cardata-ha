@@ -549,6 +549,7 @@ async def async_seed_telematic_data(
 
         if merged_data:
             await coordinator.async_handle_message({"vin": vin, "data": merged_data})
+            coordinator.record_telematic_poll(vin)
             created = True
             _LOGGER.debug(
                 "Bootstrap seeded %d descriptor(s) for VIN %s from %d container(s)",
