@@ -31,6 +31,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from typing import Any
 
 import aiohttp
 from homeassistant.components import persistent_notification
@@ -452,43 +453,18 @@ async def async_ensure_container_for_entry(
         _LOGGER.debug("Using existing container %s (signature matches)", hv_container_id)
         return True
 
-    # If container exists but signature doesn't match, log warning
+    # If container exists but signature doesn't match, auto-recreate.
+    # This happens after integration updates that add new descriptors.
     if hv_container_id and stored_signature != desired_signature:
         _LOGGER.info(
             "Container signature mismatch (stored: %s, expected: %s). "
-            "Keeping existing container. Use 'Reset Container' to update.",
+            "Auto-recreating container with updated descriptors.",
             stored_signature,
             desired_signature,
         )
-        # Keep using existing container even with mismatch
-        # User can manually reset if needed
-        if not force:
-            from homeassistant.components import persistent_notification
+        force = True
 
-            notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
-            persistent_notification.async_create(
-                hass,
-                (
-                    "BMW CarData container descriptor mismatch detected.\n\n"
-                    "This usually happens after an integration update that adds new sensors. "
-                    "Some vehicle data may not be available until you recreate the container.\n\n"
-                    "**Action required:**\n"
-                    "1. Go to Settings → Devices & Services → BMW CarData\n"
-                    "2. Click Configure on your BMW account\n"
-                    "3. Select 'Reset HV Battery Container'\n\n"
-                    "This will use 1 API call to recreate the container with updated descriptors."
-                ),
-                title="BMW CarData - Container Update Needed",
-                notification_id=notification_id,
-            )
-
-            # Keep using existing container to avoid breaking everything
-            container_manager.sync_from_entry(hv_container_id)
-            # Update signature to prevent notification spam on every restart
-            await async_update_entry_data(hass, entry, {"hv_descriptor_signature": desired_signature})
-            return True
-
-    # Only create if forced or no container exists
+    # Create (or recreate) container
     _LOGGER.info(
         "Creating HV container for entry %s (force=%s, exists=%s)", entry.entry_id, force, hv_container_id is not None
     )
@@ -498,7 +474,12 @@ async def async_ensure_container_for_entry(
     rate_limiter = runtime.container_rate_limiter if runtime else None
 
     try:
-        container_id = await container_manager.async_ensure_hv_container(access_token, rate_limiter)
+        if force:
+            # Reset deletes old matching containers before creating fresh one,
+            # ensuring updated descriptors are used (not loose-match reuse).
+            container_id = await container_manager.async_reset_hv_container(access_token, rate_limiter)
+        else:
+            container_id = await container_manager.async_ensure_hv_container(access_token, rate_limiter)
     except CardataContainerError as err:
         _LOGGER.error(
             "Failed to create HV container for entry %s: %s",
@@ -524,14 +505,14 @@ async def async_ensure_container_for_entry(
     if runtime and runtime.container_manager:
         runtime.container_manager.sync_from_entry(container_id)
 
-    await async_update_entry_data(
-        hass,
-        entry,
-        {
-            "hv_container_id": container_id,
-            "hv_descriptor_signature": actual_signature,
-        },
-    )
+    update_data: dict[str, Any] = {
+        "hv_container_id": container_id,
+        "hv_descriptor_signature": actual_signature,
+    }
+    if force:
+        # Clear stale container list so polling uses only the new container
+        update_data["container_ids"] = [container_id]
+    await async_update_entry_data(hass, entry, update_data)
     _LOGGER.info("Ensured HV container %s for entry %s", container_id, entry.entry_id)
 
     return True
