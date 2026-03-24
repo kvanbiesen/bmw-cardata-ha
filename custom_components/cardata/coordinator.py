@@ -435,7 +435,7 @@ class CardataCoordinator:
 
     def get_magic_soc_attributes(self, vin: str) -> dict[str, Any]:
         """Get extra state attributes for the Magic SOC sensor."""
-        return _sw_get_magic_soc_attrs(self._soc_predictor, self._magic_soc, vin)
+        return _sw_get_magic_soc_attrs(self._soc_predictor, self._magic_soc, vin, self.data.get(vin))
 
     def get_magic_soc(self, vin: str) -> float | None:
         """Get Magic SOC prediction for driving and charging."""

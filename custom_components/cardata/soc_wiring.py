@@ -49,6 +49,7 @@ from .const import (
     DESC_REMAINING_FUEL,
     DESC_SOC_HEADER,
     DESC_TRAVELLED_DISTANCE,
+    DESC_TRIP_HVSOC,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
     PREDICTED_SOC_DESCRIPTOR,
@@ -220,6 +221,14 @@ def get_magic_soc(
         session = soc_predictor._sessions.get(vin)
     anchor = session.anchor_timestamp if session is not None else None
     bmw_soc = _resolve_bmw_soc(vehicle_data, anchor)
+    # Fallback to trip-end hvSoc for vehicles without header/charging.level (e.g. NK)
+    if bmw_soc is None and not is_charging:
+        hvsoc_state = vehicle_data.get(DESC_TRIP_HVSOC)
+        if hvsoc_state and hvsoc_state.value is not None:
+            try:
+                bmw_soc = float(hvsoc_state.value)
+            except (TypeError, ValueError):
+                pass
 
     if is_charging:
         return soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
@@ -239,11 +248,19 @@ def get_magic_soc_attributes(
     soc_predictor: SOCPredictor,
     magic_soc: MagicSOCPredictor,
     vin: str,
+    vehicle_data: dict[str, DescriptorState] | None = None,
 ) -> dict[str, Any]:
     """Get extra state attributes for the Magic SOC sensor."""
     attrs = magic_soc.get_magic_soc_attributes(vin)
     if soc_predictor.is_charging(vin):
         attrs["prediction_mode"] = "charging"
+    elif (
+        vehicle_data is not None
+        and attrs.get("prediction_mode") == "passthrough"
+        and _descriptor_float(vehicle_data.get(DESC_SOC_HEADER)) is None
+        and _descriptor_float(vehicle_data.get(DESC_TRIP_HVSOC)) is not None
+    ):
+        attrs["prediction_mode"] = "fallback (trip-end SOC, may be stale after charging)"
     return attrs
 
 
@@ -685,6 +702,28 @@ def process_soc_descriptors(
                         if soc_predictor.has_signaled_entity(vin):
                             if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                                 schedule_debounce = True
+                        if magic_soc_pred.has_signaled_magic_soc_entity(vin):
+                            if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                                schedule_debounce = True
+                    except (TypeError, ValueError):
+                        pass
+
+        elif descriptor == DESC_TRIP_HVSOC:
+            # Trip-end SOC fallback for vehicles without header/charging.level (e.g. NK).
+            # Only populates the Magic SOC cache — does NOT feed charging prediction,
+            # trigger re-anchoring, or attempt late-anchor (hvSoc is historical data).
+            # Skipped when header has a real value (normal vehicles).
+            if value is not None:
+                header_state = vehicle_state.get(DESC_SOC_HEADER)
+                if header_state is None or header_state.value is None:
+                    try:
+                        hvsoc_val = float(value)
+                        magic_soc_pred.update_bmw_soc(vin, hvsoc_val)
+                        _LOGGER.debug(
+                            "Trip-end hvSoc fallback: %.1f%% for %s (may be stale after charging)",
+                            hvsoc_val,
+                            redact_vin(vin),
+                        )
                         if magic_soc_pred.has_signaled_magic_soc_entity(vin):
                             if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                                 schedule_debounce = True
