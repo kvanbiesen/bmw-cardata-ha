@@ -132,16 +132,12 @@ async def async_perform_telematic_fetch(
         # Fatal: cannot proceed without VIN
         return TelematicFetchResult(None, "no_vin")
 
-    # Use all cached container IDs discovered during bootstrap.
-    # Falls back to hv_container_id for legacy entries that haven't been re-bootstrapped.
+    # Use only our own HV container for ongoing polls (not all discovered containers).
+    # Bootstrap seeds from all containers once; ongoing polling should be lean.
     container_ids: list[str] = []
-    cached_ids = entry.data.get("container_ids")
-    if isinstance(cached_ids, list) and cached_ids:
-        container_ids = list(cached_ids)
-    else:
-        hv_cid = entry.data.get("hv_container_id")
-        if hv_cid:
-            container_ids = [hv_cid]
+    hv_cid = entry.data.get("hv_container_id")
+    if hv_cid:
+        container_ids = [hv_cid]
 
     if not container_ids:
         if entry.data.get(BOOTSTRAP_COMPLETE):
@@ -410,8 +406,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                 1 if runtime.coordinator.enable_tyre_diagnosis else 0
             )
             daily_extra = daily_calls_per_vin * num_vins
-            cached_cids = entry.data.get("container_ids")
-            num_containers = max(1, len(cached_cids) if isinstance(cached_cids, list) else 1)
+            num_containers = 1  # Ongoing polls use only hv_container_id
             target_polls = max((TARGET_DAILY_POLLS - daily_extra) // num_containers, num_vins)
             stale_threshold = int(86400.0 * num_vins / target_polls)
 
