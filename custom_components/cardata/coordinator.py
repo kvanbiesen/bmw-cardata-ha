@@ -423,6 +423,8 @@ class CardataCoordinator:
 
     def get_derived_fuel_range(self, vin: str) -> float | None:
         """Get derived fuel/petrol range for hybrid vehicles (total - electric)."""
+        if self._is_metadata_bev(vin):
+            return None
         return _di_get_derived_fuel_range(self.data.get(vin))
 
     # --- Delegates to soc_wiring.py ---

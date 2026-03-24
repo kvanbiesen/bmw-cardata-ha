@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -131,7 +132,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # Don't override unique_id - let parent class set it properly
         # unique_id is already set in CardataEntity.__init__ as: f"{vin}_device_tracker"
 
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
         self._base_name = "Location"
         # Update name to include vehicle name prefix
         self._update_name(write_state=False)

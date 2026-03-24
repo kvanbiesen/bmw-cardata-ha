@@ -39,8 +39,8 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import persistent_notification
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 
 from .const import DOMAIN
 
@@ -116,7 +116,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         self._reauth_entry: config_entries.ConfigEntry | None = None
         self._entries_to_remove: list[str] = []
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is None:
             return self.async_show_form(step_id="user", data_schema=vol.Schema({vol.Required("client_id"): str}))
 
@@ -172,7 +172,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
                 code_challenge=_generate_code_challenge(self._code_verifier),
             )
 
-    async def async_step_authorize(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_authorize(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if self._client_id is None:
             raise RuntimeError("Client ID must be set before authorization step")
         if self._device_data is None:
@@ -240,7 +240,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         )
         return await self.async_step_tokens()
 
-    async def async_step_tokens(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_tokens(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         from custom_components.cardata.const import DOMAIN
 
         if self._client_id is None:
@@ -300,7 +300,7 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         friendly_title = f"BMW CarData ({self._client_id[:8]})"
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
-    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         entry_id = entry_data.get("entry_id")
         if entry_id:
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)

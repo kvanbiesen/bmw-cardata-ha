@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -78,7 +79,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         self._stream = stream_manager
         self._entry_id = entry_id
         self._sensor_type = sensor_type
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
         # Configure based on sensor type
         if sensor_type == "last_message":
@@ -205,7 +206,7 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
         super().__init__(coordinator, vin, "diagnostics_vehicle_metadata")
         self._base_name = "Vehicle Metadata"
         self._update_name(write_state=False)
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -256,11 +257,6 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self) -> str | None:
-        """Return metadata status."""
-        return self._attr_native_value
-
-    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return all vehicle metadata as attributes."""
         metadata = self._coordinator.device_metadata.get(self._vin, {})
@@ -287,7 +283,7 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
         super().__init__(coordinator, vin, "diagnostics_charging_matrix")
         self._base_name = "Charging Efficiency Matrix"
         self._update_name(write_state=False)
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to learning updates."""
@@ -350,11 +346,6 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self) -> str | None:
-        """Return learning status summary."""
-        return self._attr_native_value
-
-    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return efficiency learning matrix as attributes."""
         return self._coordinator.get_efficiency_learning_attributes(self._vin)
@@ -371,7 +362,7 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
         super().__init__(coordinator, vin, "diagnostics_charging_history")
         self._base_name = "Charging History"
         self._update_name(write_state=False)
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -425,11 +416,6 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
         self.schedule_update_ha_state()
 
     @property
-    def native_value(self) -> str | None:
-        """Return charging history summary."""
-        return self._attr_native_value
-
-    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return charging history sessions as attributes.
 
@@ -468,7 +454,7 @@ class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
         super().__init__(coordinator, vin, "diagnostics_tyre_diagnosis")
         self._base_name = "Tyre Diagnosis"
         self._update_name(write_state=False)
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -541,11 +527,6 @@ class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
             return
         self._load_current_value()
         self.schedule_update_ha_state()
-
-    @property
-    def native_value(self) -> str | None:
-        """Return tyre diagnosis summary."""
-        return self._attr_native_value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

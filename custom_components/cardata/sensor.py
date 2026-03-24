@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -92,7 +93,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
 
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
         # create Raw data gps Sensors but hidden
         if descriptor in (
@@ -478,6 +479,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if descriptor in ("soc_estimate", "soc_rate", "soc_estimate_testing"):
                 continue
 
+            # Remove fuel range entity for BEV vehicles (not applicable)
+            if descriptor == "vehicle.drivetrain.fuelSystem.remainingFuelRange":
+                if coordinator._is_metadata_bev(vin):
+                    entity_registry.async_remove(entity_entry.entity_id)
+                    continue
+
             if descriptor == "diagnostics_vehicle_metadata":
                 ensure_metadata_sensor(vin)
                 continue
@@ -536,8 +543,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         # Skip only if entity is explicitly disabled by user
         entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, unique_id)
         if entity_id:
-            entity_entry = entity_registry.async_get(entity_id)
-            if entity_entry and entity_entry.disabled_by is not None:
+            existing = entity_registry.async_get(entity_id)
+            if existing and existing.disabled_by is not None:
                 continue
 
         diagnostic_entities.append(
