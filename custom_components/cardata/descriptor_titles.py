@@ -53,6 +53,7 @@ DESCRIPTOR_TITLES = {
     "vehicle.powertrain.electric.battery.preconditioning.automaticMode.statusFeedback": "Battery EV Automatic preconditioning state",
     "vehicle.powertrain.electric.battery.preconditioning.manualMode.statusFeedback": "Battery EV Manual preconditioning state",
     "vehicle.powertrain.electric.battery.preconditioning.state": "Battery EV Preconditioning state",
+    "vehicle.powertrain.electric.battery.stateOfCharge.displayed": "Battery EV State Of Charge",
     "vehicle.powertrain.electric.battery.stateOfCharge.target": "Battery EV Target state of charge",
     "vehicle.powertrain.electric.battery.stateOfCharge.targetMin": "Battery EV Target state of charge (min)",
     "vehicle.powertrain.electric.battery.stateOfCharge.targetSoCForProfessionalMode": "Battery EV Target state of charge (professional mode)",

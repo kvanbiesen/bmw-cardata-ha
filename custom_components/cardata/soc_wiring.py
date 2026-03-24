@@ -47,6 +47,7 @@ from .const import (
     DESC_FUEL_LEVEL,
     DESC_MAX_ENERGY,
     DESC_REMAINING_FUEL,
+    DESC_SOC_DISPLAYED,
     DESC_SOC_HEADER,
     DESC_TRAVELLED_DISTANCE,
     DESC_TRIP_HVSOC,
@@ -151,9 +152,10 @@ def _resolve_bmw_soc(
     vehicle_data: dict[str, DescriptorState],
     session_anchor: datetime | None,
 ) -> float | None:
-    """Resolve BMW SOC from charging.level (preferred) or header (fallback).
+    """Resolve BMW SOC from charging.level, header, or stateOfCharge.displayed.
 
-    When session_anchor is provided, both sources are checked for freshness
+    Priority: charging.level (during charging) > header > displayed (NK fallback).
+    When session_anchor is provided, sources are checked for freshness
     to avoid stale data from before the session causing a false re-anchor.
     """
     cl = vehicle_data.get(DESC_CHARGING_LEVEL)
@@ -164,15 +166,16 @@ def _resolve_bmw_soc(
             except (TypeError, ValueError):
                 pass
 
-    soc_state = vehicle_data.get(DESC_SOC_HEADER)
-    if soc_state and soc_state.value is not None:
-        try:
-            candidate = float(soc_state.value)
-            if session_anchor is not None and not _is_descriptor_fresh_for_session(soc_state, session_anchor):
-                return None
-            return candidate
-        except (TypeError, ValueError):
-            pass
+    for desc in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
+        soc_state = vehicle_data.get(desc)
+        if soc_state and soc_state.value is not None:
+            try:
+                candidate = float(soc_state.value)
+                if session_anchor is not None and not _is_descriptor_fresh_for_session(soc_state, session_anchor):
+                    continue
+                return candidate
+            except (TypeError, ValueError):
+                pass
 
     return None
 
@@ -221,7 +224,9 @@ def get_magic_soc(
         session = soc_predictor._sessions.get(vin)
     anchor = session.anchor_timestamp if session is not None else None
     bmw_soc = _resolve_bmw_soc(vehicle_data, anchor)
-    # Fallback to trip-end hvSoc for vehicles without header/charging.level (e.g. NK)
+    # Last-resort fallback to trip-end hvSoc. Normally dead code since
+    # _resolve_bmw_soc now covers stateOfCharge.displayed (NK vehicles).
+    # Kept as safety net for unknown models missing both header and displayed.
     if bmw_soc is None and not is_charging:
         hvsoc_state = vehicle_data.get(DESC_TRIP_HVSOC)
         if hvsoc_state and hvsoc_state.value is not None:
@@ -258,6 +263,7 @@ def get_magic_soc_attributes(
         vehicle_data is not None
         and attrs.get("prediction_mode") == "passthrough"
         and _descriptor_float(vehicle_data.get(DESC_SOC_HEADER)) is None
+        and _descriptor_float(vehicle_data.get(DESC_SOC_DISPLAYED)) is None
         and _descriptor_float(vehicle_data.get(DESC_TRIP_HVSOC)) is not None
     ):
         attrs["prediction_mode"] = "fallback (trip-end SOC, may be stale after charging)"
@@ -276,12 +282,14 @@ def anchor_soc_session(
     Must be called while holding _lock.
     """
     current_soc: float | None = None
-    soc_state = vehicle_state.get(DESC_SOC_HEADER)
-    if soc_state and soc_state.value is not None:
-        try:
-            current_soc = float(soc_state.value)
-        except (TypeError, ValueError):
-            pass
+    for desc in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
+        soc_state = vehicle_state.get(desc)
+        if soc_state and soc_state.value is not None:
+            try:
+                current_soc = float(soc_state.value)
+                break
+            except (TypeError, ValueError):
+                pass
 
     if current_soc is None:
         current_soc = soc_predictor._last_predicted_soc.get(vin)
@@ -426,13 +434,15 @@ def anchor_driving_session(
         _LOGGER.debug("Magic SOC: Skipping anchor for %s (charging active)", redact_vin(vin))
         return
 
-    soc_state = vehicle_state.get(DESC_SOC_HEADER)
     current_soc: float | None = None
-    if soc_state and soc_state.value is not None:
-        try:
-            current_soc = float(soc_state.value)
-        except (TypeError, ValueError):
-            pass
+    for desc in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
+        soc_state = vehicle_state.get(desc)
+        if soc_state and soc_state.value is not None:
+            try:
+                current_soc = float(soc_state.value)
+                break
+            except (TypeError, ValueError):
+                pass
     if current_soc is None:
         current_soc = magic_soc.get_last_known_soc(vin)
         if current_soc is None:
@@ -607,28 +617,28 @@ def process_soc_descriptors(
                         if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                             schedule_debounce = True
 
-        elif descriptor == DESC_SOC_HEADER:
+        elif descriptor in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
             if value is not None:
                 try:
                     soc_val = float(value)
-                    skip_stale_header = False
+                    skip_stale = False
                     if soc_predictor.is_charging(vin):
                         session = soc_predictor._sessions.get(vin)
                         if session is not None:
-                            # Skip header when its BMW timestamp is from before
+                            # Skip when BMW timestamp is from before
                             # the current session (prevents stale data after restart)
-                            header_state = vehicle_state.get(DESC_SOC_HEADER)
-                            if header_state is not None and not _is_descriptor_fresh_for_session(
-                                header_state,
+                            desc_state = vehicle_state.get(descriptor)
+                            if desc_state is not None and not _is_descriptor_fresh_for_session(
+                                desc_state,
                                 session.anchor_timestamp,
                             ):
-                                skip_stale_header = True
+                                skip_stale = True
                             # PHEV: skip header sync-down when charging.level is fresh.
                             # Stale header (frozen at pre-charge value) is always below
                             # prediction — blocking sync-down catches it.  Fresh header
                             # above prediction is a legitimate mid-charge update and must
                             # be allowed through for re-anchoring.
-                            if not skip_stale_header and soc_predictor.is_phev(vin):
+                            if not skip_stale and soc_predictor.is_phev(vin):
                                 cl = vehicle_state.get(DESC_CHARGING_LEVEL)
                                 if (
                                     cl is not None
@@ -640,8 +650,8 @@ def process_soc_descriptors(
                                 ):
                                     current_predicted = soc_predictor._last_predicted_soc.get(vin)
                                     if current_predicted is not None and soc_val < current_predicted:
-                                        skip_stale_header = True
-                    if not skip_stale_header:
+                                        skip_stale = True
+                    if not skip_stale:
                         soc_predictor.update_bmw_soc(vin, soc_val)
                         magic_soc_pred.update_bmw_soc(vin, soc_val)
                     if soc_predictor.is_charging(vin) and not soc_predictor.has_active_session(vin):
@@ -709,13 +719,17 @@ def process_soc_descriptors(
                         pass
 
         elif descriptor == DESC_TRIP_HVSOC:
-            # Trip-end SOC fallback for vehicles without header/charging.level (e.g. NK).
-            # Only populates the Magic SOC cache — does NOT feed charging prediction,
-            # trigger re-anchoring, or attempt late-anchor (hvSoc is historical data).
-            # Skipped when header has a real value (normal vehicles).
+            # Last-resort fallback. Normally dead code since header or displayed
+            # covers all known vehicles. Kept as safety net for unknown models.
+            # Only populates the Magic SOC cache — no charging prediction,
+            # no re-anchoring, no late-anchor (hvSoc is historical trip-end data).
             if value is not None:
                 header_state = vehicle_state.get(DESC_SOC_HEADER)
-                if header_state is None or header_state.value is None:
+                displayed_state = vehicle_state.get(DESC_SOC_DISPLAYED)
+                has_live_soc = (header_state is not None and header_state.value is not None) or (
+                    displayed_state is not None and displayed_state.value is not None
+                )
+                if not has_live_soc:
                     try:
                         hvsoc_val = float(value)
                         magic_soc_pred.update_bmw_soc(vin, hvsoc_val)
@@ -775,13 +789,13 @@ def process_soc_descriptors(
                 anchor_soc_session(soc_predictor, magic_soc_pred, vin, vehicle_state, manual_cap)
 
     # Check if predicted_soc sensor should be created
-    if DESC_SOC_HEADER in vehicle_state:
+    if DESC_SOC_HEADER in vehicle_state or DESC_SOC_DISPLAYED in vehicle_state:
         if PREDICTED_SOC_DESCRIPTOR not in vehicle_state:
             if pending.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
                 schedule_debounce = True
 
     # Detect PHEV
-    has_hv_battery = DESC_SOC_HEADER in vehicle_state
+    has_hv_battery = DESC_SOC_HEADER in vehicle_state or DESC_SOC_DISPLAYED in vehicle_state
     has_fuel_system = DESC_REMAINING_FUEL in vehicle_state or DESC_FUEL_LEVEL in vehicle_state
     if has_hv_battery:
         is_phev = has_fuel_system and not coordinator._is_metadata_bev(vin)
