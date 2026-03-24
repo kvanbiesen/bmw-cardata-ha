@@ -40,6 +40,8 @@ DESC_CHARGING_POWER = "vehicle.powertrain.electric.battery.charging.power"
 DESC_REMAINING_FUEL = "vehicle.drivetrain.fuelSystem.remainingFuel"
 DESC_FUEL_LEVEL = "vehicle.drivetrain.fuelSystem.level"
 DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
+DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
+DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
 
 # Lock acquisition timeout (seconds) — used for connect, credential, and token refresh locks
 LOCK_ACQUIRE_TIMEOUT = 60.0
@@ -62,9 +64,10 @@ WINDOW_DESCRIPTORS = (
 # Battery descriptors for device class detection
 BATTERY_DESCRIPTORS = {
     DESC_SOC_HEADER,
+    DESC_SOC_DISPLAYED,
     DESC_CHARGING_LEVEL,
     "vehicle.powertrain.electric.battery.stateOfCharge.target",
-    "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
+    DESC_TRIP_HVSOC,
 }
 
 # Predicted SOC sensor (calculated during charging)
@@ -146,7 +149,7 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.drivetrain.electricEngine.charging.method",
     "vehicle.body.chargingPort.plugEventId",
     DESC_CHARGING_PHASES,
-    "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc",
+    DESC_TRIP_HVSOC,
     "vehicle.trip.segment.accumulated.drivetrain.electricEngine.recuperationTotal",
     "vehicle.drivetrain.electricEngine.remainingElectricRange",
     "vehicle.drivetrain.electricEngine.charging.timeRemaining",
@@ -156,6 +159,7 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.powertrain.electric.battery.preconditioning.manualMode.statusFeedback",
     "vehicle.drivetrain.electricEngine.charging.reasonChargingEnd",
     "vehicle.powertrain.electric.battery.stateOfCharge.target",
+    DESC_SOC_DISPLAYED,
     "vehicle.body.chargingPort.lockedStatus",
     DESC_CHARGING_LEVEL,
     "vehicle.powertrain.electric.battery.stateOfHealth.displayed",
