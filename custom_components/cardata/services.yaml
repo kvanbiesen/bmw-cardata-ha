@@ -48,14 +48,19 @@ clean_hv_containers:
       description: Optional config entry id to target. Required if multiple entries are configured.
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     action:
-      description: Action to perform (list, delete, or delete_all_matching).
+      name: Action
+      description: Action to perform.
+      required: true
       default: list
       selector:
         select:
           options:
-            - list
-            - delete
-            - delete_all_matching
+            - label: "List containers"
+              value: "list"
+            - label: "Delete all containers"
+              value: "delete_all_matching"
+            - label: "Delete specific container"
+              value: "delete"
     container_id:
       description: Container ID to delete (required when action is 'delete').
       example: 550e8400-e29b-41d4-a716-446655440000
