@@ -197,6 +197,7 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 - Each VIN becomes a device in HA (`VIN` pulled from CarData).
 - Sensors/binary sensors are auto-created and named from descriptors (e.g. `Cabin Door Row1 Driver Is Open`).
 - Additional attributes include the source timestamp.
+- All numeric sensors declare `suggested_display_precision`, so unit conversions (e.g. km to miles) display clean rounded values in Lovelace cards. You can override the display unit per entity via the gear icon in the entity settings, or switch your HA unit system to imperial for a global change.
 
 ## Vehicle Dashboard Card (Lovelace)
 

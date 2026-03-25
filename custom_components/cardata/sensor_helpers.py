@@ -155,6 +155,29 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
     return UNIT_DEVICE_CLASS_MAP.get(unit)
 
 
+_DISPLAY_PRECISION: dict[SensorDeviceClass, int] = {
+    SensorDeviceClass.DISTANCE: 0,
+    SensorDeviceClass.ENERGY: 2,
+    SensorDeviceClass.POWER: 2,
+    SensorDeviceClass.CURRENT: 1,
+    SensorDeviceClass.VOLTAGE: 0,
+    SensorDeviceClass.TEMPERATURE: 1,
+    SensorDeviceClass.PRESSURE: 1,
+    SensorDeviceClass.VOLUME: 1,
+    getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME): 1,
+    SensorDeviceClass.DURATION: 0,
+    SensorDeviceClass.ENERGY_DISTANCE: 1,
+    SensorDeviceClass.BATTERY: 0,
+}
+
+
+def get_display_precision(device_class: SensorDeviceClass | None) -> int | None:
+    """Return suggested display precision for a device class."""
+    if device_class is None:
+        return None
+    return _DISPLAY_PRECISION.get(device_class)
+
+
 def convert_value_for_unit(
     value: float | str | int | None, original_unit: str | None, normalized_unit: str | None
 ) -> float | str | int | None:
