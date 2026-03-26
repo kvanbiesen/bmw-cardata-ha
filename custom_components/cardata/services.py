@@ -49,6 +49,7 @@ from .api_parsing import get_first_key
 from .const import (
     API_BASE_URL,
     API_VERSION,
+    BOOTSTRAP_COMPLETE,
     DOMAIN,
     HTTP_TIMEOUT,
     HV_BATTERY_CONTAINER_NAME,
@@ -495,7 +496,14 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
     async def _clear_stored_container(hass_: HomeAssistant, entry_: ConfigEntry, runtime_: CardataRuntimeData) -> None:
         """Clear stored container ID so the integration creates a fresh one on restart."""
         await async_update_entry_data(
-            hass_, entry_, {"hv_container_id": None, "hv_descriptor_signature": None, "container_ids": []}
+            hass_,
+            entry_,
+            {
+                "hv_container_id": None,
+                "hv_descriptor_signature": None,
+                "container_ids": [],
+                BOOTSTRAP_COMPLETE: False,
+            },
         )
         if hasattr(runtime_, "container_manager") and runtime_.container_manager:
             runtime_.container_manager.sync_from_entry(None)
