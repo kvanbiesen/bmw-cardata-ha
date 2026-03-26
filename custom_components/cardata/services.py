@@ -29,6 +29,7 @@ Includes a developer service `cardata.clean_hv_containers` which can:
  - list containers visible to the entry's access token
  - delete a specific container by id
  - delete all containers matching the HV battery container name/purpose
+ - delete all containers regardless of name/purpose
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ from .const import (
     HV_BATTERY_CONTAINER_NAME,
     HV_BATTERY_CONTAINER_PURPOSE,
 )
-from .runtime import CardataRuntimeData
+from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import (
     is_valid_vin,
     redact_sensitive_data,
@@ -491,6 +492,18 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             )
             return False, 0, redact_sensitive_data(str(err))
 
+    async def _clear_stored_container(hass_: HomeAssistant, entry_: ConfigEntry, runtime_: CardataRuntimeData) -> None:
+        """Clear stored container ID so the integration creates a fresh one on restart."""
+        await async_update_entry_data(
+            hass_, entry_, {"hv_container_id": None, "hv_descriptor_signature": None, "container_ids": []}
+        )
+        if hasattr(runtime_, "container_manager") and runtime_.container_manager:
+            runtime_.container_manager.sync_from_entry(None)
+        _LOGGER.info(
+            "clean_hv_containers: cleared stored container for entry %s; restart HA to create a fresh one",
+            entry_.entry_id,
+        )
+
     # Perform requested action
     if action == "list":
         containers = await _list_containers()
@@ -510,7 +523,11 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             _LOGGER.error("clean_hv_containers: 'delete' action requires container_id")
             return
         ok, status, text = await _delete_container(container_id)
-        if not ok:
+        if ok:
+            stored_cid = entry.data.get("hv_container_id")
+            if stored_cid == container_id:
+                await _clear_stored_container(hass, entry, runtime)
+        else:
             _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
         return
 
@@ -533,7 +550,9 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             ok, status, text = await _delete_container(cid)
             if ok:
                 deleted_any = True
-        if not deleted_any:
+        if deleted_any:
+            await _clear_stored_container(hass, entry, runtime)
+        else:
             if match_all:
                 _LOGGER.info("clean_hv_containers: no containers deleted (entry %s)", entry.entry_id)
             else:
