@@ -464,6 +464,12 @@ async def async_ensure_container_for_entry(
         )
         force = True
 
+    # No stored container (first install or after manual cleanup).
+    # Force recreation to avoid fallback-reusing stale containers
+    # that BMW hasn't fully deleted yet.
+    if not hv_container_id:
+        force = True
+
     # Create (or recreate) container
     _LOGGER.info(
         "Creating HV container for entry %s (force=%s, exists=%s)", entry.entry_id, force, hv_container_id is not None
