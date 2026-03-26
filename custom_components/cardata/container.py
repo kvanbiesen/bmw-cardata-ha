@@ -354,7 +354,7 @@ class CardataContainerManager:
                 access_token,
             )
         except CardataContainerError as err:
-            if err.status == 404:
+            if err.status in (404, 208):
                 if debug_enabled():
                     _LOGGER.debug(
                         "[%s] Container %s already deleted",

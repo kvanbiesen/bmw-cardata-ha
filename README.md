@@ -373,7 +373,7 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_charging_history` fetches the last 30 days of charging sessions for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_vehicle_images` manually fetches vehicle images for all configured vehicles.
-- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all_matching`).
+- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`).
 - `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them.
 
 ## API Quota and MQTT Streaming
