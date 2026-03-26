@@ -295,6 +295,7 @@ class CardataContainerManager:
                 rate_limiter.record_creation()
 
             self._container_id = new_id
+            self._container_signature = self._descriptor_signature
             _LOGGER.info(
                 "[%s] Reset HV telemetry container; new container id %s",
                 self._entry_id,
