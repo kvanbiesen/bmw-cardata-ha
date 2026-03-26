@@ -98,7 +98,6 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
             entry,
             hass,
             runtime.container_manager,
-            force=False,  # Don't force recreation
         )
 
         if not container_ready:

@@ -415,15 +415,13 @@ async def async_ensure_container_for_entry(
     entry: ConfigEntry,
     hass: HomeAssistant,
     container_manager: CardataContainerManager | None,
-    force: bool = False,
 ) -> bool:
     """Ensure HV container exists for entry.
 
-    This function should ONLY be called:
-    1. During initial bootstrap
-    2. When user manually resets container
-    3. When signature changes AND user confirms recreation
+    If a container with matching descriptors is already stored, reuses it.
+    Otherwise, deletes any stale containers and creates a fresh one.
 
+    This function should ONLY be called during bootstrap.
     NOT during token refresh, MQTT reconnects, or unauthorized errors!
 
     Returns True if container is ready, False otherwise.
@@ -448,44 +446,29 @@ async def async_ensure_container_for_entry(
     desired_signature = CardataContainerManager.compute_signature(HV_BATTERY_DESCRIPTORS)
 
     # If container exists and signature matches, we're done!
-    if hv_container_id and stored_signature == desired_signature and not force:
+    if hv_container_id and stored_signature == desired_signature:
         container_manager.sync_from_entry(hv_container_id)
         _LOGGER.debug("Using existing container %s (signature matches)", hv_container_id)
         return True
 
-    # If container exists but signature doesn't match, auto-recreate.
-    # This happens after integration updates that add new descriptors.
+    # Log reason for recreation
     if hv_container_id and stored_signature != desired_signature:
         _LOGGER.info(
-            "Container signature mismatch (stored: %s, expected: %s). "
-            "Auto-recreating container with updated descriptors.",
+            "Container signature mismatch (stored: %s, expected: %s). Recreating container with updated descriptors.",
             stored_signature,
             desired_signature,
         )
-        force = True
-
-    # No stored container (first install or after manual cleanup).
-    # Force recreation to avoid fallback-reusing stale containers
-    # that BMW hasn't fully deleted yet.
-    if not hv_container_id:
-        force = True
-
-    # Create (or recreate) container
-    _LOGGER.info(
-        "Creating HV container for entry %s (force=%s, exists=%s)", entry.entry_id, force, hv_container_id is not None
-    )
+    else:
+        _LOGGER.info("Creating HV container for entry %s (exists=%s)", entry.entry_id, hv_container_id is not None)
 
     container_manager.sync_from_entry(None)
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     rate_limiter = runtime.container_rate_limiter if runtime else None
 
     try:
-        if force:
-            # Reset deletes old matching containers before creating fresh one,
-            # ensuring updated descriptors are used (not loose-match reuse).
-            container_id = await container_manager.async_reset_hv_container(access_token, rate_limiter)
-        else:
-            container_id = await container_manager.async_ensure_hv_container(access_token, rate_limiter)
+        # Reset deletes old matching containers before creating fresh one,
+        # ensuring updated descriptors are used (not loose-match reuse).
+        container_id = await container_manager.async_reset_hv_container(access_token, rate_limiter)
     except CardataContainerError as err:
         _LOGGER.error(
             "Failed to create HV container for entry %s: %s",
@@ -498,9 +481,6 @@ async def async_ensure_container_for_entry(
         _LOGGER.error("Container creation returned no ID")
         return False
 
-    # Capture the actual container's signature before sync_from_entry resets it.
-    # If we reused a container with different descriptors (loose match), this
-    # preserves the real signature so the mismatch notification fires correctly.
     actual_signature = container_manager.container_signature or desired_signature
 
     # Success! Update entry
@@ -514,10 +494,8 @@ async def async_ensure_container_for_entry(
     update_data: dict[str, Any] = {
         "hv_container_id": container_id,
         "hv_descriptor_signature": actual_signature,
+        "container_ids": [container_id],
     }
-    if force:
-        # Clear stale container list so polling uses only the new container
-        update_data["container_ids"] = [container_id]
     await async_update_entry_data(hass, entry, update_data)
     _LOGGER.info("Ensured HV container %s for entry %s", container_id, entry.entry_id)
 
