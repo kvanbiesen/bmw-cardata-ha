@@ -197,6 +197,7 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 - Each VIN becomes a device in HA (`VIN` pulled from CarData).
 - Sensors/binary sensors are auto-created and named from descriptors (e.g. `Cabin Door Row1 Driver Is Open`).
 - Additional attributes include the source timestamp.
+- All numeric sensors declare `suggested_display_precision`, so unit conversions (e.g. km to miles) display clean rounded values in Lovelace cards. You can override the display unit per entity via the gear icon in the entity settings, or switch your HA unit system to imperial for a global change.
 
 ## Vehicle Dashboard Card (Lovelace)
 
@@ -372,7 +373,7 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_charging_history` fetches the last 30 days of charging sessions for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_vehicle_images` manually fetches vehicle images for all configured vehicles.
-- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all_matching`).
+- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`).
 - `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them.
 
 ## API Quota and MQTT Streaming

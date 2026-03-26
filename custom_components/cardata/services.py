@@ -92,7 +92,7 @@ MIGRATE_SERVICE_SCHEMA = vol.Schema(
 CLEAN_CONTAINERS_SCHEMA = vol.Schema(
     {
         vol.Optional("entry_id"): str,
-        vol.Optional("action", default="list"): vol.In(["list", "delete", "delete_all_matching"]),
+        vol.Optional("action", default="list"): vol.In(["list", "delete", "delete_all", "delete_all_matching"]),
         vol.Optional("container_id"): str,
     }
 )
@@ -473,7 +473,7 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
         try:
             async with session.delete(url, headers=headers, timeout=request_timeout) as resp:
                 text = await resp.text()
-                if resp.status in (200, 204):
+                if resp.status in (200, 204, 208):
                     _LOGGER.info("clean_hv_containers: deleted container %s for entry %s", cid, entry.entry_id)
                     return True, resp.status, text
                 _LOGGER.warning(
@@ -514,22 +514,32 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
             _LOGGER.error("clean_hv_containers: delete failed for %s (HTTP %s): %s", container_id, status, text)
         return
 
-    if action == "delete_all_matching":
+    if action in ("delete_all", "delete_all_matching"):
         containers = await _list_containers()
         if not containers:
             _LOGGER.info("clean_hv_containers: no containers to delete (entry %s)", entry.entry_id)
             return
+        match_all = action == "delete_all"
         deleted_any = False
         for c in containers:
             cid = c.get("containerId")
-            name = c.get("name")
-            purpose = c.get("purpose")
-            if cid and name == HV_BATTERY_CONTAINER_NAME and purpose == HV_BATTERY_CONTAINER_PURPOSE:
-                ok, status, text = await _delete_container(cid)
-                if ok:
-                    deleted_any = True
+            if not cid:
+                continue
+            if not match_all:
+                name = c.get("name")
+                purpose = c.get("purpose")
+                if name != HV_BATTERY_CONTAINER_NAME or purpose != HV_BATTERY_CONTAINER_PURPOSE:
+                    continue
+            ok, status, text = await _delete_container(cid)
+            if ok:
+                deleted_any = True
         if not deleted_any:
-            _LOGGER.info("clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id)
+            if match_all:
+                _LOGGER.info("clean_hv_containers: no containers deleted (entry %s)", entry.entry_id)
+            else:
+                _LOGGER.info(
+                    "clean_hv_containers: no matching HV containers found for deletion (entry %s)", entry.entry_id
+                )
         return
 
     _LOGGER.error("clean_hv_containers: unknown action '%s'", action)

@@ -77,6 +77,7 @@ from .sensor_diagnostics import (
 from .sensor_helpers import (
     convert_value_for_unit,
     get_device_class_for_unit,
+    get_display_precision,
     map_unit_to_ha,
     validate_restored_state,
 )
@@ -103,6 +104,9 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             LOCATION_HEADING_DESCRIPTOR,
         ):
             self._attr_entity_registry_enabled_default = False
+
+        if descriptor in (PREDICTED_SOC_DESCRIPTOR, MAGIC_SOC_DESCRIPTOR):
+            self._attr_suggested_display_precision = 1
 
         state_class = self._determine_state_class()
         if state_class:
@@ -138,6 +142,9 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
                     existing_device_class = getattr(self, "_attr_device_class", None)
                     if existing_device_class is None:
                         self._attr_device_class = get_device_class_for_unit(unit, self._descriptor)
+                        precision = get_display_precision(self._attr_device_class)
+                        if precision is not None:
+                            self._attr_suggested_display_precision = precision
 
                     self._attr_native_unit_of_measurement = unit
 
@@ -222,6 +229,9 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         existing_device_class = getattr(self, "_attr_device_class", None)
         if existing_device_class is None:
             self._attr_device_class = get_device_class_for_unit(normalized_unit, self._descriptor)
+            precision = get_display_precision(self._attr_device_class)
+            if precision is not None:
+                self._attr_suggested_display_precision = precision
 
         # Set state class if not already set (for new entities)
         if not hasattr(self, "_attr_state_class") or self._attr_state_class is None:

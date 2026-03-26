@@ -58,6 +58,8 @@ clean_hv_containers:
             - label: "List containers"
               value: "list"
             - label: "Delete all containers"
+              value: "delete_all"
+            - label: "Delete matching containers"
               value: "delete_all_matching"
             - label: "Delete specific container"
               value: "delete"
