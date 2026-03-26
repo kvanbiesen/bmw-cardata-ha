@@ -40,7 +40,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
 
-from .auth import async_token_refresh_loop, handle_stream_error, refresh_tokens_for_entry
+from .auth import (
+    async_ensure_container_for_entry,
+    async_token_refresh_loop,
+    handle_stream_error,
+    refresh_tokens_for_entry,
+)
 from .bootstrap import async_run_bootstrap
 from .const import (
     ALLOWED_VINS_KEY,
@@ -398,33 +403,13 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Ensure HV container if token refresh didn't succeed
         if not refreshed_token and container_manager:
-            try:
-                container_manager.sync_from_entry(entry.data.get("hv_container_id"))
-                await container_manager.async_ensure_hv_container(entry.data.get("access_token"))
-            except aiohttp.ClientError as err:
-                # Network errors - treat same as MQTT network errors
-                _LOGGER.warning(
-                    "Network error ensuring HV container for entry %s: %s",
+            container_ready = await async_ensure_container_for_entry(entry, hass, container_manager)
+            if not container_ready and not container_manager.container_id:
+                _LOGGER.error(
+                    "No HV container available for entry %s; "
+                    "telematic data polling will be unavailable until container is created",
                     entry.entry_id,
-                    err,
                 )
-                if not container_manager.container_id:
-                    raise ConfigEntryNotReady(f"Unable to ensure HV container (network error): {err}") from err
-            except Exception as err:
-                # Other errors - log and check if we have a fallback
-                _LOGGER.warning(
-                    "Unable to ensure HV container for entry %s: %s",
-                    entry.entry_id,
-                    err,
-                )
-                if not container_manager.container_id:
-                    # No container at all - telematic polling won't work
-                    _LOGGER.error(
-                        "No HV container available for entry %s; "
-                        "telematic data polling will be unavailable until container is created",
-                        entry.entry_id,
-                    )
-                    # Continue anyway - MQTT streaming will still work
 
         # MQTT auto-start is now prevented by _bootstrap_in_progress flag
         # We'll explicitly start it after bootstrap completes
