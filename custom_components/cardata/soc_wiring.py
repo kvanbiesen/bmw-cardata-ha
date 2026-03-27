@@ -516,13 +516,15 @@ def end_driving_session(
 
     Must be called while holding _lock.
     """
-    soc_state = vehicle_state.get(DESC_SOC_HEADER)
     end_soc = None
-    if soc_state and soc_state.value is not None:
-        try:
-            end_soc = float(soc_state.value)
-        except (TypeError, ValueError):
-            pass
+    for desc in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
+        soc_state = vehicle_state.get(desc)
+        if soc_state and soc_state.value is not None:
+            try:
+                end_soc = float(soc_state.value)
+                break
+            except (TypeError, ValueError):
+                pass
 
     mileage_state = vehicle_state.get(DESC_TRAVELLED_DISTANCE)
     end_mileage = None

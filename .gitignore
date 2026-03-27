@@ -11,3 +11,7 @@ __pycache__/
 *.pyo
 .vs*
 .venv/
+
+# APK files
+*.xapk
+*.apk

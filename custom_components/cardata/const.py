@@ -215,6 +215,8 @@ DEFAULT_CONSUMPTION_BY_MODEL: dict[str, float] = {
     # iX2 family (WLTP ~15.6-17.7)
     "iX2 xDrive30": 0.18,
     "iX2": 0.17,
+    # iX3 NK/NA5 (WLTP ~17.5-19.5)
+    "iX3 50 xDrive": 0.19,
     # iX3 (old G08: WLTP ~18.5-18.9)
     "iX3": 0.20,
     # iX family (WLTP ~19.3-24.7)
@@ -248,6 +250,8 @@ DEFAULT_CAPACITY_BY_MODEL: dict[str, float] = {
     # iX2 family
     "iX2 xDrive30": 64.7,
     "iX2": 64.7,
+    # iX3 NK/NA5
+    "iX3 50 xDrive": 109.0,
     # iX3 (G08)
     "iX3": 74.0,
     # iX family
