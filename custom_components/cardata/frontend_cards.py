@@ -40,7 +40,13 @@ from homeassistant.components import websocket_api
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
 
-from .const import DESC_SOC_HEADER, DOMAIN, MANUAL_TANK_CAPACITY_DESCRIPTOR
+from .const import (
+    DESC_SOC_HEADER,
+    DOMAIN,
+    MAGIC_SOC_DESCRIPTOR,
+    MANUAL_TANK_CAPACITY_DESCRIPTOR,
+    PREDICTED_SOC_DESCRIPTOR,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -281,9 +287,13 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
         if fuel_range := unique_id_map.get(f"{vin}_vehicle.drivetrain.fuelSystem.remainingFuelRange"):
             entities["range_fuel"] = fuel_range
 
-        # Battery SOC (basic implementation).
+        # Battery SOC sources.
         if soc_entity := unique_id_map.get(f"{vin}_{DESC_SOC_HEADER}"):
             entities["soc"] = soc_entity
+        if predicted_soc := unique_id_map.get(f"{vin}_{PREDICTED_SOC_DESCRIPTOR}"):
+            entities["soc_predicted"] = predicted_soc
+        if magic_soc := unique_id_map.get(f"{vin}_{MAGIC_SOC_DESCRIPTOR}"):
+            entities["soc_magic"] = magic_soc
 
         # 360 / status markers (use real API descriptor paths as unique_id suffixes).
         for key, descriptor in [
