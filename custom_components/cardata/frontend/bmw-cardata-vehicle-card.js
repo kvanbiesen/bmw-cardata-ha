@@ -143,6 +143,19 @@ class BmwCardataVehicleCard extends HTMLElement {
           },
         },
         { name: "license_plate", selector: { text: {} } },
+        {
+          name: "soc_source",
+          selector: {
+            select: {
+              options: [
+                { value: "soc", label: "BMW State of Charge (last known)" },
+                { value: "predicted", label: "Predicted SOC (charging)" },
+                { value: "magic", label: "Magic SOC (driving)" },
+              ],
+              mode: "dropdown",
+            },
+          },
+        },
         { name: "show_indicators", selector: { boolean: {} } },
         { name: "show_range", selector: { boolean: {} } },
         { name: "show_image", selector: { boolean: {} } },
@@ -152,6 +165,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       computeLabel: (schema) => {
         if (schema.name === "device_id") return "Vehicle";
         if (schema.name === "license_plate") return "License plate (shown instead of VIN)";
+        if (schema.name === "soc_source") return "Battery level source";
         if (schema.name === "show_indicators") return "Show indicator row";
         if (schema.name === "show_range") return "Show SOC and range bar";
         if (schema.name === "show_image") return "Show vehicle image";
@@ -164,6 +178,7 @@ class BmwCardataVehicleCard extends HTMLElement {
 
   static getStubConfig() {
     return {
+      soc_source: "soc",
       show_indicators: true,
       show_range: true,
       show_image: true,
@@ -734,7 +749,9 @@ class BmwCardataVehicleCard extends HTMLElement {
     const lightsEntity = entities.lights || "";
     const hoodEntity = entities.hood || "";
     const tailgateEntity = entities.tailgate || "";
-    const socEntity = entities.soc || "";
+    const socSourceKey = cfg.soc_source === "predicted" ? "soc_predicted" : cfg.soc_source === "magic" ? "soc_magic" : "soc";
+    const socEntity = entities[socSourceKey] || entities.soc || "";
+    const socState = socEntity ? hass?.states?.[socEntity] : undefined;
     const fuelLevelEntity = entities.fuel_level || "";
     const rangeEntity = entities.range_total || "";
     const remainingFuelEntity = entities.remaining_fuel || "";
@@ -760,7 +777,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const isMoving = motionState === "on" || motionState === "true" || motionState.includes("moving");
     const hasCharging = Boolean(chargingEntity && hasUsableState(read("charging_state")));
     const hasFuelLevel = Boolean(fuelLevelEntity && hasUsableState(read("fuel_level")));
-    const hasSoc = Boolean(socEntity && hasUsableState(read("soc")));
+    const hasSoc = Boolean(socEntity && hasUsableState(socState));
     const hasFuelRemaining = Boolean(remainingFuelEntity && hasUsableState(read("remaining_fuel")));
     const hasRange = Boolean(rangeEntity && hasUsableState(read("range_total")));
     const hasRangeElectric = Boolean(rangeElectricEntity && hasUsableState(read("range_electric")));
@@ -769,9 +786,9 @@ class BmwCardataVehicleCard extends HTMLElement {
     const tankCapValue = toNumberOrZero(read("manual_tank_capacity"));
     const fuelLitres = toNumberOrZero(read("remaining_fuel"));
     const hasFuelWithCap = hasFuelRemaining && tankCapValue > 0;
-    const primaryLevelState = hasSoc ? read("soc") : hasFuelLevel ? read("fuel_level") : (hasFuelWithCap || hasFuelRemaining) ? read("remaining_fuel") : null;
+    const primaryLevelState = hasSoc ? socState : hasFuelLevel ? read("fuel_level") : (hasFuelWithCap || hasFuelRemaining) ? read("remaining_fuel") : null;
     const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : hasFuelRemaining ? remainingFuelEntity : "";
-    const primaryLevelValue = hasSoc ? clamp(toNumberOrZero(read("soc")), 0, 100) : hasFuelLevel ? clamp(toNumberOrZero(read("fuel_level")), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
+    const primaryLevelValue = hasSoc ? clamp(toNumberOrZero(socState), 0, 100) : hasFuelLevel ? clamp(toNumberOrZero(read("fuel_level")), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
     const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : hasFuelWithCap ? `${primaryLevelValue}%` : hasFuelRemaining ? formatState(read("remaining_fuel")) : "—";
     const primaryLevelHasBar = hasSoc || hasFuelLevel || hasFuelWithCap;
     const primaryRangeState = hasRange ? read("range_total") : hasFuelRemaining ? read("remaining_fuel") : null;
@@ -860,7 +877,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (showRange && (primaryLevelState || primaryRangeState)) {
       // PHEV support: Show split range bar if both electric and fuel ranges are available
       if (isPHEV) {
-        const socValue = clamp(toNumberOrZero(read("soc")), 0, 100);
+        const socValue = clamp(toNumberOrZero(socState), 0, 100);
         const fuelLevelValue = clamp(toNumberOrZero(read("fuel_level")), 0, 100);
         const evRangeCurrent = toNumberOrZero(read("range_electric"));
         const fuelRangeCurrent = toNumberOrZero(read("range_fuel"));
