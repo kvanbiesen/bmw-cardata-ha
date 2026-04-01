@@ -675,7 +675,7 @@ def process_soc_descriptors(
                             except (TypeError, ValueError):
                                 pass
                     else:
-                        bmw_moving = coordinator._last_derived_is_moving.get(f"{vin}_bmw")
+                        bmw_moving = coordinator._last_bmw_is_moving.get(vin)
                         gps_moving = coordinator._last_derived_is_moving.get(vin)
                         if bmw_moving is True or gps_moving is True:
                             manual_cap = coordinator.get_manual_battery_capacity(vin)
@@ -757,7 +757,7 @@ def process_soc_descriptors(
                         # Live is_moving() can transiently return True via mileage fallback
                         # then immediately revert when GPS/door-lock arrives in the same batch,
                         # creating a session that isMoving tracking never sees and can't clean up.
-                        bmw_moving = coordinator._last_derived_is_moving.get(f"{vin}_bmw")
+                        bmw_moving = coordinator._last_bmw_is_moving.get(vin)
                         gps_moving = coordinator._last_derived_is_moving.get(vin)
                         if bmw_moving is True or gps_moving is True:
                             manual_cap = coordinator.get_manual_battery_capacity(vin)
@@ -815,7 +815,7 @@ def process_soc_descriptors(
             from .message_utils import normalize_boolean_value
 
             new_is_moving = normalize_boolean_value("vehicle.isMoving", is_moving_payload.get("value"))
-            last_bmw_moving = coordinator._last_derived_is_moving.get(f"{vin}_bmw")
+            last_bmw_moving = coordinator._last_bmw_is_moving.get(vin)
             if last_bmw_moving is True and new_is_moving is False:
                 runtime = coordinator.hass.data.get(DOMAIN, {}).get(coordinator.entry_id)
                 if runtime is not None:
@@ -831,6 +831,6 @@ def process_soc_descriptors(
                     if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
                         schedule_debounce = True
             if new_is_moving is not None:
-                coordinator._last_derived_is_moving[f"{vin}_bmw"] = new_is_moving
+                coordinator._last_bmw_is_moving[vin] = new_is_moving
 
     return schedule_debounce

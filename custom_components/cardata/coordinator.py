@@ -100,6 +100,8 @@ class CardataCoordinator:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # Cache last sent derived isMoving state to avoid duplicate updates
     _last_derived_is_moving: dict[str, bool | None] = field(default_factory=dict, init=False)
+    # Cache last BMW-provided vehicle.isMoving state (separate from GPS-derived)
+    _last_bmw_is_moving: dict[str, bool | None] = field(default_factory=dict, init=False)
     # Cache last sent predicted SOC to avoid redundant dispatches during periodic updates
     _last_predicted_soc_sent: dict[str, float] = field(default_factory=dict, init=False)
     # Per-VIN timestamp of last MQTT message (unix time) for freshness gating
