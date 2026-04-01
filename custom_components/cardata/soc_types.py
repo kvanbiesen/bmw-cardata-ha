@@ -362,7 +362,6 @@ class ChargingSession:
     # AC charging state (for vehicles without direct power streaming)
     last_voltage: float | None = None
     last_current: float | None = None
-    last_aux_power: float | None = None
     phases: int = 1
 
     def to_dict(self) -> dict[str, Any]:
@@ -380,7 +379,6 @@ class ChargingSession:
             "target_soc": self.target_soc,
             "last_voltage": self.last_voltage,
             "last_current": self.last_current,
-            "last_aux_power": self.last_aux_power,
             "phases": self.phases,
         }
 
@@ -395,13 +393,12 @@ class ChargingSession:
             charging_method=data["charging_method"],
             total_energy_kwh=data.get("total_energy_kwh", 0.0),
             last_power_kw=data.get("last_power_kw", 0.0),
-            last_aux_kw=data.get("last_aux_kw", 0.0),
+            last_aux_kw=data.get("last_aux_kw", 0.0) or data.get("last_aux_power", 0.0) or 0.0,
             last_energy_update=data.get("last_energy_update"),
             target_soc=data.get("target_soc"),
             restored=True,
             last_voltage=data.get("last_voltage"),
             last_current=data.get("last_current"),
-            last_aux_power=data.get("last_aux_power"),
             phases=data.get("phases", 1),
         )
 
