@@ -312,13 +312,17 @@ class CardataStreamManager:
             await asyncio.wait_for(self._connect_lock.acquire(), timeout=LOCK_ACQUIRE_TIMEOUT)
         except TimeoutError:
             _LOGGER.warning("Connect lock held during stop; forcing cleanup")
-            # Force stop without lock - resource cleanup is critical
             self._intentional_disconnect = True
-            if self._client:
+            client = self._client
+            self._client = None
+            self._connection_state = ConnectionState.DISCONNECTED
+            if client:
                 try:
-                    self._client.disconnect()
+                    client.disconnect()
                 except Exception:
                     pass
+                self._safe_loop_stop(client)
+            await stream_reconnect.async_cancel_retry(self)
             return
 
         try:
