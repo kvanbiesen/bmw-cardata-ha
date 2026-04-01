@@ -783,7 +783,7 @@ class SOCPredictor:
         if phases is not None:
             session.phases = int(phases)
         if aux_power_kw is not None:
-            session.last_aux_power = aux_power_kw
+            session.last_aux_kw = aux_power_kw
 
         # Calculate power if we have both voltage and current
         power_kw = _calc_ac_power_kw(session)
@@ -820,7 +820,7 @@ class SOCPredictor:
             # Prefer V×A recalculation for AC sessions
             power_kw = _calc_ac_power_kw(session)
             if power_kw is not None:
-                self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_power or 0.0)
+                self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_kw)
                 updated_vins.append(vin)
 
             # Fallback: use last known power for AC sessions without V×A data.

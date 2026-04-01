@@ -26,10 +26,11 @@ const normalizeState = (stateObj) => {
   return String(raw).trim().toLowerCase();
 };
 
-const formatState = (stateObj) => {
+const formatState = (stateObj, hass) => {
   if (!stateObj) return "—";
   const state = stateObj.state;
   if (state === "unknown" || state === "unavailable") return "—";
+  if (hass?.formatEntityState) return hass.formatEntityState(stateObj);
   const unit = stateObj.attributes?.unit_of_measurement;
   return unit ? `${state} ${unit}` : `${state}`;
 };
@@ -788,13 +789,13 @@ class BmwCardataVehicleCard extends HTMLElement {
     const hasFuelWithCap = hasFuelRemaining && tankCapValue > 0;
     const primaryLevelState = hasSoc ? socState : hasFuelLevel ? read("fuel_level") : (hasFuelWithCap || hasFuelRemaining) ? read("remaining_fuel") : null;
     const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : hasFuelRemaining ? remainingFuelEntity : "";
-    const primaryLevelValue = hasSoc ? clamp(toNumberOrZero(socState), 0, 100) : hasFuelLevel ? clamp(toNumberOrZero(read("fuel_level")), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
-    const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : hasFuelWithCap ? `${primaryLevelValue}%` : hasFuelRemaining ? formatState(read("remaining_fuel")) : "—";
+    const primaryLevelValue = hasSoc ? clamp(Math.round(toNumberOrZero(socState)), 0, 100) : hasFuelLevel ? clamp(Math.round(toNumberOrZero(read("fuel_level"))), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
+    const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : hasFuelWithCap ? `${primaryLevelValue}%` : hasFuelRemaining ? formatState(read("remaining_fuel"), hass) : "—";
     const primaryLevelHasBar = hasSoc || hasFuelLevel || hasFuelWithCap;
     const primaryRangeState = hasRange ? read("range_total") : hasFuelRemaining ? read("remaining_fuel") : null;
     const primaryRangeEntity = hasRange ? rangeEntity : hasFuelRemaining ? remainingFuelEntity : "";
     const primaryRangeIcon = hasRange ? "mdi:arrow-left-right" : "mdi:gas-station";
-    const primaryRangeText = primaryRangeState ? formatState(primaryRangeState) : "—";
+    const primaryRangeText = primaryRangeState ? formatState(primaryRangeState, hass) : "—";
 
     const isLocked = lockState.includes("lock") && !lockState.includes("unlock");
     const doorsOverallKnown = doorsOverallRaw !== "";
@@ -877,8 +878,8 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (showRange && (primaryLevelState || primaryRangeState)) {
       // PHEV support: Show split range bar if both electric and fuel ranges are available
       if (isPHEV) {
-        const socValue = clamp(toNumberOrZero(socState), 0, 100);
-        const fuelLevelValue = clamp(toNumberOrZero(read("fuel_level")), 0, 100);
+        const socValue = clamp(Math.round(toNumberOrZero(socState)), 0, 100);
+        const fuelLevelValue = clamp(Math.round(toNumberOrZero(read("fuel_level"))), 0, 100);
         const evRangeCurrent = toNumberOrZero(read("range_electric"));
         const fuelRangeCurrent = toNumberOrZero(read("range_fuel"));
         
@@ -891,9 +892,9 @@ class BmwCardataVehicleCard extends HTMLElement {
         const evRangePercent = totalMaxRange > 0 ? (evRangeCurrent / totalMaxRange) * 100 : 0;
         const fuelRangePercent = totalMaxRange > 0 ? (fuelRangeCurrent / totalMaxRange) * 100 : 0;
         
-        const evRangeText = formatState(read("range_electric"));
-        const fuelRangeText = formatState(read("range_fuel"));
-        const totalRangeValue = evRangeCurrent + fuelRangeCurrent;
+        const evRangeText = formatState(read("range_electric"), hass);
+        const fuelRangeText = formatState(read("range_fuel"), hass);
+        const totalRangeValue = Math.round(evRangeCurrent + fuelRangeCurrent);
         const totalRangeUnit = read("range_electric")?.attributes?.unit_of_measurement || "km";
         const totalRangeText = totalRangeValue > 0 ? `${totalRangeValue} ${totalRangeUnit}` : "—";
         
@@ -1054,7 +1055,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         {
           icon: "mdi:counter",
           label: "Mileage",
-          value: formatState(read("mileage")),
+          value: formatState(read("mileage"), hass),
           entity: entities.mileage || "",
         },
       ].filter((item) => item && firstDefined(item.entity, item.value) !== "");

@@ -231,6 +231,7 @@ async def async_cleanup_stale_vins(coordinator: CardataCoordinator) -> None:
 
         tracking_dicts: list[dict[str, Any]] = [
             coordinator._last_derived_is_moving,
+            coordinator._last_bmw_is_moving,
             coordinator._last_vin_message_at,
             coordinator._last_poll_at,
             coordinator._last_predicted_soc_sent,
@@ -239,8 +240,7 @@ async def async_cleanup_stale_vins(coordinator: CardataCoordinator) -> None:
         stale_vins: set[str] = set()
         for d in tracking_dicts:
             for k in d.keys():
-                base_vin = k.removesuffix("_bmw")
-                if base_vin not in valid_vins:
+                if k not in valid_vins:
                     stale_vins.add(k)
 
         stale_vins.update(vin for vin in coordinator._motion_detector.get_tracked_vins() if vin not in valid_vins)
