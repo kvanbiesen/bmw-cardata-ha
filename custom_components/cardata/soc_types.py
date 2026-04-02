@@ -359,6 +359,10 @@ class ChargingSession:
     target_soc: float | None = None  # Charge target from BMW (e.g. 80%)
     restored: bool = False  # True when loaded from storage (energy data incomplete)
 
+    # Session-level tracking (never reset by re-anchors, used for learning)
+    session_start_soc: float | None = None  # Original SOC at session creation
+    session_total_energy_kwh: float = 0.0  # Cumulative energy across all re-anchors
+
     # AC charging state (for vehicles without direct power streaming)
     last_voltage: float | None = None
     last_current: float | None = None
@@ -377,6 +381,8 @@ class ChargingSession:
             "last_aux_kw": self.last_aux_kw,
             "last_energy_update": self.last_energy_update,
             "target_soc": self.target_soc,
+            "session_start_soc": self.session_start_soc,
+            "session_total_energy_kwh": self.session_total_energy_kwh,
             "last_voltage": self.last_voltage,
             "last_current": self.last_current,
             "phases": self.phases,
@@ -397,6 +403,8 @@ class ChargingSession:
             last_energy_update=data.get("last_energy_update"),
             target_soc=data.get("target_soc"),
             restored=True,
+            session_start_soc=data.get("session_start_soc"),
+            session_total_energy_kwh=data.get("session_total_energy_kwh", 0.0),
             last_voltage=data.get("last_voltage"),
             last_current=data.get("last_current"),
             phases=data.get("phases", 1),
@@ -421,7 +429,9 @@ class ChargingSession:
                 # Trapezoidal integration: average of last and current power
                 avg_power = (self.last_power_kw + power_kw) / 2.0
                 net_power = max(avg_power - aux_power_kw, 0.0)
-                self.total_energy_kwh += net_power * capped_hours
+                energy = net_power * capped_hours
+                self.total_energy_kwh += energy
+                self.session_total_energy_kwh += energy
         self.last_power_kw = power_kw
         self.last_aux_kw = aux_power_kw
         self.last_energy_update = timestamp
