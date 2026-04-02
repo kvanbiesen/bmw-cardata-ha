@@ -276,6 +276,7 @@ class SOCPredictor:
             last_power_kw=0.0,
             last_energy_update=None,
             target_soc=target_soc,
+            session_start_soc=anchor_soc,
         )
 
         _LOGGER.debug(

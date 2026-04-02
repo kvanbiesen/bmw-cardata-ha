@@ -283,6 +283,7 @@ The predicted SOC sensor automatically learns your vehicle's charging efficiency
 - Learning data persists across Home Assistant restarts
 - Active charging sessions and pending sessions survive HA restarts (restored sessions skip learning to avoid polluted data from energy gaps)
 - After HA restart, stale SOC data from previous sessions is detected and rejected using BMW-provided timestamps, preventing false re-anchoring of the predicted SOC
+- Session-level SOC and energy tracking survives mid-session re-anchoring, so learning uses the full session data even when BMW SOC corrections occurred during charging
 
 ### Learning Requirements
 

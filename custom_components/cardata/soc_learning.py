@@ -224,10 +224,12 @@ def end_session(
             current_soc,
             target_soc,
         )
+        start_soc = session.session_start_soc if session.session_start_soc is not None else session.anchor_soc
+        energy = session.session_total_energy_kwh if session.session_total_energy_kwh > 0 else session.total_energy_kwh
         predictor._pending_sessions[vin] = PendingSession(
             end_timestamp=time.time(),
-            anchor_soc=session.anchor_soc,
-            total_energy_kwh=session.total_energy_kwh,
+            anchor_soc=start_soc,
+            total_energy_kwh=energy,
             charging_method=session.charging_method,
             battery_capacity_kwh=session.battery_capacity_kwh,
             phases=session.phases,
@@ -360,12 +362,16 @@ def _finalize_learning(
         )
         return
 
+    # Prefer session-level fields (survive re-anchors) over segment-level
+    start_soc = session.session_start_soc if session.session_start_soc is not None else session.anchor_soc
+    energy = session.session_total_energy_kwh if session.session_total_energy_kwh > 0 else session.total_energy_kwh
+
     _validate_and_learn(
         learned_efficiency,
         on_learning_updated,
         vin,
-        anchor_soc=session.anchor_soc,
-        total_energy_kwh=session.total_energy_kwh,
+        anchor_soc=start_soc,
+        total_energy_kwh=energy,
         battery_capacity_kwh=session.battery_capacity_kwh,
         charging_method=session.charging_method,
         phases=session.phases,
