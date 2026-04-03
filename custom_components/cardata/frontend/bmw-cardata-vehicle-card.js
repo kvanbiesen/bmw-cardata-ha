@@ -263,6 +263,10 @@ class BmwCardataVehicleCard extends HTMLElement {
             color: var(--error-color);
             border-color: transparent;
           }
+          .indicator.good {
+            color: var(--success-color);
+            border-color: transparent;
+          }
           .indicator.placeholder {
             opacity: 0;
             pointer-events: none;
@@ -773,6 +777,8 @@ class BmwCardataVehicleCard extends HTMLElement {
       Boolean(alarmActiveEntity && hasUsableState(alarmActiveStateObj)) ||
       Boolean(alarmArmingEntity && hasUsableState(alarmArmingStateObj));
     const alarmIsActive = alarmActiveState === "on" || alarmActiveState === "true";
+    const alarmArmingState = normalizeState(alarmArmingStateObj);
+    const alarmIsArmed = alarmArmingState !== "" && alarmArmingState !== "unarmed";
     const motionState = normalizeState(motionStateObj);
     const motionKnown = motionState !== "";
     const isMoving = motionState === "on" || motionState === "true" || motionState.includes("moving");
@@ -828,12 +834,10 @@ class BmwCardataVehicleCard extends HTMLElement {
       },
       {
         icon: "mdi:shield-lock",
-        stateClass: hasAlarm ? (alarmIsActive ? "ok" : "") : "",
-        entity: alarmActiveEntity || alarmArmingEntity,
+        stateClass: hasAlarm ? (alarmIsActive ? "alert" : alarmIsArmed ? "good" : "ok") : "",
+        entity: alarmArmingEntity || alarmActiveEntity,
         title: hasAlarm
-          ? (alarmActiveEntity
-            ? `Alarm: ${alarmIsActive ? "ACTIVE" : "INACTIVE"}`
-            : `Alarm arming: ${alarmArmingLabel}`)
+          ? (alarmIsActive ? "Alarm: TRIGGERED" : `Alarm: ${alarmArmingLabel || "unknown"}`)
           : "Alarm status unavailable",
       },
       {
