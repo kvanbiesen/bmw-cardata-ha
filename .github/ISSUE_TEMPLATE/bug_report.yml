@@ -10,6 +10,8 @@ body:
 
         Please fill out all required fields — issues without debug logs will be closed.
 
+        **Reports that appear to be written or analysed by an LLM without accompanying real debug logs will be closed without investigation.** Polished code-level analysis is not a substitute for reproduction data. Using an LLM to help describe your problem is fine, but the debug logs must be real and included.
+
   - type: input
     id: ha_version
     attributes:
@@ -102,4 +104,6 @@ body:
         - label: I've searched existing issues to avoid duplicates
           required: true
         - label: I've included debug logs and version information
+          required: true
+        - label: If I used an LLM to help write this report, I have included real debug logs (not reconstructed from reading the source code)
           required: true
