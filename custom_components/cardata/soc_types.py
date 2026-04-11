@@ -356,6 +356,11 @@ class ChargingSession:
     last_power_kw: float = 0.0  # Last power reading for trapezoidal integration
     last_aux_kw: float = 0.0  # Last auxiliary power for extrapolation
     last_energy_update: float | None = None  # Timestamp of last energy accumulation
+    # Timestamp of the last externally-sourced power update (MQTT or API).
+    # NOT refreshed by the heartbeat self-replay — that's the whole point: this
+    # lets the heartbeat detect when BMW has gone silent on power data and stop
+    # replaying stale values into accumulate_energy().
+    last_external_power_update: float | None = None
     target_soc: float | None = None  # Charge target from BMW (e.g. 80%)
     restored: bool = False  # True when loaded from storage (energy data incomplete)
 
@@ -380,6 +385,7 @@ class ChargingSession:
             "last_power_kw": self.last_power_kw,
             "last_aux_kw": self.last_aux_kw,
             "last_energy_update": self.last_energy_update,
+            "last_external_power_update": self.last_external_power_update,
             "target_soc": self.target_soc,
             "session_start_soc": self.session_start_soc,
             "session_total_energy_kwh": self.session_total_energy_kwh,
@@ -401,6 +407,7 @@ class ChargingSession:
             last_power_kw=data.get("last_power_kw", 0.0),
             last_aux_kw=data.get("last_aux_kw", 0.0) or data.get("last_aux_power", 0.0) or 0.0,
             last_energy_update=data.get("last_energy_update"),
+            last_external_power_update=data.get("last_external_power_update"),
             target_soc=data.get("target_soc"),
             restored=True,
             session_start_soc=data.get("session_start_soc"),

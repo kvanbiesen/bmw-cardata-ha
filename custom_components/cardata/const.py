@@ -194,6 +194,11 @@ SOC_LEARNING_STORAGE_KEY = "cardata.soc_learning"
 SOC_LEARNING_STORAGE_VERSION = 2
 # Maximum gap between energy readings before skipping integration (seconds)
 MAX_ENERGY_GAP_SECONDS = 600
+# Maximum age of the last external MQTT power update before heartbeat replay
+# and get_predicted_soc extrapolation are gated off. Prevents phantom energy
+# accumulation when BMW keeps reporting CHARGING but stops pushing power data
+# (e.g. EVSE externally stopped but BMW backend still reports the session active).
+STALE_EXTERNAL_POWER_SECONDS = 600
 
 # Driving consumption learning parameters
 DEFAULT_CONSUMPTION_KWH_PER_KM = 0.21  # BMW BEV fleet average

@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from . import soc_learning
-from .const import DEFAULT_DC_EFFICIENCY, MAX_ENERGY_GAP_SECONDS
+from .const import DEFAULT_DC_EFFICIENCY, MAX_ENERGY_GAP_SECONDS, STALE_EXTERNAL_POWER_SECONDS
 from .soc_types import ChargingSession, LearnedEfficiency, PendingSession
 from .utils import redact_vin
 
@@ -311,19 +311,32 @@ class SOCPredictor:
                     session.charging_method,
                 )
 
-    def update_power_reading(self, vin: str, power_kw: float | None = None, aux_power_kw: float = 0.0) -> None:
+    def update_power_reading(
+        self,
+        vin: str,
+        power_kw: float | None = None,
+        aux_power_kw: float = 0.0,
+        *,
+        mark_fresh: bool = True,
+    ) -> None:
         """Record power update for energy accumulation.
 
         Args:
             vin: Vehicle identification number
             power_kw: Current gross charging power in kW (optional, for energy tracking)
             aux_power_kw: Auxiliary power consumption in kW (preheating, etc.)
+            mark_fresh: If True, mark the session's external power update timestamp
+                as fresh. External (MQTT/API-driven) callers leave this as True so
+                the heartbeat knows real data arrived; the heartbeat itself passes
+                False when replaying cached values to avoid self-refreshing.
         """
         session = self._sessions.get(vin)
         if session:
             # Accumulate net energy if power provided
             if power_kw is not None and power_kw >= 0:
                 session.accumulate_energy(power_kw, aux_power_kw, time.time())
+                if mark_fresh:
+                    session.last_external_power_update = time.time()
 
                 # Log every power update with current state
                 _LOGGER.debug(
@@ -490,6 +503,10 @@ class SOCPredictor:
         implied_power = energy_in_battery / (elapsed_seconds / 3600.0 * efficiency)
 
         session.last_power_kw = implied_power
+        # Fresh SOC delta counts as fresh external data for the heartbeat gate.
+        # Without this, vehicles that rely on this derivation (no charging.power
+        # telemetry) would have last_power_kw cleared on the next heartbeat tick.
+        session.last_external_power_update = time.time()
 
         _LOGGER.debug(
             "SOC: Derived charging power for %s: %.2f kW (%.1f%% -> %.1f%% over %.0f min)",
@@ -596,8 +613,15 @@ class SOCPredictor:
         # Cap gap to MAX_ENERGY_GAP_SECONDS to match accumulate_energy() —
         # without cap, long MQTT gaps inflate prediction, then "never decrease"
         # constraint locks in the inflated value creating visible plateaus.
-        if session.last_power_kw > 0 and session.last_energy_update is not None:
-            gap = time.time() - session.last_energy_update
+        # Also gated on external power freshness: if BMW hasn't pushed a real
+        # power update within STALE_EXTERNAL_POWER_SECONDS, don't extrapolate.
+        now_ts = time.time()
+        external_fresh = (
+            session.last_external_power_update is not None
+            and now_ts - session.last_external_power_update <= STALE_EXTERNAL_POWER_SECONDS
+        )
+        if session.last_power_kw > 0 and session.last_energy_update is not None and external_fresh:
+            gap = now_ts - session.last_energy_update
             if gap > 0:
                 capped_gap = min(gap, MAX_ENERGY_GAP_SECONDS)
                 net_power = max(session.last_power_kw - session.last_aux_kw, 0.0)
@@ -766,8 +790,13 @@ class SOCPredictor:
         current: float | None = None,
         phases: float | None = None,
         aux_power_kw: float | None = None,
+        *,
+        mark_fresh: bool = True,
     ) -> bool:
         """Update AC charging data and calculate power if voltage+current available.
+
+        Args:
+            mark_fresh: Propagated to update_power_reading — see that method.
 
         Returns:
             True if power was calculated and energy accumulation occurred
@@ -797,7 +826,7 @@ class SOCPredictor:
                 session.last_current,
                 session.phases,
             )
-            self.update_power_reading(vin, power_kw, aux_power_kw or 0.0)
+            self.update_power_reading(vin, power_kw, aux_power_kw or 0.0, mark_fresh=mark_fresh)
             return True
 
         return False
@@ -809,26 +838,53 @@ class SOCPredictor:
         Falls back to last_power_kw for sessions without V×A data (e.g. DC, or AC
         vehicles that only report charging.power).
 
+        Gated by session.last_external_power_update: if no real MQTT-driven power
+        update has arrived within STALE_EXTERNAL_POWER_SECONDS, replay is skipped
+        and cached power values are cleared. This prevents phantom energy
+        accumulation when BMW keeps reporting CHARGING but stops pushing power
+        data (e.g. EVSE stopped externally but BMW still reports session active).
+
         Returns:
             List of VINs that had their prediction updated
         """
         updated_vins = []
+        now = time.time()
 
         for vin, session in list(self._sessions.items()):
             if not session:
                 continue
 
+            # Freshness gate: skip replay if external power data is stale.
+            if (
+                session.last_external_power_update is None
+                or now - session.last_external_power_update > STALE_EXTERNAL_POWER_SECONDS
+            ):
+                # Clear cached power so get_predicted_soc extrapolation also stops.
+                # V×A values are left intact: if BMW resumes pushing fresh data,
+                # update_ac_charging_data will refresh them and re-arm the gate.
+                if session.last_power_kw > 0:
+                    age = (now - session.last_external_power_update) if session.last_external_power_update else -1
+                    _LOGGER.debug(
+                        "Heartbeat stale for %s (age=%.0fs) — clearing last_power_kw to freeze prediction",
+                        redact_vin(vin),
+                        age,
+                    )
+                    session.last_power_kw = 0.0
+                continue
+
             # Prefer V×A recalculation for AC sessions
             power_kw = _calc_ac_power_kw(session)
             if power_kw is not None:
-                self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_kw)
+                self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_kw, mark_fresh=False)
                 updated_vins.append(vin)
 
             # Fallback: use last known power for AC sessions without V×A data.
             # DC excluded — power tapers during charging, so replaying stale
             # power would overestimate energy.
             elif session.last_power_kw > 0 and session.charging_method != "DC":
-                self.update_power_reading(vin, session.last_power_kw, aux_power_kw=session.last_aux_kw)
+                self.update_power_reading(
+                    vin, session.last_power_kw, aux_power_kw=session.last_aux_kw, mark_fresh=False
+                )
                 updated_vins.append(vin)
 
         # Periodic save: every 10 updates (~300s at 30s interval)
