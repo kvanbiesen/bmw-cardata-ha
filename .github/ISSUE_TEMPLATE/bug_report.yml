@@ -107,3 +107,5 @@ body:
           required: true
         - label: If I used an LLM to help write this report, I have included real debug logs (not reconstructed from reading the source code)
           required: true
+        - label: "For frontend/card issues: I've done a full browser cache refresh (Ctrl+Shift+R on Windows/Linux, Cmd+Shift+R on macOS, or Reset Frontend Cache in the mobile companion app)"
+          required: false
