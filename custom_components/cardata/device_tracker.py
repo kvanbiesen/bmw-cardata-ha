@@ -187,6 +187,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                         self._current_lat,
                         self._current_lon,
                     )
+                    # Write state immediately — super().async_added_to_hass() already
+                    # wrote state with lat/lon=None before we restored the values here.
+                    self.async_write_ha_state()
                 except (TypeError, ValueError):
                     pass
 
