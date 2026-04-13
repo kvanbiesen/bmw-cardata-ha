@@ -39,6 +39,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_config_entry,
+    async_get,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
@@ -86,6 +90,17 @@ async def async_setup_entry(
         trackers[vin] = tracker
         async_add_entities([tracker])
         _LOGGER.debug("Created device tracker for VIN: %s", redact_vin(vin))
+
+    # Restore device trackers from entity registry so they are not
+    # "Unavailable" between restart and first MQTT data arrival.
+    entity_registry = async_get(hass)
+    for entity_entry in async_entries_for_config_entry(entity_registry, config_entry.entry_id):
+        if entity_entry.domain != "device_tracker" or entity_entry.disabled_by is not None:
+            continue
+        unique_id = entity_entry.unique_id
+        if unique_id and unique_id.endswith("_device_tracker"):
+            vin = unique_id.removesuffix("_device_tracker")
+            ensure_tracker(vin)
 
     # Create trackers for all known VINs
     for vin in coordinator.data.keys():
