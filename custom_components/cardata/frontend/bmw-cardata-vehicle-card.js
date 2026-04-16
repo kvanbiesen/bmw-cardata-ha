@@ -813,6 +813,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const chargingActive =
       hasCharging &&
       chargingState !== "nocharging" &&
+      chargingState !== "chargingended" &&
       (
         chargingState.includes("charging") ||
         chargingState.includes("vehicle2grid") ||
