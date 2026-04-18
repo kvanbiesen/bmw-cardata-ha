@@ -147,6 +147,7 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.drivetrain.electricEngine.charging.timeToFullyCharged",
     "vehicle.powertrain.electric.battery.charging.acLimit.selected",
     "vehicle.drivetrain.electricEngine.charging.method",
+    "vehicle.drivetrain.electricEngine.charging.profile.mode",
     "vehicle.body.chargingPort.plugEventId",
     DESC_CHARGING_PHASES,
     DESC_TRIP_HVSOC,
