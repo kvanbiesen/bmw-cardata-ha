@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Generic, NamedTuple, TypeVar
 
+from .utils import redact_vin_in_text
+
 _LOGGER = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -72,19 +74,27 @@ class PendingManager(Generic[T]):
                 _LOGGER.debug(
                     "%s already in progress for key=%s, skipping duplicate",
                     self._operation_name,
-                    key,
+                    redact_vin_in_text(str(key)),
                 )
                 return False
 
             self._pending.add(key)
-            _LOGGER.debug("%s started for key=%s", self._operation_name, key)
+            _LOGGER.debug(
+                "%s started for key=%s",
+                self._operation_name,
+                redact_vin_in_text(str(key)),
+            )
             return True
 
     async def release(self, key: T) -> None:
         """Release operation completion."""
         async with self._lock:
             self._pending.discard(key)
-            _LOGGER.debug("%s completed for key=%s", self._operation_name, key)
+            _LOGGER.debug(
+                "%s completed for key=%s",
+                self._operation_name,
+                redact_vin_in_text(str(key)),
+            )
 
 
 class PendingSnapshot(NamedTuple):
