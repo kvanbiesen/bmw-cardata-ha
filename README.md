@@ -347,6 +347,33 @@ Magic SOC predicts battery drain during driving using real-time odometer distanc
 
 **Limitations**: This is experimental. Accuracy depends on BMW sending timely SOC and mileage data. Preheating, extended idle with accessories, and firmware glitches can cause temporary inaccuracy. PHEVs are excluded from prediction (hybrid powertrain makes distance-based estimation unreliable).
 
+## External Power Meter Injection (Optional)
+
+If you have a smart meter that reports the power delivered to the car, you can feed its readings into the SOC predictor and bypass BMW's V×A telemetry, which is refreshed only every ~5 hours on some models and returns sentinel zero values during fast EVSE flapping (see discussion [#359](https://github.com/kvanbiesen/bmw-cardata-ha/discussions/359)). **Disabled by default.**
+
+- **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Use external power meter for charging
+- **Service**: `cardata.update_charging_power` with fields `vin`, `power_kw`, and optional `aux_power_kw`.
+- **Precedence**: Freshness-based. While a local reading has arrived within the last 120 seconds, BMW-sourced V×A and `charging.power` updates are suppressed. When local readings stop (car driven away, meter offline), the predictor falls back to BMW after the timeout — no manual switching needed.
+- **Typical setup**: A Home Assistant automation that triggers on your meter's power sensor changes (or on a 10–30 second interval) and calls the service with the current reading. **Gate the automation on the car being home** — otherwise the meter will happily push 0 W while the car is away at a public charger, holding the freshness gate and blocking BMW's V×A updates from the public session.
+
+```yaml
+automation:
+  - trigger:
+      - platform: state
+        entity_id: sensor.my_ev_meter_power
+    condition:
+      - condition: state
+        entity_id: device_tracker.my_bmw
+        state: home
+    action:
+      - service: cardata.update_charging_power
+        data:
+          vin: "WBY31AW090FP15359"
+          power_kw: "{{ states('sensor.my_ev_meter_power') | float / 1000 }}"
+```
+
+When the option is disabled, the service no-ops with a warning — leaving it always registered so automations do not break across reloads.
+
 ## Charging History (Optional)
 
 The integration can fetch your BMW charging session history from the past 30 days. This is **disabled by default** to conserve your API quota.
@@ -379,6 +406,7 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_vehicle_images` manually fetches vehicle images for all configured vehicles.
 - `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`).
 - `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them.
+- `cardata.update_charging_power` injects a locally measured charging power reading (kW) into the SOC predictor. Requires the **Use external power meter for charging** option to be enabled under Settings. Intended for users with a smart meter who want to feed accurate real-time power into the prediction instead of relying on BMW's V×A — see the section below.
 
 ## API Quota and MQTT Streaming
 

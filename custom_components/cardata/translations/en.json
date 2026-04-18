@@ -45,13 +45,15 @@
           "enable_charging_history": "Enable Charging History (daily API poll)",
           "enable_tyre_diagnosis": "Enable Tyre Diagnosis (daily API poll)",
           "enable_trip_end_polling": "Enable trip-end polling",
-          "trip_poll_cooldown_minutes": "Trip-end poll cooldown (minutes)"
+          "trip_poll_cooldown_minutes": "Trip-end poll cooldown (minutes)",
+          "enable_external_power_injection": "Use external power meter for charging"
         },
         "data_description": {
           "enable_charging_history": "Fetches charging session history from BMW once per day. Uses 1 additional API call per vehicle per day from your 50-call daily quota.",
           "enable_tyre_diagnosis": "Fetches tyre health and wear data from BMW once per day. Uses 1 additional API call per vehicle per day from your 50-call daily quota.",
           "enable_trip_end_polling": "When enabled, triggers an immediate API poll each time the vehicle stops. Disable this if you make many short trips and hit the daily API limit. Scheduled polling still runs regardless.",
-          "trip_poll_cooldown_minutes": "Minimum wait between trip-end polls for the same vehicle (default: 10). Increase this to reduce API usage on frequent short trips."
+          "trip_poll_cooldown_minutes": "Minimum wait between trip-end polls for the same vehicle (default: 10). Increase this to reduce API usage on frequent short trips.",
+          "enable_external_power_injection": "Allow an automation to push locally measured charging power to the SOC predictor via the cardata.update_charging_power service. While fresh local readings arrive, BMW-sourced V×A is suppressed. Leave off unless you run a smart meter and have wired it up."
         }
       },
       "action_mqtt_broker": {

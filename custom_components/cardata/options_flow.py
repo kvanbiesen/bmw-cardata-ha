@@ -50,6 +50,7 @@ from .const import (
     OPTION_CUSTOM_MQTT_TOPIC_PREFIX,
     OPTION_CUSTOM_MQTT_USERNAME,
     OPTION_ENABLE_CHARGING_HISTORY,
+    OPTION_ENABLE_EXTERNAL_POWER,
     OPTION_ENABLE_MAGIC_SOC,
     OPTION_ENABLE_TRIP_POLL,
     OPTION_ENABLE_TYRE_DIAGNOSIS,
@@ -175,6 +176,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             options[OPTION_ENABLE_TYRE_DIAGNOSIS] = user_input[OPTION_ENABLE_TYRE_DIAGNOSIS]
             options[OPTION_ENABLE_TRIP_POLL] = user_input[OPTION_ENABLE_TRIP_POLL]
             options[OPTION_TRIP_POLL_COOLDOWN] = cooldown
+            options[OPTION_ENABLE_EXTERNAL_POWER] = user_input[OPTION_ENABLE_EXTERNAL_POWER]
             return self.async_create_entry(title="", data=options)
 
         current_magic = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
@@ -182,6 +184,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         current_td = self._config_entry.options.get(OPTION_ENABLE_TYRE_DIAGNOSIS, False)
         current_trip = self._config_entry.options.get(OPTION_ENABLE_TRIP_POLL, True)
         current_cooldown = self._config_entry.options.get(OPTION_TRIP_POLL_COOLDOWN, DEFAULT_TRIP_POLL_COOLDOWN_MINUTES)
+        current_ext_power = self._config_entry.options.get(OPTION_ENABLE_EXTERNAL_POWER, False)
         return self.async_show_form(
             step_id="action_settings",
             data_schema=vol.Schema(
@@ -191,6 +194,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(OPTION_ENABLE_TYRE_DIAGNOSIS, default=current_td): bool,
                     vol.Optional(OPTION_ENABLE_TRIP_POLL, default=current_trip): bool,
                     vol.Optional(OPTION_TRIP_POLL_COOLDOWN, default=current_cooldown): int,
+                    vol.Optional(OPTION_ENABLE_EXTERNAL_POWER, default=current_ext_power): bool,
                 }
             ),
         )

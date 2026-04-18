@@ -54,6 +54,9 @@ from .const import (
     HTTP_TIMEOUT,
     HV_BATTERY_CONTAINER_NAME,
     HV_BATTERY_CONTAINER_PURPOSE,
+    MAGIC_SOC_DESCRIPTOR,
+    OPTION_ENABLE_EXTERNAL_POWER,
+    PREDICTED_SOC_DESCRIPTOR,
 )
 from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import (
@@ -96,6 +99,15 @@ CLEAN_CONTAINERS_SCHEMA = vol.Schema(
         vol.Optional("entry_id"): str,
         vol.Optional("action", default="list"): vol.In(["list", "delete", "delete_all", "delete_all_matching"]),
         vol.Optional("container_id"): str,
+    }
+)
+
+UPDATE_CHARGING_POWER_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): str,
+        vol.Required("vin"): str,
+        vol.Required("power_kw"): vol.Coerce(float),
+        vol.Optional("aux_power_kw", default=0.0): vol.Coerce(float),
     }
 )
 
@@ -572,6 +584,73 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
     _LOGGER.error("clean_hv_containers: unknown action '%s'", action)
 
 
+async def async_handle_update_charging_power(call: ServiceCall) -> None:
+    """Inject locally measured charging power into the SOC predictor.
+
+    Gated by OPTION_ENABLE_EXTERNAL_POWER on the config entry — the service
+    is always registered so automations do not break on reload, but calls
+    no-op with a warning when the option is disabled.
+    """
+    hass = call.hass
+    resolved = _resolve_target(hass, call.data)
+    if not resolved:
+        return
+
+    _target_entry_id, target_entry, runtime = resolved
+
+    if not target_entry.options.get(OPTION_ENABLE_EXTERNAL_POWER, False):
+        _LOGGER.warning("Cardata update_charging_power: enable_external_power_injection option is off; ignoring call")
+        return
+
+    vin = call.data.get("vin")
+    if not vin or not is_valid_vin(vin):
+        _LOGGER.error("Cardata update_charging_power: invalid or missing VIN")
+        return
+
+    power_kw = float(call.data["power_kw"])
+    if power_kw < 0:
+        _LOGGER.error(
+            "Cardata update_charging_power: negative power (%.3f kW) rejected for %s",
+            power_kw,
+            redact_vin(vin),
+        )
+        return
+
+    aux_power_kw = float(call.data.get("aux_power_kw", 0.0) or 0.0)
+
+    coordinator = getattr(runtime, "coordinator", None)
+    soc_predictor = getattr(coordinator, "_soc_predictor", None) if coordinator else None
+    if soc_predictor is None or coordinator is None:
+        _LOGGER.error("Cardata update_charging_power: SOC predictor not available")
+        return
+
+    magic_soc_pred = getattr(coordinator, "_magic_soc", None)
+    schedule_debounce = False
+    async with coordinator._lock:
+        soc_predictor.update_power_reading(vin, power_kw, aux_power_kw, from_local=True)
+        if soc_predictor.is_charging(vin):
+            if soc_predictor.has_signaled_entity(vin) and coordinator._pending_manager.add_update(
+                vin, PREDICTED_SOC_DESCRIPTOR
+            ):
+                schedule_debounce = True
+            if (
+                magic_soc_pred is not None
+                and magic_soc_pred.has_signaled_magic_soc_entity(vin)
+                and coordinator._pending_manager.add_update(vin, MAGIC_SOC_DESCRIPTOR)
+            ):
+                schedule_debounce = True
+
+    if schedule_debounce:
+        await coordinator._async_schedule_debounced_update()
+
+    _LOGGER.debug(
+        "Cardata update_charging_power: injected %.2f kW (aux %.2f kW) for %s",
+        power_kw,
+        aux_power_kw,
+        redact_vin(vin),
+    )
+
+
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all Cardata services."""
     hass.services.async_register(
@@ -610,6 +689,12 @@ def async_register_services(hass: HomeAssistant) -> None:
         async_handle_fetch_tyre_diagnosis,
         schema=DAILY_FETCH_SERVICE_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN,
+        "update_charging_power",
+        async_handle_update_charging_power,
+        schema=UPDATE_CHARGING_POWER_SCHEMA,
+    )
 
     # Developer migration service
     if not hass.services.has_service(DOMAIN, "migrate_entity_ids"):
@@ -642,6 +727,7 @@ def async_unregister_services(hass: HomeAssistant) -> None:
         "fetch_vehicle_images",
         "fetch_charging_history",
         "fetch_tyre_diagnosis",
+        "update_charging_power",
     ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)
