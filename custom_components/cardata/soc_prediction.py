@@ -33,7 +33,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from . import soc_learning
-from .const import DEFAULT_DC_EFFICIENCY, MAX_ENERGY_GAP_SECONDS, STALE_EXTERNAL_POWER_SECONDS
+from .const import (
+    DEFAULT_DC_EFFICIENCY,
+    LOCAL_POWER_TTL_SECONDS,
+    MAX_ENERGY_GAP_SECONDS,
+    STALE_EXTERNAL_POWER_SECONDS,
+)
 from .soc_types import ChargingSession, LearnedEfficiency, PendingSession
 from .utils import redact_vin
 
@@ -133,6 +138,11 @@ class SOCPredictor:
 
         # Counter for periodic save during charging (every 10 heartbeats)
         self._periodic_save_counter: int = 0
+
+        # VIN -> monotonic timestamp of last externally-injected (local meter)
+        # power reading. While this is fresh, BMW-sourced V×A / charging.power
+        # updates are suppressed. See LOCAL_POWER_TTL_SECONDS.
+        self._last_local_power_update: dict[str, float] = {}
 
     def set_learning_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when learning data is updated.
@@ -318,6 +328,7 @@ class SOCPredictor:
         aux_power_kw: float = 0.0,
         *,
         mark_fresh: bool = True,
+        from_local: bool = False,
     ) -> None:
         """Record power update for energy accumulation.
 
@@ -329,14 +340,32 @@ class SOCPredictor:
                 as fresh. External (MQTT/API-driven) callers leave this as True so
                 the heartbeat knows real data arrived; the heartbeat itself passes
                 False when replaying cached values to avoid self-refreshing.
+            from_local: True when the reading was injected by the user's local
+                meter via the update_charging_power service. When False (BMW or
+                heartbeat origin), the call is suppressed while a local injection
+                is still fresh (see LOCAL_POWER_TTL_SECONDS) so BMW's stale V×A
+                cannot overwrite the meter's view.
         """
+        now = time.time()
+        if from_local:
+            self._last_local_power_update[vin] = now
+        else:
+            last_local = self._last_local_power_update.get(vin)
+            if last_local is not None and now - last_local <= LOCAL_POWER_TTL_SECONDS:
+                _LOGGER.debug(
+                    "Skipping BMW power update for %s: local injection is fresh (%.1fs ago)",
+                    redact_vin(vin),
+                    now - last_local,
+                )
+                return
+
         session = self._sessions.get(vin)
         if session:
             # Accumulate net energy if power provided
             if power_kw is not None and power_kw >= 0:
-                session.accumulate_energy(power_kw, aux_power_kw, time.time())
+                session.accumulate_energy(power_kw, aux_power_kw, now)
                 if mark_fresh:
-                    session.last_external_power_update = time.time()
+                    session.last_external_power_update = now
 
                 # Log every power update with current state
                 _LOGGER.debug(

@@ -123,6 +123,13 @@ OPTION_ENABLE_CHARGING_HISTORY = "enable_charging_history"
 OPTION_ENABLE_TYRE_DIAGNOSIS = "enable_tyre_diagnosis"
 OPTION_ENABLE_TRIP_POLL = "enable_trip_end_polling"
 OPTION_TRIP_POLL_COOLDOWN = "trip_poll_cooldown_minutes"
+OPTION_ENABLE_EXTERNAL_POWER = "enable_external_power_injection"
+
+# Freshness window for externally injected charging power. While a local
+# injection has arrived within this many seconds, BMW-sourced V×A and
+# charging.power updates are suppressed so they do not overwrite the user's
+# meter data with stale BMW values.
+LOCAL_POWER_TTL_SECONDS = 120
 
 # Error message constants (for consistent error detection)
 ERR_TOKEN_REFRESH_IN_PROGRESS = "Token refresh already in progress"
