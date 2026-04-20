@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check stale issues
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const NOW = Date.now();
@@ -116,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Remove stale label on human comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const comment = context.payload.comment;

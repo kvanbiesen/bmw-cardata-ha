@@ -15,7 +15,7 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build matrix
         id: set-matrix
@@ -41,10 +41,10 @@ jobs:
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -60,7 +60,21 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          python fuzz/${{ matrix.fuzzer }} -max_total_time=18000 -timeout=30 | tee fuzz_output.txt
+          # Stream stdout to the action log (visible) and keep only the last
+          # ~5000 lines on disk (capturing libFuzzer's crash dump tail without
+          # letting the file grow unbounded over a 5h run).
+          python fuzz/${{ matrix.fuzzer }} -max_total_time=18000 -timeout=30 2>&1 \
+            | python3 -u -c "
+          import sys
+          from collections import deque
+          buf = deque(maxlen=5000)
+          for line in sys.stdin:
+              sys.stdout.write(line)
+              sys.stdout.flush()
+              buf.append(line)
+          with open('fuzz_output.txt', 'w') as f:
+              f.writelines(buf)
+          "
           exit_code=${PIPESTATUS[0]}
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -145,7 +159,7 @@ jobs:
 
       - name: Upload failure snippet
         if: ${{ steps.run_fuzzer.outputs.exit_code != '0' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fuzz-failure-${{ matrix.fuzzer }}
           path: fuzz_failure_${{ matrix.fuzzer }}.txt
@@ -164,7 +178,7 @@ jobs:
       issues: write
     steps:
       - name: Download failure snippets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         continue-on-error: true
         with:
           path: fuzz-failure
@@ -172,7 +186,7 @@ jobs:
           merge-multiple: true
 
       - name: Create or update failure issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const owner = context.repo.owner;
@@ -203,24 +217,54 @@ jobs:
               github.rest.actions.listJobsForWorkflowRun,
               { owner, repo, run_id: runId, per_page: 100 }
             );
-            const failedJobs = jobs
-              .filter((job) => job.conclusion === "failure" || job.conclusion === "cancelled")
-              .map((job) => job.name);
-            const failedList = failedJobs.length
-              ? failedJobs.map((name) => `- ${name}`).join("\n")
-              : "- (unknown)";
 
-            const body = [
+            // Distinguish a fuzzer-found crash (Run fuzzer step completed with
+            // a non-zero exit code) from a runner kill (the step never
+            // completed because the runner was terminated externally — OOM,
+            // infrastructure issue, etc.). The latter is infrastructure noise,
+            // not a code bug, so it should not file an issue.
+            const crashedJobs = [];
+            const killedJobs = [];
+            for (const job of jobs) {
+              if (job.conclusion !== "failure" && job.conclusion !== "cancelled") continue;
+              const runFuzzer = (job.steps || []).find((s) => s.name === "Run fuzzer");
+              if (runFuzzer && runFuzzer.status !== "completed") {
+                killedJobs.push(job.name);
+              } else {
+                crashedJobs.push(job.name);
+              }
+            }
+
+            if (crashedJobs.length === 0 && killedJobs.length > 0) {
+              core.notice(
+                `Skipping issue creation: ${killedJobs.length} job(s) were terminated externally (likely runner kill), no fuzzer crashes detected. Killed: ${killedJobs.join(", ")}`
+              );
+              return;
+            }
+
+            const sections = [
               "Automated report: the scheduled fuzzing workflow failed.",
               "",
               `Run: ${runUrl}`,
               "",
-              "Failed jobs:",
-              failedList,
+              "Crashed jobs (fuzzer found a real failure):",
+              crashedJobs.length
+                ? crashedJobs.map((n) => `- ${n}`).join("\n")
+                : "- (none)",
+            ];
+            if (killedJobs.length) {
+              sections.push(
+                "",
+                "Killed jobs (runner terminated externally, not a fuzzer crash):",
+                killedJobs.map((n) => `- ${n}`).join("\n")
+              );
+            }
+            sections.push(
               snippetsSection,
               "",
               "Please review the workflow logs and reproduce locally if needed."
-            ].join("\n");
+            );
+            const body = sections.join("\n");
 
             const query = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
             const search = await github.rest.search.issuesAndPullRequests({ q: query });
