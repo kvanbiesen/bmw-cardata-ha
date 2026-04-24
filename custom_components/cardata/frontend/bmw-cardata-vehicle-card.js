@@ -104,9 +104,20 @@ const humanizeStateValue = (rawState) => {
   const normalized = String(rawState).trim().toLowerCase();
   if (!normalized || normalized === "unknown" || normalized === "unavailable") return "—";
   switch (normalized) {
+    // charging state
     case "CHARGINGACTIVE": return "Charging Active";
     case "CHARGINGENDED": return "Charging Ended";
     case "NOCHARGING": return "No Charging";
+    // doors
+    case "SECURED": return "Secured";
+    case "UNLOCKED": return "Unlocked";
+    // alarm
+    case "doorsTiltCabin": return "Doors, Tilt, Cabin";
+    case "doorsOnly": return "Doors Only";
+    case "unarmed": return "Unarmed";
+    // windows
+    case "CLOSED": return "Closed";
+    case "INTERMEDIATE": return "Intermediate";
   }
   return normalized
     .replaceAll("_", " ")
