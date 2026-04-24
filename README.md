@@ -169,6 +169,9 @@ document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l
 
 ## Installation (HACS)
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=kvanbiesen&repository=bmw-cardata-ha&category=integration)
+
+Or:
 1. Add this repo to HACS as a **custom repository** (type: Integration).
 2. Install "Bmw cardata" from the Custom section.
 3. Restart Home Assistant.
