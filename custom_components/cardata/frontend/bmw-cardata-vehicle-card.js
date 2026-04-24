@@ -103,7 +103,11 @@ const humanizeStateValue = (rawState) => {
   if (rawState === undefined || rawState === null) return "—";
   const normalized = String(rawState).trim().toLowerCase();
   if (!normalized || normalized === "unknown" || normalized === "unavailable") return "—";
-  if (normalized === "nocharging") return "No charging";
+  switch (normalized) {
+    case "CHARGINGACTIVE": return "Charging Active";
+    case "CHARGINGENDED": return "Charging Ended";
+    case "NOCHARGING": return "No Charging";
+  }
   return normalized
     .replaceAll("_", " ")
     .split(" ")
