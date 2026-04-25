@@ -867,11 +867,24 @@ class SOCPredictor:
         Falls back to last_power_kw for sessions without V×A data (e.g. DC, or AC
         vehicles that only report charging.power).
 
-        Gated by session.last_external_power_update: if no real MQTT-driven power
-        update has arrived within STALE_EXTERNAL_POWER_SECONDS, replay is skipped
-        and cached power values are cleared. This prevents phantom energy
-        accumulation when BMW keeps reporting CHARGING but stops pushing power
-        data (e.g. EVSE stopped externally but BMW still reports session active).
+        Two replay paths with different freshness rules:
+
+        1. V×A recompute. When the session has positive voltage and current,
+           treat the recomputed power as a real reading and refresh the
+           freshness marker. Stable AC charging can go 30+ min between BMW
+           MQTT updates because the values do not change, and value-changed
+           filtering means even API polls do not always flow back through
+           update_ac_charging_data. The heartbeat is then the only thing
+           keeping the prediction live, so it has to mark fresh itself.
+           Self-protecting: when an EVSE stops, BMW reports V=0/I=0 and
+           _calc_ac_power_kw returns None, dropping into the gated fallback.
+
+        2. Cached last_power_kw fallback (no live V×A). Here we cannot tell
+           ongoing charging apart from a session BMW still flags as active
+           after an external EVSE stop, so the freshness gate clears the
+           scalar once STALE_EXTERNAL_POWER_SECONDS has passed without a
+           real external power update. This is the path that issue #355
+           guards against; #372 was caused by path 1 being gated as well.
 
         Returns:
             List of VINs that had their prediction updated
@@ -883,34 +896,36 @@ class SOCPredictor:
             if not session:
                 continue
 
-            # Freshness gate: skip replay if external power data is stale.
+            # Path 1: live V×A (AC sessions only). DC is excluded because a
+            # session that flipped AC → DC mid-life can carry stale V×A and
+            # _calc_ac_power_kw would compute a meaningless number for it.
+            if session.charging_method != "DC":
+                power_kw = _calc_ac_power_kw(session)
+                if power_kw is not None:
+                    self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_kw)
+                    updated_vins.append(vin)
+                    continue
+
+            # Path 2: cached last_power_kw fallback. Gate on freshness so a
+            # session BMW keeps flagging as active after an external EVSE
+            # stop cannot inflate the prediction indefinitely (issue #355).
             if (
                 session.last_external_power_update is None
                 or now - session.last_external_power_update > STALE_EXTERNAL_POWER_SECONDS
             ):
-                # Clear cached power so get_predicted_soc extrapolation also stops.
-                # V×A values are left intact: if BMW resumes pushing fresh data,
-                # update_ac_charging_data will refresh them and re-arm the gate.
                 if session.last_power_kw > 0:
                     age = (now - session.last_external_power_update) if session.last_external_power_update else -1
                     _LOGGER.debug(
-                        "Heartbeat stale for %s (age=%.0fs) — clearing last_power_kw to freeze prediction",
+                        "Heartbeat stale for %s (age=%.0fs), clearing last_power_kw to freeze prediction",
                         redact_vin(vin),
                         age,
                     )
                     session.last_power_kw = 0.0
                 continue
 
-            # Prefer V×A recalculation for AC sessions
-            power_kw = _calc_ac_power_kw(session)
-            if power_kw is not None:
-                self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_kw, mark_fresh=False)
-                updated_vins.append(vin)
-
-            # Fallback: use last known power for AC sessions without V×A data.
-            # DC excluded — power tapers during charging, so replaying stale
+            # DC excluded: power tapers during charging, so replaying stale
             # power would overestimate energy.
-            elif session.last_power_kw > 0 and session.charging_method != "DC":
+            if session.last_power_kw > 0 and session.charging_method != "DC":
                 self.update_power_reading(
                     vin, session.last_power_kw, aux_power_kw=session.last_aux_kw, mark_fresh=False
                 )
