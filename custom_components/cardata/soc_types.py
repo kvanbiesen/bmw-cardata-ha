@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -442,3 +443,16 @@ class ChargingSession:
         self.last_power_kw = power_kw
         self.last_aux_kw = aux_power_kw
         self.last_energy_update = timestamp
+
+    def flush_pending_energy(self, now: float | None = None) -> None:
+        """Credit energy delivered at last known power up to ``now``.
+
+        Called before a re-anchor so the energy accrued between the last
+        power telemetry update and the re-anchor moment is captured in
+        session_total_energy_kwh instead of being silently dropped when
+        last_energy_update is fast-forwarded to "now". No-op when there is
+        no previous power reading to extrapolate from.
+        """
+        if self.last_power_kw <= 0 or self.last_energy_update is None:
+            return
+        self.accumulate_energy(self.last_power_kw, self.last_aux_kw, now if now is not None else time.time())

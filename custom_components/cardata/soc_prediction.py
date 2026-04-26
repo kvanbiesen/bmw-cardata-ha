@@ -437,6 +437,7 @@ class SOCPredictor:
                             session.last_energy_update = time.time()
                         else:
                             # Charging, from real battery (header): full re-anchor downward
+                            session.flush_pending_energy()
                             old_anchor = session.anchor_soc
                             ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
                             session.anchor_soc = soc
@@ -458,6 +459,7 @@ class SOCPredictor:
                     self._last_predicted_soc[vin] = soc
                     session = self._sessions.get(vin)
                     if session is not None:
+                        session.flush_pending_energy()
                         old_anchor = session.anchor_soc
                         ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
                         session.anchor_soc = soc
@@ -479,6 +481,7 @@ class SOCPredictor:
                 # consistent state (prevents race with SyncWorker reads)
                 session = self._sessions.get(vin)
                 if session is not None:
+                    session.flush_pending_energy()
                     old_anchor = session.anchor_soc
                     ref_time = session.last_energy_update or session.anchor_timestamp.timestamp()
                     session.anchor_soc = soc
