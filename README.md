@@ -352,7 +352,7 @@ Magic SOC predicts battery drain during driving using real-time odometer distanc
 
 ## External Power Meter Injection (Optional)
 
-If you have a smart meter that reports the power delivered to the car, you can feed its readings into the SOC predictor and bypass BMW's V×A telemetry, which is refreshed only every ~5 hours on some models and returns sentinel zero values during fast EVSE flapping (see discussion [#359](https://github.com/kvanbiesen/bmw-cardata-ha/discussions/359)). **Disabled by default.**
+If you have a smart meter that reports the power delivered to the car, you can feed its readings into the SOC predictor and bypass BMW's V×A telemetry, which is refreshed only every ~5 hours on some models and returns sentinel zero values during fast EVSE flapping (see discussion [#359](https://github.com/kvanbiesen/bmw-cardata-ha/discussions/359)). It is also the recommended setup if you stop the EVSE externally (e.g. a Home Assistant automation cutting the wallbox), since BMW's backend can keep reporting `CHARGING` with stale power for some time after the actual stop and the predictor will keep extrapolating from the last known power. Feeding 0 W from the meter at stop time anchors the prediction to ground truth. **Disabled by default.**
 
 - **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Use external power meter for charging
 - **Service**: `cardata.update_charging_power` with fields `vin`, `power_kw`, and optional `aux_power_kw`.

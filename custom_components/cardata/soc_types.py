@@ -357,24 +357,12 @@ class ChargingSession:
     last_power_kw: float = 0.0  # Last power reading for trapezoidal integration
     last_aux_kw: float = 0.0  # Last auxiliary power for extrapolation
     last_energy_update: float | None = None  # Timestamp of last energy accumulation
-    # Timestamp of the last externally-sourced power update (MQTT or API).
-    # NOT refreshed by the heartbeat self-replay — that's the whole point: this
-    # lets the heartbeat detect when BMW has gone silent on power data and stop
-    # replaying stale values into accumulate_energy().
-    last_external_power_update: float | None = None
     target_soc: float | None = None  # Charge target from BMW (e.g. 80%)
     restored: bool = False  # True when loaded from storage (energy data incomplete)
 
     # Session-level tracking (never reset by re-anchors, used for learning)
     session_start_soc: float | None = None  # Original SOC at session creation
     session_total_energy_kwh: float = 0.0  # Cumulative energy across all re-anchors
-
-    # Highest BMW-reported SOC observed during this session. Used by
-    # update_bmw_soc to refresh last_external_power_update only when BMW SOC
-    # has strictly progressed since the previous reading — not when it has
-    # merely arrived (which can happen when the EVSE has been stopped
-    # externally and BMW keeps pushing the same static value).
-    last_bmw_soc_seen: float | None = None
 
     # AC charging state (for vehicles without direct power streaming)
     last_voltage: float | None = None
@@ -393,11 +381,9 @@ class ChargingSession:
             "last_power_kw": self.last_power_kw,
             "last_aux_kw": self.last_aux_kw,
             "last_energy_update": self.last_energy_update,
-            "last_external_power_update": self.last_external_power_update,
             "target_soc": self.target_soc,
             "session_start_soc": self.session_start_soc,
             "session_total_energy_kwh": self.session_total_energy_kwh,
-            "last_bmw_soc_seen": self.last_bmw_soc_seen,
             "last_voltage": self.last_voltage,
             "last_current": self.last_current,
             "phases": self.phases,
@@ -416,12 +402,10 @@ class ChargingSession:
             last_power_kw=data.get("last_power_kw", 0.0),
             last_aux_kw=data.get("last_aux_kw", 0.0) or data.get("last_aux_power", 0.0) or 0.0,
             last_energy_update=data.get("last_energy_update"),
-            last_external_power_update=data.get("last_external_power_update"),
             target_soc=data.get("target_soc"),
             restored=True,
             session_start_soc=data.get("session_start_soc"),
             session_total_energy_kwh=data.get("session_total_energy_kwh", 0.0),
-            last_bmw_soc_seen=data.get("last_bmw_soc_seen"),
             last_voltage=data.get("last_voltage"),
             last_current=data.get("last_current"),
             phases=data.get("phases", 1),
