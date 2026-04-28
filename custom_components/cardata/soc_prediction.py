@@ -398,6 +398,13 @@ class SOCPredictor:
 
         is_charging = self._is_charging.get(vin, False)
         current_predicted = self._last_predicted_soc.get(vin)
+        session = self._sessions.get(vin)
+
+        # Capture the highest BMW SOC seen during this session BEFORE any
+        # branch updates session state. Used after the branches decide
+        # whether to refresh the heartbeat freshness gate: only a strict
+        # increase counts as real charging progress.
+        prev_bmw_soc_seen = session.last_bmw_soc_seen if session is not None else None
 
         # For PHEVs during AC charging: the real HV battery header is authoritative
         # and may move both up and down (battery recovery mode, hybrid management, etc).
@@ -425,7 +432,6 @@ class SOCPredictor:
                         current_predicted,
                     )
                     self._last_predicted_soc[vin] = soc
-                    session = self._sessions.get(vin)
                     if session is not None:
                         # Update display value so monotonicity guard doesn't
                         # immediately override the sync-down on the next prediction.
@@ -457,7 +463,6 @@ class SOCPredictor:
                         current_predicted,
                     )
                     self._last_predicted_soc[vin] = soc
-                    session = self._sessions.get(vin)
                     if session is not None:
                         session.flush_pending_energy()
                         old_anchor = session.anchor_soc
@@ -467,6 +472,15 @@ class SOCPredictor:
                         session.total_energy_kwh = 0.0
                         session.last_energy_update = time.time()
                         self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
+                elif (
+                    session is not None
+                    and not from_charging_level
+                    and (prev_bmw_soc_seen is None or soc > prev_bmw_soc_seen)
+                ):
+                    # Heartbeat ran ahead of BMW SOC but BMW progressed since
+                    # the last reading — refresh the freshness gate so Path 2
+                    # keeps replaying instead of freezing prematurely.
+                    session.last_external_power_update = time.time()
         elif is_charging:
             # BEV charging: only sync up (never down during charge)
             if current_predicted is None or soc > current_predicted:
@@ -479,7 +493,6 @@ class SOCPredictor:
                 self._last_predicted_soc[vin] = soc
                 # Also re-anchor the session so get_predicted_soc() sees
                 # consistent state (prevents race with SyncWorker reads)
-                session = self._sessions.get(vin)
                 if session is not None:
                     session.flush_pending_energy()
                     old_anchor = session.anchor_soc
@@ -490,9 +503,27 @@ class SOCPredictor:
                     session.last_energy_update = time.time()
                     # Keep last_power_kw + reset gap to now for extrapolation continuity
                     self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
+            elif session is not None and (prev_bmw_soc_seen is None or soc > prev_bmw_soc_seen):
+                # Heartbeat extrapolation has run ahead of BMW SOC, so no
+                # re-anchor — but BMW has reported a strictly higher value
+                # than the previous reading, which is real evidence the
+                # session is still active. Refresh the freshness gate.
+                # Static SOC pushes after an external EVSE stop fail this
+                # check (see #355) so phantom inflation is still bounded.
+                session.last_external_power_update = time.time()
         else:
             # BEV not charging: snap to actual BMW SOC
             self._last_predicted_soc[vin] = soc
+
+        # Track the highest BMW SOC seen during this charging session so the
+        # next call's freshness decision compares against the right reference.
+        # Updated regardless of which branch fired so sync-up paths also keep
+        # the tracker current. Skipped for PHEV charging.level since we
+        # explicitly ignore that source — letting it bump the tracker would
+        # suppress real-header refresh on the next push.
+        is_phev_level_ignored = self._is_phev.get(vin, False) and from_charging_level
+        if session is not None and is_charging and not is_phev_level_ignored:
+            session.last_bmw_soc_seen = soc if prev_bmw_soc_seen is None else max(prev_bmw_soc_seen, soc)
 
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())

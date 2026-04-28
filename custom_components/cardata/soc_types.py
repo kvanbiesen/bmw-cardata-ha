@@ -369,6 +369,13 @@ class ChargingSession:
     session_start_soc: float | None = None  # Original SOC at session creation
     session_total_energy_kwh: float = 0.0  # Cumulative energy across all re-anchors
 
+    # Highest BMW-reported SOC observed during this session. Used by
+    # update_bmw_soc to refresh last_external_power_update only when BMW SOC
+    # has strictly progressed since the previous reading — not when it has
+    # merely arrived (which can happen when the EVSE has been stopped
+    # externally and BMW keeps pushing the same static value).
+    last_bmw_soc_seen: float | None = None
+
     # AC charging state (for vehicles without direct power streaming)
     last_voltage: float | None = None
     last_current: float | None = None
@@ -390,6 +397,7 @@ class ChargingSession:
             "target_soc": self.target_soc,
             "session_start_soc": self.session_start_soc,
             "session_total_energy_kwh": self.session_total_energy_kwh,
+            "last_bmw_soc_seen": self.last_bmw_soc_seen,
             "last_voltage": self.last_voltage,
             "last_current": self.last_current,
             "phases": self.phases,
@@ -413,6 +421,7 @@ class ChargingSession:
             restored=True,
             session_start_soc=data.get("session_start_soc"),
             session_total_energy_kwh=data.get("session_total_energy_kwh", 0.0),
+            last_bmw_soc_seen=data.get("last_bmw_soc_seen"),
             last_voltage=data.get("last_voltage"),
             last_current=data.get("last_current"),
             phases=data.get("phases", 1),
