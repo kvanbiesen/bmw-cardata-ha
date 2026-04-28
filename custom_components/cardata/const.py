@@ -176,6 +176,9 @@ HV_BATTERY_DESCRIPTORS = [
     DESC_MAX_ENERGY,
     DESC_CHARGING_POWER,
     DESC_CHARGING_STATUS,
+    # API fallback for vehicles where MQTT goes silent on the odometer
+    # descriptor (issue #377). Mileage previously only arrived via MQTT.
+    DESC_TRAVELLED_DISTANCE,
 ]
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"
