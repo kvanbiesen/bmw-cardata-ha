@@ -186,6 +186,7 @@ async def async_perform_telematic_fetch(
     any_attempt = False
     auth_failure = False
     rate_limited = False
+    container_invalid = False
     all_skipped = True  # Track if we skipped all VINs due to fresh MQTT
 
     for vin in vins:
@@ -243,6 +244,24 @@ async def async_perform_telematic_fetch(
                 )
                 continue
 
+            # Container invalidated by BMW (CU-105): token is fine, but the
+            # stored container_id is no longer accepted. Clear it so the next
+            # bootstrap re-discovers / recreates a container.
+            if response.is_container_invalid:
+                _LOGGER.warning(
+                    "Cardata fetch_telematic_data: container %s no longer valid for %s "
+                    "(CU-105); clearing stored container so next restart re-bootstraps",
+                    cid,
+                    redacted_vin,
+                )
+                await async_update_entry_data(
+                    hass,
+                    entry,
+                    {"hv_container_id": None, BOOTSTRAP_COMPLETE: False},
+                )
+                container_invalid = True
+                break  # Stop trying other containers
+
             # Check for auth errors - these are fatal and require reauth
             if response.is_auth_error:
                 _LOGGER.error(
@@ -284,7 +303,7 @@ async def async_perform_telematic_fetch(
             if isinstance(telematic_payload, dict):
                 merged_data.update(telematic_payload)
 
-        if auth_failure or rate_limited:
+        if auth_failure or rate_limited or container_invalid:
             break  # Stop trying other VINs
 
         if merged_data:
@@ -296,6 +315,11 @@ async def async_perform_telematic_fetch(
     if all_skipped:
         _LOGGER.debug("All VINs have fresh MQTT data, skipping scheduled poll")
         return TelematicFetchResult(True)
+
+    # Container was invalidated by BMW; bootstrap flag has been cleared so the
+    # next restart will re-discover. Don't trigger the reauth flow.
+    if container_invalid:
+        return TelematicFetchResult(None, "container_invalid")
 
     # Auth failure is fatal - signal reauth needed
     if auth_failure:

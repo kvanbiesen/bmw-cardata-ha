@@ -138,9 +138,20 @@ class HttpResponse:
         return False
 
     @property
+    def is_container_invalid(self) -> bool:
+        """Check if response indicates the requested container is invalid.
+
+        BMW returns CU-105 ("No permission for specified containerId") as HTTP 403
+        when the container has been deleted or unlinked on their side. Distinct
+        from a real auth error: the OAuth token is fine, only the stored
+        container_id needs to be re-discovered.
+        """
+        return self.status == 403 and "CU-105" in self.text
+
+    @property
     def is_auth_error(self) -> bool:
         """Check if response indicates authentication error."""
-        if self.is_rate_limited:
+        if self.is_rate_limited or self.is_container_invalid:
             return False
         return self.status in (401, 403)
 
