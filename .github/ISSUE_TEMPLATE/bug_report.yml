@@ -74,14 +74,23 @@ body:
       label: Debug logs
       description: |
         Enable debug logging, reproduce the issue, and paste the logs here.
-        Please remove or redact personal data (VIN, location, tokens, etc.).
+
+        The integration already redacts VINs (e.g. `WBY...9486`) and bearer
+        tokens / Authorization headers in error messages. You only need to
+        redact things it doesn't auto-redact: account email, precise GPS
+        coordinates, and anything visible in attached screenshots.
+
+        Please leave entry IDs (UUID-like), container IDs (e.g.
+        `G00B025F732UD`), GCIDs, and BMW descriptor names visible — they're
+        internal identifiers, not personal data, and removing them makes
+        diagnosis harder.
 
         Enable debug logging by adding this to your configuration.yaml:
         ```yaml
         logger:
           default: info
           logs:
-            custom_components.bmw_cardata: debug
+            custom_components.cardata: debug
         ```
         or set debug_log in const.py to true and restart HA.
       render: text
