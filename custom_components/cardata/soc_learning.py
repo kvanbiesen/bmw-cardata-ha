@@ -102,6 +102,8 @@ def load_session_data(predictor: SOCPredictor, data: dict[str, Any]) -> None:
             session = ChargingSession.from_dict(s_data)
             predictor._sessions[vin] = session
             predictor._last_predicted_soc[vin] = session.last_predicted_soc
+            if session.charging_method:
+                predictor._charging_method[vin] = session.charging_method
         except Exception as err:
             _LOGGER.warning("SOC: Failed to load active session for %s: %s", redact_vin(vin), err)
 
