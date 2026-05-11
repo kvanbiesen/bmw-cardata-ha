@@ -116,6 +116,29 @@ The CarData web portal isn’t available everywhere (e.g., it’s disabled in Fi
 ```js
 document.querySelectorAll('label.chakra-checkbox:not([data-checked])').forEach(l => l.click());
 ```
+In Google Chrome, open the console (F12) and manually type `allow pasting` and then paste this:
+``` js
+function pierceShadow(root) {
+  const selectors = [
+    'input[type="checkbox"]:not(:checked)',
+    'label.chakra-checkbox:not([data-checked])',
+    '[role="checkbox"][aria-checked="false"]'
+  ];
+  selectors.forEach(selector => {
+    root.querySelectorAll(selector).forEach(el => {
+      console.log('Clicking:', el);
+      el.click();
+    });
+  });
+  root.querySelectorAll('*').forEach(el => {
+    if (el.shadowRoot) {
+      pierceShadow(el.shadowRoot);
+    }
+  });
+}
+pierceShadow(document);
+```
+
    - If you want the "Predicted SOC" helper sensor to work, make sure your telematics container includes the descriptors `vehicle.drivetrain.batteryManagement.header`, `vehicle.drivetrain.batteryManagement.maxEnergy`, `vehicle.powertrain.electric.battery.charging.power`, and `vehicle.drivetrain.electricEngine.charging.status`. Those fields let the integration reset the predicted state of charge and calculate the charging slope between stream updates. It seems like the `vehicle.drivetrain.batteryManagement.maxEnergy` always gets sent even though it's not explicitly set, but check it anyway.
 
 9. Save the selection.
