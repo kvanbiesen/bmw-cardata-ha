@@ -481,8 +481,11 @@ class SOCPredictor:
                     # Keep last_power_kw + reset gap to now for extrapolation continuity
                     self._derive_power_from_soc_change(vin, session, old_anchor, soc, ref_time)
         else:
-            # BEV not charging: snap to actual BMW SOC
-            self._last_predicted_soc[vin] = soc
+            # BEV not charging: BMW header reports integer SOC, so a sub-integer
+            # prediction within 0.5pp is still consistent with the same rounded
+            # value. Snapping would discard accuracy across short charging pauses.
+            if current_predicted is None or abs(current_predicted - soc) >= 0.5:
+                self._last_predicted_soc[vin] = soc
 
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())

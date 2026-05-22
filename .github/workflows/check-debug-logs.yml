@@ -25,6 +25,12 @@ jobs:
             const match = body.match(/### Debug logs\s*\n([\s\S]*?)(?=\n### |$)/);
             const logsSection = match ? match[1].trim() : '';
 
+            // A .log attachment anywhere in the body counts as valid evidence —
+            // mirrors the comment job's behaviour so reports that link the file
+            // instead of pasting it don't get falsely flagged.
+            const logAttachmentPattern = /github\.com\/user-attachments\/files\/\d+\/[^\s)]+\.log\b/i;
+            const hasLogAttachment = logAttachmentPattern.test(body);
+
             // Must contain at least one DEBUG-level line in an actual log entry.
             // WARNING/INFO-only logs are not debug logs, and the word DEBUG
             // appearing in yaml snippets or instructions should not match.
@@ -38,7 +44,7 @@ jobs:
 
             const hasLabel = context.payload.issue.labels.some(l => l.name === 'needs-debug-logs');
             const matchCount = logPatterns.filter(p => p.test(logsSection)).length;
-            const isValid = logsSection.length > 100 && hasDebugLevel && matchCount >= 1;
+            const isValid = hasLogAttachment || (logsSection.length > 100 && hasDebugLevel && matchCount >= 1);
 
             if (!isValid) {
               // Add label if not present
