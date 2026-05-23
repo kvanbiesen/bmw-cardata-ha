@@ -212,6 +212,14 @@ class MagicSOCPredictor:
         """Get last known battery capacity for fallback when descriptor evicted."""
         return self._last_known_capacity.get(vin)
 
+    def set_last_magic_soc(self, vin: str, soc: float) -> None:
+        """Record latest Magic SOC value so the not-charging snap-down has
+        a current reference. Used by soc_wiring during charging, when the
+        charging predictor owns the displayed value and get_magic_soc() is
+        bypassed.
+        """
+        self._last_magic_soc[vin] = soc
+
     # --- Persistence ---
 
     def get_session_data(self) -> dict[str, Any]:

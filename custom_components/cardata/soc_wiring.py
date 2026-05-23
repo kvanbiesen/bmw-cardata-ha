@@ -236,7 +236,10 @@ def get_magic_soc(
                 pass
 
     if is_charging:
-        return soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
+        predicted = soc_predictor.get_predicted_soc(vin=vin, bmw_soc=bmw_soc)
+        if predicted is not None:
+            magic_soc.set_last_magic_soc(vin, predicted)
+        return predicted
 
     mileage_state = vehicle_data.get(DESC_TRAVELLED_DISTANCE)
     mileage = None
