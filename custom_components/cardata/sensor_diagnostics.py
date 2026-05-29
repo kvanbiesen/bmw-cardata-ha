@@ -428,18 +428,21 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
 
         Sessions are summarised to key fields only.  If the result still
         exceeds the HA recorder limit, the oldest sessions are dropped
-        until it fits.
+        until it fits, keeping the most recent ones.
         """
         sessions = self._coordinator.get_charging_history(self._vin)
         if not sessions:
             return {}
 
         summarised = [{k: s[k] for k in _CHARGING_SESSION_KEYS if k in s} for s in sessions]
+        # BMW's array order is not guaranteed, so sort newest-first ourselves
+        # and drop the oldest entries when trimming to fit the recorder limit.
+        summarised.sort(key=lambda s: s.get("startTime") or 0, reverse=True)
 
         attrs = {"sessions": summarised}
         serialised_len = len(json.dumps(attrs, default=str))
         while summarised and serialised_len > _MAX_ATTRIBUTES_BYTES:
-            summarised.pop(0)
+            summarised.pop()
             attrs = {"sessions": summarised}
             serialised_len = len(json.dumps(attrs, default=str))
             if not summarised:
