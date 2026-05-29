@@ -48,16 +48,23 @@ _LOGGER = logging.getLogger(__name__)
 # HA recorder rejects attributes above this size
 _MAX_ATTRIBUTES_BYTES = 16384
 
-# Fields to keep when summarising charging sessions for state attributes
+# Fields to keep when summarising charging sessions for state attributes.
+# Names must match BMW's chargingHistory schema. Large or nested fields
+# (chargingBlocks, chargingLocation, publicChargingPoint, businessErrors)
+# are intentionally omitted to stay under the recorder limit and to avoid
+# storing GPS data; the full payload is available via the
+# cardata.fetch_charging_history service.
 _CHARGING_SESSION_KEYS = (
     "startTime",
     "endTime",
-    "startSoc",
-    "endSoc",
-    "energyConsumed",
-    "duration",
-    "chargingType",
-    "sessionId",
+    "displayedStartSoc",
+    "displayedSoc",
+    "energyConsumedFromPowerGridKwh",
+    "totalChargingDurationSec",
+    "mileage",
+    "mileageUnits",
+    "timeZone",
+    "isPreconditioningActivated",
 )
 
 
@@ -421,18 +428,21 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
 
         Sessions are summarised to key fields only.  If the result still
         exceeds the HA recorder limit, the oldest sessions are dropped
-        until it fits.
+        until it fits, keeping the most recent ones.
         """
         sessions = self._coordinator.get_charging_history(self._vin)
         if not sessions:
             return {}
 
         summarised = [{k: s[k] for k in _CHARGING_SESSION_KEYS if k in s} for s in sessions]
+        # BMW's array order is not guaranteed, so sort newest-first ourselves
+        # and drop the oldest entries when trimming to fit the recorder limit.
+        summarised.sort(key=lambda s: s.get("startTime") or 0, reverse=True)
 
         attrs = {"sessions": summarised}
         serialised_len = len(json.dumps(attrs, default=str))
         while summarised and serialised_len > _MAX_ATTRIBUTES_BYTES:
-            summarised.pop(0)
+            summarised.pop()
             attrs = {"sessions": summarised}
             serialised_len = len(json.dumps(attrs, default=str))
             if not summarised:
