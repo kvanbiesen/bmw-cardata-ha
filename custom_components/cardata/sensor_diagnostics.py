@@ -48,16 +48,23 @@ _LOGGER = logging.getLogger(__name__)
 # HA recorder rejects attributes above this size
 _MAX_ATTRIBUTES_BYTES = 16384
 
-# Fields to keep when summarising charging sessions for state attributes
+# Fields to keep when summarising charging sessions for state attributes.
+# Names must match BMW's chargingHistory schema. Large or nested fields
+# (chargingBlocks, chargingLocation, publicChargingPoint, businessErrors)
+# are intentionally omitted to stay under the recorder limit and to avoid
+# storing GPS data; the full payload is available via the
+# cardata.fetch_charging_history service.
 _CHARGING_SESSION_KEYS = (
     "startTime",
     "endTime",
-    "startSoc",
-    "endSoc",
-    "energyConsumed",
-    "duration",
-    "chargingType",
-    "sessionId",
+    "displayedStartSoc",
+    "displayedSoc",
+    "energyConsumedFromPowerGridKwh",
+    "totalChargingDurationSec",
+    "mileage",
+    "mileageUnits",
+    "timeZone",
+    "isPreconditioningActivated",
 )
 
 
