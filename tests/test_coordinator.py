@@ -26,10 +26,11 @@
 """Tests for the coordinator module, focusing on message handling and motion detection."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.cardata.const import ALLOWED_VINS_KEY, DOMAIN
 from custom_components.cardata.coordinator import CardataCoordinator
 
 
@@ -191,3 +192,89 @@ class TestDerivedMotion:
         result = coordinator.get_derived_is_moving(vin)
 
         assert result is False
+
+
+class TestDynamicVinClaim:
+    """Tests for dynamic VIN claiming and claim persistence (issue #402)."""
+
+    OWNED_VIN = "WBY00000000006306"
+    NEW_VIN = "WBA00000000008448"
+
+    @pytest.fixture
+    def mock_hass(self):
+        """Create a mock Home Assistant instance with empty domain/entry state."""
+        hass = MagicMock()
+        hass.loop = MagicMock()
+        hass.bus = MagicMock()
+        hass.bus.async_fire = MagicMock()
+        hass.data = {DOMAIN: {}}
+        hass.config_entries.async_entries.return_value = []
+        return hass
+
+    @pytest.fixture
+    def coordinator(self, mock_hass):
+        """Create a coordinator that already owns one VIN."""
+        with patch("custom_components.cardata.coordinator.async_dispatcher_send"):
+            coord = CardataCoordinator(mock_hass, "test_entry_id")
+        coord._allowed_vins = {self.OWNED_VIN}
+        coord._allowed_vins_initialized = True
+        return coord
+
+    def _payload(self):
+        return {
+            "vin": self.NEW_VIN,
+            "data": {"vehicle.speed": {"value": 100, "unit": "km/h", "timestamp": None}},
+        }
+
+    @pytest.mark.asyncio
+    async def test_dynamic_claim_persists_to_entry_data(self, coordinator, mock_hass):
+        """A dynamically claimed VIN is written back to entry data."""
+        entry = MagicMock()
+        mock_hass.config_entries.async_get_entry.return_value = entry
+
+        with patch(
+            "custom_components.cardata.runtime.async_update_entry_data",
+            new_callable=AsyncMock,
+        ) as persist:
+            await coordinator.async_handle_message(self._payload())
+
+        persist.assert_awaited_once_with(
+            mock_hass,
+            entry,
+            {ALLOWED_VINS_KEY: sorted({self.OWNED_VIN, self.NEW_VIN})},
+        )
+        assert self.NEW_VIN in coordinator._allowed_vins
+        assert self.NEW_VIN in coordinator.data
+
+    @pytest.mark.asyncio
+    async def test_claim_rejected_when_vin_persisted_by_other_entry(self, coordinator, mock_hass):
+        """A VIN in another entry's persisted allowed list is not claimed."""
+        other_entry = MagicMock()
+        other_entry.entry_id = "other_entry_id"
+        other_entry.data = {ALLOWED_VINS_KEY: [self.NEW_VIN]}
+        mock_hass.config_entries.async_entries.return_value = [other_entry]
+
+        with patch(
+            "custom_components.cardata.runtime.async_update_entry_data",
+            new_callable=AsyncMock,
+        ) as persist:
+            await coordinator.async_handle_message(self._payload())
+
+        persist.assert_not_awaited()
+        assert self.NEW_VIN not in coordinator._allowed_vins
+        assert self.NEW_VIN not in coordinator.data
+
+    @pytest.mark.asyncio
+    async def test_claim_survives_missing_entry(self, coordinator, mock_hass):
+        """If the config entry cannot be resolved, the claim stays in-memory only."""
+        mock_hass.config_entries.async_get_entry.return_value = None
+
+        with patch(
+            "custom_components.cardata.runtime.async_update_entry_data",
+            new_callable=AsyncMock,
+        ) as persist:
+            await coordinator.async_handle_message(self._payload())
+
+        persist.assert_not_awaited()
+        assert self.NEW_VIN in coordinator._allowed_vins
+        assert self.NEW_VIN in coordinator.data

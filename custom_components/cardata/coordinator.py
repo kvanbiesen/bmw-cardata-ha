@@ -41,6 +41,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
+    ALLOWED_VINS_KEY,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
     LOCATION_LATITUDE_DESCRIPTOR,
@@ -77,7 +78,7 @@ from .soc_wiring import (
     process_soc_descriptors,
 )
 from .units import normalize_unit
-from .utils import get_all_registered_vins, is_valid_vin, redact_vin
+from .utils import get_externally_owned_vins, is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -560,7 +561,7 @@ class CardataCoordinator:
                 len(self._allowed_vins),
                 self.entry_id,
             )
-            other_vins = get_all_registered_vins(self.hass, exclude_entry_id=self.entry_id)
+            other_vins = get_externally_owned_vins(self.hass, exclude_entry_id=self.entry_id)
             _LOGGER.debug(
                 "MQTT VIN dedup: other entries own %d VIN(s): %s",
                 len(other_vins),
@@ -579,6 +580,27 @@ class CardataCoordinator:
                 self.entry_id,
                 len(self._allowed_vins),
             )
+
+            # Persist the claim so it survives restart. Without this, the restore
+            # logic in lifecycle evicted the device for this VIN on every HA start
+            # because entry.data still held the pre-claim allowed list (issue #402).
+            # Function-level import: runtime.py imports coordinator.py at module
+            # level, so a top-level import here would be circular.
+            from .runtime import async_update_entry_data
+
+            entry = self.hass.config_entries.async_get_entry(self.entry_id)
+            if entry is not None:
+                await async_update_entry_data(self.hass, entry, {ALLOWED_VINS_KEY: sorted(self._allowed_vins)})
+                _LOGGER.debug(
+                    "Persisted dynamically claimed VIN %s to entry data",
+                    redact_vin(vin),
+                )
+            else:
+                _LOGGER.debug(
+                    "Entry %s not found; claim for VIN %s kept in-memory only",
+                    self.entry_id,
+                    redact_vin(vin),
+                )
 
         if len(data) > self._MAX_DESCRIPTORS_PER_VIN:
             _LOGGER.warning(

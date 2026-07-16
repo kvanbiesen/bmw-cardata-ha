@@ -261,3 +261,66 @@ def get_all_registered_vins(
         [redact_vin(v) for v in all_vins],
     )
     return all_vins
+
+
+def get_externally_owned_vins(
+    hass: Any,
+    exclude_entry_id: str | None = None,
+) -> set[str]:
+    """Collect VINs owned by other config entries, loaded or not.
+
+    Extends get_all_registered_vins (which only sees the in-memory allowed VINs
+    of currently loaded entries) with the persisted allowed_vins lists of every
+    other config entry. The persisted half matters during startup: entry load
+    order is nondeterministic, so a VIN owned by a not-yet-loaded entry would
+    otherwise look unowned and could be wrongly claimed or adopted.
+
+    Args:
+        hass: Home Assistant instance
+        exclude_entry_id: Entry ID to exclude from the search (typically the current entry)
+
+    Returns:
+        Set of VINs owned by other config entries (in-memory or persisted)
+    """
+    from .const import ALLOWED_VINS_KEY, DOMAIN
+
+    all_vins = get_all_registered_vins(hass, exclude_entry_id=exclude_entry_id)
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.entry_id == exclude_entry_id:
+            continue
+        stored = entry.data.get(ALLOWED_VINS_KEY)
+        if isinstance(stored, list):
+            all_vins.update(vin for vin in stored if isinstance(vin, str))
+    _LOGGER.debug(
+        "VIN dedup: %d externally owned VIN(s) including persisted lists: %s",
+        len(all_vins),
+        [redact_vin(v) for v in all_vins],
+    )
+    return all_vins
+
+
+def partition_restored_vins(
+    metadata_vins: Iterable[str],
+    allowed_vins: set[str],
+    externally_owned_vins: set[str],
+) -> tuple[list[str], list[str]]:
+    """Split restored-metadata VINs missing from this entry's allowed list.
+
+    Returns (vins_to_remove, vins_to_adopt):
+    - vins_to_remove: owned by another config entry -> duplicates, remove them
+      (existing cross-entry dedup behavior).
+    - vins_to_adopt: owned by nobody -> re-adopt into this entry's allowed list.
+      This self-heals entries whose VIN was dynamically claimed from MQTT (e.g.
+      a non-PRIMARY mapped vehicle) but whose claim was never persisted, which
+      previously caused the device to be evicted on every restart (issue #402).
+    """
+    vins_to_remove: list[str] = []
+    vins_to_adopt: list[str] = []
+    for vin in metadata_vins:
+        if vin in allowed_vins:
+            continue
+        if vin in externally_owned_vins:
+            vins_to_remove.append(vin)
+        else:
+            vins_to_adopt.append(vin)
+    return vins_to_remove, vins_to_adopt

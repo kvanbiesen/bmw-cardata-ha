@@ -87,11 +87,18 @@ from .debug import set_debug_enabled
 from .device_flow import CardataAuthError
 from .frontend_cards import async_setup_frontend_cards, async_unload_frontend_cards_if_last_entry
 from .metadata import async_restore_vehicle_images, async_restore_vehicle_metadata
-from .runtime import CardataRuntimeData, cleanup_entry_lock
+from .runtime import CardataRuntimeData, async_update_entry_data, cleanup_entry_lock
 from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
-from .utils import async_cancel_task, redact_vin, redact_vins, validate_and_clamp_option
+from .utils import (
+    async_cancel_task,
+    get_externally_owned_vins,
+    partition_restored_vins,
+    redact_vin,
+    redact_vins,
+    validate_and_clamp_option,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -293,17 +300,24 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry.entry_id,
             )
 
-            # Clean up device_metadata, names, and devices for VINs not in allowed list
-            # This is needed because async_restore_vehicle_metadata creates devices for
-            # ALL VINs in stored metadata before we know which VINs are allowed
-            # Note: We always run this cleanup when allowed_vins key exists, even if empty
-            # An empty allowed list means this entry owns no VINs, so remove ALL VINs
+            # Reconcile restored metadata VINs against the allowed list. Metadata VINs
+            # missing from the allowed list are either duplicates owned by another
+            # config entry (remove them - existing cross-entry dedup behavior) or
+            # orphans owned by nobody, e.g. a non-PRIMARY mapped vehicle that was
+            # dynamically claimed from MQTT but whose claim predates persistence.
+            # Orphans are adopted instead of destroyed; blindly removing them evicted
+            # the vehicle's device and entities on every restart (issue #402).
+            # Ownership must consider the PERSISTED allowed lists of other entries
+            # too, because entry load order at startup is nondeterministic.
             from homeassistant.helpers import device_registry as dr
 
             device_registry = dr.async_get(hass)
-            vins_to_remove = [
-                vin for vin in list(coordinator.device_metadata.keys()) if vin not in coordinator._allowed_vins
-            ]
+            externally_owned = get_externally_owned_vins(hass, exclude_entry_id=entry.entry_id)
+            vins_to_remove, vins_to_adopt = partition_restored_vins(
+                list(coordinator.device_metadata.keys()),
+                coordinator._allowed_vins,
+                externally_owned,
+            )
             for vin in vins_to_remove:
                 coordinator.device_metadata.pop(vin, None)
                 coordinator.names.pop(vin, None)
@@ -313,14 +327,23 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if device and entry.entry_id in device.config_entries:
                     device_registry.async_remove_device(device.id)
                     _LOGGER.info(
-                        "Removed device for VIN %s (not in allowed list for this entry)",
+                        "Removed device for VIN %s (owned by another config entry)",
                         redact_vin(vin),
                     )
                 else:
                     _LOGGER.debug(
-                        "Removed VIN %s from coordinator (not in allowed list for this entry)",
+                        "Removed VIN %s from coordinator (owned by another config entry)",
                         redact_vin(vin),
                     )
+            if vins_to_adopt:
+                coordinator._allowed_vins.update(vins_to_adopt)
+                for vin in vins_to_adopt:
+                    _LOGGER.info(
+                        "Adopting VIN %s into allowed list (present in this entry's metadata, "
+                        "not owned by any other entry)",
+                        redact_vin(vin),
+                    )
+                await async_update_entry_data(hass, entry, {ALLOWED_VINS_KEY: sorted(coordinator._allowed_vins)})
         else:
             _LOGGER.warning(
                 "No allowed VINs key in entry data for entry %s - will force bootstrap to run",
