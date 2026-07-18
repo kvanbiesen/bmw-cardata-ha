@@ -42,6 +42,7 @@ from homeassistant.helpers.event import async_call_later
 
 from .const import (
     ALLOWED_VINS_KEY,
+    DESC_TRAVELLED_DISTANCE,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
     LOCATION_LATITUDE_DESCRIPTOR,
@@ -109,6 +110,8 @@ class CardataCoordinator:
     _last_vin_message_at: dict[str, float] = field(default_factory=dict, init=False)
     # Per-VIN timestamp of last successful telematic API poll (unix time)
     _last_poll_at: dict[str, float] = field(default_factory=dict, init=False)
+    # Per-VIN count of consecutive rejected implausible odometer readings
+    _mileage_reject_streak: dict[str, int] = field(default_factory=dict, init=False)
 
     # Debouncing and pending update management
     _update_debounce_handle: Callable[[], None] | None = field(default=None, init=False)
@@ -116,6 +119,17 @@ class CardataCoordinator:
     _pending_manager: UpdateBatcher = field(default_factory=UpdateBatcher, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
+    # Odometer sanity guard: BMW's telematic API has occasionally returned
+    # vehicle.vehicle.travelledDistance with a mismatched unit (e.g. a km value
+    # while the sensor's native unit is mi), which HA then displays without
+    # conversion, producing a huge bogus spike. A single legitimate update should
+    # never move the odometer by more than this many km/mi.
+    _MAX_PLAUSIBLE_MILEAGE_JUMP: float = 2000.0
+    # Tiny negative tolerance for float jitter; the odometer should never truly decrease
+    _MILEAGE_DECREASE_TOLERANCE: float = -1.0
+    # After this many consecutive implausible readings for a VIN, accept the value
+    # anyway rather than getting stuck forever comparing against a stale baseline
+    _MAX_MILEAGE_REJECT_STREAK: int = 3
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
     # Memory protection: limit total descriptors per VIN
@@ -670,6 +684,40 @@ class CardataCoordinator:
                 )
                 self._descriptors_evicted_count += 1
                 continue
+
+            if descriptor == DESC_TRAVELLED_DISTANCE and not is_new and isinstance(value, (int, float)):
+                existing_mileage = vehicle_state.get(descriptor)
+                existing_value = existing_mileage.value if existing_mileage is not None else None
+                if isinstance(existing_value, (int, float)):
+                    delta = value - existing_value
+                    if delta < self._MILEAGE_DECREASE_TOLERANCE or delta > self._MAX_PLAUSIBLE_MILEAGE_JUMP:
+                        streak = self._mileage_reject_streak.get(vin, 0) + 1
+                        if streak <= self._MAX_MILEAGE_REJECT_STREAK:
+                            self._mileage_reject_streak[vin] = streak
+                            _LOGGER.warning(
+                                "Ignoring implausible odometer reading for VIN %s: %s -> %s %s "
+                                "(likely a unit mismatch from BMW's API); keeping previous value "
+                                "(reject streak %d/%d)",
+                                redacted_vin,
+                                existing_value,
+                                value,
+                                unit,
+                                streak,
+                                self._MAX_MILEAGE_REJECT_STREAK,
+                            )
+                            continue
+                        _LOGGER.warning(
+                            "Odometer for VIN %s changed by an implausible amount (%s -> %s %s) "
+                            "but accepting after %d consecutive rejections in case it's genuine",
+                            redacted_vin,
+                            existing_value,
+                            value,
+                            unit,
+                            streak,
+                        )
+                        self._mileage_reject_streak.pop(vin, None)
+                    else:
+                        self._mileage_reject_streak.pop(vin, None)
 
             if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
                 value_changed = True
