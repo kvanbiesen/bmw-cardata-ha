@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "L'autorizzazione BMW non è stata completata. Questo di solito significa che hai cliccato su \"Rifiuta\", hai chiuso la pagina prima di approvare o la richiesta è scaduta. Dettagli dell'errore: {error}. Rimuovi l'integrazione e prova ad aggiungerla di nuovo, assicurandoti di cliccare su \"Approva\" quando BMW chiede il permesso.",
+      "authorization_failed": "L'autorizzazione BMW non è stata completata. Questo può accadere se hai cliccato su \"Rifiuta\", hai chiuso la pagina prima di approvare, la richiesta è scaduta, oppure i server BMW hanno avuto un problema temporaneo (non è sempre colpa tua). Dettagli dell'errore: {error}. Qui sotto è stato generato un nuovo link di autorizzazione: aprilo e approva, poi clicca di nuovo su Invia.",
       "device_code_failed": "BMW ha rifiutato la richiesta di autorizzazione del dispositivo ({error}). Verifica che l'ID client sia valido e riprova."
     },
     "abort": {

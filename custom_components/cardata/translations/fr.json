@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "L'autorisation BMW n'a pas été complétée. Cela signifie généralement que vous avez cliqué sur « Refuser », fermé la page avant d'approuver, ou que la demande a expiré. Détails de l'erreur : {error}. Veuillez supprimer l'intégration et essayer de l'ajouter à nouveau, en vous assurant de cliquer sur « Approuver » lorsque BMW demande la permission.",
+      "authorization_failed": "L'autorisation BMW n'a pas été complétée. Cela peut arriver si vous avez cliqué sur « Refuser », fermé la page avant d'approuver, si la demande a expiré, ou si les serveurs de BMW ont eu un problème temporaire (ce n'est pas toujours de votre faute). Détails de l'erreur : {error}. Un nouveau lien d'autorisation a été généré ci-dessous — ouvrez-le et approuvez, puis cliquez à nouveau sur Soumettre.",
       "device_code_failed": "BMW a rejeté la demande d'autorisation de l'appareil ({error}). Vérifiez que l'identifiant client est valide et réessayez."
     },
     "abort": {

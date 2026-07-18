@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "Die BMW-Autorisierung wurde nicht abgeschlossen. Dies bedeutet normalerweise, dass Sie auf \"Ablehnen\" geklickt, die Seite vor der Genehmigung geschlossen oder die Anfrage eine Zeitüberschreitung hatte. Fehlerdetails: {error}. Bitte entfernen Sie die Integration und versuchen Sie, sie erneut hinzuzufügen. Stellen Sie sicher, dass Sie auf \"Genehmigen\" klicken, wenn BMW um Erlaubnis bittet.",
+      "authorization_failed": "Die BMW-Autorisierung wurde nicht abgeschlossen. Dies kann passieren, wenn Sie auf \"Ablehnen\" geklickt, die Seite vor der Genehmigung geschlossen haben, die Anfrage eine Zeitüberschreitung hatte, oder die Server von BMW vorübergehend gestört waren (das liegt nicht immer an Ihnen). Fehlerdetails: {error}. Unten wurde ein neuer Autorisierungslink erstellt — öffnen Sie ihn, genehmigen Sie, und klicken Sie dann erneut auf Absenden.",
       "device_code_failed": "BMW hat die Geräteautorisierungsanfrage abgelehnt ({error}). Überprüfen Sie, ob die Client-ID gültig ist, und versuchen Sie es erneut."
     },
     "abort": {

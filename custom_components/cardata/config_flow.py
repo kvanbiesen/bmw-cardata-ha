@@ -172,13 +172,9 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
                 code_challenge=_generate_code_challenge(self._code_verifier),
             )
 
-    async def async_step_authorize(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if self._client_id is None:
-            raise RuntimeError("Client ID must be set before authorization step")
+    def _authorize_placeholders(self) -> dict[str, str]:
         if self._device_data is None:
             raise RuntimeError("Device data must be set before authorization step")
-        if self._code_verifier is None:
-            raise RuntimeError("Code verifier must be set before authorization step")
 
         verification_url = self._device_data.get("verification_uri_complete")
 
@@ -191,10 +187,20 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             else:
                 verification_url = base_url  # Fallback
 
-        placeholders = {
+        return {
             "verification_url": verification_url,
             "user_code": self._device_data.get("user_code", ""),
         }
+
+    async def async_step_authorize(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if self._client_id is None:
+            raise RuntimeError("Client ID must be set before authorization step")
+        if self._device_data is None:
+            raise RuntimeError("Device data must be set before authorization step")
+        if self._code_verifier is None:
+            raise RuntimeError("Code verifier must be set before authorization step")
+
+        placeholders = self._authorize_placeholders()
 
         if user_input is None:
             return self.async_show_form(
@@ -225,11 +231,28 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
                 )
             except CardataAuthError as err:
                 _LOGGER.warning("BMW authorization pending/failed: %s", err)
+                error_message = _sanitize_error_for_user(err)
+
+                # The device_code just failed (e.g. BMW returned access_denied or it
+                # expired), so it can never succeed on a retry. Request a fresh device
+                # code/verifier so the user can retry in place instead of having to
+                # remove and re-add the integration.
+                try:
+                    await self._request_device_code()
+                except Exception:
+                    _LOGGER.exception("Unable to obtain a fresh device code after authorization failure")
+                    return self.async_show_form(
+                        step_id="authorize",
+                        data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
+                        errors={"base": "authorization_failed"},
+                        description_placeholders={"error": error_message, **placeholders},
+                    )
+
                 return self.async_show_form(
                     step_id="authorize",
                     data_schema=vol.Schema({vol.Required("confirmed", default=True): bool}),
                     errors={"base": "authorization_failed"},
-                    description_placeholders={"error": _sanitize_error_for_user(err), **placeholders},
+                    description_placeholders={"error": error_message, **self._authorize_placeholders()},
                 )
 
         self._token_data = token_data

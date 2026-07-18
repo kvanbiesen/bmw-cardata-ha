@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "A autorização BMW não foi concluída. Isto geralmente significa que clicou em \"Recusar\", fechou a página antes de aprovar, ou o pedido expirou. Detalhes do erro: {error}. Por favor, remova a integração e tente adicioná-la novamente, certificando-se de clicar em \"Aprovar\" quando a BMW solicitar permissão.",
+      "authorization_failed": "A autorização BMW não foi concluída. Isto pode acontecer se clicou em \"Recusar\", fechou a página antes de aprovar, o pedido expirou, ou os servidores da BMW tiveram um problema temporário (nem sempre é culpa sua). Detalhes do erro: {error}. Foi gerada uma nova ligação de autorização abaixo — abra-a e aprove, depois clique novamente em Submeter.",
       "device_code_failed": "A BMW rejeitou o pedido de autorização do dispositivo ({error}). Verifique se o ID de cliente é válido e tente novamente."
     },
     "abort": {

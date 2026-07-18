@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "La autorización de BMW no se completó. Esto generalmente significa que hiciste clic en \"Denegar\", cerraste la página antes de aprobar, o la solicitud expiró. Detalles del error: {error}. Por favor, elimina la integración e intenta añadirla de nuevo, asegurándote de hacer clic en \"Aprobar\" cuando BMW solicite permiso.",
+      "authorization_failed": "La autorización de BMW no se completó. Esto puede ocurrir si hiciste clic en \"Denegar\", cerraste la página antes de aprobar, la solicitud expiró, o los servidores de BMW tuvieron un problema temporal (no siempre es culpa tuya). Detalles del error: {error}. Se ha generado un nuevo enlace de autorización abajo — ábrelo y aprueba, luego haz clic en Enviar de nuevo.",
       "device_code_failed": "BMW rechazó la solicitud de autorización del dispositivo ({error}). Verifica que el ID de cliente sea válido e inténtalo de nuevo."
     },
     "abort": {

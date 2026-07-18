@@ -126,11 +126,30 @@ async def poll_for_tokens(
 
                 # Handle 500 errors with retry logic (BMW's API can be flaky)
                 if 500 <= resp.status < 600:
+                    safe_data = {
+                        k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
+                    }
+
+                    fault = data_dict.get("fault")
+                    fault_detail = fault.get("detail") if isinstance(fault, dict) else None
+                    fault_errorcode = fault_detail.get("errorcode") if isinstance(fault_detail, dict) else None
+                    if fault_errorcode == "keymanagement.service.invalid_access_token":
+                        # BMW's gateway appears to consume/invalidate the device_code even
+                        # though it returns 500 here: retrying with the same device_code
+                        # reliably comes back access_denied on the very next attempt. Fail
+                        # fast instead of burning a retry that cannot succeed, so the
+                        # caller can request a fresh device_code sooner.
+                        _LOGGER.warning(
+                            "Token polling got %d (%s): %s. Not retrying with the same "
+                            "device_code, since this BMW gateway fault reliably invalidates it.",
+                            resp.status,
+                            fault_errorcode,
+                            safe_data,
+                        )
+                        raise CardataAuthError(f"Token polling failed ({resp.status}): {safe_data}")
+
                     consecutive_500s += 1
                     if consecutive_500s <= max_consecutive_500s:
-                        safe_data = {
-                            k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
-                        }
                         _LOGGER.warning(
                             "Token polling got %d: %s (attempt %d/%d, retrying in %ds)",
                             resp.status,
@@ -142,9 +161,6 @@ async def poll_for_tokens(
                         await asyncio.sleep(interval)
                         continue
                     # Too many consecutive 500s - give up
-                    safe_data = {
-                        k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
-                    }
                     raise CardataAuthError(
                         f"Token polling failed after {max_consecutive_500s} consecutive 500 errors: {safe_data}. "
                         f"Please try again later or contact BMW support if this persists."

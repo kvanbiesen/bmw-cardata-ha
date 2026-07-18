@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "BMW-goedkeuring is niet voltooid. Dit betekent meestal dat u op 'Weigeren' heeft geklikt, de pagina heeft gesloten voordat u goedkeurde, of de aanvraag is verlopen. Foutdetails: {error}. Verwijder de integratie en probeer deze opnieuw toe te voegen. Zorg ervoor dat u op 'Goedkeuren' klikt wanneer BMW om toestemming vraagt.",
+      "authorization_failed": "BMW-goedkeuring is niet voltooid. Dit kan gebeuren als u op 'Weigeren' heeft geklikt, de pagina heeft gesloten voordat u goedkeurde, de aanvraag is verlopen, of doordat de servers van BMW tijdelijk haperden (dit is niet altijd uw fout). Foutdetails: {error}. Hieronder is een nieuwe goedkeuringslink gegenereerd — open deze en keur goed, klik daarna opnieuw op Verzenden.",
       "device_code_failed": "BMW heeft de goedkeuringaanvraag afgewezen ({error}). Controleer of de client-ID geldig is en probeer het opnieuw."
     },
     "abort": {
