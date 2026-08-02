@@ -8,6 +8,8 @@
 const WS_TYPE = "cardata/vehicle_cards";
 const CARD_TAG = "bmw-cardata-vehicle-card";
 const CACHE_MS = 30_000;
+const CARD_SIZE_UNIT_PX = 50;
+const MAP_HEIGHT_DEFAULT = 120;
 
 const ensureCustomCardsArray = () => {
   window.customCards = window.customCards || [];
@@ -43,6 +45,11 @@ const toNumberOrZero = (stateObj) => {
 };
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const mapHeightConfig = (cfg) => {
+  const value = Number(cfg?.map_height);
+  return Number.isFinite(value) && value > 0 ? value : MAP_HEIGHT_DEFAULT;
+};
 
 const isOpenState = (stateObj) => {
   const state = normalizeState(stateObj);
@@ -139,7 +146,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const cfg = this._config || {};
     let size = 5;
     if (boolConfig(cfg, "show_image", true)) size += 2;
-    if (boolConfig(cfg, "show_map", true)) size += 2;
+    if (boolConfig(cfg, "show_map", true)) size += mapHeightConfig(cfg) / CARD_SIZE_UNIT_PX;
     if (boolConfig(cfg, "show_buttons", true)) size += 2;
     return size;
   }
@@ -172,6 +179,15 @@ class BmwCardataVehicleCard extends HTMLElement {
         { name: "show_range", selector: { boolean: {} } },
         { name: "show_image", selector: { boolean: {} } },
         { name: "show_map", selector: { boolean: {} } },
+        {
+          name: "map_height",
+          selector: {
+            number: {
+              mode: "box",
+              unit_of_measurement: "px",
+            },
+          },
+        },
         { name: "show_buttons", selector: { boolean: {} } },
       ],
       computeLabel: (schema) => {
@@ -182,6 +198,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         if (schema.name === "show_range") return "Show SOC and range bar";
         if (schema.name === "show_image") return "Show vehicle image";
         if (schema.name === "show_map") return "Show mini map";
+        if (schema.name === "map_height") return "Mini map height";
         if (schema.name === "show_buttons") return "Show quick info buttons";
         return undefined;
       },
@@ -195,6 +212,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       show_range: true,
       show_image: true,
       show_map: true,
+      map_height: MAP_HEIGHT_DEFAULT,
       show_buttons: true,
     };
   }
@@ -441,17 +459,17 @@ class BmwCardataVehicleCard extends HTMLElement {
           .map hui-map-card {
             display: block;
             width: 100%;
-            height: 120px;
+            height: var(--map-height, ${MAP_HEIGHT_DEFAULT}px);
           }
           .map-mount {
-            height: 120px;
+            height: var(--map-height, ${MAP_HEIGHT_DEFAULT}px);
             overflow: hidden;
           }
           .map-mount > * {
             height: 100%;
           }
           .map-fallback {
-            height: 120px;
+            height: var(--map-height, ${MAP_HEIGHT_DEFAULT}px);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -624,8 +642,8 @@ class BmwCardataVehicleCard extends HTMLElement {
         entities: [trackerEntityId],
         default_zoom: 14,
         hours_to_show: 24,
-        aspect_ratio: "16:6",
       });
+      mapCard.layout = "grid";
       mapCard.hass = hass;
       return mapCard;
     } catch {
@@ -739,6 +757,8 @@ class BmwCardataVehicleCard extends HTMLElement {
     const showMap = boolConfig(cfg, "show_map", true);
     const showButtons = boolConfig(cfg, "show_buttons", true);
     const mapEntityId = entities.device_tracker;
+
+    mapEl.style.setProperty("--map-height", `${mapHeightConfig(cfg)}px`);
 
     const lockState = normalizeState(read("doors_lock"));
     const doorsOverallStateObj = read("doors_overall");
