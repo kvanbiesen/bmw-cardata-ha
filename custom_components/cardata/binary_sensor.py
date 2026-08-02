@@ -43,7 +43,7 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN, MIN_TELEMETRY_DESCRIPTORS
+from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
@@ -148,11 +148,13 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
         if vin != self.vin or descriptor != self.descriptor:
             return
 
-        # Filter out "ghost" cars with minimal data (e.g., family sharing with limited access)
-        telemetry_data = self._coordinator.data.get(self._vin, {})
-        if len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
-            return
-
+        # Ghost cars (e.g. family sharing with limited access) are handled by
+        # async_cleanup_ghost_devices(), which removes the whole device after
+        # a grace period. Gating value display here on the *current* total
+        # descriptor count would permanently freeze legitimate low-descriptor
+        # vehicles at "unknown" once this handler's own descriptor stops
+        # updating, since it's never re-invoked just because some other
+        # descriptor later pushes the count over the threshold.
         state = self._coordinator.get_state(vin, descriptor)
         if not state or not isinstance(state.value, bool):
             return

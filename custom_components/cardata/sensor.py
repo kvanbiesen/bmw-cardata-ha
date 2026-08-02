@@ -60,7 +60,6 @@ from .const import (
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
     MAGIC_SOC_DESCRIPTOR,
-    MIN_TELEMETRY_DESCRIPTORS,
     PREDICTED_SOC_DESCRIPTOR,
     WINDOW_DESCRIPTORS,
 )
@@ -197,11 +196,15 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if not self.enabled:
             return
 
-        # Filter out "ghost" cars with minimal data (e.g., family sharing with limited access)
-        telemetry_data = self._coordinator.data.get(self._vin, {})
-        if len(telemetry_data) < MIN_TELEMETRY_DESCRIPTORS:
-            return
-
+        # Ghost cars (e.g. family sharing with limited access) are handled by
+        # async_cleanup_ghost_devices(), which removes the whole device after
+        # a grace period. Gating value display here on the *current* total
+        # descriptor count would permanently freeze legitimate low-descriptor
+        # vehicles (e.g. conventional/ICE cars) at "unknown": a low-frequency
+        # descriptor (mileage, fuel level) can arrive before the count
+        # crosses the threshold, and this per-descriptor handler is never
+        # re-invoked just because some other descriptor later pushes the
+        # count over it.
         state = self._coordinator.get_state(vin, descriptor)
         if not state:
             return

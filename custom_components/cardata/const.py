@@ -179,6 +179,12 @@ HV_BATTERY_DESCRIPTORS = [
     # API fallback for vehicles where MQTT goes silent on the odometer
     # descriptor (issue #377). Mileage previously only arrived via MQTT.
     DESC_TRAVELLED_DISTANCE,
+    # Fuel/tank descriptors so conventional and hybrid vehicles (driveTrain
+    # CONV/PHEV) also get an API fallback, not just BEV battery data.
+    # Without these, BMW never returns fuel data via telematicData polling
+    # since the request is scoped to this container's descriptor list.
+    DESC_FUEL_LEVEL,
+    DESC_REMAINING_FUEL,
 ]
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"
