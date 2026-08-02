@@ -35,10 +35,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from homeassistant.const import UnitOfLength
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util.unit_conversion import DistanceConverter
 
 from .const import (
     ALLOWED_VINS_KEY,
@@ -63,10 +65,7 @@ from .device_info import (
     restore_descriptor_state as _di_restore_descriptor_state,
 )
 from .magic_soc import MagicSOCPredictor
-from .message_utils import (
-    normalize_boolean_value,
-    sanitize_timestamp_string,
-)
+from .message_utils import normalize_boolean_value, sanitize_timestamp_string
 from .motion_detection import MotionDetector
 from .pending_manager import PendingManager, UpdateBatcher
 from .soc_prediction import SOCPredictor
@@ -110,8 +109,14 @@ class CardataCoordinator:
     _last_vin_message_at: dict[str, float] = field(default_factory=dict, init=False)
     # Per-VIN timestamp of last successful telematic API poll (unix time)
     _last_poll_at: dict[str, float] = field(default_factory=dict, init=False)
-    # Per-VIN count of consecutive rejected implausible odometer readings
-    _mileage_reject_streak: dict[str, int] = field(default_factory=dict, init=False)
+    # Per-VIN pending implausible odometer reading awaiting corroboration:
+    # (value, unit, first_seen_unix_time)
+    _mileage_pending_reading: dict[str, tuple[float, str | None, float]] = field(default_factory=dict, init=False)
+    # VINs whose travelledDistance baseline came from HA's restored entity
+    # state rather than a validated live reading - restore is unauthenticated
+    # (see issue #405), so the next live reading replaces it unconditionally
+    # instead of being checked against it.
+    _mileage_restored_unconfirmed: set[str] = field(default_factory=set, init=False)
 
     # Debouncing and pending update management
     _update_debounce_handle: Callable[[], None] | None = field(default=None, init=False)
@@ -119,17 +124,24 @@ class CardataCoordinator:
     _pending_manager: UpdateBatcher = field(default_factory=UpdateBatcher, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
-    # Odometer sanity guard: BMW's telematic API has occasionally returned
-    # vehicle.vehicle.travelledDistance with a mismatched unit (e.g. a km value
-    # while the sensor's native unit is mi), which HA then displays without
-    # conversion, producing a huge bogus spike. A single legitimate update should
-    # never move the odometer by more than this many km/mi.
+    # Odometer sanity guard: BMW's telematicData API always reports
+    # vehicle.vehicle.travelledDistance with unit=null (confirmed against BMW's
+    # own descriptor catalogue), and its backend is occasionally internally
+    # inconsistent about which unit system (km vs mi) it used to compute the
+    # raw number - producing a huge bogus spike when the value is actually the
+    # existing mileage expressed in the other unit. A single legitimate update
+    # should never move the odometer by more than this many km/mi.
     _MAX_PLAUSIBLE_MILEAGE_JUMP: float = 2000.0
     # Tiny negative tolerance for float jitter; the odometer should never truly decrease
     _MILEAGE_DECREASE_TOLERANCE: float = -1.0
-    # After this many consecutive implausible readings for a VIN, accept the value
-    # anyway rather than getting stuck forever comparing against a stale baseline
-    _MAX_MILEAGE_REJECT_STREAK: int = 3
+    # How close a second, later reading must be to a previously-rejected one
+    # to be treated as corroborating evidence of a genuine large jump
+    _MILEAGE_CORROBORATION_TOLERANCE: float = 1.0
+    # Conversion factor used only to *test* whether an unlabelled odometer
+    # reading matches the existing baseline in the other unit system; the
+    # value we store is always the raw, unconverted number - Home Assistant's
+    # own SensorEntity unit conversion (device_class=DISTANCE) does the actual
+    # display maths once we tag it with the correct unit.
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
     # Memory protection: limit total descriptors per VIN
@@ -685,50 +697,42 @@ class CardataCoordinator:
                 self._descriptors_evicted_count += 1
                 continue
 
-            if descriptor == DESC_TRAVELLED_DISTANCE and not is_new and isinstance(value, (int, float)):
-                existing_mileage = vehicle_state.get(descriptor)
-                existing_value = existing_mileage.value if existing_mileage is not None else None
-                if isinstance(existing_value, (int, float)):
-                    delta = value - existing_value
-                    if delta < self._MILEAGE_DECREASE_TOLERANCE or delta > self._MAX_PLAUSIBLE_MILEAGE_JUMP:
-                        streak = self._mileage_reject_streak.get(vin, 0) + 1
-                        if streak <= self._MAX_MILEAGE_REJECT_STREAK:
-                            self._mileage_reject_streak[vin] = streak
-                            _LOGGER.warning(
-                                "Ignoring implausible odometer reading for VIN %s: %s -> %s %s "
-                                "(likely a unit mismatch from BMW's API); keeping previous value "
-                                "(reject streak %d/%d)",
-                                redacted_vin,
-                                existing_value,
-                                value,
-                                unit,
-                                streak,
-                                self._MAX_MILEAGE_REJECT_STREAK,
-                            )
-                            continue
-                        _LOGGER.warning(
-                            "Odometer for VIN %s changed by an implausible amount (%s -> %s %s) "
-                            "but accepting after %d consecutive rejections in case it's genuine",
-                            redacted_vin,
-                            existing_value,
-                            value,
-                            unit,
-                            streak,
-                        )
-                        self._mileage_reject_streak.pop(vin, None)
-                    else:
-                        self._mileage_reject_streak.pop(vin, None)
+            if descriptor == DESC_TRAVELLED_DISTANCE and isinstance(value, str):
+                # BMW's telematicData API sometimes reports this descriptor's
+                # numeric value as a JSON string rather than a number; coerce
+                # it so the plausibility checks below (and the sensor's
+                # total_increasing statistics) see a real float.
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    pass
 
-            if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
-                value_changed = True
-            else:
-                value_changed = is_new or self._is_significant_change(vin, descriptor, value)
+            if descriptor == DESC_TRAVELLED_DISTANCE and isinstance(value, (int, float)):
+                _LOGGER.debug(
+                    "Mileage reading for VIN %s: value=%s unit=%s source=%s",
+                    redacted_vin,
+                    value,
+                    unit,
+                    "telematic_poll" if is_telematic else "mqtt",
+                )
+                if not is_new:
+                    accept, resolved_unit = self._resolve_mileage_reading(vin, redacted_vin, value, unit, is_telematic)
+                    if not accept:
+                        continue
+                    unit = resolved_unit
 
             # Preserve existing unit when new message doesn't include one
             if unit is None and not is_new:
                 existing = vehicle_state.get(descriptor)
                 if existing is not None and existing.unit is not None:
                     unit = existing.unit
+
+            if descriptor in (LOCATION_LATITUDE_DESCRIPTOR, LOCATION_LONGITUDE_DESCRIPTOR):
+                value_changed = True
+            elif descriptor == DESC_TRAVELLED_DISTANCE:
+                value_changed = is_new or self._is_significant_mileage_change(vin, value, unit)
+            else:
+                value_changed = is_new or self._is_significant_change(vin, descriptor, value)
 
             vehicle_state[descriptor] = DescriptorState(
                 value=value, unit=unit, timestamp=timestamp, last_seen=time.time()
@@ -792,6 +796,108 @@ class CardataCoordinator:
 
         return immediate_updates, schedule_debounce
 
+    def _resolve_mileage_reading(
+        self, vin: str, redacted_vin: str, value: float, unit: str | None, is_telematic: bool
+    ) -> tuple[bool, str | None]:
+        """Validate a travelledDistance reading against the last known value.
+
+        Returns (accept, unit_to_store). When accept is False, the caller
+        should drop the reading and keep the previous value.
+        """
+        existing_state = self.data.get(vin, {}).get(DESC_TRAVELLED_DISTANCE)
+        existing_value = existing_state.value if existing_state is not None else None
+        existing_unit = existing_state.unit if existing_state is not None else None
+
+        if not isinstance(existing_value, (int, float)):
+            return True, unit
+
+        if vin in self._mileage_restored_unconfirmed:
+            # MQTT reports this descriptor with a real, trustworthy unit, so
+            # the first MQTT reading after a restore can win unconditionally
+            # and become the new trusted baseline - only then is the VIN
+            # actually healed. Telematic polls can't be trusted the same way
+            # (BMW always reports unit=null there and can be internally
+            # inconsistent about km vs mi), so a poll must not clear this
+            # flag: doing so would stop a later, genuine MQTT reading from
+            # ever getting this fast-track treatment. Fall through to the
+            # normal plausibility checks below instead.
+            if not is_telematic:
+                self._mileage_restored_unconfirmed.discard(vin)
+                self._mileage_pending_reading.pop(vin, None)
+                return True, unit
+
+        # An explicit unit that differs from what we've previously stored is a
+        # genuine unit change (e.g. the user changed HA's display unit) -
+        # trust it and let Home Assistant's own unit converter (device_class
+        # DISTANCE) handle the display maths, rather than fighting it here.
+        if unit is not None and unit != existing_unit:
+            self._mileage_pending_reading.pop(vin, None)
+            return True, unit
+
+        delta = value - existing_value
+        if self._MILEAGE_DECREASE_TOLERANCE <= delta <= self._MAX_PLAUSIBLE_MILEAGE_JUMP:
+            self._mileage_pending_reading.pop(vin, None)
+            return True, unit
+
+        # Implausible jump. BMW's telematicData API always reports this
+        # descriptor with unit=null, so when we don't know the incoming unit,
+        # check whether the raw number is actually the existing mileage
+        # computed in the other unit system - a known BMW backend
+        # inconsistency (see issue #405).
+        if unit is None and existing_unit in (UnitOfLength.MILES, UnitOfLength.KILOMETERS):
+            other_unit = UnitOfLength.KILOMETERS if existing_unit == UnitOfLength.MILES else UnitOfLength.MILES
+            converted = DistanceConverter.convert(value, other_unit, existing_unit)
+
+            converted_delta = converted - existing_value
+            if self._MILEAGE_DECREASE_TOLERANCE <= converted_delta <= self._MAX_PLAUSIBLE_MILEAGE_JUMP:
+                self._mileage_pending_reading.pop(vin, None)
+                _LOGGER.warning(
+                    "Correcting unit-mismatched odometer reading for VIN %s: unlabelled raw value %s "
+                    "matches the existing %s %s when treated as %s; storing as %s %s",
+                    redacted_vin,
+                    value,
+                    existing_value,
+                    existing_unit,
+                    other_unit,
+                    value,
+                    other_unit,
+                )
+                return True, other_unit
+
+        # Not resolvable as a unit-swap. Require a second, corroborating
+        # reading before accepting a jump this large - a single implausible
+        # number could be any kind of data glitch, not necessarily a real
+        # long-distance trip.
+        pending = self._mileage_pending_reading.get(vin)
+        if (
+            pending is not None
+            and pending[1] == unit
+            and abs(value - pending[0]) < self._MILEAGE_CORROBORATION_TOLERANCE
+        ):
+            self._mileage_pending_reading.pop(vin, None)
+            _LOGGER.warning(
+                "Odometer for VIN %s changed by an implausible amount (%s %s -> %s %s) but a second, "
+                "independent reading agrees; accepting as genuine",
+                redacted_vin,
+                existing_value,
+                existing_unit,
+                value,
+                unit,
+            )
+            return True, unit
+
+        self._mileage_pending_reading[vin] = (value, unit, time.time())
+        _LOGGER.warning(
+            "Ignoring implausible odometer reading for VIN %s: %s %s -> %s %s; keeping previous value "
+            "pending a corroborating reading",
+            redacted_vin,
+            existing_value,
+            existing_unit,
+            value,
+            unit,
+        )
+        return False, None
+
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
         """Check if value change is significant enough to send to sensors."""
         current_state = self.get_state(vin, descriptor)
@@ -809,6 +915,31 @@ class CardataCoordinator:
                 return False
 
         return True
+
+    def _is_significant_mileage_change(self, vin: str, new_value: Any, new_unit: str | None) -> bool:
+        """Unit-aware significant-change check for travelledDistance.
+
+        A plain numeric diff (as used by _is_significant_change) would treat
+        every legitimate km/mi unit tag change as a huge jump; convert to a
+        common unit before comparing.
+        """
+        current_state = self.get_state(vin, DESC_TRAVELLED_DISTANCE)
+        if not current_state:
+            return True
+
+        old_value = current_state.value
+        if not isinstance(new_value, (int, float)) or not isinstance(old_value, (int, float)):
+            return old_value != new_value
+
+        comparable_value = new_value
+        if (
+            new_unit != current_state.unit
+            and new_unit in (UnitOfLength.MILES, UnitOfLength.KILOMETERS)
+            and current_state.unit in (UnitOfLength.MILES, UnitOfLength.KILOMETERS)
+        ):
+            comparable_value = DistanceConverter.convert(new_value, new_unit, current_state.unit)
+
+        return abs(comparable_value - old_value) >= self._MIN_CHANGE_THRESHOLD
 
     async def _async_schedule_debounced_update(self) -> None:
         """Schedule debounced coordinator update."""
@@ -975,6 +1106,8 @@ class CardataCoordinator:
     ) -> None:
         """Restore descriptor state from saved data. Must be called while holding _lock."""
         _di_restore_descriptor_state(self.data, vin, descriptor, value, unit, timestamp)
+        if descriptor == DESC_TRAVELLED_DISTANCE:
+            self._mileage_restored_unconfirmed.add(vin)
 
     async def async_restore_descriptor_state(
         self,

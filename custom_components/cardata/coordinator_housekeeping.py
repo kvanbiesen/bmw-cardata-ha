@@ -235,6 +235,7 @@ async def async_cleanup_stale_vins(coordinator: CardataCoordinator) -> None:
             coordinator._last_vin_message_at,
             coordinator._last_poll_at,
             coordinator._last_predicted_soc_sent,
+            coordinator._mileage_pending_reading,
         ]
 
         stale_vins: set[str] = set()
@@ -246,11 +247,13 @@ async def async_cleanup_stale_vins(coordinator: CardataCoordinator) -> None:
         stale_vins.update(vin for vin in coordinator._motion_detector.get_tracked_vins() if vin not in valid_vins)
         stale_vins.update(vin for vin in coordinator._soc_predictor.get_tracked_vins() if vin not in valid_vins)
         stale_vins.update(vin for vin in coordinator._magic_soc.get_tracked_vins() if vin not in valid_vins)
+        stale_vins.update(vin for vin in coordinator._mileage_restored_unconfirmed if vin not in valid_vins)
 
         if stale_vins:
             for vin in stale_vins:
                 for d in tracking_dicts:
                     d.pop(vin, None)
+                coordinator._mileage_restored_unconfirmed.discard(vin)
                 coordinator._motion_detector.cleanup_vin(vin)
                 coordinator._soc_predictor.cleanup_vin(vin)
                 coordinator._magic_soc.cleanup_vin(vin)
