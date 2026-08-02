@@ -250,6 +250,7 @@ Available configuration options:
 | `show_range` | `true` | Battery / fuel level bar with range |
 | `show_image` | `true` | Vehicle image |
 | `show_map` | `true` | Inline location map |
+| `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
 
 ### YAML Configuration
@@ -276,6 +277,7 @@ show_indicators: true
 show_range: true
 show_image: true
 show_map: true
+map_height: 120
 show_buttons: true
 ```
 
