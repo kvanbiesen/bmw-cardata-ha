@@ -47,7 +47,10 @@ const toNumberOrZero = (stateObj) => {
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const mapHeightConfig = (cfg) => {
-  const value = Number(cfg?.map_height);
+  // Accept plain numbers as well as strings like "120px" - the GUI editor's
+  // number selector only ever stores a bare number, but hand-written YAML
+  // can easily include the "px" suffix shown in that field's UI label.
+  const value = Number.parseFloat(cfg?.map_height);
   return Number.isFinite(value) && value > 0 ? value : MAP_HEIGHT_DEFAULT;
 };
 
@@ -162,6 +165,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           },
         },
         { name: "license_plate", selector: { text: {} } },
+        { name: "show_title", selector: { boolean: {} } },
         {
           name: "soc_source",
           selector: {
@@ -193,6 +197,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       computeLabel: (schema) => {
         if (schema.name === "device_id") return "Vehicle";
         if (schema.name === "license_plate") return "License plate (shown instead of VIN)";
+        if (schema.name === "show_title") return "Show vehicle name / card header";
         if (schema.name === "soc_source") return "Battery level source";
         if (schema.name === "show_indicators") return "Show indicator row";
         if (schema.name === "show_range") return "Show SOC and range bar";
@@ -208,6 +213,7 @@ class BmwCardataVehicleCard extends HTMLElement {
   static getStubConfig() {
     return {
       soc_source: "soc",
+      show_title: true,
       show_indicators: true,
       show_range: true,
       show_image: true,
@@ -748,7 +754,9 @@ class BmwCardataVehicleCard extends HTMLElement {
 
     const read = (key) => hass?.states?.[entities[key]];
 
-    nameEl.textContent = name;
+    const showTitle = boolConfig(cfg, "show_title", true);
+    nameEl.style.display = showTitle ? "" : "none";
+    nameEl.textContent = showTitle ? name : "";
     vinEl.textContent = cfg.license_plate || vin;
 
     const showIndicators = boolConfig(cfg, "show_indicators", true);

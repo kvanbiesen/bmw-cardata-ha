@@ -518,6 +518,15 @@ async def async_cleanup_ghost_devices(
         for identifier in device.identifiers:
             if identifier[0] == DOMAIN:
                 vin = identifier[1]
+
+                # The integration's own diagnostics device is identified by
+                # (DOMAIN, entry_id), not a VIN - it never has "telemetry"
+                # in coordinator.data by design, so Reason 3 below would
+                # otherwise always match it and delete it 10 minutes after
+                # every restart.
+                if vin == entry.entry_id:
+                    break
+
                 redacted_vin = redact_vin(vin)
 
                 # Calculate device age (time since creation)
