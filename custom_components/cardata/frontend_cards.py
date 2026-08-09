@@ -32,6 +32,7 @@ It provides:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,23 @@ _RESOURCE_ID_KEY = "_frontend_cards_resource_id"
 
 _STATIC_BASE_URL = "/cardata/bmw-cardata-vehicle-card.js"
 _STATIC_RELATIVE_PATH = Path(__file__).parent / "frontend" / "bmw-cardata-vehicle-card.js"
+_MANIFEST_PATH = Path(__file__).parent / "manifest.json"
+
+
+def _card_resource_url() -> str:
+    """Return the Lovelace resource URL, cache-busted with the integration version.
+
+    Home Assistant registers this static file with long-lived cache headers,
+    so browsers (and HA's own frontend service worker) keep serving an old
+    cached copy of the card JS across upgrades unless the URL itself changes.
+    """
+    version = "0"
+    try:
+        manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
+        version = str(manifest.get("version", version))
+    except Exception as err:  # pragma: no cover
+        _LOGGER.debug("Unable to read manifest version for cache-busting: %s", err)
+    return f"{_STATIC_BASE_URL}?v={version}"
 
 
 async def _async_register_lovelace_resource(hass: HomeAssistant) -> str | None:
@@ -79,11 +97,25 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> str | None:
             await resources.async_load()
             resources.loaded = True
 
-        for item in resources.async_items():
-            if item.get("url") == _STATIC_BASE_URL:
-                return item["id"]
+        desired_url = _card_resource_url()
 
-        item = await resources.async_create_item({"res_type": "module", "url": _STATIC_BASE_URL})
+        for item in resources.async_items():
+            url = item.get("url")
+            if not isinstance(url, str) or not url.startswith(_STATIC_BASE_URL):
+                continue
+            if url == desired_url:
+                return item["id"]
+            # Same resource, stale version query (or none at all, from before
+            # cache-busting existed) - update in place rather than creating a
+            # duplicate entry, so the browser is forced to fetch the new file.
+            try:
+                await resources.async_update_item(item["id"], {"url": desired_url})
+                _LOGGER.debug("Updated Lovelace resource URL from %s to %s", url, desired_url)
+            except Exception as err:
+                _LOGGER.warning("Unable to update stale Lovelace resource URL: %s", err)
+            return item["id"]
+
+        item = await resources.async_create_item({"res_type": "module", "url": desired_url})
         return item["id"]
     except AttributeError:
         # Lovelace resources are managed via YAML (ResourceYAMLCollection),
