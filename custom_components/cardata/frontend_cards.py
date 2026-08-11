@@ -59,19 +59,24 @@ _STATIC_RELATIVE_PATH = Path(__file__).parent / "frontend" / "bmw-cardata-vehicl
 _MANIFEST_PATH = Path(__file__).parent / "manifest.json"
 
 
-def _card_resource_url() -> str:
+def _read_manifest_version() -> str:
+    """Blocking read of manifest.json's version field. Run via executor only."""
+    try:
+        manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
+        return str(manifest.get("version", "0"))
+    except Exception as err:  # pragma: no cover
+        _LOGGER.debug("Unable to read manifest version for cache-busting: %s", err)
+        return "0"
+
+
+async def _card_resource_url(hass: HomeAssistant) -> str:
     """Return the Lovelace resource URL, cache-busted with the integration version.
 
     Home Assistant registers this static file with long-lived cache headers,
     so browsers (and HA's own frontend service worker) keep serving an old
     cached copy of the card JS across upgrades unless the URL itself changes.
     """
-    version = "0"
-    try:
-        manifest = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
-        version = str(manifest.get("version", version))
-    except Exception as err:  # pragma: no cover
-        _LOGGER.debug("Unable to read manifest version for cache-busting: %s", err)
+    version = await hass.async_add_executor_job(_read_manifest_version)
     return f"{_STATIC_BASE_URL}?v={version}"
 
 
@@ -97,7 +102,7 @@ async def _async_register_lovelace_resource(hass: HomeAssistant) -> str | None:
             await resources.async_load()
             resources.loaded = True
 
-        desired_url = _card_resource_url()
+        desired_url = await _card_resource_url(hass)
 
         for item in resources.async_items():
             url = item.get("url")
@@ -159,7 +164,8 @@ async def async_setup_frontend_cards(hass: HomeAssistant) -> None:
     try:
         from homeassistant.components.http import StaticPathConfig
 
-        if not _STATIC_RELATIVE_PATH.exists():
+        path_exists = await hass.async_add_executor_job(_STATIC_RELATIVE_PATH.exists)
+        if not path_exists:
             _LOGGER.warning(
                 "Frontend card JS missing at %s; vehicle cards will be unavailable",
                 _STATIC_RELATIVE_PATH,
