@@ -47,7 +47,7 @@
 
 Turn your BMW CarData stream into native Home Assistant entities. This integration subscribes to the BMW CarData MQTT stream (or an optional custom MQTT broker), keeps the token fresh automatically, and creates sensors/binary sensors for every descriptor that emits data.
 
-> **Note:** This entire plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
+> **Note:** This base of the plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
 
 > **Tested Environment:** Home Assistant 2025.3+ is required. Brand logos are included since HA 2026.3 via the `brand/` directory.
 
