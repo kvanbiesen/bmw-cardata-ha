@@ -19,3 +19,6 @@ __pycache__/
 # libFuzzer crash reproducers and corpus
 /crashes/
 /corpus/
+
+# Scratch space
+/tmp/
