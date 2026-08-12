@@ -27,6 +27,7 @@ import os
 import sys
 import time
 import types
+from enum import StrEnum
 
 import atheris
 
@@ -101,6 +102,7 @@ def _install_homeassistant_stubs() -> None:
     components = types.ModuleType("homeassistant.components")
     device_tracker = types.ModuleType("homeassistant.components.device_tracker")
     config_entries = types.ModuleType("homeassistant.config_entries")
+    const = types.ModuleType("homeassistant.const")
     core = types.ModuleType("homeassistant.core")
     helpers = types.ModuleType("homeassistant.helpers")
     dispatcher = types.ModuleType("homeassistant.helpers.dispatcher")
@@ -112,6 +114,28 @@ def _install_homeassistant_stubs() -> None:
     storage = types.ModuleType("homeassistant.helpers.storage")
     util = types.ModuleType("homeassistant.util")
     dt = types.ModuleType("homeassistant.util.dt")
+    unit_conversion = types.ModuleType("homeassistant.util.unit_conversion")
+
+    class UnitOfLength(StrEnum):
+        # Must stay a StrEnum with these exact values: the coordinator compares
+        # raw BMW unit strings such as "km" against these members.
+        KILOMETERS = "km"
+        MILES = "mi"
+
+    class DistanceConverter:
+        # Only km and mi are reachable from the coordinator, so anything else
+        # is stub drift and should be loud rather than silently wrong.
+        _KM_PER_MILE = 1.609344
+
+        @staticmethod
+        def convert(value: float, from_unit: str | None, to_unit: str | None) -> float:
+            if from_unit == to_unit:
+                return value
+            if from_unit == UnitOfLength.MILES and to_unit == UnitOfLength.KILOMETERS:
+                return value * DistanceConverter._KM_PER_MILE
+            if from_unit == UnitOfLength.KILOMETERS and to_unit == UnitOfLength.MILES:
+                return value / DistanceConverter._KM_PER_MILE
+            raise ValueError(f"unsupported conversion: {from_unit} to {to_unit}")
 
     class HomeAssistant:
         def __init__(self) -> None:
@@ -208,10 +232,14 @@ def _install_homeassistant_stubs() -> None:
     device_registry.DeviceInfo = dict
     storage.Store = Store
     dt.parse_datetime = parse_datetime
+    const.UnitOfLength = UnitOfLength
+    unit_conversion.DistanceConverter = DistanceConverter
     util.dt = dt
+    util.unit_conversion = unit_conversion
 
     homeassistant.components = components
     homeassistant.config_entries = config_entries
+    homeassistant.const = const
     homeassistant.core = core
     homeassistant.helpers = helpers
     homeassistant.util = util
@@ -227,6 +255,7 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.components"] = components
     sys.modules["homeassistant.components.device_tracker"] = device_tracker
     sys.modules["homeassistant.config_entries"] = config_entries
+    sys.modules["homeassistant.const"] = const
     sys.modules["homeassistant.core"] = core
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.dispatcher"] = dispatcher
@@ -238,6 +267,7 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.helpers.storage"] = storage
     sys.modules["homeassistant.util"] = util
     sys.modules["homeassistant.util.dt"] = dt
+    sys.modules["homeassistant.util.unit_conversion"] = unit_conversion
 
 
 def _install_cardata_package() -> None:
