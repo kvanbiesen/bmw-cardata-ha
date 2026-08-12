@@ -31,11 +31,10 @@ import types
 
 import atheris
 
-# Silence cardata's loggers so the fuzzer does not emit millions of warning
-# lines. The token-polling retry paths log on every 5xx response, and the
-# fuzzer generates a constant stream of them, which otherwise balloons the
-# run output to hundreds of MB and stalls execution past the CI time limit.
-logging.getLogger("cardata").setLevel(logging.CRITICAL)
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
 
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60

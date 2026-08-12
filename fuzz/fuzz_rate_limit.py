@@ -29,6 +29,11 @@ import sys
 
 import atheris
 
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
+
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
 
@@ -39,9 +44,6 @@ sys.path.insert(0, CARDATA_PATH)
 
 with atheris.instrument_imports():
     import ratelimit
-
-
-logging.getLogger("ratelimit").setLevel(logging.CRITICAL)
 
 
 class _FuzzClock:

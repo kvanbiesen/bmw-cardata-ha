@@ -24,6 +24,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import asyncio
+import logging
 import os
 import sys
 import types
@@ -31,6 +32,11 @@ from datetime import datetime
 from enum import StrEnum
 
 import atheris
+
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
 
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
