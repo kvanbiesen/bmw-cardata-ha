@@ -34,11 +34,16 @@ jobs:
   fuzz:
     needs: discover
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    env:
+      # Per-fuzzer budget in seconds. Every harness reads FUZZ_MAX_TIME and caps
+      # itself to it, so this is the only place the budget needs setting. The
+      # 4h constant in each harness stays as the local default and ceiling.
+      FUZZ_MAX_TIME: "1800"
     steps:
       - name: Check out
         uses: actions/checkout@v5
@@ -76,8 +81,8 @@ jobs:
           mkdir -p corpus crashes
           # Stream stdout to the action log (visible) and keep only the last
           # ~5000 lines on disk (capturing libFuzzer's crash dump tail without
-          # letting the file grow unbounded over a 5h run).
-          python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30 corpus 2>&1 \
+          # letting the file grow unbounded).
+          python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -timeout=30 corpus 2>&1 \
             | python3 -u -c "
           import sys
           from collections import deque
@@ -180,7 +185,7 @@ jobs:
           PY
         env:
           FUZZER_NAME: ${{ matrix.fuzzer }}
-          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30 corpus
+          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -timeout=30 corpus
           FUZZER_SNIPPET: fuzz_failure_${{ matrix.fuzzer }}.txt
 
       - name: Upload failure snippet
