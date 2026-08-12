@@ -56,8 +56,6 @@ jobs:
           pip install -r requirements-fuzz.txt
 
       - name: Run fuzzer
-        id: run_fuzzer
-        continue-on-error: true
         run: |
           set -o pipefail
           # Stream stdout to the action log (visible) and keep only the last
@@ -75,12 +73,9 @@ jobs:
           with open('fuzz_output.txt', 'w') as f:
               f.writelines(buf)
           "
-          exit_code=${PIPESTATUS[0]}
-          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-          exit 0
 
       - name: Extract failure snippet
-        if: ${{ steps.run_fuzzer.outputs.exit_code != '0' }}
+        if: failure()
         run: |
           python - <<'PY'
           import os
@@ -158,15 +153,11 @@ jobs:
           FUZZER_SNIPPET: fuzz_failure_${{ matrix.fuzzer }}.txt
 
       - name: Upload failure snippet
-        if: ${{ steps.run_fuzzer.outputs.exit_code != '0' }}
+        if: failure()
         uses: actions/upload-artifact@v6
         with:
           name: fuzz-failure-${{ matrix.fuzzer }}
           path: fuzz_failure_${{ matrix.fuzzer }}.txt
-
-      - name: Fail job if fuzzer failed
-        if: ${{ steps.run_fuzzer.outputs.exit_code != '0' }}
-        run: exit 1
 
   report_failure:
     needs: fuzz
