@@ -209,26 +209,47 @@ jobs:
               { owner, repo, run_id: runId, per_page: 100 }
             );
 
-            // Distinguish a fuzzer-found crash (Run fuzzer step completed with
-            // a non-zero exit code) from a runner kill (the step never
-            // completed because the runner was terminated externally — OOM,
-            // infrastructure issue, etc.). The latter is infrastructure noise,
-            // not a code bug, so it should not file an issue.
+            // Classify each failed matrix job by what its "Run fuzzer" step did.
+            //
+            //   crashed  the step ran and exited non-zero, so the fuzzer found
+            //            something (or the harness itself is broken)
+            //   broken   the step was skipped because an earlier step failed,
+            //            so no fuzzing happened at all
+            //   killed   the step never completed, or the job carries no steps,
+            //            which is what a lost or cancelled runner looks like
+            //
+            // Only the first two are worth an issue. A lost runner is noise
+            // from outside the repository. If nothing classifies at all we
+            // still file, so a job rename can never silence this quietly.
             const crashedJobs = [];
+            const brokenJobs = [];
             const killedJobs = [];
             for (const job of jobs) {
+              if (!job.name.startsWith("fuzz (")) continue;
               if (job.conclusion !== "failure" && job.conclusion !== "cancelled") continue;
-              const runFuzzer = (job.steps || []).find((s) => s.name === "Run fuzzer");
-              if (runFuzzer && runFuzzer.status !== "completed") {
+              const steps = job.steps || [];
+              const runFuzzer = steps.find((s) => s.name === "Run fuzzer");
+              if (!runFuzzer || runFuzzer.status !== "completed") {
                 killedJobs.push(job.name);
-              } else {
+                continue;
+              }
+              if (runFuzzer.conclusion === "failure") {
                 crashedJobs.push(job.name);
+                continue;
+              }
+              const failedStep = steps.find(
+                (s) => s.name !== "Run fuzzer" && s.conclusion === "failure"
+              );
+              if (failedStep) {
+                brokenJobs.push(`${job.name} (failed at "${failedStep.name}")`);
+              } else {
+                killedJobs.push(job.name);
               }
             }
 
-            if (crashedJobs.length === 0 && killedJobs.length > 0) {
+            if (crashedJobs.length === 0 && brokenJobs.length === 0 && killedJobs.length > 0) {
               core.notice(
-                `Skipping issue creation: ${killedJobs.length} job(s) were terminated externally (likely runner kill), no fuzzer crashes detected. Killed: ${killedJobs.join(", ")}`
+                `Skipping issue creation: ${killedJobs.length} job(s) never completed the Run fuzzer step (lost or cancelled runner). Affected: ${killedJobs.join(", ")}`
               );
               return;
             }
@@ -237,12 +258,21 @@ jobs:
               "Automated report: the scheduled fuzzing workflow failed.",
               "",
               `Run: ${runUrl}`,
-              "",
-              "Crashed jobs (fuzzer found a real failure):",
-              crashedJobs.length
-                ? crashedJobs.map((n) => `- ${n}`).join("\n")
-                : "- (none)",
             ];
+            if (crashedJobs.length) {
+              sections.push(
+                "",
+                "Crashed jobs (the fuzzer found a failure):",
+                crashedJobs.map((n) => `- ${n}`).join("\n")
+              );
+            }
+            if (brokenJobs.length) {
+              sections.push(
+                "",
+                "Broken jobs (CI setup failed, the fuzzer never ran):",
+                brokenJobs.map((n) => `- ${n}`).join("\n")
+              );
+            }
             if (killedJobs.length) {
               sections.push(
                 "",
