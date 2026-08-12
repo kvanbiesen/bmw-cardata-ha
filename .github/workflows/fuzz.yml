@@ -58,10 +58,13 @@ jobs:
       - name: Run fuzzer
         run: |
           set -o pipefail
+          # libFuzzer treats a prefix ending in a separator as a directory and
+          # refuses to start if it is missing, so create it first.
+          mkdir -p crashes
           # Stream stdout to the action log (visible) and keep only the last
           # ~5000 lines on disk (capturing libFuzzer's crash dump tail without
           # letting the file grow unbounded over a 5h run).
-          python fuzz/${{ matrix.fuzzer }} -max_total_time=18000 -timeout=30 2>&1 \
+          python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30 2>&1 \
             | python3 -u -c "
           import sys
           from collections import deque
@@ -73,6 +76,14 @@ jobs:
           with open('fuzz_output.txt', 'w') as f:
               f.writelines(buf)
           "
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-crash-${{ matrix.fuzzer }}
+          path: crashes/
+          if-no-files-found: ignore
 
       - name: Extract failure snippet
         if: failure()
@@ -149,7 +160,7 @@ jobs:
           PY
         env:
           FUZZER_NAME: ${{ matrix.fuzzer }}
-          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -max_total_time=18000 -timeout=30
+          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30
           FUZZER_SNIPPET: fuzz_failure_${{ matrix.fuzzer }}.txt
 
       - name: Upload failure snippet
@@ -263,7 +274,9 @@ jobs:
               sections.push(
                 "",
                 "Crashed jobs (the fuzzer found a failure):",
-                crashedJobs.map((n) => `- ${n}`).join("\n")
+                crashedJobs.map((n) => `- ${n}`).join("\n"),
+                "",
+                "The crashing input is attached to the run as a fuzz-crash-* artifact."
               );
             }
             if (brokenJobs.length) {
