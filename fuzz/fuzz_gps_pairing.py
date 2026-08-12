@@ -85,12 +85,20 @@ def _install_aiohttp_stub() -> None:
     class ClientError(Exception):
         pass
 
-    class ContentTypeError(Exception):
+    class ClientResponseError(ClientError):
+        pass
+
+    class ContentTypeError(ClientResponseError):
+        pass
+
+    class ClientPayloadError(ClientError):
         pass
 
     aiohttp.ClientTimeout = ClientTimeout
     aiohttp.ClientError = ClientError
+    aiohttp.ClientResponseError = ClientResponseError
     aiohttp.ContentTypeError = ContentTypeError
+    aiohttp.ClientPayloadError = ClientPayloadError
     sys.modules["aiohttp"] = aiohttp
 
 
