@@ -41,7 +41,6 @@ DEFAULT_MAX_TIME = 4 * 60 * 60
 CARDATA_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "custom_components", "cardata")
 )
-sys.path.insert(0, CARDATA_PATH)
 
 
 def _install_aiohttp_stub() -> None:
