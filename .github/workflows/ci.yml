@@ -90,3 +90,36 @@ jobs:
 
       - name: Compile all
         run: python -m compileall custom_components/cardata
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      # Pinned to 3.11 to match the fuzzing workflow: atheris has no wheel for
+      # 3.13, so the version the other jobs use cannot install it.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements-fuzz.txt
+
+      - name: Install fuzzing dependencies
+        run: pip install -r requirements-fuzz.txt
+
+      # The nightly fuzzing only notices a broken harness at 01:00, and a
+      # harness that dies at import wastes a whole matrix job. Import each one
+      # here instead. The glob must match the one the fuzzing workflow uses to
+      # build its matrix. run_name keeps main() from starting a real fuzz run,
+      # and each harness needs its own process because the homeassistant stub
+      # installers skip their work when the module is already imported.
+      - name: Import every fuzz harness
+        run: |
+          status=0
+          for harness in fuzz/fuzz_*.py; do
+            echo "== $harness"
+            python -c "import runpy, sys; runpy.run_path(sys.argv[1], run_name='smoke')" "$harness" || status=1
+          done
+          exit $status

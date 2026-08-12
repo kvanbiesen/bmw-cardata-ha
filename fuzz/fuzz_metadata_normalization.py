@@ -24,11 +24,18 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import asyncio
+import logging
 import os
 import sys
 import types
+from enum import StrEnum
 
 import atheris
+
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
 
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
@@ -41,6 +48,7 @@ def _install_homeassistant_stubs() -> None:
         return
 
     homeassistant = types.ModuleType("homeassistant")
+    const = types.ModuleType("homeassistant.const")
     core = types.ModuleType("homeassistant.core")
     helpers = types.ModuleType("homeassistant.helpers")
     dispatcher = types.ModuleType("homeassistant.helpers.dispatcher")
@@ -48,6 +56,28 @@ def _install_homeassistant_stubs() -> None:
     entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
     util = types.ModuleType("homeassistant.util")
     util_dt = types.ModuleType("homeassistant.util.dt")
+    unit_conversion = types.ModuleType("homeassistant.util.unit_conversion")
+
+    class UnitOfLength(StrEnum):
+        # Must stay a StrEnum with these exact values: the coordinator compares
+        # raw BMW unit strings such as "km" against these members.
+        KILOMETERS = "km"
+        MILES = "mi"
+
+    class DistanceConverter:
+        # Only km and mi are reachable from the coordinator, so anything else
+        # is stub drift and should be loud rather than silently wrong.
+        _KM_PER_MILE = 1.609344
+
+        @staticmethod
+        def convert(value: float, from_unit: str | None, to_unit: str | None) -> float:
+            if from_unit == to_unit:
+                return value
+            if from_unit == UnitOfLength.MILES and to_unit == UnitOfLength.KILOMETERS:
+                return value * DistanceConverter._KM_PER_MILE
+            if from_unit == UnitOfLength.KILOMETERS and to_unit == UnitOfLength.MILES:
+                return value / DistanceConverter._KM_PER_MILE
+            raise ValueError(f"unsupported conversion: {from_unit} to {to_unit}")
 
     class HomeAssistant:
         def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -85,16 +115,21 @@ def _install_homeassistant_stubs() -> None:
     event.async_call_later = async_call_later
     util_dt.parse_datetime = parse_datetime
     util.dt = util_dt
+    util.unit_conversion = unit_conversion
+    const.UnitOfLength = UnitOfLength
+    unit_conversion.DistanceConverter = DistanceConverter
     entity_registry.async_get = async_get_entity_registry
     entity_registry.async_entries_for_config_entry = async_entries_for_config_entry
     helpers.dispatcher = dispatcher
     helpers.event = event
     helpers.entity_registry = entity_registry
+    homeassistant.const = const
     homeassistant.core = core
     homeassistant.helpers = helpers
     homeassistant.util = util
 
     sys.modules["homeassistant"] = homeassistant
+    sys.modules["homeassistant.const"] = const
     sys.modules["homeassistant.core"] = core
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.dispatcher"] = dispatcher
@@ -102,6 +137,7 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
     sys.modules["homeassistant.util"] = util
     sys.modules["homeassistant.util.dt"] = util_dt
+    sys.modules["homeassistant.util.unit_conversion"] = unit_conversion
 
 
 def _install_cardata_package() -> None:
