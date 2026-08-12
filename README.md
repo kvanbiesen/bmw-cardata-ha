@@ -53,7 +53,7 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-Not required but appreciated :)
+Not required but appreciated
 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
