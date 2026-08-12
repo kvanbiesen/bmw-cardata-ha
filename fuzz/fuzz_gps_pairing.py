@@ -303,10 +303,10 @@ with atheris.instrument_imports():
 
 
 class _State:
-    def __init__(self, value, unit=None) -> None:
+    def __init__(self, value, unit=None, timestamp=None) -> None:
         self.value = value
         self.unit = unit
-        self.timestamp = None
+        self.timestamp = timestamp
 
 
 class _Coordinator:
@@ -379,6 +379,28 @@ def _consume_floatish(fdp: atheris.FuzzedDataProvider):
     if choice == 3:
         return _consume_text(fdp, 16)
     return None
+
+
+def _consume_timestamp(fdp: atheris.FuzzedDataProvider) -> str | None:
+    """Build a BMW payload timestamp for one coordinate state.
+
+    The tracker parses these with fromisoformat and pairs a fix when both stamps
+    sit within 5 s of each other, so the seconds field spans a whole minute and
+    straddles that window in both directions. The suffix is drawn per coordinate
+    because a naive stamp next to an aware one is what drives the TypeError
+    fallback in the pairing code. The date and hour are fixed so that a crashing
+    input replays identically.
+    """
+
+    choice = fdp.ConsumeIntInRange(0, 5)
+    if choice == 0:
+        return None
+    if choice == 1:
+        return _consume_text(fdp, 24)
+    second = fdp.ConsumeIntInRange(0, 59)
+    micro = fdp.ConsumeIntInRange(0, 999999)
+    suffix = ("", "Z", "+00:00", "+02:00")[choice - 2]
+    return f"2025-01-01T12:00:{second:02d}.{micro:06d}{suffix}"
 
 
 def _consume_descriptor(fdp: atheris.FuzzedDataProvider) -> str:
@@ -478,10 +500,10 @@ def TestOneInput(data: bytes) -> None:
 
         if descriptor == const.LOCATION_LATITUDE_DESCRIPTOR:
             value = _consume_coordinate_value(fdp, is_lat=True)
-            vin_bucket[descriptor] = _State(value)
+            vin_bucket[descriptor] = _State(value, timestamp=_consume_timestamp(fdp))
         elif descriptor == const.LOCATION_LONGITUDE_DESCRIPTOR:
             value = _consume_coordinate_value(fdp, is_lat=False)
-            vin_bucket[descriptor] = _State(value)
+            vin_bucket[descriptor] = _State(value, timestamp=_consume_timestamp(fdp))
         elif descriptor == const.LOCATION_HEADING_DESCRIPTOR:
             vin_bucket[descriptor] = _State(_consume_floatish(fdp))
         elif descriptor == const.LOCATION_ALTITUDE_DESCRIPTOR:
