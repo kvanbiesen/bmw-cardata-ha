@@ -55,16 +55,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-fuzz.txt
 
+      # Caches are immutable, so the key has to be unique per run and the
+      # rolling prefix in restore-keys is what actually finds last night's
+      # corpus. restore and save are used separately because the combined
+      # action skips its save step unless the job succeeded, which would throw
+      # away the corpus on exactly the night a fuzzer crashes.
+      - name: Restore corpus
+        uses: actions/cache/restore@v6
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.fuzzer }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fuzz-corpus-${{ matrix.fuzzer }}-
+
       - name: Run fuzzer
         run: |
           set -o pipefail
           # libFuzzer treats a prefix ending in a separator as a directory and
-          # refuses to start if it is missing, so create it first.
-          mkdir -p crashes
+          # refuses to start if it is missing, and the corpus directory is not
+          # created by a cache miss, so create both first.
+          mkdir -p corpus crashes
           # Stream stdout to the action log (visible) and keep only the last
           # ~5000 lines on disk (capturing libFuzzer's crash dump tail without
           # letting the file grow unbounded over a 5h run).
-          python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30 2>&1 \
+          python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30 corpus 2>&1 \
             | python3 -u -c "
           import sys
           from collections import deque
@@ -76,6 +89,13 @@ jobs:
           with open('fuzz_output.txt', 'w') as f:
               f.writelines(buf)
           "
+
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.fuzzer }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload crashing inputs
         if: failure()
@@ -160,7 +180,7 @@ jobs:
           PY
         env:
           FUZZER_NAME: ${{ matrix.fuzzer }}
-          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30
+          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -max_total_time=18000 -timeout=30 corpus
           FUZZER_SNIPPET: fuzz_failure_${{ matrix.fuzzer }}.txt
 
       - name: Upload failure snippet

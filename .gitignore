@@ -16,5 +16,6 @@ __pycache__/
 *.xapk
 *.apk
 
-# libFuzzer crash reproducers
+# libFuzzer crash reproducers and corpus
 /crashes/
+/corpus/
