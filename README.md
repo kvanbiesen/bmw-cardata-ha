@@ -253,6 +253,35 @@ Available configuration options:
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
+| `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
+
+### Leasing Section (optional)
+
+Set `leasing_entity` to any sensor that tracks your lease. The card then shows
+four extra tiles: remaining lease time, current distance balance (actual vs.
+pro-rata target), projected over/under mileage at lease end, and the projected
+cost/refund. The card only displays — all math lives in your sensor.
+
+Expected contract: the sensor **state** is the projected over/under mileage at
+lease end (positive = over), with the sensor's `unit_of_measurement` used for
+display (falls back to km). Attributes:
+
+| Attribute | Meaning |
+|-----------|---------|
+| `days_remaining` / `months_remaining` | Remaining lease time |
+| `deviation` | Actual distance minus pro-rata target today |
+| `projected_cost` | Projected cost (positive) or refund (negative) at lease end, in your HA currency |
+
+Tiles show "—" for missing attributes. Over-mileage and costs render in the
+error color, under-mileage and refunds in the success color. A ready-made
+template blueprint implementing this contract:
+[elmars/ha-leasing-blueprint](https://github.com/elmars/ha-leasing-blueprint)
+
+```yaml
+type: custom:bmw-cardata-vehicle-card
+device_id: abcdef1234567890abcdef1234567890
+leasing_entity: sensor.leasing_mini
+```
 
 ### YAML Configuration
 
@@ -281,6 +310,7 @@ show_image: true
 show_map: true
 map_height: 120
 show_buttons: true
+leasing_entity: sensor.leasing_mini
 ```
 
 To hide the map and quick-info tiles:
