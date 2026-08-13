@@ -133,6 +133,36 @@ const humanizeStateValue = (rawState) => {
     .join(" ");
 };
 
+const attrNumber = (stateObj, key) => {
+  const value = Number(stateObj?.attributes?.[key]);
+  return Number.isFinite(value) ? value : NaN;
+};
+
+const formatSignedDistance = (value, unit) => {
+  if (!Number.isFinite(value)) return "—";
+  const rounded = Math.round(value);
+  return `${rounded > 0 ? "+" : ""}${rounded.toLocaleString()} ${unit || "km"}`;
+};
+
+// positive = extra distance / extra cost (alert), negative = under distance / refund (good)
+const leaseDeltaClass = (value) =>
+  !Number.isFinite(value) || Math.round(value) === 0 ? "" : value > 0 ? "alert" : "good";
+
+const formatLeaseRemaining = (days, months) => {
+  if (Number.isFinite(days) && days < 61) return `${Math.max(0, Math.round(days))} d`;
+  if (Number.isFinite(months)) return `${months} mo`;
+  return "—";
+};
+
+const formatLeaseCost = (value, currency) => {
+  if (!Number.isFinite(value)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "EUR" }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${currency || "EUR"}`;
+  }
+};
+
 class BmwCardataVehicleCard extends HTMLElement {
   setConfig(config) {
     const cfg = config || {};
@@ -151,6 +181,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (boolConfig(cfg, "show_image", true)) size += 2;
     if (boolConfig(cfg, "show_map", true)) size += mapHeightConfig(cfg) / CARD_SIZE_UNIT_PX;
     if (boolConfig(cfg, "show_buttons", true)) size += 2;
+    if (cfg.leasing_entity) size += 1;
     return size;
   }
 
@@ -193,6 +224,10 @@ class BmwCardataVehicleCard extends HTMLElement {
           },
         },
         { name: "show_buttons", selector: { boolean: {} } },
+        {
+          name: "leasing_entity",
+          selector: { entity: { domain: "sensor" } },
+        },
       ],
       computeLabel: (schema) => {
         if (schema.name === "device_id") return "Vehicle";
@@ -205,6 +240,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         if (schema.name === "show_map") return "Show mini map";
         if (schema.name === "map_height") return "Mini map height";
         if (schema.name === "show_buttons") return "Show quick info buttons";
+        if (schema.name === "leasing_entity") return "Leasing sensor (optional)";
         return undefined;
       },
     };
@@ -510,6 +546,12 @@ class BmwCardataVehicleCard extends HTMLElement {
           .btn-item.alert .btn-value {
             color: var(--error-color);
           }
+          .btn-item.good .btn-icon {
+            color: var(--success-color);
+          }
+          .btn-item.good .btn-value {
+            color: var(--success-color);
+          }
           .btn-icon {
             width: 34px;
             height: 34px;
@@ -579,6 +621,7 @@ class BmwCardataVehicleCard extends HTMLElement {
               <div id="range_info"></div>
               <div id="mini_map"></div>
               <div id="buttons"></div>
+              <div id="leasing"></div>
             </main>
           </div>
         </ha-card>
@@ -1125,6 +1168,65 @@ class BmwCardataVehicleCard extends HTMLElement {
     } else {
       this._setHtml(buttonsEl, "");
     }
+
+    const leasingEl = this.shadowRoot.getElementById("leasing");
+    const leasingEntityId = typeof cfg.leasing_entity === "string" ? cfg.leasing_entity : "";
+    if (leasingEntityId) {
+      const leaseState = hass?.states?.[leasingEntityId];
+      const leaseAvailable = hasUsableState(leaseState);
+      const daysRemaining = leaseAvailable ? attrNumber(leaseState, "days_remaining") : NaN;
+      const monthsRemaining = leaseAvailable ? attrNumber(leaseState, "months_remaining") : NaN;
+      const deviation = leaseAvailable ? attrNumber(leaseState, "deviation") : NaN;
+      const projectedDelta = leaseAvailable ? Number(leaseState.state) : NaN;
+      const projectedCost = leaseAvailable ? attrNumber(leaseState, "projected_cost") : NaN;
+      const distanceUnit = leaseState?.attributes?.unit_of_measurement || "km";
+      const currency = hass?.config?.currency || "EUR";
+      const leasingItems = [
+        {
+          icon: "mdi:calendar-clock",
+          label: "Lease remaining",
+          value: formatLeaseRemaining(daysRemaining, monthsRemaining),
+          cls: "",
+        },
+        {
+          icon: "mdi:map-marker-distance",
+          label: "km balance",
+          value: formatSignedDistance(deviation, distanceUnit),
+          cls: leaseDeltaClass(deviation),
+        },
+        {
+          icon: "mdi:chart-line",
+          label: "Projected at end",
+          value: formatSignedDistance(projectedDelta, distanceUnit),
+          cls: leaseDeltaClass(projectedDelta),
+        },
+        {
+          icon: "mdi:cash",
+          label: "Cost / refund",
+          value: formatLeaseCost(projectedCost, currency),
+          cls: leaseDeltaClass(projectedCost),
+        },
+      ];
+      this._setHtml(leasingEl, `
+        <div class="buttons-grid">
+          ${leasingItems
+            .map(
+              (item) => `
+            <button class="btn-item${item.cls ? ` ${item.cls}` : ""}" data-entity-id="${escapeHtml(leasingEntityId)}" title="${escapeHtml(leasingEntityId)}">
+              <div class="btn-icon"><ha-icon icon="${item.icon}"></ha-icon></div>
+              <div class="btn-text">
+                <div class="btn-title">${escapeHtml(item.label)}</div>
+                <div class="btn-value">${escapeHtml(item.value)}</div>
+              </div>
+            </button>
+          `
+            )
+            .join("")}
+        </div>
+      `);
+    } else {
+      this._setHtml(leasingEl, "");
+    }
   }
 
   _renderMessage(message) {
@@ -1137,6 +1239,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const imageEl = this.shadowRoot.getElementById("images");
     const mapEl = this.shadowRoot.getElementById("mini_map");
     const buttonsEl = this.shadowRoot.getElementById("buttons");
+    const leasingEl = this.shadowRoot.getElementById("leasing");
 
     nameEl.textContent = "BMW CarData";
     vinEl.textContent = message;
@@ -1145,6 +1248,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     this._setHtml(imageEl, "");
     this._setHtml(mapEl, "");
     this._setHtml(buttonsEl, "");
+    this._setHtml(leasingEl, "");
   }
 }
 
