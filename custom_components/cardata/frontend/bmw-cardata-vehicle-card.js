@@ -125,6 +125,10 @@ const TRANSLATIONS = {
     km_balance: "km balance",
     projected_at_end: "Projected at end",
     cost_refund: "Cost / refund",
+    excess_km: "Excess mileage",
+    shortfall_km: "Under mileage",
+    payment_due: "Additional payment",
+    refund: "Refund",
     unit_days_short: "d",
     unit_months_short: "mo",
     doors_overall: "Doors overall",
@@ -202,6 +206,10 @@ const TRANSLATIONS = {
     km_balance: "km-Saldo",
     projected_at_end: "Prognose Vertragsende",
     cost_refund: "Kosten / Erstattung",
+    excess_km: "Mehrkilometer",
+    shortfall_km: "Minderkilometer",
+    payment_due: "Nachzahlung",
+    refund: "Erstattung",
     unit_days_short: "T",
     unit_months_short: "Mon.",
     doors_overall: "Türen gesamt",
@@ -306,6 +314,11 @@ const formatSignedDistance = (value, unit) => {
   if (!Number.isFinite(value)) return "—";
   const rounded = Math.round(value);
   return `${rounded > 0 ? "+" : ""}${rounded.toLocaleString()} ${unit || "km"}`;
+};
+
+const formatAbsDistance = (value, unit) => {
+  if (!Number.isFinite(value)) return "—";
+  return `${Math.abs(Math.round(value)).toLocaleString()} ${unit || "km"}`;
 };
 
 // positive = extra distance / extra cost (alert), negative = under distance / refund (good)
@@ -1355,6 +1368,8 @@ class BmwCardataVehicleCard extends HTMLElement {
       const projectedCost = leaseAvailable ? attrNumber(leaseState, "projected_cost") : NaN;
       const distanceUnit = leaseState?.attributes?.unit_of_measurement || "km";
       const currency = hass?.config?.currency || "EUR";
+      const projectedDirection = leaseDeltaClass(projectedDelta);
+      const costDirection = leaseDeltaClass(projectedCost);
       const leasingItems = [
         {
           icon: "mdi:calendar-clock",
@@ -1370,15 +1385,17 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
         {
           icon: "mdi:chart-line",
-          label: t("projected_at_end"),
-          value: formatSignedDistance(projectedDelta, distanceUnit),
-          cls: leaseDeltaClass(projectedDelta),
+          // Directional label ("excess"/"under") carries the sign, so the value goes unsigned;
+          // neutral/unknown keeps the generic label with the signed value.
+          label: projectedDirection === "alert" ? t("excess_km") : projectedDirection === "good" ? t("shortfall_km") : t("projected_at_end"),
+          value: projectedDirection ? formatAbsDistance(projectedDelta, distanceUnit) : formatSignedDistance(projectedDelta, distanceUnit),
+          cls: projectedDirection,
         },
         {
           icon: "mdi:cash",
-          label: t("cost_refund"),
-          value: formatLeaseCost(projectedCost, currency),
-          cls: leaseDeltaClass(projectedCost),
+          label: costDirection === "alert" ? t("payment_due") : costDirection === "good" ? t("refund") : t("cost_refund"),
+          value: costDirection ? formatLeaseCost(Math.abs(projectedCost), currency) : formatLeaseCost(projectedCost, currency),
+          cls: costDirection,
         },
       ];
       this._setHtml(leasingEl, `
