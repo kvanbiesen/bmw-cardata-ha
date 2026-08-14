@@ -123,6 +123,10 @@ const TRANSLATIONS = {
     mileage: "Mileage",
     lease_remaining: "Lease remaining",
     monthly_budget: "Remaining/month",
+    monthly_average: "Average/month",
+    km_balance: "km balance",
+    driven: "Driven",
+    target_today: "Target today",
     projected_at_end: "Projected at end",
     cost_refund: "Cost / refund",
     excess_km: "Excess mileage",
@@ -184,6 +188,7 @@ const TRANSLATIONS = {
     "editor.map_height": "Mini map height",
     "editor.show_buttons": "Show quick info buttons",
     "editor.leasing_entity": "Leasing sensor (optional)",
+    "editor.leasing_tiles": "Leasing tiles (order = display order)",
     "editor.language": "Card language",
     "editor.lang_auto": "Auto (Home Assistant language)",
   },
@@ -204,6 +209,10 @@ const TRANSLATIONS = {
     mileage: "Kilometerstand",
     lease_remaining: "Leasing-Restlaufzeit",
     monthly_budget: "Restsaldo/Monat",
+    monthly_average: "Schnitt/Monat",
+    km_balance: "km-Saldo",
+    driven: "Gefahren",
+    target_today: "Soll heute",
     projected_at_end: "Prognose Vertragsende",
     cost_refund: "Kosten / Erstattung",
     excess_km: "Mehrkilometer",
@@ -265,10 +274,24 @@ const TRANSLATIONS = {
     "editor.map_height": "Höhe der Mini-Karte",
     "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
     "editor.leasing_entity": "Leasing-Sensor (optional)",
+    "editor.leasing_tiles": "Leasing-Kacheln (Reihenfolge = Anzeige)",
     "editor.language": "Kartensprache",
     "editor.lang_auto": "Automatisch (HA-Sprache)",
   },
 };
+
+// value = tile key in the render registry, label = translation key for the editor
+const LEASE_TILE_OPTIONS = [
+  { value: "lease_remaining", labelKey: "lease_remaining" },
+  { value: "monthly_budget", labelKey: "monthly_budget" },
+  { value: "monthly_average", labelKey: "monthly_average" },
+  { value: "km_balance", labelKey: "km_balance" },
+  { value: "driven", labelKey: "driven" },
+  { value: "target", labelKey: "target_today" },
+  { value: "projected", labelKey: "projected_at_end" },
+  { value: "cost", labelKey: "cost_refund" },
+];
+const DEFAULT_LEASE_TILES = ["lease_remaining", "monthly_budget", "projected", "cost"];
 
 const resolveLang = (cfg, hass) => {
   const configured = typeof cfg?.language === "string" && cfg.language !== "auto" ? cfg.language : "";
@@ -358,7 +381,12 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (boolConfig(cfg, "show_image", true)) size += 2;
     if (boolConfig(cfg, "show_map", true)) size += mapHeightConfig(cfg) / CARD_SIZE_UNIT_PX;
     if (boolConfig(cfg, "show_buttons", true)) size += 2;
-    if (cfg.leasing_entity) size += 1;
+    if (cfg.leasing_entity) {
+      const tileCount = Array.isArray(cfg.leasing_tiles) && cfg.leasing_tiles.length
+        ? cfg.leasing_tiles.length
+        : DEFAULT_LEASE_TILES.length;
+      size += Math.ceil(tileCount / 2) / 2;
+    }
     return size;
   }
 
@@ -408,6 +436,16 @@ class BmwCardataVehicleCard extends HTMLElement {
         {
           name: "leasing_entity",
           selector: { entity: { domain: "sensor" } },
+        },
+        {
+          name: "leasing_tiles",
+          selector: {
+            select: {
+              multiple: true,
+              mode: "dropdown",
+              options: LEASE_TILE_OPTIONS.map((opt) => ({ value: opt.value, label: t(opt.labelKey) })),
+            },
+          },
         },
         {
           name: "language",
@@ -1361,31 +1399,60 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (leasingEntityId) {
       const leaseState = hass?.states?.[leasingEntityId];
       const leaseAvailable = hasUsableState(leaseState);
-      const daysRemaining = leaseAvailable ? attrNumber(leaseState, "days_remaining") : NaN;
-      const monthsRemaining = leaseAvailable ? attrNumber(leaseState, "months_remaining") : NaN;
-      const monthlyRemaining = leaseAvailable ? attrNumber(leaseState, "monthly_remaining") : NaN;
+      const attr = (key) => (leaseAvailable ? attrNumber(leaseState, key) : NaN);
+      const daysRemaining = attr("days_remaining");
+      const monthsRemaining = attr("months_remaining");
+      const monthlyRemaining = attr("monthly_remaining");
+      const monthlyAverage = attr("monthly_average");
+      const deviation = attr("deviation");
+      const drivenKm = attr("actual");
+      const targetKm = attr("target");
       const projectedDelta = leaseAvailable ? Number(leaseState.state) : NaN;
-      const projectedCost = leaseAvailable ? attrNumber(leaseState, "projected_cost") : NaN;
+      const projectedCost = attr("projected_cost");
       const distanceUnit = leaseState?.attributes?.unit_of_measurement || "km";
       const currency = hass?.config?.currency || "EUR";
       const projectedDirection = leaseDeltaClass(projectedDelta);
       const costDirection = leaseDeltaClass(projectedCost);
-      const leasingItems = [
-        {
+      const plainDistance = (value) =>
+        Number.isFinite(value) ? `${Math.round(value).toLocaleString()} ${distanceUnit}` : "—";
+      const tileDefs = {
+        lease_remaining: {
           icon: "mdi:calendar-clock",
           label: t("lease_remaining"),
           value: formatLeaseRemaining(daysRemaining, monthsRemaining, t),
           cls: "",
         },
-        {
+        monthly_budget: {
           icon: "mdi:speedometer",
           label: t("monthly_budget"),
-          value: Number.isFinite(monthlyRemaining)
-            ? `${Math.round(monthlyRemaining).toLocaleString()} ${distanceUnit}`
-            : "—",
+          value: plainDistance(monthlyRemaining),
           cls: Number.isFinite(monthlyRemaining) && monthlyRemaining < 0 ? "alert" : "",
         },
-        {
+        monthly_average: {
+          icon: "mdi:chart-timeline-variant",
+          label: t("monthly_average"),
+          value: plainDistance(monthlyAverage),
+          cls: "",
+        },
+        km_balance: {
+          icon: "mdi:map-marker-distance",
+          label: t("km_balance"),
+          value: formatSignedDistance(deviation, distanceUnit),
+          cls: leaseDeltaClass(deviation),
+        },
+        driven: {
+          icon: "mdi:counter",
+          label: t("driven"),
+          value: plainDistance(drivenKm),
+          cls: "",
+        },
+        target: {
+          icon: "mdi:bullseye-arrow",
+          label: t("target_today"),
+          value: plainDistance(targetKm),
+          cls: "",
+        },
+        projected: {
           icon: "mdi:chart-line",
           // Directional label ("excess"/"under") carries the sign, so the value goes unsigned;
           // neutral/unknown keeps the generic label with the signed value.
@@ -1393,13 +1460,17 @@ class BmwCardataVehicleCard extends HTMLElement {
           value: projectedDirection ? formatAbsDistance(projectedDelta, distanceUnit) : formatSignedDistance(projectedDelta, distanceUnit),
           cls: projectedDirection,
         },
-        {
+        cost: {
           icon: "mdi:cash",
           label: costDirection === "alert" ? t("payment_due") : costDirection === "good" ? t("refund") : t("cost_refund"),
           value: costDirection ? formatLeaseCost(Math.abs(projectedCost), currency) : formatLeaseCost(projectedCost, currency),
           cls: costDirection,
         },
-      ];
+      };
+      const selectedTiles = Array.isArray(cfg.leasing_tiles) && cfg.leasing_tiles.length
+        ? cfg.leasing_tiles.filter((key) => tileDefs[key])
+        : DEFAULT_LEASE_TILES;
+      const leasingItems = selectedTiles.map((key) => tileDefs[key]);
       this._setHtml(leasingEl, `
         <div class="buttons-grid">
           ${leasingItems
