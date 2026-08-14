@@ -254,6 +254,7 @@ Available configuration options:
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
+| `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, or `de`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome — each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
 
 ### Leasing Section (optional)
 
