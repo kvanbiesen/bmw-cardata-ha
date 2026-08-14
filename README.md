@@ -259,9 +259,10 @@ Available configuration options:
 ### Leasing Section (optional)
 
 Set `leasing_entity` to a sensor that tracks your lease. The card then shows
-four extra tiles: remaining lease time, current distance balance (actual vs.
-pro-rata target), projected over/under mileage at lease end, and the projected
-cost/refund. The card only displays — all math lives in the sensor.
+four extra tiles: remaining lease time, the remaining average distance per
+month allowed by the contract, projected over/under mileage at lease end, and
+the projected cost/refund. The card only displays — all math lives in the
+sensor.
 
 Over-mileage and costs render in the error color, under-mileage and refunds in
 the success color. Missing attributes show "—". Distances use the sensor's
@@ -323,7 +324,7 @@ and it provides these attributes:
 | Attribute | Meaning |
 |-----------|---------|
 | `days_remaining` / `months_remaining` | Remaining lease time |
-| `deviation` | Actual distance minus pro-rata target today |
+| `monthly_remaining` | Remaining average distance per month allowed by the contract |
 | `projected_cost` | Projected cost (positive) or refund (negative) at lease end, in your HA currency |
 
 ### YAML Configuration

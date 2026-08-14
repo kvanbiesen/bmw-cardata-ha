@@ -122,7 +122,7 @@ const TRANSLATIONS = {
     tire: "Tire",
     mileage: "Mileage",
     lease_remaining: "Lease remaining",
-    km_balance: "km balance",
+    monthly_budget: "Remaining/month",
     projected_at_end: "Projected at end",
     cost_refund: "Cost / refund",
     excess_km: "Excess mileage",
@@ -203,7 +203,7 @@ const TRANSLATIONS = {
     tire: "Reifen",
     mileage: "Kilometerstand",
     lease_remaining: "Leasing-Restlaufzeit",
-    km_balance: "km-Saldo",
+    monthly_budget: "Restsaldo/Monat",
     projected_at_end: "Prognose Vertragsende",
     cost_refund: "Kosten / Erstattung",
     excess_km: "Mehrkilometer",
@@ -1363,7 +1363,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       const leaseAvailable = hasUsableState(leaseState);
       const daysRemaining = leaseAvailable ? attrNumber(leaseState, "days_remaining") : NaN;
       const monthsRemaining = leaseAvailable ? attrNumber(leaseState, "months_remaining") : NaN;
-      const deviation = leaseAvailable ? attrNumber(leaseState, "deviation") : NaN;
+      const monthlyRemaining = leaseAvailable ? attrNumber(leaseState, "monthly_remaining") : NaN;
       const projectedDelta = leaseAvailable ? Number(leaseState.state) : NaN;
       const projectedCost = leaseAvailable ? attrNumber(leaseState, "projected_cost") : NaN;
       const distanceUnit = leaseState?.attributes?.unit_of_measurement || "km";
@@ -1378,10 +1378,12 @@ class BmwCardataVehicleCard extends HTMLElement {
           cls: "",
         },
         {
-          icon: "mdi:map-marker-distance",
-          label: t("km_balance"),
-          value: formatSignedDistance(deviation, distanceUnit),
-          cls: leaseDeltaClass(deviation),
+          icon: "mdi:speedometer",
+          label: t("monthly_budget"),
+          value: Number.isFinite(monthlyRemaining)
+            ? `${Math.round(monthlyRemaining).toLocaleString()} ${distanceUnit}`
+            : "—",
+          cls: Number.isFinite(monthlyRemaining) && monthlyRemaining < 0 ? "alert" : "",
         },
         {
           icon: "mdi:chart-line",
