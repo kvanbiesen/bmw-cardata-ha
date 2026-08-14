@@ -254,7 +254,7 @@ Available configuration options:
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
-| `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `projected`, `cost` |
+| `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
 | `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, or `de`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome — each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
 
 ### Leasing Section (optional)
@@ -334,6 +334,8 @@ attributes of the tiles you enable are required:
 | `km_balance` | `deviation` | Actual distance minus pro-rata target today |
 | `driven` | `actual` | Distance driven since lease start |
 | `target` | `target` | Pro-rata target distance as of today |
+| `total` | `total_distance` | Total contract distance allowance |
+| `lease_start` / `lease_end` | `lease_start` / `lease_end` | Contract start / end date (shown in the card language's date format) |
 | `cost` | `projected_cost` | Projected cost (positive) or refund (negative) at lease end, in your HA currency |
 
 ### YAML Configuration

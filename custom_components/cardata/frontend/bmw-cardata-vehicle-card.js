@@ -127,6 +127,9 @@ const TRANSLATIONS = {
     km_balance: "km balance",
     driven: "Driven",
     target_today: "Target today",
+    total_distance: "Total allowance",
+    lease_start: "Lease start",
+    lease_end: "Lease end",
     projected_at_end: "Projected at end",
     cost_refund: "Cost / refund",
     excess_km: "Excess mileage",
@@ -213,6 +216,9 @@ const TRANSLATIONS = {
     km_balance: "km-Saldo",
     driven: "Gefahren",
     target_today: "Soll heute",
+    total_distance: "Gesamtkilometer",
+    lease_start: "Leasingbeginn",
+    lease_end: "Leasingende",
     projected_at_end: "Prognose Vertragsende",
     cost_refund: "Kosten / Erstattung",
     excess_km: "Mehrkilometer",
@@ -288,6 +294,9 @@ const LEASE_TILE_OPTIONS = [
   { value: "km_balance", labelKey: "km_balance" },
   { value: "driven", labelKey: "driven" },
   { value: "target", labelKey: "target_today" },
+  { value: "total", labelKey: "total_distance" },
+  { value: "lease_start", labelKey: "lease_start" },
+  { value: "lease_end", labelKey: "lease_end" },
   { value: "projected", labelKey: "projected_at_end" },
   { value: "cost", labelKey: "cost_refund" },
 ];
@@ -342,6 +351,12 @@ const formatSignedDistance = (value, unit) => {
 const formatAbsDistance = (value, unit) => {
   if (!Number.isFinite(value)) return "—";
   return `${Math.abs(Math.round(value)).toLocaleString()} ${unit || "km"}`;
+};
+
+const formatLeaseDate = (value, lang) => {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString(lang);
 };
 
 // positive = extra distance / extra cost (alert), negative = under distance / refund (good)
@@ -1450,6 +1465,24 @@ class BmwCardataVehicleCard extends HTMLElement {
           icon: "mdi:bullseye-arrow",
           label: t("target_today"),
           value: plainDistance(targetKm),
+          cls: "",
+        },
+        total: {
+          icon: "mdi:road-variant",
+          label: t("total_distance"),
+          value: plainDistance(attr("total_distance")),
+          cls: "",
+        },
+        lease_start: {
+          icon: "mdi:calendar-start",
+          label: t("lease_start"),
+          value: formatLeaseDate(leaseState?.attributes?.lease_start, lang),
+          cls: "",
+        },
+        lease_end: {
+          icon: "mdi:calendar-end",
+          label: t("lease_end"),
+          value: formatLeaseDate(leaseState?.attributes?.lease_end, lang),
           cls: "",
         },
         projected: {
