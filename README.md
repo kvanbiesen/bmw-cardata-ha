@@ -253,6 +253,77 @@ Available configuration options:
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
+| `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
+
+### Leasing Section (optional)
+
+Set `leasing_entity` to a sensor that tracks your lease. The card then shows
+four extra tiles: remaining lease time, current distance balance (actual vs.
+pro-rata target), projected over/under mileage at lease end, and the projected
+cost/refund. The card only displays — all math lives in the sensor.
+
+Over-mileage and costs render in the error color, under-mileage and refunds in
+the success color. Missing attributes show "—". Distances use the sensor's
+`unit_of_measurement` (falls back to km); the cost tile uses your Home
+Assistant currency. Tapping any tile opens the sensor's more-info dialog with
+all details.
+
+#### Setup with the Lease Mileage Tracker blueprint
+
+The section is built against the sensor contract of the
+[Lease Mileage Tracker](https://github.com/elmars/ha-leasing-blueprint)
+template blueprint (requires Home Assistant 2024.10+) — the quickest way to
+get a conforming sensor:
+
+1. Import the blueprint:
+
+   [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Felmars%2Fha-leasing-blueprint%2Fblob%2Fmain%2Flease_mileage.yaml)
+
+   (Template blueprints do not appear on the Blueprints settings page — that
+   page only lists automation/script blueprints. The import still works.)
+
+2. Create one sensor per vehicle in your YAML configuration, feeding it the
+   mileage sensor this integration provides:
+
+   ```yaml
+   template:
+     - use_blueprint:
+         path: elmars/lease_mileage.yaml
+         input:
+           name: "Lease My BMW"
+           unique_id: lease_my_bmw
+           odometer: sensor.my_bmw_mileage   # mileage sensor from this integration
+           start_date: "2024-12-18"
+           end_date: "2027-12-18"
+           total_distance: 75000
+           excess_rate: 0.40      # per km/mi over, incl. VAT
+           shortfall_rate: 0.25   # per km/mi under, incl. VAT
+           excess_allowance: 1500
+           shortfall_allowance: 1500
+   ```
+
+   Then reload template entities (Developer tools → YAML → Template entities).
+
+3. Point the card at the sensor — via the GUI editor ("Leasing sensor
+   (optional)") or in YAML:
+
+   ```yaml
+   type: custom:bmw-cardata-vehicle-card
+   device_id: abcdef1234567890abcdef1234567890
+   leasing_entity: sensor.lease_my_bmw
+   ```
+
+#### Sensor contract (for custom sensors)
+
+Any sensor works as long as it follows the blueprint's contract: the sensor
+**state** is the projected over/under mileage at lease end (positive = over),
+and it provides these attributes:
+
+| Attribute | Meaning |
+|-----------|---------|
+| `days_remaining` / `months_remaining` | Remaining lease time |
+| `deviation` | Actual distance minus pro-rata target today |
+| `projected_cost` | Projected cost (positive) or refund (negative) at lease end, in your HA currency |
 
 ### YAML Configuration
 
@@ -281,6 +352,7 @@ show_image: true
 show_map: true
 map_height: 120
 show_buttons: true
+leasing_entity: sensor.leasing_mini
 ```
 
 To hide the map and quick-info tiles:
