@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW Bildata",
+        "description": "Indtast dit BMW CarData-klient-ID."
+      },
+      "authorize": {
+        "title": "Godkend BMW CarData",
+        "description": "Åbn {verification_url}, og indtast brugerkoden {user_code}, hvis du bliver bedt om det. Når du har godkendt enheden, skal du klikke på Indsend. Hvis godkendelsen allerede er gennemført, skal du klikke på Indsend igen for at fortsætte."
+      },
+      "blocked": {
+        "title": "Bootstrap deaktiveret på grund af API-hastighedsgrænse",
+        "description": "Integrationen har tidligere ramt BMW API'ets daglige hastighedsgrænse, og automatisk bootstrap (oprettelse og mapping af containere) er midlertidigt deaktiveret for {entry_title} indtil {until}. Du kan enten vente til dette tidspunkt og prøve igen eller rydde flaget nedenfor for at prøve igen med det samme (du kan risikere at ramme hastighedsgrænsen igen)."
+      },
+      "cleared": {
+        "title": "Nyt bootstrap-forsøg planlagt",
+        "description": "Du har ryddet det midlertidige deaktiveringsflag for {entry_title}. Integrationen vil forsøge bootstrap igen. Hvis den stadig rammer BMW API'ets hastighedsgrænse, deaktiveres bootstrap igen indtil nulstillingstidspunktet. Alternativt kan du bruge udviklertjenesten `cardata.clean_hv_containers` til at vise/slette gamle containere (vær opmærksom på API-hastighedsgrænser)."
+      },
+      "blocked_fallback": {
+        "description": "Automatisk bootstrap er deaktiveret indtil {until}. Ryd flaget for at prøve igen nu, eller annuller og prøv igen efter nulstillingstidspunktet."
+      }
+    },
+    "error": {
+      "authorization_failed": "BMW-godkendelsen blev ikke gennemført. Det kan ske, hvis du klikkede på 'Afvis', lukkede siden før godkendelsen, anmodningen udløb, eller BMW's servere midlertidigt havde problemer (det er ikke nødvendigvis din fejl). Fejloplysninger: {error}. Et nyt godkendelseslink er genereret nedenfor – åbn det, godkend, og klik derefter på Indsend igen.",
+      "device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Kontrollér, at klient-ID'et er gyldigt, og prøv igen."
+    },
+    "abort": {
+      "auth_failed": "BMW-godkendelsessvaret var ufuldstændigt (manglende tokens). Prøv igen.",
+      "reauth_device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Opdatér klient-ID'et under Konfigurer > Start enhedsgodkendelse igen, eller fjern og tilføj integrationen igen.",
+      "reauth_missing_client_id": "Klient-ID mangler for denne integration. Fjern og tilføj integrationen igen for at godkende den.",
+      "reauth_failed": "Godkendelse igen kunne ikke startes. Prøv igen fra integrationsindstillingerne."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manuelle handlinger",
+        "description": "Vælg den handling, du vil udføre. Opdatér tokens forsøger kun at opdatere tokens uden at gennemføre godkendelsen igen. Vi anbefaler at genstarte HA bagefter, hvis du oplever problemer."
+      },
+      "action_settings": {
+        "title": "Indstillinger",
+        "data": {
+          "enable_magic_soc": "Aktivér Magic SOC (forudsigelse af forbrug under kørsel)",
+          "enable_charging_history": "Aktivér ladehistorik (dagligt API-kald)",
+          "enable_tyre_diagnosis": "Aktivér dækdiagnose (dagligt API-kald)",
+          "enable_trip_end_polling": "Aktivér polling ved afslutning af køretur",
+          "trip_poll_cooldown_minutes": "Ventetid mellem polls ved afslutning af køretur (minutter)",
+          "enable_external_power_injection": "Brug ekstern elmåler til opladning"
+        },
+        "data_description": {
+          "enable_charging_history": "Henter historik over ladesessioner fra BMW én gang dagligt. Bruger 1 ekstra API-kald pr. køretøj pr. dag fra din daglige kvote på 50 kald.",
+          "enable_tyre_diagnosis": "Henter data om dækkenes tilstand og slid fra BMW én gang dagligt. Bruger 1 ekstra API-kald pr. køretøj pr. dag fra din daglige kvote på 50 kald.",
+          "enable_trip_end_polling": "Når funktionen er aktiveret, udløses et øjeblikkeligt API-kald, hver gang køretøjet stopper. Deaktivér dette, hvis du kører mange korte ture og rammer den daglige API-grænse. Planlagte polls fortsætter uanset denne indstilling.",
+          "trip_poll_cooldown_minutes": "Minimum ventetid mellem polls ved afslutning af køretur for samme køretøj (standard: 10). Øg denne værdi for at reducere API-forbruget ved mange korte ture.",
+          "enable_external_power_injection": "Tillad en automation at sende lokalt målt ladeeffekt til SOC-forudsigelsen via tjenesten cardata.update_charging_power. Når friske lokale målinger modtages, undertrykkes BMW's V×A-baserede måling. Lad denne være deaktiveret, medmindre du bruger en smart elmåler og har tilsluttet den."
+        }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT-broker",
+        "description": "Konfigurér en brugerdefineret MQTT-broker i stedet for BMW's endpoint. Brug dette sammen med bmw-mqtt-bridge til at videresende BMW-data fra en lokal broker, så flere klienter kan dele én BMW MQTT-forbindelse.",
+        "data": {
+          "custom_mqtt_enabled": "Brug brugerdefineret MQTT-broker",
+          "custom_mqtt_host": "Broker-vært",
+          "custom_mqtt_port": "Broker-port",
+          "custom_mqtt_username": "Brugernavn (valgfrit)",
+          "custom_mqtt_password": "Adgangskode (valgfrit)",
+          "custom_mqtt_tls": "TLS-tilstand",
+          "custom_mqtt_topic_prefix": "Topic-præfiks (f.eks. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Når denne funktion er aktiveret, opretter integrationen forbindelse til din brugerdefinerede broker i stedet for BMW's MQTT-endpoint.",
+          "custom_mqtt_host": "Værtsnavn eller IP-adresse på din MQTT-broker.",
+          "custom_mqtt_port": "Portnummer (standard: 1883 for almindelig TCP, 8883 for TLS).",
+          "custom_mqtt_username": "Lad feltet være tomt for anonym adgang.",
+          "custom_mqtt_password": "Lad feltet være tomt for anonym adgang.",
+          "custom_mqtt_tls": "Fra = almindelig TCP, TLS = verificeret certifikat, TLS (selvsigneret) = spring certifikatvalidering over.",
+          "custom_mqtt_topic_prefix": "Bridge'ens topic-præfiks. Meddelelser forventes på '{prefix}{vin}'. Standard: bmw/"
+        }
+      }
+    },
+    "error": {
+      "refresh_failed": "Opdatering af token mislykkedes: {error}",
+      "runtime_missing": "Integrationens runtime er ikke klar. Prøv igen, når opsætningen er fuldført.",
+      "no_vins": "Der er endnu ingen kendte VIN-numre. Vent på, at streamen finder et køretøj, eller udløs den manuelt én gang.",
+      "invalid_int": "Indtast et positivt heltal",
+      "invalid_client_id": "Indtast BMW CarData-klient-ID'et.",
+      "mqtt_host_required": "Broker-vært skal angives, når brugerdefineret MQTT er aktiveret."
+    },
+    "abort": {
+      "auth_failed": "BMW-godkendelsessvaret var ufuldstændigt (manglende tokens). Prøv igen.",
+      "reauth_started": "Godkendelsen er genstartet. Gennemfør det nye loginforløb fra notifikationen.",
+      "reauth_device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Opdatér klient-ID'et i integrationsindstillingerne, og prøv igen.",
+      "reauth_missing_client_id": "Klient-ID mangler for denne integration. Fjern og tilføj integrationen igen for at godkende den.",
+      "reauth_failed": "Godkendelse igen kunne ikke startes. Prøv igen fra integrationsindstillingerne."
+    }
+  }
+}
