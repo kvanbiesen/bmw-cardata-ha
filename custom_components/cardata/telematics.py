@@ -354,11 +354,13 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     # Targets ~24 total scheduled API calls/day, including daily optional fetches.
     consecutive_failures = 0
     consecutive_auth_failures = 0  # Track auth failures separately
-    # Skip immediate poll on restart if last poll was recent (saves quota)
-    last_poll_at = runtime.coordinator.last_telematic_api_at
-    if last_poll_at is not None:
-        poll_age = (datetime.now(UTC) - last_poll_at).total_seconds()
-        last_check_time = time.time() - poll_age
+    # Skip immediate poll on restart if last poll was recent (saves quota).
+    # This uses the stored attempt time, not the last success: a restart shortly
+    # after a failed or rate limited poll must not retry straight away either.
+    stored_entry = hass.config_entries.async_get_entry(entry_id)
+    stored_poll = stored_entry.data.get("last_telematic_poll") if stored_entry else None
+    if isinstance(stored_poll, (int, float)) and stored_poll > 0:
+        last_check_time = float(stored_poll)
     else:
         last_check_time = 0.0
 
