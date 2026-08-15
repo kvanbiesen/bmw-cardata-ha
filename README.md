@@ -521,7 +521,7 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
 - **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
 - **Multi-VIN setups**: All vehicles share the same 50 call/day limit. The poll interval scales with VIN count plus any enabled daily features. Each VIN is guaranteed at least 1 poll per day; BMW's 429 backoff handles actual quota enforcement.
-- **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay.
+- **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay (1h, 2h, 4h, 8h, up to 24h). Because the quota resets at midnight UTC, a backoff that would run past the reset is shortened to end at it, so API calls resume as soon as the quota is back instead of sitting out the rest of a long backoff. A `Retry-After` header sent by BMW is honoured as-is.
 
 ## Requirements
 
