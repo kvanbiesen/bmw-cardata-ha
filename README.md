@@ -254,14 +254,19 @@ Available configuration options:
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
+| `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
 | `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, or `de`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome — each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
 
 ### Leasing Section (optional)
 
 Set `leasing_entity` to a sensor that tracks your lease. The card then shows
-four extra tiles: remaining lease time, current distance balance (actual vs.
-pro-rata target), projected over/under mileage at lease end, and the projected
-cost/refund. The card only displays — all math lives in the sensor.
+leasing tiles — by default: remaining lease time, the remaining average
+distance per month allowed by the contract, projected over/under mileage at
+lease end, and the projected cost/refund. Which tiles appear (and their
+order) is configurable via `leasing_tiles`; additional tiles are available
+for the monthly average so far, today's balance vs. pro-rata target, total
+distance driven, and today's target. The card only displays — all math lives
+in the sensor.
 
 Over-mileage and costs render in the error color, under-mileage and refunds in
 the success color. Missing attributes show "—". Distances use the sensor's
@@ -317,14 +322,21 @@ get a conforming sensor:
 #### Sensor contract (for custom sensors)
 
 Any sensor works as long as it follows the blueprint's contract: the sensor
-**state** is the projected over/under mileage at lease end (positive = over),
-and it provides these attributes:
+**state** is the projected over/under mileage at lease end (positive = over,
+used by the `projected` tile), and each tile reads one attribute — only the
+attributes of the tiles you enable are required:
 
-| Attribute | Meaning |
-|-----------|---------|
-| `days_remaining` / `months_remaining` | Remaining lease time |
-| `deviation` | Actual distance minus pro-rata target today |
-| `projected_cost` | Projected cost (positive) or refund (negative) at lease end, in your HA currency |
+| Tile | Attribute | Meaning |
+|------|-----------|---------|
+| `lease_remaining` | `days_remaining` / `months_remaining` | Remaining lease time |
+| `monthly_budget` | `monthly_remaining` | Remaining average distance per month allowed by the contract |
+| `monthly_average` | `monthly_average` | Average distance per month so far |
+| `km_balance` | `deviation` | Actual distance minus pro-rata target today |
+| `driven` | `actual` | Distance driven since lease start |
+| `target` | `target` | Pro-rata target distance as of today |
+| `total` | `total_distance` | Total contract distance allowance |
+| `lease_start` / `lease_end` | `lease_start` / `lease_end` | Contract start / end date (shown in the card language's date format) |
+| `cost` | `projected_cost` | Projected cost (positive) or refund (negative) at lease end, in your HA currency |
 
 ### YAML Configuration
 
