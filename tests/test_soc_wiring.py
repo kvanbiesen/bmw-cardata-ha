@@ -176,7 +176,7 @@ class TestApplyAcPower:
         predictor.anchor_session(self.VIN, 50.0, 30.0, "AC")
         return predictor
 
-    def _state_with(self, phases_timestamp, power=None):
+    def _state_with(self, phases_timestamp, power=None, power_timestamp=None):
         """Vehicle state charging at 230 V and 16 A, plugged in at PLUGGED_IN."""
         vehicle_state = {
             DESC_CHARGING_AC_VOLTAGE: _state(230, self.PLUGGED_IN),
@@ -185,7 +185,7 @@ class TestApplyAcPower:
             DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
         }
         if power is not None:
-            vehicle_state[DESC_CHARGING_POWER] = _state(power, self.PLUGGED_IN, unit="kW")
+            vehicle_state[DESC_CHARGING_POWER] = _state(power, power_timestamp or self.PLUGGED_IN, unit="kW")
         return vehicle_state
 
     def test_valid_phase_count_uses_voltage_times_current(self):
@@ -228,3 +228,20 @@ class TestApplyAcPower:
         assert not _prefer_reported_power(self._state_with(self.PLUGGED_IN))
         assert _prefer_reported_power(self._state_with(self.LAST_CHARGE_END))
         assert _prefer_reported_power({})
+
+    def test_a_power_reading_from_the_previous_charge_is_ignored(self):
+        """A figure left behind by an earlier charge is not the power going in now.
+
+        A DC session that ended without a closing zero would otherwise hand a
+        50 kW reading to the next AC charge.
+        """
+        predictor = self._predictor()
+        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=50.0, power_timestamp=self.LAST_CHARGE_END)
+        assert _apply_ac_power(predictor, self.VIN, vehicle_state)
+        assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(3.68)
+
+    def test_a_power_reading_from_this_charge_is_used(self):
+        predictor = self._predictor()
+        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=11.0)
+        assert _apply_ac_power(predictor, self.VIN, vehicle_state)
+        assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(11.0)

@@ -148,6 +148,24 @@ def _plug_in_timestamp(vehicle_state: dict[str, DescriptorState]) -> datetime | 
     return _descriptor_timestamp(vehicle_state.get(DESC_CHARGING_PORT_PLUG_EVENT))
 
 
+def _belongs_to_plug_in(state: DescriptorState, vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Whether a reading was taken since the cable went in.
+
+    Vehicles that report no plug state, or no usable timestamps, get the benefit
+    of the doubt so their behaviour does not change.
+    """
+    plugged_at = _plug_in_timestamp(vehicle_state)
+    reported_at = _descriptor_timestamp(state)
+    if plugged_at is None or reported_at is None:
+        return True
+    try:
+        return reported_at >= plugged_at
+    except TypeError:
+        # Naive and aware timestamps mixed: keep the value rather than discard
+        # data we cannot compare.
+        return True
+
+
 def _plug_in_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
     """Return the phase count only when it belongs to the current plug-in.
 
@@ -155,25 +173,10 @@ def _plug_in_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
     when it changes, so a reading older than the plug-in says nothing about the
     charge now running.  Trusting it turns a 3-phase charge into a 1-phase one
     and divides every derived power figure by three.
-
-    Vehicles that report no plug state, or no usable timestamps, keep the raw
-    value so their behaviour does not change.
     """
     state = vehicle_state.get(DESC_CHARGING_PHASES)
-    if state is None:
+    if state is None or not _belongs_to_plug_in(state, vehicle_state):
         return None
-
-    plugged_at = _plug_in_timestamp(vehicle_state)
-    reported_at = _descriptor_timestamp(state)
-    if plugged_at is not None and reported_at is not None:
-        try:
-            if reported_at < plugged_at:
-                return None
-        except TypeError:
-            # Naive and aware timestamps mixed: keep the value rather than
-            # discard data we cannot compare.
-            pass
-
     return _descriptor_phases(state)
 
 
@@ -219,6 +222,19 @@ def _reported_power_kw(vehicle_state: dict[str, DescriptorState]) -> float | Non
     return _parse_power_kw(state.value, state.unit or "")
 
 
+def _plug_in_power_kw(vehicle_state: dict[str, DescriptorState]) -> float | None:
+    """Return BMW's charging power only when it belongs to the current plug-in.
+
+    Only such a reading may displace the voltage and current product.  A figure
+    left behind by the previous charge, a DC one above all, would otherwise be
+    taken for the power going in now.
+    """
+    state = vehicle_state.get(DESC_CHARGING_POWER)
+    if state is None or not _belongs_to_plug_in(state, vehicle_state):
+        return None
+    return _reported_power_kw(vehicle_state)
+
+
 def _prefer_reported_power(vehicle_state: dict[str, DescriptorState]) -> bool:
     """Whether BMW's charging power should drive an AC session instead of V×A.
 
@@ -249,7 +265,7 @@ def _apply_ac_power(
     if voltage and current and phases is not None:
         return soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
 
-    power_kw = _reported_power_kw(vehicle_state)
+    power_kw = _plug_in_power_kw(vehicle_state)
     if power_kw is not None and power_kw > 0:
         soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
         return True
