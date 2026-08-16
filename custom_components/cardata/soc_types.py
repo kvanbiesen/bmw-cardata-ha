@@ -394,6 +394,10 @@ class ChargingSession:
     # Power pushed in by the user's own meter owes nothing to the phase count and
     # is not scaled by it, so it makes the energy unusable as evidence.
     local_power_seen: bool = False
+    # A capped integration gap leaves the modelled energy short while the SOC gain
+    # over the same period counts in full, which reads as a charge storing more
+    # than it should.  Cleared whenever a measuring window opens.
+    energy_gap_capped: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -415,6 +419,7 @@ class ChargingSession:
             "last_current": self.last_current,
             "phases": self.phases,
             "phases_source": self.phases_source,
+            "local_power_seen": self.local_power_seen,
         }
 
     @classmethod
@@ -439,6 +444,7 @@ class ChargingSession:
             last_current=data.get("last_current"),
             phases=data.get("phases", 1),
             phases_source=data.get("phases_source", PHASES_ASSUMED),
+            local_power_seen=data.get("local_power_seen", False),
         )
 
     def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
@@ -456,6 +462,8 @@ class ChargingSession:
             gap = timestamp - self.last_energy_update
             if gap > 0:
                 # Cap gap to avoid massive energy jumps after restart
+                if gap > MAX_ENERGY_GAP_SECONDS:
+                    self.energy_gap_capped = True
                 capped_hours = min(gap, MAX_ENERGY_GAP_SECONDS) / 3600.0
                 # Trapezoidal integration: average of last and current power
                 avg_power = (self.last_power_kw + power_kw) / 2.0

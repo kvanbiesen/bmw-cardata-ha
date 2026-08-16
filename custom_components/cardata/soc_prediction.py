@@ -608,6 +608,15 @@ class SOCPredictor:
                 self._open_phase_probe(session, bmw_soc)
             return
 
+        # Energy integrated across a capped gap is short on the modelled side
+        # only, so the window would read as a charge storing more than it should.
+        # Unlike rounding this repeats for as long as the sampling stays slow, so
+        # voting cannot absorb it and the window has to be abandoned.
+        if session.energy_gap_capped:
+            session.phase_votes = 0
+            self._open_phase_probe(session, bmw_soc)
+            return
+
         soc_gain = bmw_soc - session.phase_probe_soc
         gross = session.session_gross_energy_kwh - session.phase_probe_gross
         if soc_gain < self.PHASE_MIN_SOC_GAIN or gross <= 0:
@@ -667,6 +676,7 @@ class SOCPredictor:
         session.phase_probe_soc = bmw_soc
         session.phase_probe_energy = session.session_total_energy_kwh
         session.phase_probe_gross = session.session_gross_energy_kwh
+        session.energy_gap_capped = False
 
     def _unwind_derived_phases(self, vin: str, session: ChargingSession, bmw_soc: float) -> None:
         """Drop the prediction back to the reading that disproved the inference.

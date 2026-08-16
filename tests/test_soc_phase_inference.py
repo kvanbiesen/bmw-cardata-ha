@@ -407,3 +407,40 @@ class TestAcPower:
 
     def test_no_current_means_no_power(self):
         assert _calc_ac_power_kw(self._session(3, amps=0.0)) is None
+
+
+class TestSlowSamplingIsNotEvidence:
+    """Energy integration caps long gaps, the SOC gain over them does not."""
+
+    @staticmethod
+    def _charge_sampled_every(seconds: float, minutes: int = 360, true_phases: int = 1):
+        charge = Charge(true_phases=true_phases)
+        with (
+            patch("time.time", lambda: charge.clock),
+            patch("custom_components.cardata.soc_types.time.time", lambda: charge.clock),
+        ):
+            for _ in range(int(minutes * 60 / seconds)):
+                charge.clock += seconds
+                elapsed = charge.clock - 1_000_000.0
+                charge.predictor.update_power_reading(
+                    VIN,
+                    _modelled_power_kw(charge.session, charge.volts, charge.amps),
+                    aux_power_kw=AUX_KW,
+                )
+                charge.bmw_soc(elapsed)
+        return charge.session
+
+    @pytest.mark.parametrize("seconds", [900.0, 1800.0, 2400.0, 3600.0])
+    def test_a_single_phase_charge_survives_slow_sampling(self, seconds):
+        """Past the 10 minute cap the modelled energy is short every window.
+
+        Unlike rounding this repeats, so voting cannot absorb it and the window
+        has to be thrown away instead.
+        """
+        session = self._charge_sampled_every(seconds)
+        assert session.phases == 1
+        assert session.phases_source == PHASES_ASSUMED
+
+    def test_normal_sampling_still_reaches_a_verdict(self):
+        """The guard must not silence the ordinary 30 second heartbeat."""
+        assert self._charge_sampled_every(30.0, minutes=120, true_phases=3).phases == 3
