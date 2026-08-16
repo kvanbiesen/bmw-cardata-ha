@@ -198,10 +198,12 @@ def end_session(
     # Preserve last predicted for stale fallback
     predictor._last_predicted_soc[vin] = session.last_predicted_soc
 
-    if session.restored:
+    if session.restored or session.phases_changed:
+        reason = "energy data incomplete" if session.restored else "phase count changed mid-charge"
         _LOGGER.info(
-            "SOC: Ending restored session for %s without learning (energy data incomplete)",
+            "SOC: Ending session for %s without learning (%s)",
             redact_vin(vin),
+            reason,
         )
         del predictor._sessions[vin]
         predictor._charging_method.pop(vin, None)

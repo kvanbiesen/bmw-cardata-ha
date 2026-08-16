@@ -505,6 +505,7 @@ class CardataCoordinator:
                     "anchor_soc": session.anchor_soc,
                     "target_soc": session.target_soc if session.target_soc else "unknown",
                     "phases": session.phases,
+                    "phases_source": session.phases_source,
                     "charging_method": session.charging_method,
                 }
 

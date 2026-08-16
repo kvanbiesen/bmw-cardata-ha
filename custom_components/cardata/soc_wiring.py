@@ -758,6 +758,12 @@ def process_soc_descriptors(
                                     if current_predicted is not None and soc_val < current_predicted:
                                         skip_stale = True
                     if not skip_stale:
+                        # Judge the phase count on the real battery reading only.
+                        # The displayed SOC can sit on a different scale, and
+                        # charging.level is BMW predicting rather than measuring;
+                        # mixing them turns a constant offset into free gain.
+                        if descriptor == DESC_SOC_HEADER:
+                            soc_predictor.update_phase_inference(vin, soc_val)
                         soc_predictor.update_bmw_soc(vin, soc_val)
                         magic_soc_pred.update_bmw_soc(vin, soc_val)
                     if soc_predictor.is_charging(vin) and not soc_predictor.has_active_session(vin):

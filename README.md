@@ -399,6 +399,26 @@ The integration includes a predicted SOC (State of Charge) sensor that estimates
 
 Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or voltage/current via MQTT. For these vehicles, the integration derives an implied charging power from BMW SOC changes: when an API poll delivers a higher SOC than the previous anchor and no real power data exists, the average power is back-calculated from the SOC delta, elapsed time, and default efficiency. The heartbeat then extrapolates between polls using this derived value, giving smooth SOC progression instead of staircase jumps every 30 minutes. Real power data (if it arrives later) overwrites the derived value automatically.
 
+### Charging Phases
+
+For AC charging the power is worked out from the voltage and current BMW reports, multiplied by the number of phases in use. BMW resets `phaseNumber` to `1-PHASES` when a charge ends and only re-sends it when it changes, so a new charge often starts with no usable value. Any reading older than the moment the cable went in is therefore discarded, and the charge is modelled at a single phase until something better arrives.
+
+If BMW stays silent, the battery itself gives the answer away. Inverting the model against the energy actually stored says how many phases the charge would have needed, measured over a window of at least 8% SOC gain. Because whole-percent SOC steps can carry a single window over the line, two consecutive windows have to agree before the count is raised to three.
+
+Raising the count is the risky direction, so withdrawing one is deliberately easier: a single window is enough, and the withdrawal re-anchors the prediction to the BMW reading that disproved it. Putting only the phase count back would fix the rate while leaving the level, since during a charge the prediction never comes down of its own accord, so an inflated value would stay on screen for hours.
+
+Anything BMW reports for the current plug-in always wins over an inferred value, and a session whose phase count changed partway through is excluded from efficiency learning, since its energy was integrated under two different assumptions.
+
+The inference deliberately holds back where the evidence is not clear cut, in which case the charge simply stays modelled at one phase as before:
+
+- Vehicles reporting a line-to-line voltage (250 V and above), where the wiring convention behind the power formula cannot be confirmed
+- The last few percent before the target, where the current tapers and the SOC no longer tracks the energy going in
+- Charges below roughly 75% efficiency, which no longer stand out clearly enough
+- Two-phase charging, which lands between the thresholds and so stays understated rather than being overstated as three
+- Any session fed by an external power meter, since injected power is not scaled by the phase count and makes the energy unusable as evidence
+
+The diagnostic sensor attributes report `phases_source` alongside `phases`, showing whether the count was `reported` by BMW, `derived` here, or merely `assumed`, so an inferred count is never mistaken for one BMW gave.
+
 ### How Learning Works
 
 The predicted SOC sensor automatically learns your vehicle's charging efficiency:

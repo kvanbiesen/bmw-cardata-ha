@@ -38,6 +38,12 @@ from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
+# Where a session's AC phase count came from.  Only a count BMW reported for the
+# current plug-in is authoritative; the other two are the integration's own.
+PHASES_ASSUMED = "assumed"  # nothing reported, modelled as single phase
+PHASES_REPORTED = "reported"  # BMW reported it for this plug-in
+PHASES_DERIVED = "derived"  # inferred from the energy the battery took
+
 
 @dataclass
 class ChargingCondition:
@@ -363,11 +369,31 @@ class ChargingSession:
     # Session-level tracking (never reset by re-anchors, used for learning)
     session_start_soc: float | None = None  # Original SOC at session creation
     session_total_energy_kwh: float = 0.0  # Cumulative energy across all re-anchors
+    # As above but before auxiliary load is deducted.  The difference between the
+    # two is the auxiliary energy actually integrated, which the phase inference
+    # needs and cannot get from wall clock time because energy accumulation caps
+    # long gaps.
+    session_gross_energy_kwh: float = 0.0
 
     # AC charging state (for vehicles without direct power streaming)
     last_voltage: float | None = None
     last_current: float | None = None
     phases: int = 1
+
+    # Phase count inference, used when BMW never reports one for this plug-in.
+    # See SOCPredictor.update_phase_inference.
+    phases_source: str = PHASES_ASSUMED  # where the count above came from
+    phase_probe_soc: float | None = None  # BMW SOC when the measuring window opened
+    phase_probe_energy: float = 0.0  # session_total_energy_kwh at that moment
+    phase_probe_gross: float = 0.0  # session_gross_energy_kwh at that moment
+    phase_votes: int = 0  # consecutive windows agreeing the count is too low
+    # Energy integrated under two different phase counts cannot be attributed to
+    # either, so a session that changed count mid-charge is barred from learning.
+    # Not persisted: a session reloaded from disk is already barred as restored.
+    phases_changed: bool = False
+    # Power pushed in by the user's own meter owes nothing to the phase count and
+    # is not scaled by it, so it makes the energy unusable as evidence.
+    local_power_seen: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -384,9 +410,11 @@ class ChargingSession:
             "target_soc": self.target_soc,
             "session_start_soc": self.session_start_soc,
             "session_total_energy_kwh": self.session_total_energy_kwh,
+            "session_gross_energy_kwh": self.session_gross_energy_kwh,
             "last_voltage": self.last_voltage,
             "last_current": self.last_current,
             "phases": self.phases,
+            "phases_source": self.phases_source,
         }
 
     @classmethod
@@ -406,9 +434,11 @@ class ChargingSession:
             restored=True,
             session_start_soc=data.get("session_start_soc"),
             session_total_energy_kwh=data.get("session_total_energy_kwh", 0.0),
+            session_gross_energy_kwh=data.get("session_gross_energy_kwh", 0.0),
             last_voltage=data.get("last_voltage"),
             last_current=data.get("last_current"),
             phases=data.get("phases", 1),
+            phases_source=data.get("phases_source", PHASES_ASSUMED),
         )
 
     def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
@@ -433,6 +463,7 @@ class ChargingSession:
                 energy = net_power * capped_hours
                 self.total_energy_kwh += energy
                 self.session_total_energy_kwh += energy
+                self.session_gross_energy_kwh += avg_power * capped_hours
         self.last_power_kw = power_kw
         self.last_aux_kw = aux_power_kw
         self.last_energy_update = timestamp
