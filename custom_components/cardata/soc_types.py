@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .const import DEFAULT_DC_EFFICIENCY, LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
+from .const import DEFAULT_DC_EFFICIENCY, LEARNING_RATE, MAX_ENERGY_GAP_SECONDS, MAX_VALID_EFFICIENCY
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,6 +44,17 @@ PHASES_ASSUMED = "assumed"  # nothing reported, modelled as single phase
 PHASES_REPORTED = "reported"  # BMW reported it for this plug-in
 PHASES_DERIVED = "derived"  # inferred from the energy the battery took
 PHASES_CARRIED = "carried"  # left over from an earlier charge, kept as a starting point
+
+# Bumped when a change to the AC power multiplier makes an efficiency learned
+# under the old one mean something different.  Revision 1 corrected two phase
+# charging from three times the single phase product to twice, so an efficiency
+# learned before it had absorbed the one and a half times overstatement and has
+# to be scaled back up rather than applied to the corrected power.
+PHASE_MULTIPLIER_REVISION = 1
+_TWO_PHASE_CORRECTION = 3.0 / 2.0
+# Above this bracket the vehicle quotes a line-to-line voltage, where the
+# multiplier did not change and nothing needs correcting.
+_LINE_NEUTRAL_MAX_BRACKET = 410
 
 
 @dataclass
@@ -226,6 +237,28 @@ class LearnedEfficiency:
 
         return total_efficiency_weighted / total_samples
 
+    def _correct_two_phase_efficiency(self) -> None:
+        """Rescale two phase entries learned against the old power multiplier.
+
+        A two phase charge used to be modelled at three times the single phase
+        product rather than twice, and the efficiency learned for it absorbed the
+        overstatement, so the two errors cancelled and the prediction came out
+        right.  Applying that same figure to the corrected power would leave it a
+        third low for a dozen sessions, so it is scaled back to what it was
+        measuring all along.
+        """
+        for condition, entry in self.efficiency_matrix.items():
+            if condition.phases != 2 or condition.voltage_bracket >= _LINE_NEUTRAL_MAX_BRACKET:
+                continue
+            entry.efficiency = min(entry.efficiency * _TWO_PHASE_CORRECTION, MAX_VALID_EFFICIENCY)
+            entry.history = [min(value * _TWO_PHASE_CORRECTION, MAX_VALID_EFFICIENCY) for value in entry.history]
+            _LOGGER.info(
+                "Rescaled the 2-phase efficiency learned at %dV/%dA to %.2f for the corrected power multiplier",
+                condition.voltage_bracket,
+                condition.current_bracket,
+                entry.efficiency,
+            )
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence (matrix-only storage)."""
         matrix_serialized = {
@@ -240,6 +273,7 @@ class LearnedEfficiency:
             "efficiency_matrix": matrix_serialized,
             "voltage_brackets": self.voltage_brackets,
             "current_brackets": self.current_brackets,
+            "phase_multiplier_revision": PHASE_MULTIPLIER_REVISION,
         }
 
     @classmethod
@@ -269,6 +303,9 @@ class LearnedEfficiency:
                         learned.efficiency_matrix[condition] = entry
                     except (ValueError, KeyError) as err:
                         _LOGGER.warning("Failed to deserialize efficiency entry %s: %s", key, err)
+
+                if data.get("phase_multiplier_revision", 0) < PHASE_MULTIPLIER_REVISION:
+                    learned._correct_two_phase_efficiency()
 
             # Backward compatibility: migrate old flat AC efficiency to matrix
             elif "ac_efficiency" in data and data.get("ac_session_count", 0) > 0:

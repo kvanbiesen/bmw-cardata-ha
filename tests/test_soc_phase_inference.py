@@ -36,6 +36,7 @@ from unittest.mock import patch
 
 import pytest
 
+from custom_components.cardata.const import MAX_VALID_EFFICIENCY
 from custom_components.cardata.soc_learning import _phase_count_misattributed
 from custom_components.cardata.soc_prediction import SOCPredictor, _calc_ac_power_kw
 from custom_components.cardata.soc_types import (
@@ -43,7 +44,9 @@ from custom_components.cardata.soc_types import (
     PHASES_CARRIED,
     PHASES_DERIVED,
     PHASES_REPORTED,
+    ChargingCondition,
     ChargingSession,
+    LearnedEfficiency,
 )
 
 VIN = "WBA00000000000001"
@@ -565,3 +568,45 @@ class TestOlderStoredSessions:
     def test_a_stored_single_phase_is_still_only_an_assumption(self):
         """Otherwise the inference could never raise it."""
         assert self._stored(1).phases_source == PHASES_ASSUMED
+
+
+class TestTwoPhaseEfficiencyMigration:
+    """An efficiency learned against the old multiplier means something else now."""
+
+    OLD_STORE = {
+        "efficiency_matrix": {
+            "2_250_16": {"efficiency": 0.592, "sample_count": 8, "history": [0.592] * 8},
+            "1_250_16": {"efficiency": 0.90, "sample_count": 5, "history": [0.90] * 5},
+            "2_410_16": {"efficiency": 0.88, "sample_count": 3, "history": [0.88] * 3},
+        }
+    }
+
+    def test_a_two_phase_entry_is_scaled_back_to_what_it_measured(self):
+        """It had absorbed the 1.5x overstatement, so the two errors cancelled."""
+        learned = LearnedEfficiency.from_dict(self.OLD_STORE)
+        assert learned.get_efficiency(2, 230.0, 16.0, False) == pytest.approx(0.888, abs=0.001)
+
+    def test_the_history_is_scaled_too(self):
+        """Otherwise the outlier filter rejects the corrected sessions that follow."""
+        learned = LearnedEfficiency.from_dict(self.OLD_STORE)
+        entry = learned.efficiency_matrix[ChargingCondition(2, 250, 16)]
+        assert all(value == pytest.approx(0.888, abs=0.001) for value in entry.history)
+
+    def test_other_conditions_are_left_alone(self):
+        """Single phase never changed, and neither did the line-to-line case."""
+        learned = LearnedEfficiency.from_dict(self.OLD_STORE)
+        assert learned.get_efficiency(1, 230.0, 16.0, False) == pytest.approx(0.90)
+        assert learned.get_efficiency(2, 400.0, 16.0, False) == pytest.approx(0.88)
+
+    def test_it_does_not_run_twice(self):
+        """Saving and loading again must not compound the correction."""
+        once = LearnedEfficiency.from_dict(self.OLD_STORE)
+        twice = LearnedEfficiency.from_dict(once.to_dict())
+        assert twice.get_efficiency(2, 230.0, 16.0, False) == pytest.approx(0.888, abs=0.001)
+
+    def test_the_correction_is_capped(self):
+        """Scaling must not produce an efficiency the learning would reject."""
+        learned = LearnedEfficiency.from_dict(
+            {"efficiency_matrix": {"2_250_16": {"efficiency": 0.95, "sample_count": 4, "history": [0.95]}}}
+        )
+        assert learned.get_efficiency(2, 230.0, 16.0, False) <= MAX_VALID_EFFICIENCY
