@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING, Any
 from .const import (
     DESC_CHARGING_AC_AMPERE,
     DESC_CHARGING_AC_VOLTAGE,
-    DESC_CHARGING_PHASES,
     DESC_CHARGING_STATUS,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
@@ -44,8 +43,8 @@ from .const import (
 from .debug import debug_enabled
 from .soc_wiring import (
     _descriptor_float,
-    _descriptor_phases,
     _get_aux_kw,
+    _plug_in_phases,
     anchor_soc_session,
 )
 from .utils import redact_vin
@@ -96,7 +95,7 @@ async def async_handle_connection_event(
 
                         voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
                         current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-                        phases = _descriptor_phases(vehicle_state.get(DESC_CHARGING_PHASES))
+                        phases = _plug_in_phases(vehicle_state)
 
                         if voltage and current:
                             aux_kw = _get_aux_kw()

@@ -42,6 +42,9 @@ from .const import (
     DESC_CHARGING_AC_VOLTAGE,
     DESC_CHARGING_LEVEL,
     DESC_CHARGING_PHASES,
+    DESC_CHARGING_PORT_PLUG_EVENT,
+    DESC_CHARGING_PORT_PLUGGED,
+    DESC_CHARGING_PORT_STATUS,
     DESC_CHARGING_POWER,
     DESC_CHARGING_STATUS,
     DESC_FUEL_LEVEL,
@@ -101,6 +104,73 @@ def _descriptor_phases(state: DescriptorState | None) -> int | None:
         return int(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _descriptor_timestamp(state: DescriptorState | None) -> datetime | None:
+    """Return a descriptor's BMW timestamp as a datetime, or None when unusable."""
+    if state is None or state.timestamp is None:
+        return None
+    try:
+        return datetime.fromisoformat(state.timestamp)
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_plugged_in(value: Any) -> bool:
+    """Whether a plug state descriptor value means the cable is connected."""
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().upper()
+    return text.startswith("CONNECT") or text in ("TRUE", "ASN_ISTRUE", "PLUGGED", "1")
+
+
+def _plug_in_timestamp(vehicle_state: dict[str, DescriptorState]) -> datetime | None:
+    """Return when the cable was last plugged in, as reported by BMW.
+
+    Only genuine plug state descriptors qualify.  The charging status is not
+    usable here because it leaves CHARGINGACTIVE on every pause, so a solar or
+    timer driven charge would look like a string of separate plug-ins.
+
+    Returns None when the vehicle reports no plug state.
+    """
+    port = vehicle_state.get(DESC_CHARGING_PORT_STATUS)
+    if port is not None and _is_plugged_in(port.value):
+        return _descriptor_timestamp(port)
+
+    plugged = vehicle_state.get(DESC_CHARGING_PORT_PLUGGED)
+    if plugged is not None and _is_plugged_in(plugged.value):
+        return _descriptor_timestamp(plugged)
+
+    return _descriptor_timestamp(vehicle_state.get(DESC_CHARGING_PORT_PLUG_EVENT))
+
+
+def _plug_in_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
+    """Return the phase count only when it belongs to the current plug-in.
+
+    BMW resets phaseNumber to '1-PHASES' when a charge ends and only re-sends it
+    when it changes, so a reading older than the plug-in says nothing about the
+    charge now running.  Trusting it turns a 3-phase charge into a 1-phase one
+    and divides every derived power figure by three.
+
+    Vehicles that report no plug state, or no usable timestamps, keep the raw
+    value so their behaviour does not change.
+    """
+    state = vehicle_state.get(DESC_CHARGING_PHASES)
+    if state is None:
+        return None
+
+    plugged_at = _plug_in_timestamp(vehicle_state)
+    reported_at = _descriptor_timestamp(state)
+    if plugged_at is not None and reported_at is not None:
+        try:
+            if reported_at < plugged_at:
+                return None
+        except TypeError:
+            # Naive and aware timestamps mixed: keep the value rather than
+            # discard data we cannot compare.
+            pass
+
+    return _descriptor_phases(state)
 
 
 def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
@@ -372,7 +442,7 @@ def _seed_power_after_anchor(
     else:
         voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
         current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-        phases = _descriptor_phases(vehicle_state.get(DESC_CHARGING_PHASES))
+        phases = _plug_in_phases(vehicle_state)
         if voltage and current:
             soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
         else:
@@ -612,7 +682,7 @@ def process_soc_descriptors(
             if soc_predictor.is_charging(vin) and soc_predictor.get_charging_method(vin) != "DC":
                 voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
                 current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-                phases = _descriptor_phases(vehicle_state.get(DESC_CHARGING_PHASES))
+                phases = _plug_in_phases(vehicle_state)
                 aux_kw = _get_aux_kw()
                 if soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw):
                     if soc_predictor.has_signaled_entity(vin):

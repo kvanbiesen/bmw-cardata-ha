@@ -43,6 +43,11 @@ DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
 DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
 DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
 
+# Charge port descriptors, used to tell one plug-in apart from the next
+DESC_CHARGING_PORT_STATUS = "vehicle.body.chargingPort.status"
+DESC_CHARGING_PORT_PLUGGED = "vehicle.powertrain.tractionBattery.charging.port.anyPosition.isPlugged"
+DESC_CHARGING_PORT_PLUG_EVENT = "vehicle.body.chargingPort.plugEventId"
+
 # Lock acquisition timeout (seconds) — used for connect, credential, and token refresh locks
 LOCK_ACQUIRE_TIMEOUT = 60.0
 
@@ -150,12 +155,12 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.powertrain.electric.battery.preconditioning.automaticMode.statusFeedback",
     "vehicle.vehicle.avgAuxPower",
     "vehicle.powertrain.tractionBattery.charging.port.anyPosition.flap.isOpen",
-    "vehicle.powertrain.tractionBattery.charging.port.anyPosition.isPlugged",
+    DESC_CHARGING_PORT_PLUGGED,
     "vehicle.drivetrain.electricEngine.charging.timeToFullyCharged",
     "vehicle.powertrain.electric.battery.charging.acLimit.selected",
     "vehicle.drivetrain.electricEngine.charging.method",
     "vehicle.drivetrain.electricEngine.charging.profile.mode",
-    "vehicle.body.chargingPort.plugEventId",
+    DESC_CHARGING_PORT_PLUG_EVENT,
     DESC_CHARGING_PHASES,
     DESC_TRIP_HVSOC,
     "vehicle.trip.segment.accumulated.drivetrain.electricEngine.recuperationTotal",
