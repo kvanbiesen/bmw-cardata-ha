@@ -33,8 +33,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .const import (
-    DESC_CHARGING_AC_AMPERE,
-    DESC_CHARGING_AC_VOLTAGE,
     DESC_CHARGING_STATUS,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
@@ -42,9 +40,7 @@ from .const import (
 )
 from .debug import debug_enabled
 from .soc_wiring import (
-    _descriptor_float,
-    _get_aux_kw,
-    _plug_in_phases,
+    _apply_ac_power,
     anchor_soc_session,
 )
 from .utils import redact_vin
@@ -93,18 +89,10 @@ async def async_handle_connection_event(
                             manual_cap,
                         )
 
-                        voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
-                        current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-                        phases = _plug_in_phases(vehicle_state)
-
-                        if voltage and current:
-                            aux_kw = _get_aux_kw()
-                            coordinator._soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
+                        if _apply_ac_power(coordinator._soc_predictor, vin, vehicle_state):
                             _LOGGER.info(
-                                "Reconnection: restored AC charging data for %s (%.1fV × %.1fA)",
+                                "Reconnection: restored AC charging data for %s",
                                 redact_vin(vin),
-                                voltage,
-                                current,
                             )
     await async_log_diagnostics(coordinator)
 

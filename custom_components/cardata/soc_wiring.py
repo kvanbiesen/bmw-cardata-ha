@@ -192,6 +192,55 @@ def _parse_power_kw(value: Any, unit: str) -> float | None:
         return None
 
 
+def _reported_power_kw(vehicle_state: dict[str, DescriptorState]) -> float | None:
+    """Return BMW's own charging power reading in kW, if it reports one."""
+    state = vehicle_state.get(DESC_CHARGING_POWER)
+    if state is None or state.value is None:
+        return None
+    return _parse_power_kw(state.value, state.unit or "")
+
+
+def _prefer_reported_power(vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Whether BMW's charging power should drive an AC session instead of V×A.
+
+    True when there is no voltage and current pair to work from, or when the
+    phase count for the current plug-in is unknown.  A V×A product built on an
+    unverified phase count can be out by a factor of three, so a vehicle that
+    reports its charging power directly is better served by that reading.
+    """
+    if not _has_ac_power_data(vehicle_state):
+        return True
+    return _plug_in_phases(vehicle_state) is None
+
+
+def _apply_ac_power(
+    soc_predictor: SOCPredictor,
+    vin: str,
+    vehicle_state: dict[str, DescriptorState],
+) -> bool:
+    """Feed the predictor the best available power reading for an AC session.
+
+    Returns True when a reading was applied.
+    """
+    aux_kw = _get_aux_kw()
+    voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
+    current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
+    phases = _plug_in_phases(vehicle_state)
+
+    if voltage and current and phases is not None:
+        return soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
+
+    power_kw = _reported_power_kw(vehicle_state)
+    if power_kw is not None and power_kw > 0:
+        soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+        return True
+
+    if voltage and current:
+        return soc_predictor.update_ac_charging_data(vin, voltage, current, None, aux_kw)
+
+    return False
+
+
 def _get_aux_kw() -> float:
     """Get auxiliary power in kW (fixed override)."""
     return float(_OVERRIDE_AUX_POWER)
@@ -431,26 +480,12 @@ def _seed_power_after_anchor(
     charging_method: str,
 ) -> None:
     """Seed session with current power reading after anchoring."""
-    aux_kw = _get_aux_kw()
-
     if charging_method == "DC":
-        power_state = vehicle_state.get(DESC_CHARGING_POWER)
-        if power_state and power_state.value is not None:
-            power_kw = _parse_power_kw(power_state.value, power_state.unit or "")
-            if power_kw is not None:
-                soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+        power_kw = _reported_power_kw(vehicle_state)
+        if power_kw is not None:
+            soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=_get_aux_kw())
     else:
-        voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
-        current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-        phases = _plug_in_phases(vehicle_state)
-        if voltage and current:
-            soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
-        else:
-            power_state = vehicle_state.get(DESC_CHARGING_POWER)
-            if power_state and power_state.value is not None:
-                power_kw = _parse_power_kw(power_state.value, power_state.unit or "")
-                if power_kw is not None:
-                    soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+        _apply_ac_power(soc_predictor, vin, vehicle_state)
 
 
 def end_soc_session(
@@ -662,7 +697,7 @@ def process_soc_descriptors(
 
         elif descriptor == DESC_CHARGING_POWER:
             method = soc_predictor.get_charging_method(vin)
-            if method == "DC" or (method is not None and not _has_ac_power_data(vehicle_state)):
+            if method == "DC" or (method is not None and _prefer_reported_power(vehicle_state)):
                 power_kw = _parse_power_kw(value, descriptor_payload.get("unit") or "") if value is not None else None
                 aux_kw = _get_aux_kw()
                 soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
@@ -680,11 +715,7 @@ def process_soc_descriptors(
             DESC_CHARGING_PHASES,
         ):
             if soc_predictor.is_charging(vin) and soc_predictor.get_charging_method(vin) != "DC":
-                voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
-                current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-                phases = _plug_in_phases(vehicle_state)
-                aux_kw = _get_aux_kw()
-                if soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw):
+                if _apply_ac_power(soc_predictor, vin, vehicle_state):
                     if soc_predictor.has_signaled_entity(vin):
                         if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                             schedule_debounce = True

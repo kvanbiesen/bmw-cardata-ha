@@ -28,18 +28,27 @@
 import pytest
 
 from custom_components.cardata.const import (
+    DESC_CHARGING_AC_AMPERE,
+    DESC_CHARGING_AC_VOLTAGE,
     DESC_CHARGING_PHASES,
     DESC_CHARGING_PORT_PLUG_EVENT,
     DESC_CHARGING_PORT_PLUGGED,
     DESC_CHARGING_PORT_STATUS,
+    DESC_CHARGING_POWER,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
-from custom_components.cardata.soc_wiring import _descriptor_phases, _plug_in_phases
+from custom_components.cardata.soc_prediction import SOCPredictor
+from custom_components.cardata.soc_wiring import (
+    _apply_ac_power,
+    _descriptor_phases,
+    _plug_in_phases,
+    _prefer_reported_power,
+)
 
 
-def _state(value, timestamp=None):
+def _state(value, timestamp=None, unit=None):
     """Helper to create a DescriptorState with the given value."""
-    return DescriptorState(value=value, unit=None, timestamp=timestamp)
+    return DescriptorState(value=value, unit=unit, timestamp=timestamp)
 
 
 class TestDescriptorPhases:
@@ -151,3 +160,71 @@ class TestPlugInPhases:
     def test_absent_descriptor(self):
         """Returns None when the vehicle never reported a phase count."""
         assert _plug_in_phases({}) is None
+
+
+class TestApplyAcPower:
+    """Tests for the AC power source preference."""
+
+    VIN = "WBA00000000000001"
+    PLUGGED_IN = "2026-08-15T17:43:17Z"
+    LAST_CHARGE_END = "2026-08-15T13:47:55Z"
+
+    def _predictor(self):
+        """A predictor with an anchored AC session."""
+        predictor = SOCPredictor()
+        predictor.update_charging_status(self.VIN, "CHARGINGACTIVE")
+        predictor.anchor_session(self.VIN, 50.0, 30.0, "AC")
+        return predictor
+
+    def _state_with(self, phases_timestamp, power=None):
+        """Vehicle state charging at 230 V and 16 A, plugged in at PLUGGED_IN."""
+        vehicle_state = {
+            DESC_CHARGING_AC_VOLTAGE: _state(230, self.PLUGGED_IN),
+            DESC_CHARGING_AC_AMPERE: _state(16, self.PLUGGED_IN),
+            DESC_CHARGING_PHASES: _state("3-PHASES", phases_timestamp),
+            DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
+        }
+        if power is not None:
+            vehicle_state[DESC_CHARGING_POWER] = _state(power, self.PLUGGED_IN, unit="kW")
+        return vehicle_state
+
+    def test_valid_phase_count_uses_voltage_times_current(self):
+        """A phase count from this plug-in gives the full three phase power."""
+        predictor = self._predictor()
+        assert _apply_ac_power(predictor, self.VIN, self._state_with(self.PLUGGED_IN))
+        session = predictor._sessions[self.VIN]
+        assert session.phases == 3
+        assert session.last_power_kw == pytest.approx(11.04)
+
+    def test_unknown_phase_count_prefers_bmw_power(self):
+        """BMW's own reading beats a V×A product built on an unverified count."""
+        predictor = self._predictor()
+        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=11.0)
+        assert _apply_ac_power(predictor, self.VIN, vehicle_state)
+        assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(11.0)
+
+    def test_unknown_phase_count_without_reported_power_falls_back(self):
+        """Without a power reading the single phase product is all there is."""
+        predictor = self._predictor()
+        assert _apply_ac_power(predictor, self.VIN, self._state_with(self.LAST_CHARGE_END))
+        session = predictor._sessions[self.VIN]
+        assert session.phases == 1
+        assert session.last_power_kw == pytest.approx(3.68)
+
+    def test_zero_reported_power_falls_back(self):
+        """A vehicle reporting 0 kW must not stall the prediction."""
+        predictor = self._predictor()
+        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=0)
+        assert _apply_ac_power(predictor, self.VIN, vehicle_state)
+        assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(3.68)
+
+    def test_no_readings_at_all(self):
+        """Nothing to apply when the vehicle reports neither source."""
+        predictor = self._predictor()
+        assert not _apply_ac_power(predictor, self.VIN, {})
+
+    def test_prefer_reported_power(self):
+        """The preference holds only while the phase count is unknown."""
+        assert not _prefer_reported_power(self._state_with(self.PLUGGED_IN))
+        assert _prefer_reported_power(self._state_with(self.LAST_CHARGE_END))
+        assert _prefer_reported_power({})
