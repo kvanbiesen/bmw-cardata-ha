@@ -43,6 +43,7 @@ _LOGGER = logging.getLogger(__name__)
 PHASES_ASSUMED = "assumed"  # nothing reported, modelled as single phase
 PHASES_REPORTED = "reported"  # BMW reported it for this plug-in
 PHASES_DERIVED = "derived"  # inferred from the energy the battery took
+PHASES_CARRIED = "carried"  # left over from an earlier charge, kept as a starting point
 
 
 @dataclass

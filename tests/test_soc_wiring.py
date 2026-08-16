@@ -38,8 +38,10 @@ from custom_components.cardata.const import (
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.soc_prediction import SOCPredictor
+from custom_components.cardata.soc_types import PHASES_ASSUMED, PHASES_CARRIED
 from custom_components.cardata.soc_wiring import (
     _apply_ac_power,
+    _carried_over_phases,
     _descriptor_phases,
     _plug_in_phases,
     _prefer_reported_power,
@@ -176,12 +178,16 @@ class TestApplyAcPower:
         predictor.anchor_session(self.VIN, 50.0, 30.0, "AC")
         return predictor
 
-    def _state_with(self, phases_timestamp, power=None, power_timestamp=None):
-        """Vehicle state charging at 230 V and 16 A, plugged in at PLUGGED_IN."""
+    def _state_with(self, phases_timestamp, power=None, power_timestamp=None, phases="3-PHASES"):
+        """Vehicle state charging at 230 V and 16 A, plugged in at PLUGGED_IN.
+
+        A stale count defaults to what BMW leaves behind when a charge ends, so
+        the phase count really is unknown rather than carried over.
+        """
         vehicle_state = {
             DESC_CHARGING_AC_VOLTAGE: _state(230, self.PLUGGED_IN),
             DESC_CHARGING_AC_AMPERE: _state(16, self.PLUGGED_IN),
-            DESC_CHARGING_PHASES: _state("3-PHASES", phases_timestamp),
+            DESC_CHARGING_PHASES: _state(phases, phases_timestamp),
             DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
         }
         if power is not None:
@@ -199,14 +205,14 @@ class TestApplyAcPower:
     def test_unknown_phase_count_prefers_bmw_power(self):
         """BMW's own reading beats a V×A product built on an unverified count."""
         predictor = self._predictor()
-        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=11.0)
+        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=11.0, phases="1-PHASES")
         assert _apply_ac_power(predictor, self.VIN, vehicle_state)
         assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(11.0)
 
     def test_unknown_phase_count_without_reported_power_falls_back(self):
         """Without a power reading the single phase product is all there is."""
         predictor = self._predictor()
-        assert _apply_ac_power(predictor, self.VIN, self._state_with(self.LAST_CHARGE_END))
+        assert _apply_ac_power(predictor, self.VIN, self._state_with(self.LAST_CHARGE_END, phases="1-PHASES"))
         session = predictor._sessions[self.VIN]
         assert session.phases == 1
         assert session.last_power_kw == pytest.approx(3.68)
@@ -214,7 +220,7 @@ class TestApplyAcPower:
     def test_zero_reported_power_falls_back(self):
         """A vehicle reporting 0 kW must not stall the prediction."""
         predictor = self._predictor()
-        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=0)
+        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=0, phases="1-PHASES")
         assert _apply_ac_power(predictor, self.VIN, vehicle_state)
         assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(3.68)
 
@@ -236,12 +242,74 @@ class TestApplyAcPower:
         50 kW reading to the next AC charge.
         """
         predictor = self._predictor()
-        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=50.0, power_timestamp=self.LAST_CHARGE_END)
+        vehicle_state = self._state_with(
+            self.LAST_CHARGE_END, power=50.0, power_timestamp=self.LAST_CHARGE_END, phases="1-PHASES"
+        )
         assert _apply_ac_power(predictor, self.VIN, vehicle_state)
         assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(3.68)
 
     def test_a_power_reading_from_this_charge_is_used(self):
         predictor = self._predictor()
-        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=11.0)
+        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=11.0, phases="1-PHASES")
         assert _apply_ac_power(predictor, self.VIN, vehicle_state)
         assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(11.0)
+
+
+class TestCarriedOverPhases:
+    """A count left over from an earlier charge, when it still says something."""
+
+    PLUGGED_IN = "2026-08-15T17:43:17Z"
+    LAST_CHARGE_END = "2026-08-15T13:47:55Z"
+    VIN = "WBA00000000000001"
+
+    def _state(self, value, timestamp, port=True):
+        vehicle_state = {
+            DESC_CHARGING_AC_VOLTAGE: _state(230, self.PLUGGED_IN),
+            DESC_CHARGING_AC_AMPERE: _state(16, self.PLUGGED_IN),
+            DESC_CHARGING_PHASES: _state(value, timestamp),
+        }
+        if port:
+            vehicle_state[DESC_CHARGING_PORT_STATUS] = _state("CONNECTED", self.PLUGGED_IN)
+        return vehicle_state
+
+    def test_a_leftover_of_three_is_worth_keeping(self):
+        assert _carried_over_phases(self._state("3-PHASES", self.LAST_CHARGE_END)) == 3
+
+    def test_a_leftover_of_one_says_nothing(self):
+        """One phase is what BMW resets to, so it cannot be told from the reset."""
+        assert _carried_over_phases(self._state("1-PHASES", self.LAST_CHARGE_END)) is None
+
+    def test_a_reading_from_this_charge_is_not_carried_over(self):
+        """That one is reported, and goes down the authoritative path instead."""
+        assert _carried_over_phases(self._state("3-PHASES", self.PLUGGED_IN)) is None
+
+    def test_no_plug_state_means_nothing_to_carry(self):
+        """Without a plug-in boundary the reading counts as current."""
+        assert _carried_over_phases(self._state("3-PHASES", self.LAST_CHARGE_END, port=False)) is None
+
+    def test_absent_descriptor(self):
+        assert _carried_over_phases({}) is None
+
+    def _predictor(self):
+        predictor = SOCPredictor()
+        predictor.update_charging_status(self.VIN, "CHARGINGACTIVE")
+        predictor.anchor_session(self.VIN, 50.0, 30.0, "AC")
+        return predictor
+
+    def test_it_is_adopted_as_the_opening_guess(self):
+        """Better than assuming one phase, and marked so it can be withdrawn."""
+        predictor = self._predictor()
+        _apply_ac_power(predictor, self.VIN, self._state("3-PHASES", self.LAST_CHARGE_END))
+        session = predictor._sessions[self.VIN]
+        assert session.phases == 3
+        assert session.phases_source == PHASES_CARRIED
+        assert session.last_power_kw == pytest.approx(11.04)
+
+    def test_it_is_not_adopted_once_energy_has_been_counted(self):
+        """Half a session at one count and half at another belongs to neither."""
+        predictor = self._predictor()
+        session = predictor._sessions[self.VIN]
+        session.session_total_energy_kwh = 1.0
+        _apply_ac_power(predictor, self.VIN, self._state("3-PHASES", self.LAST_CHARGE_END))
+        assert session.phases == 1
+        assert session.phases_source == PHASES_ASSUMED

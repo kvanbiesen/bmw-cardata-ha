@@ -180,6 +180,21 @@ def _plug_in_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
     return _descriptor_phases(state)
 
 
+def _carried_over_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
+    """Return a phase count left over from an earlier charge, when it says something.
+
+    BMW resets phaseNumber to '1-PHASES' when a charge ends, so a leftover of one
+    is indistinguishable from that reset and carries no information.  Anything
+    higher was reported while a real charge was running and is a better opening
+    guess than assuming a single phase.
+    """
+    state = vehicle_state.get(DESC_CHARGING_PHASES)
+    if state is None or _belongs_to_plug_in(state, vehicle_state):
+        return None
+    phases = _descriptor_phases(state)
+    return phases if phases and phases > 1 else None
+
+
 def _capacity_is_trusted(capacity_kwh: float, vehicle_state: dict[str, DescriptorState]) -> bool:
     """Whether the battery capacity is fit to infer a phase count from.
 
@@ -271,6 +286,7 @@ def _apply_ac_power(
         return True
 
     if voltage and current:
+        soc_predictor.adopt_carried_over_phases(vin, _carried_over_phases(vehicle_state))
         return soc_predictor.update_ac_charging_data(vin, voltage, current, None, aux_kw)
 
     return False

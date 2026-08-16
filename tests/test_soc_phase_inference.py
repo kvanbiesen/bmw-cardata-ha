@@ -39,6 +39,7 @@ import pytest
 from custom_components.cardata.soc_prediction import SOCPredictor, _calc_ac_power_kw
 from custom_components.cardata.soc_types import (
     PHASES_ASSUMED,
+    PHASES_CARRIED,
     PHASES_DERIVED,
     PHASES_REPORTED,
     ChargingSession,
@@ -478,3 +479,43 @@ class TestPhevIsLeftAlone:
         charge = Charge(true_phases=3)
         charge.predictor.set_vehicle_is_phev(VIN, True)
         assert charge.run(minutes=180).phases == 1
+
+
+class TestCarriedOverCount:
+    """A count kept from an earlier charge is ours, so it can be taken back."""
+
+    def _carried(self, true_phases, efficiency=0.90):
+        charge = Charge(true_phases=true_phases, efficiency=efficiency)
+        charge.session.phases = 3
+        charge.session.phases_source = PHASES_CARRIED
+        return charge
+
+    def test_a_carried_count_that_fits_this_charge_is_kept(self):
+        """Same wallbox as last time: nothing to correct."""
+        charge = self._carried(true_phases=3)
+        session = charge.run(minutes=180)
+        assert session.phases == 3
+        assert session.phases_source == PHASES_CARRIED
+
+    def test_a_carried_count_that_does_not_fit_is_withdrawn(self):
+        """Plugged into a single phase socket this time.
+
+        This is the part BMW's own stale value cannot do, and why the count is
+        kept as ours rather than taken as reported.
+        """
+        charge = self._carried(true_phases=1)
+        session = charge.run(minutes=180)
+        assert session.phases == 1
+        assert session.phases_source == PHASES_ASSUMED
+
+    def test_withdrawing_a_carried_count_gives_the_level_back(self):
+        charge = self._carried(true_phases=1)
+        session = charge.run(minutes=180)
+        real_soc = charge.start_soc + charge.soc_per_second * (charge.clock - 1_000_000.0)
+        assert session.last_predicted_soc == pytest.approx(real_soc, abs=2.0)
+
+    def test_bmw_reporting_a_count_outranks_a_carried_one(self):
+        charge = self._carried(true_phases=3)
+        charge.predictor.update_ac_charging_data(VIN, VOLTAGE, 16.0, 1, AUX_KW)
+        assert charge.session.phases == 1
+        assert charge.session.phases_source == PHASES_REPORTED

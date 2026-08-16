@@ -403,6 +403,8 @@ Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or volt
 
 For AC charging the power is worked out from the voltage and current BMW reports, multiplied by the number of phases in use. BMW resets `phaseNumber` to `1-PHASES` when a charge ends and only re-sends it when it changes, so a new charge often starts with no usable value. Any reading older than the moment the cable went in is therefore discarded, and the charge is modelled at a single phase until something better arrives.
 
+A count left over from an earlier charge is not simply thrown away. BMW resets `phaseNumber` to `1-PHASES` at the end of a charge, so a leftover of one says nothing, but anything higher was reported while a real charge was running, most likely at the same wallbox, and is a better opening guess than assuming a single phase. It is held as the integration's own rather than as BMW's, so the measurement below can take it back when this charge turns out to be a different supply.
+
 If BMW stays silent, the battery itself gives the answer away. Inverting the model against the energy actually stored says how many phases the charge would have needed, measured over a window of at least 8% SOC gain. Because whole-percent SOC steps can carry a single window over the line, two consecutive windows have to agree before the count is raised to three.
 
 Raising the count is the risky direction, so withdrawing one is deliberately easier: a single window is enough, and the withdrawal re-anchors the prediction to the BMW reading that disproved it. Putting only the phase count back would fix the rate while leaving the level, since during a charge the prediction never comes down of its own accord, so an inflated value would stay on screen for hours.
@@ -420,7 +422,7 @@ The inference deliberately holds back where the evidence is not clear cut, in wh
 - A battery capacity set by hand that BMW's own reported figure contradicts by more than 20%, since the result scales directly with it
 - Plug-in hybrids, which almost never have a three-phase charger
 
-The diagnostic sensor attributes report `phases_source` alongside `phases`, showing whether the count was `reported` by BMW, `derived` here, or merely `assumed`, so an inferred count is never mistaken for one BMW gave.
+The diagnostic sensor attributes report `phases_source` alongside `phases`, showing whether the count was `reported` by BMW, `carried` over from an earlier charge, `derived` from the energy, or merely `assumed`, so a count the integration worked out is never mistaken for one BMW gave.
 
 ### How Learning Works
 

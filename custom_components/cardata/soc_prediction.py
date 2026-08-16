@@ -40,6 +40,7 @@ from .const import (
 )
 from .soc_types import (
     PHASES_ASSUMED,
+    PHASES_CARRIED,
     PHASES_DERIVED,
     PHASES_REPORTED,
     ChargingSession,
@@ -541,6 +542,34 @@ class SOCPredictor:
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())
 
+    def adopt_carried_over_phases(self, vin: str, phases: int | None) -> None:
+        """Take a phase count left over from an earlier charge as a starting point.
+
+        BMW resets phaseNumber to one phase when a charge ends, so a leftover of
+        one says nothing.  Anything higher was reported while a real charge was
+        running, most likely at the same wallbox, and beats assuming a single
+        phase.  It is held the same way an inferred count is, so the same
+        measurement withdraws it if this charge turns out to be a different
+        supply, which is the part BMW's own stale value cannot do.
+
+        Only taken before any energy has been integrated, so the whole session is
+        accounted for under one count.
+        """
+        session = self._sessions.get(vin)
+        if session is None or phases is None or phases <= 1:
+            return
+        if session.phases_source != PHASES_ASSUMED or session.phases > 1:
+            return
+        if session.session_total_energy_kwh > 0:
+            return
+        session.phases = phases
+        session.phases_source = PHASES_CARRIED
+        _LOGGER.debug(
+            "SOC: %s starting from the %d phases left over from an earlier charge",
+            redact_vin(vin),
+            phases,
+        )
+
     def update_phase_inference(self, vin: str, bmw_soc: float) -> None:
         """Infer the AC phase count from the energy the battery actually took.
 
@@ -633,7 +662,10 @@ class SOCPredictor:
 
         derivable = session.phases_source == PHASES_ASSUMED and session.phases <= 1
         too_low = self.PHASE_DERIVE_MIN <= needed <= self.PHASE_DERIVE_MAX
-        too_high = session.phases_source == PHASES_DERIVED and needed <= self.PHASE_REVERT_MAX
+        # A count carried over from an earlier charge is ours to withdraw too:
+        # BMW never confirmed it for this plug-in.
+        ours = session.phases_source in (PHASES_DERIVED, PHASES_CARRIED)
+        too_high = ours and needed <= self.PHASE_REVERT_MAX
 
         if not (derivable and too_low) and not too_high:
             session.phase_votes = 0
@@ -651,15 +683,19 @@ class SOCPredictor:
         session.phase_votes = 0
         session.phases_changed = True
         if too_high:
+            was = session.phases
+            source = session.phases_source
             session.phases = 1
             session.phases_source = PHASES_ASSUMED
             self._unwind_derived_phases(vin, session, bmw_soc)
             _LOGGER.info(
-                "SOC: %s stored only %.2f kWh, which needs %.1f phases; withdrawing the inferred "
-                "3-phase charge and re-anchoring to %.1f%%",
+                "SOC: %s stored only %.2f kWh, which needs %.1f phases; withdrawing the %s "
+                "%d-phase charge and re-anchoring to %.1f%%",
                 redact_vin(vin),
                 stored,
                 needed,
+                source,
+                was,
                 bmw_soc,
             )
             return
