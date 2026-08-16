@@ -90,9 +90,11 @@ async def async_handle_connection_event(
                         )
 
                         if _apply_ac_power(coordinator._soc_predictor, vin, vehicle_state):
+                            restored = coordinator._soc_predictor._sessions.get(vin)
                             _LOGGER.info(
-                                "Reconnection: restored AC charging data for %s",
+                                "Reconnection: restored AC charging data for %s (%.2f kW)",
                                 redact_vin(vin),
+                                restored.last_power_kw if restored else 0.0,
                             )
     await async_log_diagnostics(coordinator)
 
