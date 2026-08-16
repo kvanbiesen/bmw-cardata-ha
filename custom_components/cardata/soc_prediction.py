@@ -681,7 +681,7 @@ class SOCPredictor:
             return
 
         session.phase_votes = 0
-        session.phases_changed = True
+        session.phases_changed_gross_kwh = session.session_gross_energy_kwh
         if too_high:
             was = session.phases
             source = session.phases_source
@@ -1065,7 +1065,7 @@ class SOCPredictor:
         if phases is not None:
             # A count BMW reported for this plug-in outranks anything inferred here.
             if int(phases) != session.phases and session.session_total_energy_kwh > 0:
-                session.phases_changed = True
+                session.phases_changed_gross_kwh = session.session_gross_energy_kwh
             session.phases = int(phases)
             session.phases_source = PHASES_REPORTED
         if aux_power_kw is not None:

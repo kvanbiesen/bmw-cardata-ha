@@ -36,6 +36,7 @@ from unittest.mock import patch
 
 import pytest
 
+from custom_components.cardata.soc_learning import _phase_count_misattributed
 from custom_components.cardata.soc_prediction import SOCPredictor, _calc_ac_power_kw
 from custom_components.cardata.soc_types import (
     PHASES_ASSUMED,
@@ -296,25 +297,46 @@ class TestPhaseInferenceIsReversible:
 
 
 class TestLearningIsProtected:
-    """Energy integrated under two phase counts belongs to neither."""
+    """Energy integrated under two phase counts belongs to neither.
 
-    def test_a_session_that_changed_count_is_barred_from_learning(self):
+    Weighed against the session rather than refused outright, or a count landing
+    a minute into a long charge would cost the whole session.
+    """
+
+    def test_an_inferred_count_bars_the_session_from_learning(self):
+        """Inference needs 8% of gain first, so a real slice ran under the old count."""
         charge = Charge(true_phases=3)
         charge.run(minutes=30)
         assert charge.session.phases_source == PHASES_DERIVED
-        assert charge.session.phases_changed is True
+        assert _phase_count_misattributed(charge.session)
 
     def test_a_steady_session_still_learns(self):
         charge = Charge(true_phases=1)
         charge.run(minutes=30)
-        assert charge.session.phases_changed is False
+        assert not _phase_count_misattributed(charge.session)
 
     def test_a_reported_count_matching_the_model_is_not_a_change(self):
         """BMW confirming what we already assumed leaves the energy attributable."""
         charge = Charge(true_phases=1)
         charge.run(minutes=30)
         charge.predictor.update_ac_charging_data(VIN, VOLTAGE, 16.0, 1, AUX_KW)
-        assert charge.session.phases_changed is False
+        assert not _phase_count_misattributed(charge.session)
+
+    def test_a_count_arriving_early_does_not_cost_the_session(self):
+        """The common case: BMW reports the count shortly after the charge starts."""
+        charge = Charge(true_phases=3)
+        charge.run(minutes=2)
+        charge.predictor.update_ac_charging_data(VIN, VOLTAGE, 16.0, 3, AUX_KW)
+        charge.run(minutes=120)
+        assert charge.session.phases == 3
+        assert not _phase_count_misattributed(charge.session)
+
+    def test_a_count_arriving_late_does_cost_it(self):
+        charge = Charge(true_phases=3)
+        charge.run(minutes=60)
+        charge.predictor.update_ac_charging_data(VIN, VOLTAGE, 16.0, 3, AUX_KW)
+        charge.run(minutes=30)
+        assert _phase_count_misattributed(charge.session)
 
 
 class TestBmwReportOutranksInference:

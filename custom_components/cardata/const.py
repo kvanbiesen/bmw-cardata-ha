@@ -203,6 +203,11 @@ DEFAULT_DC_EFFICIENCY = 0.93
 LEARNING_RATE = 0.2
 # Minimum SOC gain required to learn from a session (percentage)
 MIN_LEARNING_SOC_GAIN = 5.0
+# Share of a session's energy that may have been integrated under a phase count
+# the session later corrected, before its efficiency stops being worth learning
+# from.  A count arriving a minute into a three hour charge misattributes almost
+# nothing and should not cost the session.
+MAX_MISATTRIBUTED_ENERGY_SHARE = 0.05
 # Valid efficiency bounds - reject outliers outside this range
 MIN_VALID_EFFICIENCY = 0.40
 MAX_VALID_EFFICIENCY = 0.98

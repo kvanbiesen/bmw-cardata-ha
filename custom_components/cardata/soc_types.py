@@ -388,10 +388,12 @@ class ChargingSession:
     phase_probe_energy: float = 0.0  # session_total_energy_kwh at that moment
     phase_probe_gross: float = 0.0  # session_gross_energy_kwh at that moment
     phase_votes: int = 0  # consecutive windows agreeing the count is too low
-    # Energy integrated under two different phase counts cannot be attributed to
-    # either, so a session that changed count mid-charge is barred from learning.
-    # Not persisted: a session reloaded from disk is already barred as restored.
-    phases_changed: bool = False
+    # Gross energy already integrated when the phase count last changed, so it
+    # was accounted for under a count the session no longer believes.  Learning
+    # weighs it against the session total rather than refusing outright, because
+    # a count arriving a minute into a three hour charge misattributes almost
+    # nothing.  Not persisted: a session reloaded from disk is already barred.
+    phases_changed_gross_kwh: float = 0.0
     # Power pushed in by the user's own meter owes nothing to the phase count and
     # is not scaled by it, so it makes the energy unusable as evidence.
     local_power_seen: bool = False
