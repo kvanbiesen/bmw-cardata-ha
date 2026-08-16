@@ -378,7 +378,18 @@ show_buttons: false
 ```
 
 ## Debug Logging
-Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (disabled by default). To reduce noise, change it to `False` and reload HA.
+Detailed MQTT and auth logs are off by default. Turn them on the usual Home Assistant way, either from **Settings → Devices & Services → BMW CarData → Enable debug logging**, or by adding this to `configuration.yaml` and restarting:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.cardata: debug
+```
+
+Remember to turn it off again once you have captured what you need, since the output is verbose.
+
+For development there is also `DEBUG_LOG` in `custom_components/cardata/const.py`. Setting it to `True` forces debug logging on regardless of the Home Assistant configuration, and additionally lets entity update failures propagate instead of being logged and swallowed.
 
 ## Predicted SOC with Learning
 

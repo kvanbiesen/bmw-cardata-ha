@@ -30,17 +30,40 @@ from __future__ import annotations
 import logging
 
 _LOGGER_NAMESPACE = "custom_components.cardata"
-_DEBUG_ENABLED = False
+_NAMESPACE_LOGGER = logging.getLogger(_LOGGER_NAMESPACE)
+_DEVELOPER_MODE = False
+_LEVEL_FORCED = False
 
 
 def set_debug_enabled(value: bool) -> None:
-    """Update the global debug flag and logger level."""
-    global _DEBUG_ENABLED
-    _DEBUG_ENABLED = value
-    logger = logging.getLogger(_LOGGER_NAMESPACE)
-    logger.setLevel(logging.DEBUG if value else logging.INFO)
+    """Apply the DEBUG_LOG developer switch.
+
+    Turning the switch on raises the integration logger to DEBUG.  Turning it
+    off only undoes a level this module set itself, so Home Assistant's own
+    logger configuration keeps working: both the "Enable debug logging" button
+    and a logger: entry in configuration.yaml used to be reset to INFO on every
+    setup and reload, which left users unable to capture any debug output.
+    """
+    global _DEVELOPER_MODE, _LEVEL_FORCED
+    _DEVELOPER_MODE = value
+    if value:
+        _NAMESPACE_LOGGER.setLevel(logging.DEBUG)
+        _LEVEL_FORCED = True
+    elif _LEVEL_FORCED:
+        _NAMESPACE_LOGGER.setLevel(logging.NOTSET)
+        _LEVEL_FORCED = False
 
 
 def debug_enabled() -> bool:
-    """Return whether verbose debug logging is enabled."""
-    return _DEBUG_ENABLED
+    """Return whether debug logging is in effect for the integration."""
+    return _NAMESPACE_LOGGER.isEnabledFor(logging.DEBUG)
+
+
+def developer_mode() -> bool:
+    """Return whether the DEBUG_LOG developer switch is on.
+
+    Guards behaviour that must not change just because a user turned on debug
+    logging to capture a report, such as letting entity update failures
+    propagate instead of being swallowed.
+    """
+    return _DEVELOPER_MODE

@@ -56,7 +56,7 @@ from .coordinator_housekeeping import (
     async_handle_connection_event as _hk_connection_event,
     async_log_diagnostics as _hk_log_diagnostics,
 )
-from .debug import debug_enabled
+from .debug import debug_enabled, developer_mode
 from .descriptor_state import DescriptorState
 from .device_info import (
     apply_basic_data as _di_apply_basic_data,
@@ -565,7 +565,7 @@ class CardataCoordinator:
                     self._dispatcher_exception_count,
                 )
 
-            if debug_enabled():
+            if developer_mode():
                 raise
 
     # --- Message handling ---
