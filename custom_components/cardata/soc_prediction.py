@@ -542,20 +542,30 @@ class SOCPredictor:
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())
 
-    def record_ac_conditions(self, vin: str, voltage: float | None, current: float | None) -> None:
-        """Note the voltage and current a charge is running at.
+    def use_reported_power(
+        self,
+        vin: str,
+        power_kw: float,
+        voltage: float | None,
+        current: float | None,
+        aux_power_kw: float,
+    ) -> None:
+        """Apply BMW's own charging power, noting the conditions behind it.
 
-        They key the efficiency matrix and pick the efficiency the prediction
-        uses, so they have to keep up even when the power itself comes from
-        somewhere else, or a 32 A charge ends up filed under 16 A.
+        The voltage and current still have to be recorded, because they key the
+        efficiency matrix and pick the efficiency the prediction uses, or a 32 A
+        charge ends up filed under whatever the last one drew.  They must not be
+        turned back into a power figure though: the heartbeat recomputes the
+        product every 30 seconds and would undo this choice almost at once.
         """
         session = self._sessions.get(vin)
-        if session is None:
-            return
-        if voltage:
-            session.last_voltage = voltage
-        if current:
-            session.last_current = current
+        if session is not None:
+            if voltage:
+                session.last_voltage = voltage
+            if current:
+                session.last_current = current
+            session.power_is_reported = True
+        self.update_power_reading(vin, power_kw, aux_power_kw=aux_power_kw)
 
     def adopt_carried_over_phases(self, vin: str, phases: int | None) -> None:
         """Take a phase count left over from an earlier charge as a starting point.
@@ -1089,6 +1099,7 @@ class SOCPredictor:
         # Calculate power if we have both voltage and current
         power_kw = _calc_ac_power_kw(session)
         if power_kw is not None:
+            session.power_is_reported = False
             _LOGGER.debug(
                 "Calculated AC power for %s: %.2f kW (%.1fV × %.1fA, %d phases)",
                 redact_vin(vin),
@@ -1123,7 +1134,7 @@ class SOCPredictor:
             # Path 1: live V×A (AC sessions only). DC is excluded because a
             # session that flipped AC → DC mid-life can carry stale V×A and
             # _calc_ac_power_kw would compute a meaningless number for it.
-            if session.charging_method != "DC":
+            if session.charging_method != "DC" and not session.power_is_reported:
                 power_kw = _calc_ac_power_kw(session)
                 if power_kw is not None:
                     self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_kw)

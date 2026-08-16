@@ -384,6 +384,10 @@ class ChargingSession:
     # Phase count inference, used when BMW never reports one for this plug-in.
     # See SOCPredictor.update_phase_inference.
     phases_source: str = PHASES_ASSUMED  # where the count above came from
+    # True when the power came from BMW's own reading rather than the voltage and
+    # current product.  The conditions above are still recorded because they key
+    # the efficiency matrix, but they must not be turned back into a power figure.
+    power_is_reported: bool = False
     phase_probe_soc: float | None = None  # BMW SOC when the measuring window opened
     phase_probe_energy: float = 0.0  # session_total_energy_kwh at that moment
     phase_probe_gross: float = 0.0  # session_gross_energy_kwh at that moment
@@ -427,6 +431,7 @@ class ChargingSession:
             "last_current": self.last_current,
             "phases": self.phases,
             "phases_source": self.phases_source,
+            "power_is_reported": self.power_is_reported,
             "local_power_seen": self.local_power_seen,
             "capacity_trusted": self.capacity_trusted,
         }
@@ -455,6 +460,7 @@ class ChargingSession:
             # State written before the source was tracked can only have got a
             # count above one from BMW, so say so rather than claiming it was
             # assumed and leaving it open to being withdrawn.
+            power_is_reported=data.get("power_is_reported", False),
             phases_source=data.get(
                 "phases_source",
                 PHASES_REPORTED if data.get("phases", 1) > 1 else PHASES_ASSUMED,

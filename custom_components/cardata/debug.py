@@ -38,20 +38,30 @@ _LEVEL_FORCED = False
 def set_debug_enabled(value: bool) -> None:
     """Apply the DEBUG_LOG developer switch.
 
-    Turning the switch on raises the integration logger to DEBUG.  Turning it
-    off only undoes a level this module set itself, so Home Assistant's own
-    logger configuration keeps working: both the "Enable debug logging" button
-    and a logger: entry in configuration.yaml used to be reset to INFO on every
-    setup and reload, which left users unable to capture any debug output.
+    Turning the switch on raises the integration logger to DEBUG.  Turning it off
+    never makes the integration quieter than it already is, which is what used to
+    break debug capture: the level was reset to INFO on every setup and reload, so
+    both the "Enable debug logging" button and a logger: entry in
+    configuration.yaml were undone moments after being applied.
+
+    Home Assistant leaves the root logger at WARNING unless a logger: default is
+    configured, so the integration's own INFO diagnostics are raised into view the
+    way they always were.  Only when nothing has been said about this logger in
+    particular: an explicit level, quiet or verbose, is left exactly as set.
     """
     global _DEVELOPER_MODE, _LEVEL_FORCED
     _DEVELOPER_MODE = value
     if value:
         _NAMESPACE_LOGGER.setLevel(logging.DEBUG)
         _LEVEL_FORCED = True
-    elif _LEVEL_FORCED:
+        return
+
+    if _LEVEL_FORCED:
         _NAMESPACE_LOGGER.setLevel(logging.NOTSET)
         _LEVEL_FORCED = False
+
+    if _NAMESPACE_LOGGER.level == logging.NOTSET and _NAMESPACE_LOGGER.getEffectiveLevel() > logging.INFO:
+        _NAMESPACE_LOGGER.setLevel(logging.INFO)
 
 
 def debug_enabled() -> bool:

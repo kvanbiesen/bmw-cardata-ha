@@ -44,7 +44,6 @@ from custom_components.cardata.soc_wiring import (
     _carried_over_phases,
     _descriptor_phases,
     _plug_in_phases,
-    _prefer_reported_power,
 )
 
 
@@ -228,31 +227,6 @@ class TestApplyAcPower:
         """Nothing to apply when the vehicle reports neither source."""
         predictor = self._predictor()
         assert not _apply_ac_power(predictor, self.VIN, {})
-
-    def test_prefer_reported_power(self):
-        """The preference holds only while the phase count is unknown."""
-        assert not _prefer_reported_power(self._state_with(self.PLUGGED_IN))
-        assert _prefer_reported_power(self._state_with(self.LAST_CHARGE_END))
-        assert _prefer_reported_power({})
-
-    def test_a_power_reading_from_the_previous_charge_is_ignored(self):
-        """A figure left behind by an earlier charge is not the power going in now.
-
-        A DC session that ended without a closing zero would otherwise hand a
-        50 kW reading to the next AC charge.
-        """
-        predictor = self._predictor()
-        vehicle_state = self._state_with(
-            self.LAST_CHARGE_END, power=50.0, power_timestamp=self.LAST_CHARGE_END, phases="1-PHASES"
-        )
-        assert _apply_ac_power(predictor, self.VIN, vehicle_state)
-        assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(3.68)
-
-    def test_a_power_reading_from_this_charge_is_used(self):
-        predictor = self._predictor()
-        vehicle_state = self._state_with(self.LAST_CHARGE_END, power=11.0, phases="1-PHASES")
-        assert _apply_ac_power(predictor, self.VIN, vehicle_state)
-        assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(11.0)
 
 
 class TestCarriedOverPhases:

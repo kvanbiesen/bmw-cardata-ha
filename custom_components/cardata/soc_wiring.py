@@ -250,19 +250,6 @@ def _plug_in_power_kw(vehicle_state: dict[str, DescriptorState]) -> float | None
     return _reported_power_kw(vehicle_state)
 
 
-def _prefer_reported_power(vehicle_state: dict[str, DescriptorState]) -> bool:
-    """Whether BMW's charging power should drive an AC session instead of V×A.
-
-    True when there is no voltage and current pair to work from, or when the
-    phase count for the current plug-in is unknown.  A V×A product built on an
-    unverified phase count can be out by a factor of three, so a vehicle that
-    reports its charging power directly is better served by that reading.
-    """
-    if not _has_ac_power_data(vehicle_state):
-        return True
-    return _plug_in_phases(vehicle_state) is None
-
-
 def _apply_ac_power(
     soc_predictor: SOCPredictor,
     vin: str,
@@ -282,8 +269,7 @@ def _apply_ac_power(
 
     power_kw = _plug_in_power_kw(vehicle_state)
     if power_kw is not None and power_kw > 0:
-        soc_predictor.record_ac_conditions(vin, voltage, current)
-        soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+        soc_predictor.use_reported_power(vin, power_kw, voltage, current, aux_kw)
         return True
 
     if voltage and current:
@@ -753,10 +739,16 @@ def process_soc_descriptors(
 
         elif descriptor == DESC_CHARGING_POWER:
             method = soc_predictor.get_charging_method(vin)
-            if method == "DC" or (method is not None and _prefer_reported_power(vehicle_state)):
+            applied = False
+            if method == "DC":
                 power_kw = _parse_power_kw(value, descriptor_payload.get("unit") or "") if value is not None else None
-                aux_kw = _get_aux_kw()
-                soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
+                soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=_get_aux_kw())
+                applied = True
+            elif method is not None:
+                # Same choice between the two sources as everywhere else, rather
+                # than a second copy that would feed a reported zero straight in.
+                applied = _apply_ac_power(soc_predictor, vin, vehicle_state)
+            if applied:
                 if soc_predictor.is_charging(vin):
                     if soc_predictor.has_signaled_entity(vin):
                         if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
