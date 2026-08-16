@@ -63,12 +63,19 @@ LINE_TO_LINE_MIN_VOLTAGE = 250.0
 
 
 def _ac_phase_multiplier(session: ChargingSession) -> float:
-    """Power multiplier for the phase count the session currently believes."""
+    """Power multiplier for the phase count the session currently believes.
+
+    A line-neutral voltage scales with the number of phases in use.  A
+    line-to-line voltage already carries the sqrt(3) between two phases of the
+    same supply, and is left as the three phase case: BMW does report a two phase
+    count, but charging on two phases of a 400 V supply is not a combination this
+    can confirm.
+    """
     if not session.phases or session.phases <= 1:
         return 1.0
     if session.last_voltage and session.last_voltage >= LINE_TO_LINE_MIN_VOLTAGE:
         return 1.732
-    return 3.0
+    return float(min(session.phases, 3))
 
 
 def _calc_ac_power_kw(session: ChargingSession) -> float | None:

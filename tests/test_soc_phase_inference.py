@@ -23,11 +23,12 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Tests for inferring the AC charging phase count from the SOC actually gained.
+"""Tests for the AC charging phase count: what it does to the power, and how it
+is inferred when BMW never reports one.
 
-Each test simulates a charge: the vehicle physically draws ``true_phases``, while
-the predictor is only told the voltage and current, so it models a single phase
-until the SOC gain shows otherwise.
+The inference tests simulate a charge: the vehicle physically draws
+``true_phases``, while the predictor is only told the voltage and current, so it
+models a single phase until the SOC gain shows otherwise.
 """
 
 from datetime import UTC, datetime
@@ -35,7 +36,7 @@ from unittest.mock import patch
 
 import pytest
 
-from custom_components.cardata.soc_prediction import SOCPredictor
+from custom_components.cardata.soc_prediction import SOCPredictor, _calc_ac_power_kw
 from custom_components.cardata.soc_types import (
     PHASES_ASSUMED,
     PHASES_DERIVED,
@@ -366,3 +367,43 @@ class TestPersistence:
         data = session.to_dict()
         del data["phases_source"]
         assert ChargingSession.from_dict(data).phases_source == PHASES_ASSUMED
+
+
+class TestAcPower:
+    """The phase count decides how voltage and current become power."""
+
+    @staticmethod
+    def _session(phases, volts=VOLTAGE, amps=16.0):
+        session = ChargingSession(
+            anchor_soc=50.0,
+            anchor_timestamp=datetime.now(UTC),
+            battery_capacity_kwh=CAPACITY_KWH,
+            last_predicted_soc=50.0,
+            charging_method="AC",
+            phases=phases,
+        )
+        session.last_voltage, session.last_current = volts, amps
+        return session
+
+    @pytest.mark.parametrize(
+        "phases, expected",
+        [
+            (1, 3.744),
+            (2, 7.488),
+            (3, 11.232),
+        ],
+    )
+    def test_line_neutral_scales_with_the_phase_count(self, phases, expected):
+        """Two phases carry twice a single phase, not three times."""
+        assert _calc_ac_power_kw(self._session(phases)) == pytest.approx(expected, abs=0.001)
+
+    def test_line_to_line_carries_the_root_three(self):
+        """At 400 V the voltage already spans two phases of the same supply."""
+        assert _calc_ac_power_kw(self._session(3, volts=400.0)) == pytest.approx(11.085, abs=0.001)
+
+    def test_an_implausible_count_is_capped(self):
+        """Nothing validates BMW's phase count, so it cannot be trusted unbounded."""
+        assert _calc_ac_power_kw(self._session(9)) == pytest.approx(11.232, abs=0.001)
+
+    def test_no_current_means_no_power(self):
+        assert _calc_ac_power_kw(self._session(3, amps=0.0)) is None
