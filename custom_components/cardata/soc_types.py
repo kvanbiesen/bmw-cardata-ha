@@ -394,10 +394,15 @@ class ChargingSession:
     # Power pushed in by the user's own meter owes nothing to the phase count and
     # is not scaled by it, so it makes the energy unusable as evidence.
     local_power_seen: bool = False
-    # A capped integration gap leaves the modelled energy short while the SOC gain
-    # over the same period counts in full, which reads as a charge storing more
-    # than it should.  Cleared whenever a measuring window opens.
-    energy_gap_capped: bool = False
+    # Energy the integration could not count, because the gap was capped or the
+    # clock went backwards.  It leaves the modelled side of a window short while
+    # the SOC gained over the same period counts in full, which reads as a charge
+    # storing more than it should.  Cleared whenever a measuring window opens.
+    energy_uncounted: bool = False
+    # False when the battery capacity is the user's own figure and BMW's own
+    # disagrees with it.  The inferred phase count scales directly with capacity,
+    # so a figure known to be contradicted cannot support one.
+    capacity_trusted: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -420,6 +425,7 @@ class ChargingSession:
             "phases": self.phases,
             "phases_source": self.phases_source,
             "local_power_seen": self.local_power_seen,
+            "capacity_trusted": self.capacity_trusted,
         }
 
     @classmethod
@@ -445,6 +451,7 @@ class ChargingSession:
             phases=data.get("phases", 1),
             phases_source=data.get("phases_source", PHASES_ASSUMED),
             local_power_seen=data.get("local_power_seen", False),
+            capacity_trusted=data.get("capacity_trusted", True),
         )
 
     def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
@@ -460,10 +467,15 @@ class ChargingSession:
         """
         if self.last_energy_update is not None and power_kw > 0:
             gap = timestamp - self.last_energy_update
+            if gap < 0:
+                # A clock that went backwards still moves the reference below, so
+                # this interval's energy is lost.  A gap of exactly zero is two
+                # calls at the same instant and loses nothing.
+                self.energy_uncounted = True
             if gap > 0:
                 # Cap gap to avoid massive energy jumps after restart
                 if gap > MAX_ENERGY_GAP_SECONDS:
-                    self.energy_gap_capped = True
+                    self.energy_uncounted = True
                 capped_hours = min(gap, MAX_ENERGY_GAP_SECONDS) / 3600.0
                 # Trapezoidal integration: average of last and current power
                 avg_power = (self.last_power_kw + power_kw) / 2.0

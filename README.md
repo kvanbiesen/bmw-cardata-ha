@@ -417,6 +417,8 @@ The inference deliberately holds back where the evidence is not clear cut, in wh
 - Two-phase charging, which lands between the thresholds and so stays understated rather than being overstated as three
 - Any session fed by an external power meter, since injected power is not scaled by the phase count and makes the energy unusable as evidence
 - Windows containing a long gap in the energy integration, which leaves the modelled side short while the SOC gain over the same period counts in full
+- A battery capacity set by hand that BMW's own reported figure contradicts by more than 20%, since the result scales directly with it
+- Plug-in hybrids, which almost never have a three-phase charger
 
 The diagnostic sensor attributes report `phases_source` alongside `phases`, showing whether the count was `reported` by BMW, `derived` here, or merely `assumed`, so an inferred count is never mistaken for one BMW gave.
 

@@ -444,3 +444,37 @@ class TestSlowSamplingIsNotEvidence:
     def test_normal_sampling_still_reaches_a_verdict(self):
         """The guard must not silence the ordinary 30 second heartbeat."""
         assert self._charge_sampled_every(30.0, minutes=120, true_phases=3).phases == 3
+
+    def test_a_clock_going_backwards_discards_the_window(self):
+        """A dropped sample leaves the modelled side short just as a cap does."""
+        charge = Charge(true_phases=3)
+        charge.run(minutes=10)
+        charge.clock -= 600.0
+        charge.predictor.update_power_reading(
+            VIN, _modelled_power_kw(charge.session, charge.volts, charge.amps), aux_power_kw=AUX_KW
+        )
+        assert charge.session.energy_uncounted is True
+
+
+class TestUntrustworthyCapacity:
+    """The inferred count scales directly with the battery capacity."""
+
+    def test_a_capacity_bmw_contradicts_is_not_used_to_infer(self):
+        """A manual figure well away from BMW's own cannot support a conclusion."""
+        charge = Charge(true_phases=3)
+        charge.session.capacity_trusted = False
+        assert charge.run(minutes=180).phases == 1
+
+    def test_a_capacity_bmw_agrees_with_still_infers(self):
+        charge = Charge(true_phases=3)
+        charge.session.capacity_trusted = True
+        assert charge.run(minutes=180).phases == 3
+
+
+class TestPhevIsLeftAlone:
+    """A hybrid almost never has a three phase charger."""
+
+    def test_phev_is_not_judged(self):
+        charge = Charge(true_phases=3)
+        charge.predictor.set_vehicle_is_phev(VIN, True)
+        assert charge.run(minutes=180).phases == 1

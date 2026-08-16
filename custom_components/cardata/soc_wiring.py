@@ -70,6 +70,10 @@ _LOGGER = logging.getLogger(__name__)
 
 _OVERRIDE_AUX_POWER = 0.3  # kW - estimated auxiliary power load during charging (for SOC prediction)
 
+# How far a manual battery capacity may sit from BMW's own before the phase
+# count can no longer be inferred from it.
+_CAPACITY_TOLERANCE = 0.20
+
 
 def _descriptor_float(state: DescriptorState | None) -> float | None:
     """Extract a float from a descriptor state, returning None on failure."""
@@ -171,6 +175,21 @@ def _plug_in_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
             pass
 
     return _descriptor_phases(state)
+
+
+def _capacity_is_trusted(capacity_kwh: float, vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Whether the battery capacity is fit to infer a phase count from.
+
+    The inferred count scales directly with capacity, so a figure BMW's own
+    contradicts cannot support one.  A manual figure with nothing to check it
+    against is still trusted: the whole prediction rests on it either way, and
+    the users who set one are usually the ones BMW reports nothing for.
+    """
+    for descriptor in (DESC_MAX_ENERGY, DESC_BATTERY_SIZE_MAX):
+        reported = _descriptor_float(vehicle_state.get(descriptor))
+        if reported and reported > 0:
+            return abs(capacity_kwh - reported) / reported <= _CAPACITY_TOLERANCE
+    return True
 
 
 def _has_ac_power_data(vehicle_state: dict[str, DescriptorState]) -> bool:
@@ -469,6 +488,10 @@ def anchor_soc_session(
     magic_soc.update_battery_capacity(vin, capacity_kwh)
     charging_method = soc_predictor.get_charging_method(vin) or "AC"
     soc_predictor.anchor_session(vin, current_soc, capacity_kwh, charging_method, target_soc=target_soc)
+
+    session = soc_predictor._sessions.get(vin)
+    if session is not None:
+        session.capacity_trusted = _capacity_is_trusted(capacity_kwh, vehicle_state)
 
     _seed_power_after_anchor(soc_predictor, vin, vehicle_state, charging_method)
 

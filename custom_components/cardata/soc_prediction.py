@@ -588,7 +588,11 @@ class SOCPredictor:
             return
         if session.charging_method == "DC":
             return
-        if session.battery_capacity_kwh <= 0:
+        # A plug-in hybrid is very unlikely to have a three phase charger, and its
+        # header updates are filtered against the prediction this would produce.
+        if self._is_phev.get(vin, False):
+            return
+        if session.battery_capacity_kwh <= 0 or not session.capacity_trusted:
             return
         # A line-to-line reading means a wiring convention this cannot confirm.
         if not session.last_voltage or session.last_voltage >= LINE_TO_LINE_MIN_VOLTAGE:
@@ -608,11 +612,11 @@ class SOCPredictor:
                 self._open_phase_probe(session, bmw_soc)
             return
 
-        # Energy integrated across a capped gap is short on the modelled side
-        # only, so the window would read as a charge storing more than it should.
-        # Unlike rounding this repeats for as long as the sampling stays slow, so
-        # voting cannot absorb it and the window has to be abandoned.
-        if session.energy_gap_capped:
+        # Energy the integration could not count is missing from the modelled
+        # side only, so the window would read as a charge storing more than it
+        # should.  Unlike rounding this repeats for as long as the sampling stays
+        # slow, so voting cannot absorb it and the window has to be abandoned.
+        if session.energy_uncounted:
             session.phase_votes = 0
             self._open_phase_probe(session, bmw_soc)
             return
@@ -676,7 +680,7 @@ class SOCPredictor:
         session.phase_probe_soc = bmw_soc
         session.phase_probe_energy = session.session_total_energy_kwh
         session.phase_probe_gross = session.session_gross_energy_kwh
-        session.energy_gap_capped = False
+        session.energy_uncounted = False
 
     def _unwind_derived_phases(self, vin: str, session: ChargingSession, bmw_soc: float) -> None:
         """Drop the prediction back to the reading that disproved the inference.
