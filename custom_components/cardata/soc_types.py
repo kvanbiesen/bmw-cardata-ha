@@ -452,7 +452,13 @@ class ChargingSession:
             last_voltage=data.get("last_voltage"),
             last_current=data.get("last_current"),
             phases=data.get("phases", 1),
-            phases_source=data.get("phases_source", PHASES_ASSUMED),
+            # State written before the source was tracked can only have got a
+            # count above one from BMW, so say so rather than claiming it was
+            # assumed and leaving it open to being withdrawn.
+            phases_source=data.get(
+                "phases_source",
+                PHASES_REPORTED if data.get("phases", 1) > 1 else PHASES_ASSUMED,
+            ),
             local_power_seen=data.get("local_power_seen", False),
             capacity_trusted=data.get("capacity_trusted", True),
         )

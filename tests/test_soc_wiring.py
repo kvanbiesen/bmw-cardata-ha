@@ -313,3 +313,16 @@ class TestCarriedOverPhases:
         _apply_ac_power(predictor, self.VIN, self._state("3-PHASES", self.LAST_CHARGE_END))
         assert session.phases == 1
         assert session.phases_source == PHASES_ASSUMED
+
+    def test_conditions_are_recorded_even_when_bmw_power_is_used(self):
+        """They key the efficiency matrix, so they cannot go stale behind it."""
+        predictor = self._predictor()
+        session = predictor._sessions[self.VIN]
+        session.last_voltage, session.last_current = 230.0, 16.0
+        vehicle_state = self._state("1-PHASES", self.LAST_CHARGE_END)
+        vehicle_state[DESC_CHARGING_AC_AMPERE] = _state(32, self.PLUGGED_IN)
+        vehicle_state[DESC_CHARGING_POWER] = _state(7.4, self.PLUGGED_IN, unit="kW")
+
+        assert _apply_ac_power(predictor, self.VIN, vehicle_state)
+        assert session.last_power_kw == pytest.approx(7.4)
+        assert session.last_current == 32

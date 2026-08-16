@@ -542,6 +542,21 @@ class SOCPredictor:
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())
 
+    def record_ac_conditions(self, vin: str, voltage: float | None, current: float | None) -> None:
+        """Note the voltage and current a charge is running at.
+
+        They key the efficiency matrix and pick the efficiency the prediction
+        uses, so they have to keep up even when the power itself comes from
+        somewhere else, or a 32 A charge ends up filed under 16 A.
+        """
+        session = self._sessions.get(vin)
+        if session is None:
+            return
+        if voltage:
+            session.last_voltage = voltage
+        if current:
+            session.last_current = current
+
     def adopt_carried_over_phases(self, vin: str, phases: int | None) -> None:
         """Take a phase count left over from an earlier charge as a starting point.
 

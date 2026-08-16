@@ -282,6 +282,7 @@ def _apply_ac_power(
 
     power_kw = _plug_in_power_kw(vehicle_state)
     if power_kw is not None and power_kw > 0:
+        soc_predictor.record_ac_conditions(vin, voltage, current)
         soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
         return True
 

@@ -541,3 +541,27 @@ class TestCarriedOverCount:
         charge.predictor.update_ac_charging_data(VIN, VOLTAGE, 16.0, 1, AUX_KW)
         assert charge.session.phases == 1
         assert charge.session.phases_source == PHASES_REPORTED
+
+
+class TestOlderStoredSessions:
+    """State written before the source was tracked."""
+
+    def _stored(self, phases):
+        session = ChargingSession(
+            anchor_soc=50.0,
+            anchor_timestamp=datetime.now(UTC),
+            battery_capacity_kwh=CAPACITY_KWH,
+            last_predicted_soc=50.0,
+            charging_method="AC",
+            phases=phases,
+        )
+        data = session.to_dict()
+        del data["phases_source"]
+        return ChargingSession.from_dict(data)
+
+    def test_a_stored_count_above_one_can_only_have_come_from_bmw(self):
+        assert self._stored(3).phases_source == PHASES_REPORTED
+
+    def test_a_stored_single_phase_is_still_only_an_assumption(self):
+        """Otherwise the inference could never raise it."""
+        assert self._stored(1).phases_source == PHASES_ASSUMED

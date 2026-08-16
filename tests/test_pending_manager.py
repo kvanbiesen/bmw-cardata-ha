@@ -74,6 +74,7 @@ class TestPendingManagerBasic:
         pm.add_new_binary("VIN123", "binary.door")
         assert pm.get_total_count() == 3
 
+
 class TestPendingManagerSnapshot:
     """Tests for snapshot_and_clear functionality."""
 
