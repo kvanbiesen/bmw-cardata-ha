@@ -45,7 +45,14 @@ from homeassistant.const import (
     UnitOfVolume,
 )
 
-from .const import BATTERY_DESCRIPTORS, DESC_REMAINING_FUEL, MAGIC_SOC_DESCRIPTOR, PREDICTED_SOC_DESCRIPTOR
+from .const import (
+    BATTERY_DESCRIPTORS,
+    DESC_BATTERY_SIZE_MAX,
+    DESC_MAX_ENERGY,
+    DESC_REMAINING_FUEL,
+    MAGIC_SOC_DESCRIPTOR,
+    PREDICTED_SOC_DESCRIPTOR,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,11 +89,26 @@ FUEL_VOLUME_DESCRIPTORS = {
     DESC_REMAINING_FUEL,
 }
 
+# Battery capacity/energy-content descriptors are a stored, point-in-time
+# quantity (can go up or down), not a cumulative flow - HA's "energy" device
+# class only allows total/total_increasing state classes, which would be
+# wrong here. "energy_storage" allows measurement instead.
+ENERGY_STORAGE_DESCRIPTORS = {
+    DESC_MAX_ENERGY,
+    DESC_BATTERY_SIZE_MAX,
+}
 
-def map_unit_to_ha(unit: str | None) -> str | None:
+# Descriptors BMW reports without any unit at all, even though the value is
+# always a percentage.
+FORCED_UNIT_DESCRIPTORS: dict[str, str] = {
+    "vehicle.powertrain.electric.battery.stateOfHealth.displayed": "%",
+}
+
+
+def map_unit_to_ha(unit: str | None, descriptor: str | None = None) -> str | None:
     """Map BMW unit strings to Home Assistant compatible units."""
     if unit is None:
-        return None
+        return FORCED_UNIT_DESCRIPTORS.get(descriptor) if descriptor else None
 
     unit_mapping = {
         "l": UnitOfVolume.LITERS,
@@ -112,6 +134,9 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
         # Fuel tank volume is a stored volume, not a flowing volume
         if descriptor in FUEL_VOLUME_DESCRIPTORS:
             return getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME)
+        # Battery energy content/capacity is stored energy, not a flowing total
+        if descriptor in ENERGY_STORAGE_DESCRIPTORS:
+            return getattr(SensorDeviceClass, "ENERGY_STORAGE", SensorDeviceClass.ENERGY)
         # Check if this is a battery-related descriptor with % unit
         if descriptor in BATTERY_DESCRIPTORS:
             # Only apply battery class if unit is % (percentage)
@@ -162,6 +187,7 @@ _DISPLAY_PRECISION: dict[SensorDeviceClass, int] = {
     SensorDeviceClass.PRESSURE: 1,
     SensorDeviceClass.VOLUME: 1,
     getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME): 1,
+    getattr(SensorDeviceClass, "ENERGY_STORAGE", SensorDeviceClass.ENERGY): 2,
     SensorDeviceClass.DURATION: 0,
     SensorDeviceClass.ENERGY_DISTANCE: 1,
     SensorDeviceClass.BATTERY: 0,
