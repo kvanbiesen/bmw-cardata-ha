@@ -31,6 +31,13 @@ from __future__ import annotations
 # Extend this as new variants appear in either streaming or API payloads.
 UNIT_OVERRIDES: dict[str, str] = {
     "percent": "%",
+    # REST poll sometimes spells these out instead of using mi/km (#429)
+    "miles": "mi",
+    "mile": "mi",
+    "kilometers": "km",
+    "kilometres": "km",
+    "kilometer": "km",
+    "kilometre": "km",
 }
 
 
