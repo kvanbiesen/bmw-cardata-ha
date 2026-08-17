@@ -23,12 +23,19 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import os
 import sys
 import time
 import types
+from enum import StrEnum
 
 import atheris
+
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
 
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
@@ -84,12 +91,20 @@ def _install_aiohttp_stub() -> None:
     class ClientError(Exception):
         pass
 
-    class ContentTypeError(Exception):
+    class ClientResponseError(ClientError):
+        pass
+
+    class ContentTypeError(ClientResponseError):
+        pass
+
+    class ClientPayloadError(ClientError):
         pass
 
     aiohttp.ClientTimeout = ClientTimeout
     aiohttp.ClientError = ClientError
+    aiohttp.ClientResponseError = ClientResponseError
     aiohttp.ContentTypeError = ContentTypeError
+    aiohttp.ClientPayloadError = ClientPayloadError
     sys.modules["aiohttp"] = aiohttp
 
 
@@ -101,6 +116,7 @@ def _install_homeassistant_stubs() -> None:
     components = types.ModuleType("homeassistant.components")
     device_tracker = types.ModuleType("homeassistant.components.device_tracker")
     config_entries = types.ModuleType("homeassistant.config_entries")
+    const = types.ModuleType("homeassistant.const")
     core = types.ModuleType("homeassistant.core")
     helpers = types.ModuleType("homeassistant.helpers")
     dispatcher = types.ModuleType("homeassistant.helpers.dispatcher")
@@ -112,6 +128,28 @@ def _install_homeassistant_stubs() -> None:
     storage = types.ModuleType("homeassistant.helpers.storage")
     util = types.ModuleType("homeassistant.util")
     dt = types.ModuleType("homeassistant.util.dt")
+    unit_conversion = types.ModuleType("homeassistant.util.unit_conversion")
+
+    class UnitOfLength(StrEnum):
+        # Must stay a StrEnum with these exact values: the coordinator compares
+        # raw BMW unit strings such as "km" against these members.
+        KILOMETERS = "km"
+        MILES = "mi"
+
+    class DistanceConverter:
+        # Only km and mi are reachable from the coordinator, so anything else
+        # is stub drift and should be loud rather than silently wrong.
+        _KM_PER_MILE = 1.609344
+
+        @staticmethod
+        def convert(value: float, from_unit: str | None, to_unit: str | None) -> float:
+            if from_unit == to_unit:
+                return value
+            if from_unit == UnitOfLength.MILES and to_unit == UnitOfLength.KILOMETERS:
+                return value * DistanceConverter._KM_PER_MILE
+            if from_unit == UnitOfLength.KILOMETERS and to_unit == UnitOfLength.MILES:
+                return value / DistanceConverter._KM_PER_MILE
+            raise ValueError(f"unsupported conversion: {from_unit} to {to_unit}")
 
     class HomeAssistant:
         def __init__(self) -> None:
@@ -208,10 +246,14 @@ def _install_homeassistant_stubs() -> None:
     device_registry.DeviceInfo = dict
     storage.Store = Store
     dt.parse_datetime = parse_datetime
+    const.UnitOfLength = UnitOfLength
+    unit_conversion.DistanceConverter = DistanceConverter
     util.dt = dt
+    util.unit_conversion = unit_conversion
 
     homeassistant.components = components
     homeassistant.config_entries = config_entries
+    homeassistant.const = const
     homeassistant.core = core
     homeassistant.helpers = helpers
     homeassistant.util = util
@@ -227,6 +269,7 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.components"] = components
     sys.modules["homeassistant.components.device_tracker"] = device_tracker
     sys.modules["homeassistant.config_entries"] = config_entries
+    sys.modules["homeassistant.const"] = const
     sys.modules["homeassistant.core"] = core
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.dispatcher"] = dispatcher
@@ -238,6 +281,7 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.helpers.storage"] = storage
     sys.modules["homeassistant.util"] = util
     sys.modules["homeassistant.util.dt"] = dt
+    sys.modules["homeassistant.util.unit_conversion"] = unit_conversion
 
 
 def _install_cardata_package() -> None:
@@ -259,10 +303,10 @@ with atheris.instrument_imports():
 
 
 class _State:
-    def __init__(self, value, unit=None) -> None:
+    def __init__(self, value, unit=None, timestamp=None) -> None:
         self.value = value
         self.unit = unit
-        self.timestamp = None
+        self.timestamp = timestamp
 
 
 class _Coordinator:
@@ -335,6 +379,28 @@ def _consume_floatish(fdp: atheris.FuzzedDataProvider):
     if choice == 3:
         return _consume_text(fdp, 16)
     return None
+
+
+def _consume_timestamp(fdp: atheris.FuzzedDataProvider) -> str | None:
+    """Build a BMW payload timestamp for one coordinate state.
+
+    The tracker parses these with fromisoformat and pairs a fix when both stamps
+    sit within 5 s of each other, so the seconds field spans a whole minute and
+    straddles that window in both directions. The suffix is drawn per coordinate
+    because a naive stamp next to an aware one is what drives the TypeError
+    fallback in the pairing code. The date and hour are fixed so that a crashing
+    input replays identically.
+    """
+
+    choice = fdp.ConsumeIntInRange(0, 5)
+    if choice == 0:
+        return None
+    if choice == 1:
+        return _consume_text(fdp, 24)
+    second = fdp.ConsumeIntInRange(0, 59)
+    micro = fdp.ConsumeIntInRange(0, 999999)
+    suffix = ("", "Z", "+00:00", "+02:00")[choice - 2]
+    return f"2025-01-01T12:00:{second:02d}.{micro:06d}{suffix}"
 
 
 def _consume_descriptor(fdp: atheris.FuzzedDataProvider) -> str:
@@ -434,10 +500,10 @@ def TestOneInput(data: bytes) -> None:
 
         if descriptor == const.LOCATION_LATITUDE_DESCRIPTOR:
             value = _consume_coordinate_value(fdp, is_lat=True)
-            vin_bucket[descriptor] = _State(value)
+            vin_bucket[descriptor] = _State(value, timestamp=_consume_timestamp(fdp))
         elif descriptor == const.LOCATION_LONGITUDE_DESCRIPTOR:
             value = _consume_coordinate_value(fdp, is_lat=False)
-            vin_bucket[descriptor] = _State(value)
+            vin_bucket[descriptor] = _State(value, timestamp=_consume_timestamp(fdp))
         elif descriptor == const.LOCATION_HEADING_DESCRIPTOR:
             vin_bucket[descriptor] = _State(_consume_floatish(fdp))
         elif descriptor == const.LOCATION_ALTITUDE_DESCRIPTOR:

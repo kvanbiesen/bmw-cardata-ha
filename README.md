@@ -53,7 +53,7 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-Not required but appreciated :)
+Not required but appreciated
 
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -253,6 +253,90 @@ Available configuration options:
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
+| `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
+| `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
+| `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, or `de`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome — each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
+
+### Leasing Section (optional)
+
+Set `leasing_entity` to a sensor that tracks your lease. The card then shows
+leasing tiles — by default: remaining lease time, the remaining average
+distance per month allowed by the contract, projected over/under mileage at
+lease end, and the projected cost/refund. Which tiles appear (and their
+order) is configurable via `leasing_tiles`; additional tiles are available
+for the monthly average so far, today's balance vs. pro-rata target, total
+distance driven, and today's target. The card only displays — all math lives
+in the sensor.
+
+Over-mileage and costs render in the error color, under-mileage and refunds in
+the success color. Missing attributes show "—". Distances use the sensor's
+`unit_of_measurement` (falls back to km); the cost tile uses your Home
+Assistant currency. Tapping any tile opens the sensor's more-info dialog with
+all details.
+
+#### Setup with the Lease Mileage Tracker blueprint
+
+The section is built against the sensor contract of the
+[Lease Mileage Tracker](https://github.com/elmars/ha-leasing-blueprint)
+template blueprint (requires Home Assistant 2024.10+) — the quickest way to
+get a conforming sensor:
+
+1. Import the blueprint:
+
+   [![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Felmars%2Fha-leasing-blueprint%2Fblob%2Fmain%2Flease_mileage.yaml)
+
+   (Template blueprints do not appear on the Blueprints settings page — that
+   page only lists automation/script blueprints. The import still works.)
+
+2. Create one sensor per vehicle in your YAML configuration, feeding it the
+   mileage sensor this integration provides:
+
+   ```yaml
+   template:
+     - use_blueprint:
+         path: elmars/lease_mileage.yaml
+         input:
+           name: "Lease My BMW"
+           unique_id: lease_my_bmw
+           odometer: sensor.my_bmw_mileage   # mileage sensor from this integration
+           start_date: "2024-12-18"
+           end_date: "2027-12-18"
+           total_distance: 75000
+           excess_rate: 0.40      # per km/mi over, incl. VAT
+           shortfall_rate: 0.25   # per km/mi under, incl. VAT
+           excess_allowance: 1500
+           shortfall_allowance: 1500
+   ```
+
+   Then reload template entities (Developer tools → YAML → Template entities).
+
+3. Point the card at the sensor — via the GUI editor ("Leasing sensor
+   (optional)") or in YAML:
+
+   ```yaml
+   type: custom:bmw-cardata-vehicle-card
+   device_id: abcdef1234567890abcdef1234567890
+   leasing_entity: sensor.lease_my_bmw
+   ```
+
+#### Sensor contract (for custom sensors)
+
+Any sensor works as long as it follows the blueprint's contract: the sensor
+**state** is the projected over/under mileage at lease end (positive = over,
+used by the `projected` tile), and each tile reads one attribute — only the
+attributes of the tiles you enable are required:
+
+| Tile | Attribute | Meaning |
+|------|-----------|---------|
+| `lease_remaining` | `days_remaining` / `months_remaining` | Remaining lease time |
+| `monthly_budget` | `monthly_remaining` | Remaining average distance per month allowed by the contract |
+| `monthly_average` | `monthly_average` | Average distance per month so far |
+| `km_balance` | `deviation` | Actual distance minus pro-rata target today |
+| `driven` | `actual` | Distance driven since lease start |
+| `target` | `target` | Pro-rata target distance as of today |
+| `total` | `total_distance` | Total contract distance allowance |
+| `lease_start` / `lease_end` | `lease_start` / `lease_end` | Contract start / end date (shown in the card language's date format) |
+| `cost` | `projected_cost` | Projected cost (positive) or refund (negative) at lease end, in your HA currency |
 
 ### YAML Configuration
 
@@ -281,6 +365,7 @@ show_image: true
 show_map: true
 map_height: 120
 show_buttons: true
+leasing_entity: sensor.leasing_mini
 ```
 
 To hide the map and quick-info tiles:
@@ -448,7 +533,7 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
 - **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
 - **Multi-VIN setups**: All vehicles share the same 50 call/day limit. The poll interval scales with VIN count plus any enabled daily features. Each VIN is guaranteed at least 1 poll per day; BMW's 429 backoff handles actual quota enforcement.
-- **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay.
+- **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay (1h, 2h, 4h, 8h, up to 24h). Because the quota resets at midnight UTC, a backoff that would run past the reset is shortened to end at it, so API calls resume as soon as the quota is back instead of sitting out the rest of a long backoff. A `Retry-After` header sent by BMW is honoured as-is.
 
 ## Requirements
 

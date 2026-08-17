@@ -34,11 +34,16 @@ jobs:
   fuzz:
     needs: discover
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    env:
+      # Per-fuzzer budget in seconds. Every harness reads FUZZ_MAX_TIME and caps
+      # itself to it, so this is the only place the budget needs setting. The
+      # 4h constant in each harness stays as the local default and ceiling.
+      FUZZ_MAX_TIME: "1800"
     steps:
       - name: Check out
         uses: actions/checkout@v5
@@ -55,15 +60,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-fuzz.txt
 
+      # Caches are immutable, so the key has to be unique per run and the
+      # rolling prefix in restore-keys is what actually finds last night's
+      # corpus. restore and save are used separately because the combined
+      # action skips its save step unless the job succeeded, which would throw
+      # away the corpus on exactly the night a fuzzer crashes.
+      - name: Restore corpus
+        uses: actions/cache/restore@v6
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.fuzzer }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fuzz-corpus-${{ matrix.fuzzer }}-
+
       - name: Run fuzzer
-        id: run_fuzzer
-        continue-on-error: true
         run: |
           set -o pipefail
+          # libFuzzer treats a prefix ending in a separator as a directory and
+          # refuses to start if it is missing, and the corpus directory is not
+          # created by a cache miss, so create both first.
+          mkdir -p corpus crashes
           # Stream stdout to the action log (visible) and keep only the last
           # ~5000 lines on disk (capturing libFuzzer's crash dump tail without
-          # letting the file grow unbounded over a 5h run).
-          python fuzz/${{ matrix.fuzzer }} -max_total_time=18000 -timeout=30 2>&1 \
+          # letting the file grow unbounded).
+          python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -timeout=30 corpus 2>&1 \
             | python3 -u -c "
           import sys
           from collections import deque
@@ -75,12 +94,24 @@ jobs:
           with open('fuzz_output.txt', 'w') as f:
               f.writelines(buf)
           "
-          exit_code=${PIPESTATUS[0]}
-          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-          exit 0
+
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ matrix.fuzzer }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-crash-${{ matrix.fuzzer }}
+          path: crashes/
+          if-no-files-found: ignore
 
       - name: Extract failure snippet
-        if: ${{ steps.run_fuzzer.outputs.exit_code != '0' }}
+        if: failure()
         run: |
           python - <<'PY'
           import os
@@ -154,19 +185,15 @@ jobs:
           PY
         env:
           FUZZER_NAME: ${{ matrix.fuzzer }}
-          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -max_total_time=18000 -timeout=30
+          FUZZER_COMMAND: python fuzz/${{ matrix.fuzzer }} -artifact_prefix=crashes/ -timeout=30 corpus
           FUZZER_SNIPPET: fuzz_failure_${{ matrix.fuzzer }}.txt
 
       - name: Upload failure snippet
-        if: ${{ steps.run_fuzzer.outputs.exit_code != '0' }}
+        if: failure()
         uses: actions/upload-artifact@v6
         with:
           name: fuzz-failure-${{ matrix.fuzzer }}
           path: fuzz_failure_${{ matrix.fuzzer }}.txt
-
-      - name: Fail job if fuzzer failed
-        if: ${{ steps.run_fuzzer.outputs.exit_code != '0' }}
-        run: exit 1
 
   report_failure:
     needs: fuzz
@@ -218,26 +245,47 @@ jobs:
               { owner, repo, run_id: runId, per_page: 100 }
             );
 
-            // Distinguish a fuzzer-found crash (Run fuzzer step completed with
-            // a non-zero exit code) from a runner kill (the step never
-            // completed because the runner was terminated externally — OOM,
-            // infrastructure issue, etc.). The latter is infrastructure noise,
-            // not a code bug, so it should not file an issue.
+            // Classify each failed matrix job by what its "Run fuzzer" step did.
+            //
+            //   crashed  the step ran and exited non-zero, so the fuzzer found
+            //            something (or the harness itself is broken)
+            //   broken   the step was skipped because an earlier step failed,
+            //            so no fuzzing happened at all
+            //   killed   the step never completed, or the job carries no steps,
+            //            which is what a lost or cancelled runner looks like
+            //
+            // Only the first two are worth an issue. A lost runner is noise
+            // from outside the repository. If nothing classifies at all we
+            // still file, so a job rename can never silence this quietly.
             const crashedJobs = [];
+            const brokenJobs = [];
             const killedJobs = [];
             for (const job of jobs) {
+              if (!job.name.startsWith("fuzz (")) continue;
               if (job.conclusion !== "failure" && job.conclusion !== "cancelled") continue;
-              const runFuzzer = (job.steps || []).find((s) => s.name === "Run fuzzer");
-              if (runFuzzer && runFuzzer.status !== "completed") {
+              const steps = job.steps || [];
+              const runFuzzer = steps.find((s) => s.name === "Run fuzzer");
+              if (!runFuzzer || runFuzzer.status !== "completed") {
                 killedJobs.push(job.name);
-              } else {
+                continue;
+              }
+              if (runFuzzer.conclusion === "failure") {
                 crashedJobs.push(job.name);
+                continue;
+              }
+              const failedStep = steps.find(
+                (s) => s.name !== "Run fuzzer" && s.conclusion === "failure"
+              );
+              if (failedStep) {
+                brokenJobs.push(`${job.name} (failed at "${failedStep.name}")`);
+              } else {
+                killedJobs.push(job.name);
               }
             }
 
-            if (crashedJobs.length === 0 && killedJobs.length > 0) {
+            if (crashedJobs.length === 0 && brokenJobs.length === 0 && killedJobs.length > 0) {
               core.notice(
-                `Skipping issue creation: ${killedJobs.length} job(s) were terminated externally (likely runner kill), no fuzzer crashes detected. Killed: ${killedJobs.join(", ")}`
+                `Skipping issue creation: ${killedJobs.length} job(s) never completed the Run fuzzer step (lost or cancelled runner). Affected: ${killedJobs.join(", ")}`
               );
               return;
             }
@@ -246,12 +294,23 @@ jobs:
               "Automated report: the scheduled fuzzing workflow failed.",
               "",
               `Run: ${runUrl}`,
-              "",
-              "Crashed jobs (fuzzer found a real failure):",
-              crashedJobs.length
-                ? crashedJobs.map((n) => `- ${n}`).join("\n")
-                : "- (none)",
             ];
+            if (crashedJobs.length) {
+              sections.push(
+                "",
+                "Crashed jobs (the fuzzer found a failure):",
+                crashedJobs.map((n) => `- ${n}`).join("\n"),
+                "",
+                "The crashing input is attached to the run as a fuzz-crash-* artifact."
+              );
+            }
+            if (brokenJobs.length) {
+              sections.push(
+                "",
+                "Broken jobs (CI setup failed, the fuzzer never ran):",
+                brokenJobs.map((n) => `- ${n}`).join("\n")
+              );
+            }
             if (killedJobs.length) {
               sections.push(
                 "",

@@ -31,7 +31,6 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
-from datetime import UTC, datetime
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -264,11 +263,11 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator._soc_predictor.set_save_callback(_trigger_save)
         coordinator._magic_soc.set_learning_callback(_trigger_save)
 
-        # Restore stored vehicle metadata
-        last_poll_ts = data.get("last_telematic_poll")
-        if isinstance(last_poll_ts, (int, float)) and last_poll_ts > 0:
-            coordinator.last_telematic_api_at = datetime.fromtimestamp(last_poll_ts, UTC)
-
+        # Restore stored vehicle metadata.
+        # last_telematic_api_at is deliberately not restored here: it feeds the
+        # "Last Telematics API Call" sensor and must only ever hold the time of a
+        # successful fetch, while the stored last_telematic_poll also records
+        # failed and rate limited attempts. The sensor restores its own state.
         await async_restore_vehicle_metadata(hass, entry, coordinator)
 
         # CRITICAL FIX: Pre-populate coordinator.names from restored device_metadata

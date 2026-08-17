@@ -593,7 +593,7 @@ def process_soc_descriptors(
         elif descriptor == DESC_CHARGING_POWER:
             method = soc_predictor.get_charging_method(vin)
             if method == "DC" or (method is not None and not _has_ac_power_data(vehicle_state)):
-                power_kw = _parse_power_kw(value, descriptor_payload.get("unit", "")) if value is not None else None
+                power_kw = _parse_power_kw(value, descriptor_payload.get("unit") or "") if value is not None else None
                 aux_kw = _get_aux_kw()
                 soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=aux_kw)
                 if soc_predictor.is_charging(vin):

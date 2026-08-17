@@ -25,6 +25,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import types
@@ -102,6 +103,27 @@ asyncio.set_event_loop(_LOOP)
 with atheris.instrument_imports():
     from cardata import stream as stream_module
     from homeassistant.core import HomeAssistant
+
+
+# stream._handle_message wraps its whole body in "except Exception" so that a bad
+# payload cannot kill the MQTT callback thread. That also hides every fault from
+# the fuzzer, which is why this harness could only ever fail by hanging or by
+# running out of memory. Turn the record that catch-all logs back into a raised
+# exception: reaching it at all means an unanticipated path, which is worth
+# reporting even though production deliberately tolerates it.
+class _RaiseSwallowedError(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.exc_info and record.exc_info[1] is not None:
+            raise record.exc_info[1]
+
+
+# Pin the level on this logger rather than on its "cardata" parent, because
+# getEffectiveLevel() starts at the logger itself. A later log volume change on
+# the parent then cannot filter the record away and silently disarm the handler.
+# For the same reason this harness deliberately does not call logging.disable().
+_STREAM_LOGGER = logging.getLogger("cardata.stream")
+_STREAM_LOGGER.setLevel(logging.ERROR)
+_STREAM_LOGGER.addHandler(_RaiseSwallowedError())
 
 
 class FakeMessage:
@@ -212,6 +234,10 @@ def TestOneInput(data: bytes) -> None:
 
     if fdp.ConsumeBool():
         manager.set_message_callback(_message_callback)
+        # Keep this override paired with the callback. The real _run_coro_safe
+        # logs through the same cardata.stream logger from a done-callback, and
+        # against this non-running loop it would trip the handler above with a
+        # harness fault rather than an integration one.
         manager._run_coro_safe = lambda coro: _LOOP.run_until_complete(coro)
 
     iterations = fdp.ConsumeIntInRange(1, 6)

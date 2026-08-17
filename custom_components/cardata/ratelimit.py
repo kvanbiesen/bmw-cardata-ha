@@ -34,6 +34,22 @@ from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
 
+# Shortest cooldown we are willing to set, also used as the floor when the
+# cooldown is clamped to the quota reset.
+MIN_COOLDOWN_SECONDS = 60
+
+SECONDS_PER_DAY = 86400
+
+
+def seconds_until_quota_reset(now: float) -> float:
+    """Return seconds from now until BMW's daily quota resets (midnight UTC).
+
+    Unix time counts seconds since midnight UTC with no leap seconds, so the
+    remainder is the UTC time of day. Plain arithmetic keeps this defined for
+    any clock value, including one far in the future.
+    """
+    return SECONDS_PER_DAY - (now % SECONDS_PER_DAY)
+
 
 class RateLimitTracker:
     """Track API rate limits and implement cooldown after 429 errors."""
@@ -59,15 +75,24 @@ class RateLimitTracker:
         # Try to use server's Retry-After header if provided
         server_cooldown = self._parse_retry_after(retry_after)
 
+        cooldown_seconds: float
         if server_cooldown is not None:
             # Use server-specified cooldown, but enforce minimum of 60s and max of 24h
-            cooldown_seconds = max(60, min(server_cooldown, 24 * 3600))
+            cooldown_seconds = max(MIN_COOLDOWN_SECONDS, min(server_cooldown, 24 * 3600))
             cooldown_source = "server Retry-After"
         else:
             # Fall back to exponential cooldown: 1h, 2h, 4h, 8h, max 24h
             cooldown_hours = min(2 ** (self._429_count - 1), 24)
             cooldown_seconds = cooldown_hours * 3600
             cooldown_source = "exponential backoff"
+            # BMW's daily quota resets at midnight UTC, so waiting past that reset
+            # keeps the REST path idle while calls would already succeed again.
+            # Only our own guess is clamped: an explicit Retry-After from BMW is
+            # honoured as sent.
+            until_reset = max(MIN_COOLDOWN_SECONDS, seconds_until_quota_reset(now))
+            if cooldown_seconds > until_reset:
+                cooldown_seconds = until_reset
+                cooldown_source = "exponential backoff, clamped to quota reset"
 
         self._rate_limited_until = now + cooldown_seconds
         reset_time = datetime.fromtimestamp(self._rate_limited_until)

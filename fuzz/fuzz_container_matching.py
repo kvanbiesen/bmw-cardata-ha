@@ -23,11 +23,17 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import os
 import sys
 import types
 
 import atheris
+
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
 
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
@@ -35,7 +41,6 @@ DEFAULT_MAX_TIME = 4 * 60 * 60
 CARDATA_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "custom_components", "cardata")
 )
-sys.path.insert(0, CARDATA_PATH)
 
 
 def _install_aiohttp_stub() -> None:
@@ -56,12 +61,20 @@ def _install_aiohttp_stub() -> None:
     class ClientError(Exception):
         pass
 
-    class ContentTypeError(Exception):
+    class ClientResponseError(ClientError):
+        pass
+
+    class ContentTypeError(ClientResponseError):
+        pass
+
+    class ClientPayloadError(ClientError):
         pass
 
     aiohttp.ClientTimeout = ClientTimeout
     aiohttp.ClientError = ClientError
+    aiohttp.ClientResponseError = ClientResponseError
     aiohttp.ContentTypeError = ContentTypeError
+    aiohttp.ClientPayloadError = ClientPayloadError
     sys.modules["aiohttp"] = aiohttp
 
 
@@ -78,11 +91,24 @@ _install_cardata_package()
 
 with atheris.instrument_imports():
     from cardata import api_parsing
+    from cardata import const
     from cardata import container as container_module
 
 
 def _consume_text(fdp: atheris.FuzzedDataProvider, max_len: int) -> str:
     return fdp.ConsumeUnicodeNoSurrogates(max_len)
+
+
+def _consume_name_or_purpose(fdp: atheris.FuzzedDataProvider, expected: str, max_len: int) -> str:
+    """Return the value the matcher accepts, or free-form text.
+
+    The matcher compares for exact equality, so fuzzer text alone can never
+    reach the code behind the guard.
+    """
+
+    if fdp.ConsumeBool():
+        return expected
+    return _consume_text(fdp, max_len)
 
 
 def _consume_descriptor_value(fdp: atheris.FuzzedDataProvider):
@@ -107,16 +133,24 @@ def _consume_descriptor_list(fdp: atheris.FuzzedDataProvider):
     ]
 
 
+def _consume_descriptors(fdp: atheris.FuzzedDataProvider) -> list:
+    """Return the descriptor set the integration wants, or a fuzzer-built one."""
+
+    if fdp.ConsumeBool():
+        return list(const.HV_BATTERY_DESCRIPTORS)
+    return _consume_descriptor_list(fdp)
+
+
 def _consume_container_dict(fdp: atheris.FuzzedDataProvider) -> dict:
     payload = {}
     if fdp.ConsumeBool():
-        payload["purpose"] = _consume_text(fdp, 40)
+        payload["purpose"] = _consume_name_or_purpose(fdp, const.HV_BATTERY_CONTAINER_PURPOSE, 40)
     if fdp.ConsumeBool():
-        payload["name"] = _consume_text(fdp, 40)
+        payload["name"] = _consume_name_or_purpose(fdp, const.HV_BATTERY_CONTAINER_NAME, 40)
     if fdp.ConsumeBool():
         payload["containerId"] = _consume_text(fdp, 24)
     if fdp.ConsumeBool():
-        payload["technicalDescriptors"] = _consume_descriptor_list(fdp)
+        payload["technicalDescriptors"] = _consume_descriptors(fdp)
     if fdp.ConsumeBool():
         payload[_consume_text(fdp, 10)] = _consume_descriptor_value(fdp)
     return payload
@@ -168,11 +202,10 @@ def TestOneInput(data: bytes) -> None:
     containers = api_parsing.extract_container_items(payload)
 
     manager = object.__new__(container_module.CardataContainerManager)
-    manager._descriptor_signature = (
-        container_module.CardataContainerManager.compute_signature(str_only)
-        if str_only
-        else ""
-    )
+    # An empty signature is a state production cannot reach, since __init__
+    # always stores a sha1 hexdigest, so compute one either way.
+    desired = list(const.HV_BATTERY_DESCRIPTORS) if fdp.ConsumeBool() else str_only
+    manager._descriptor_signature = container_module.CardataContainerManager.compute_signature(desired)
 
     for container in containers:
         manager._matches_hv_container(container)

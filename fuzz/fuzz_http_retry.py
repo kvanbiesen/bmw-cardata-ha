@@ -24,11 +24,17 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import asyncio
+import logging
 import os
 import sys
 import types
 
 import atheris
+
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
 
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
@@ -56,8 +62,20 @@ def _install_aiohttp_stub() -> None:
     class ClientError(Exception):
         pass
 
+    class ClientResponseError(ClientError):
+        pass
+
+    class ContentTypeError(ClientResponseError):
+        pass
+
+    class ClientPayloadError(ClientError):
+        pass
+
     aiohttp.ClientTimeout = ClientTimeout
     aiohttp.ClientError = ClientError
+    aiohttp.ClientResponseError = ClientResponseError
+    aiohttp.ContentTypeError = ContentTypeError
+    aiohttp.ClientPayloadError = ClientPayloadError
     sys.modules["aiohttp"] = aiohttp
 
 

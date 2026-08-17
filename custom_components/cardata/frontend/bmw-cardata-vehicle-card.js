@@ -87,9 +87,12 @@ const hasUsableState = (stateObj) => {
   return state !== "";
 };
 
-const compactStateLabel = (stateObj) => {
+const compactStateLabel = (stateObj, t) => {
   const state = normalizeState(stateObj);
   if (!state) return "—";
+  const key = `state.${state}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
   return state.replaceAll("_", " ").toUpperCase();
 };
 
@@ -100,37 +103,279 @@ const sanitizePlate = (raw) => {
   return raw.trim().replace(/[^\p{L}\p{N}\s-]/gu, "").substring(0, 15).toUpperCase();
 };
 
-const humanizeLocationState = (rawState) => {
-  if (rawState === undefined || rawState === null) return "Location unavailable";
+const DEFAULT_LANG = "en";
+
+const TRANSLATIONS = {
+  en: {
+    location: "Location",
+    location_unavailable: "Location unavailable",
+    away: "Away",
+    home: "Home",
+    range: "Range",
+    fuel: "Fuel",
+    motion: "Motion",
+    moving: "Moving",
+    parked: "Parked",
+    charging: "Charging",
+    level: "Level",
+    tires: "Tires",
+    tire: "Tire",
+    mileage: "Mileage",
+    lease_remaining: "Lease remaining",
+    monthly_budget: "Remaining/month",
+    monthly_average: "Average/month",
+    km_balance: "km balance",
+    driven: "Driven",
+    target_today: "Target today",
+    total_distance: "Total allowance",
+    lease_start: "Lease start",
+    lease_end: "Lease end",
+    projected_at_end: "Projected at end",
+    cost_refund: "Cost / refund",
+    excess_km: "Excess mileage",
+    shortfall_km: "Under mileage",
+    payment_due: "Additional payment",
+    refund: "Refund",
+    unit_days_short: "d",
+    unit_months_short: "mo",
+    doors_overall: "Doors overall",
+    lock: "Lock",
+    locked: "Locked",
+    unlocked: "Unlocked",
+    alarm: "Alarm",
+    alarm_triggered: "Alarm: TRIGGERED",
+    alarm_unavailable: "Alarm status unavailable",
+    windows: "Windows",
+    windows_closed: "closed",
+    windows_open_count: "open",
+    charging_active: "active",
+    lights: "Lights",
+    lights_on: "on",
+    lights_off: "off",
+    hood_tailgate_open: "Hood and tailgate open",
+    hood_open: "Hood open",
+    tailgate_open: "Tailgate open",
+    hood_tailgate_closed: "Hood and tailgate: closed",
+    total_range: "Total Range",
+    ev: "EV",
+    unknown: "unknown",
+    select_vehicle: "Select a vehicle in the card editor.",
+    vehicle_not_found: "Vehicle not found yet. Try again in a few seconds.",
+    no_tracker: "No vehicle tracker entity available",
+    tracker_unavailable: "Tracker entity unavailable",
+    map_loading: "Loading map…",
+    map_failed: "Unable to load Home Assistant map",
+    "state.chargingactive": "Charging Active",
+    "state.chargingended": "Charging Ended",
+    "state.nocharging": "No Charging",
+    "state.chargingpaused": "Charging Paused",
+    "state.chargingerror": "Charging Error",
+    "state.doorstiltcabin": "Cabin Doors Tilted",
+    "state.doorsonly": "Doors Only",
+    "state.secured": "Secured",
+    "state.open": "Open",
+    "state.closed": "Closed",
+    "state.locked": "Locked",
+    "state.unlocked": "Unlocked",
+    "editor.device_id": "Vehicle",
+    "editor.license_plate": "License plate (shown instead of VIN)",
+    "editor.show_title": "Show vehicle name / card header",
+    "editor.soc_source": "Battery level source",
+    "editor.soc_soc": "BMW State of Charge (last known)",
+    "editor.soc_predicted": "Predicted SOC (charging)",
+    "editor.soc_magic": "Magic SOC (driving)",
+    "editor.show_indicators": "Show indicator row",
+    "editor.show_range": "Show SOC and range bar",
+    "editor.show_image": "Show vehicle image",
+    "editor.show_map": "Show mini map",
+    "editor.map_height": "Mini map height",
+    "editor.show_buttons": "Show quick info buttons",
+    "editor.leasing_entity": "Leasing sensor (optional)",
+    "editor.leasing_tiles": "Leasing tiles (order = display order)",
+    "editor.language": "Card language",
+    "editor.lang_auto": "Auto (Home Assistant language)",
+  },
+  de: {
+    location: "Standort",
+    location_unavailable: "Standort nicht verfügbar",
+    away: "Unterwegs",
+    home: "Zuhause",
+    range: "Reichweite",
+    fuel: "Kraftstoff",
+    motion: "Bewegung",
+    moving: "In Fahrt",
+    parked: "Geparkt",
+    charging: "Laden",
+    level: "Füllstand",
+    tires: "Reifen",
+    tire: "Reifen",
+    mileage: "Kilometerstand",
+    lease_remaining: "Leasing-Restlaufzeit",
+    monthly_budget: "Restsaldo/Monat",
+    monthly_average: "Schnitt/Monat",
+    km_balance: "km-Saldo",
+    driven: "Gefahren",
+    target_today: "Soll heute",
+    total_distance: "Gesamtkilometer",
+    lease_start: "Leasingbeginn",
+    lease_end: "Leasingende",
+    projected_at_end: "Prognose Vertragsende",
+    cost_refund: "Kosten / Erstattung",
+    excess_km: "Mehrkilometer",
+    shortfall_km: "Minderkilometer",
+    payment_due: "Nachzahlung",
+    refund: "Erstattung",
+    unit_days_short: "T",
+    unit_months_short: "Mon.",
+    doors_overall: "Türen gesamt",
+    lock: "Schloss",
+    locked: "Verriegelt",
+    unlocked: "Entriegelt",
+    alarm: "Alarm",
+    alarm_triggered: "Alarm: AUSGELÖST",
+    alarm_unavailable: "Alarmstatus nicht verfügbar",
+    windows: "Fenster",
+    windows_closed: "geschlossen",
+    windows_open_count: "offen",
+    charging_active: "aktiv",
+    lights: "Licht",
+    lights_on: "an",
+    lights_off: "aus",
+    hood_tailgate_open: "Motorhaube und Heckklappe offen",
+    hood_open: "Motorhaube offen",
+    tailgate_open: "Heckklappe offen",
+    hood_tailgate_closed: "Motorhaube und Heckklappe: geschlossen",
+    total_range: "Gesamtreichweite",
+    ev: "Elektro",
+    unknown: "unbekannt",
+    select_vehicle: "Wähle ein Fahrzeug im Karten-Editor.",
+    vehicle_not_found: "Fahrzeug noch nicht gefunden. Versuch es in ein paar Sekunden erneut.",
+    no_tracker: "Kein Fahrzeug-Tracker verfügbar",
+    tracker_unavailable: "Tracker-Entität nicht verfügbar",
+    map_loading: "Karte lädt…",
+    map_failed: "Home-Assistant-Karte konnte nicht geladen werden",
+    "state.chargingactive": "Lädt",
+    "state.chargingended": "Laden beendet",
+    "state.nocharging": "Lädt nicht",
+    "state.chargingpaused": "Laden pausiert",
+    "state.chargingerror": "Ladefehler",
+    "state.doorstiltcabin": "Türen gekippt",
+    "state.doorsonly": "Nur Türen",
+    "state.secured": "Gesichert",
+    "state.open": "Offen",
+    "state.closed": "Geschlossen",
+    "state.locked": "Verriegelt",
+    "state.unlocked": "Entriegelt",
+    "editor.device_id": "Fahrzeug",
+    "editor.license_plate": "Kennzeichen (statt VIN angezeigt)",
+    "editor.show_title": "Fahrzeugname / Kartentitel anzeigen",
+    "editor.soc_source": "Quelle für Batteriestand",
+    "editor.soc_soc": "BMW-Ladestand (zuletzt bekannt)",
+    "editor.soc_predicted": "Prognostizierter Ladestand (beim Laden)",
+    "editor.soc_magic": "Magic SOC (während der Fahrt)",
+    "editor.show_indicators": "Statuszeile anzeigen",
+    "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
+    "editor.show_image": "Fahrzeugbild anzeigen",
+    "editor.show_map": "Mini-Karte anzeigen",
+    "editor.map_height": "Höhe der Mini-Karte",
+    "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
+    "editor.leasing_entity": "Leasing-Sensor (optional)",
+    "editor.leasing_tiles": "Leasing-Kacheln (Reihenfolge = Anzeige)",
+    "editor.language": "Kartensprache",
+    "editor.lang_auto": "Automatisch (HA-Sprache)",
+  },
+};
+
+// value = tile key in the render registry, label = translation key for the editor
+const LEASE_TILE_OPTIONS = [
+  { value: "lease_remaining", labelKey: "lease_remaining" },
+  { value: "monthly_budget", labelKey: "monthly_budget" },
+  { value: "monthly_average", labelKey: "monthly_average" },
+  { value: "km_balance", labelKey: "km_balance" },
+  { value: "driven", labelKey: "driven" },
+  { value: "target", labelKey: "target_today" },
+  { value: "total", labelKey: "total_distance" },
+  { value: "lease_start", labelKey: "lease_start" },
+  { value: "lease_end", labelKey: "lease_end" },
+  { value: "projected", labelKey: "projected_at_end" },
+  { value: "cost", labelKey: "cost_refund" },
+];
+const DEFAULT_LEASE_TILES = ["lease_remaining", "monthly_budget", "projected", "cost"];
+
+const resolveLang = (cfg, hass) => {
+  const configured = typeof cfg?.language === "string" && cfg.language !== "auto" ? cfg.language : "";
+  const raw = (configured || hass?.locale?.language || hass?.language || DEFAULT_LANG).toLowerCase();
+  const short = raw.split("-")[0];
+  return TRANSLATIONS[raw] ? raw : TRANSLATIONS[short] ? short : DEFAULT_LANG;
+};
+
+const localize = (lang, key) =>
+  TRANSLATIONS[lang]?.[key] ?? TRANSLATIONS[DEFAULT_LANG]?.[key] ?? key;
+
+const humanizeLocationState = (rawState, t) => {
+  if (rawState === undefined || rawState === null) return t("location_unavailable");
   const normalized = String(rawState).trim().toLowerCase();
-  if (!normalized || normalized === "unknown" || normalized === "unavailable") return "Location unavailable";
-  if (normalized === "not_home") return "Away";
-  if (normalized === "home") return "Home";
+  if (!normalized || normalized === "unknown" || normalized === "unavailable") return t("location_unavailable");
+  if (normalized === "not_home") return t("away");
+  if (normalized === "home") return t("home");
   return String(rawState).replaceAll("_", " ");
 };
 
-const humanizeStateValue = (rawState) => {
+const humanizeStateValue = (rawState, t) => {
   if (rawState === undefined || rawState === null) return "—";
   const normalized = String(rawState).trim().toLowerCase();
   if (!normalized || normalized === "unknown" || normalized === "unavailable") return "—";
-  switch (normalized) {
-    // Multi Words Override
-    // charging state
-    case "chargingactive": return "Charging Active";
-    case "chargingended": return "Charging Ended";
-    case "nocharging": return "No Charging";
-      
-    // alarm
-    case "doorstiltcabin": return "Cabin Doors Tilted";
-    case "doorsonly": return "Doors Only";
-  }
-  
+  const key = `state.${normalized}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
+
   return normalized
     .replaceAll("_", " ")
     .split(" ")
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+};
+
+const attrNumber = (stateObj, key) => {
+  const value = Number(stateObj?.attributes?.[key]);
+  return Number.isFinite(value) ? value : NaN;
+};
+
+const formatSignedDistance = (value, unit) => {
+  if (!Number.isFinite(value)) return "—";
+  const rounded = Math.round(value);
+  return `${rounded > 0 ? "+" : ""}${rounded.toLocaleString()} ${unit || "km"}`;
+};
+
+const formatAbsDistance = (value, unit) => {
+  if (!Number.isFinite(value)) return "—";
+  return `${Math.abs(Math.round(value)).toLocaleString()} ${unit || "km"}`;
+};
+
+const formatLeaseDate = (value, lang) => {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString(lang);
+};
+
+// positive = extra distance / extra cost (alert), negative = under distance / refund (good)
+const leaseDeltaClass = (value) =>
+  !Number.isFinite(value) || Math.round(value) === 0 ? "" : value > 0 ? "alert" : "good";
+
+const formatLeaseRemaining = (days, months, t) => {
+  if (Number.isFinite(days) && days < 61) return `${Math.max(0, Math.round(days))} ${t("unit_days_short")}`;
+  if (Number.isFinite(months)) return `${months} ${t("unit_months_short")}`;
+  return "—";
+};
+
+const formatLeaseCost = (value, currency) => {
+  if (!Number.isFinite(value)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "EUR" }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${currency || "EUR"}`;
+  }
 };
 
 class BmwCardataVehicleCard extends HTMLElement {
@@ -151,10 +396,20 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (boolConfig(cfg, "show_image", true)) size += 2;
     if (boolConfig(cfg, "show_map", true)) size += mapHeightConfig(cfg) / CARD_SIZE_UNIT_PX;
     if (boolConfig(cfg, "show_buttons", true)) size += 2;
+    if (cfg.leasing_entity) {
+      const tileCount = Array.isArray(cfg.leasing_tiles) && cfg.leasing_tiles.length
+        ? cfg.leasing_tiles.length
+        : DEFAULT_LEASE_TILES.length;
+      size += Math.ceil(tileCount / 2) / 2;
+    }
     return size;
   }
 
   static getConfigForm() {
+    // Static context has no hass reference; read the UI language from the
+    // home-assistant root element (common custom-card pattern), fall back to en.
+    const lang = resolveLang({}, document.querySelector("home-assistant")?.hass);
+    const t = (key) => localize(lang, key);
     return {
       schema: [
         {
@@ -171,9 +426,9 @@ class BmwCardataVehicleCard extends HTMLElement {
           selector: {
             select: {
               options: [
-                { value: "soc", label: "BMW State of Charge (last known)" },
-                { value: "predicted", label: "Predicted SOC (charging)" },
-                { value: "magic", label: "Magic SOC (driving)" },
+                { value: "soc", label: t("editor.soc_soc") },
+                { value: "predicted", label: t("editor.soc_predicted") },
+                { value: "magic", label: t("editor.soc_magic") },
               ],
               mode: "dropdown",
             },
@@ -193,19 +448,38 @@ class BmwCardataVehicleCard extends HTMLElement {
           },
         },
         { name: "show_buttons", selector: { boolean: {} } },
+        {
+          name: "leasing_entity",
+          selector: { entity: { domain: "sensor" } },
+        },
+        {
+          name: "leasing_tiles",
+          selector: {
+            select: {
+              multiple: true,
+              mode: "dropdown",
+              options: LEASE_TILE_OPTIONS.map((opt) => ({ value: opt.value, label: t(opt.labelKey) })),
+            },
+          },
+        },
+        {
+          name: "language",
+          selector: {
+            select: {
+              options: [
+                { value: "auto", label: t("editor.lang_auto") },
+                { value: "en", label: "English" },
+                { value: "de", label: "Deutsch" },
+              ],
+              mode: "dropdown",
+            },
+          },
+        },
       ],
       computeLabel: (schema) => {
-        if (schema.name === "device_id") return "Vehicle";
-        if (schema.name === "license_plate") return "License plate (shown instead of VIN)";
-        if (schema.name === "show_title") return "Show vehicle name / card header";
-        if (schema.name === "soc_source") return "Battery level source";
-        if (schema.name === "show_indicators") return "Show indicator row";
-        if (schema.name === "show_range") return "Show SOC and range bar";
-        if (schema.name === "show_image") return "Show vehicle image";
-        if (schema.name === "show_map") return "Show mini map";
-        if (schema.name === "map_height") return "Mini map height";
-        if (schema.name === "show_buttons") return "Show quick info buttons";
-        return undefined;
+        const key = `editor.${schema.name}`;
+        const label = t(key);
+        return label === key ? undefined : label;
       },
     };
   }
@@ -510,6 +784,12 @@ class BmwCardataVehicleCard extends HTMLElement {
           .btn-item.alert .btn-value {
             color: var(--error-color);
           }
+          .btn-item.good .btn-icon {
+            color: var(--success-color);
+          }
+          .btn-item.good .btn-value {
+            color: var(--success-color);
+          }
           .btn-icon {
             width: 34px;
             height: 34px;
@@ -579,6 +859,7 @@ class BmwCardataVehicleCard extends HTMLElement {
               <div id="range_info"></div>
               <div id="mini_map"></div>
               <div id="buttons"></div>
+              <div id="leasing"></div>
             </main>
           </div>
         </ha-card>
@@ -657,7 +938,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     }
   }
 
-  _renderMap(target, hass, trackerEntityId) {
+  _renderMap(target, hass, trackerEntityId, t) {
     if (!target) return;
 
     if (!trackerEntityId) {
@@ -665,7 +946,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       this._cachedMapTracker = null;
       target.innerHTML = `
         <div class="map">
-          <div class="map-fallback">No vehicle tracker entity available</div>
+          <div class="map-fallback">${escapeHtml(t("no_tracker"))}</div>
         </div>
       `;
       return;
@@ -676,7 +957,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       this._cachedMapTracker = null;
       target.innerHTML = `
         <div class="map">
-          <div class="map-fallback">Tracker entity unavailable: ${escapeHtml(trackerEntityId)}</div>
+          <div class="map-fallback">${escapeHtml(t("tracker_unavailable"))}: ${escapeHtml(trackerEntityId)}</div>
         </div>
       `;
       return;
@@ -699,7 +980,7 @@ class BmwCardataVehicleCard extends HTMLElement {
 
     const mapMount = document.createElement("div");
     mapMount.className = "map-mount";
-    mapMount.innerHTML = `<div class="map-fallback">Loading map…</div>`;
+    mapMount.innerHTML = `<div class="map-fallback">${escapeHtml(t("map_loading"))}</div>`;
 
     wrapper.appendChild(mapMount);
     target.replaceChildren(wrapper);
@@ -708,7 +989,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       if (!target.isConnected) return;
       if (this._mapRenderToken !== renderToken) return;
       if (!mapCard) {
-        mapMount.innerHTML = `<div class="map-fallback">Unable to load Home Assistant map</div>`;
+        mapMount.innerHTML = `<div class="map-fallback">${escapeHtml(t("map_failed"))}</div>`;
         return;
       }
       this._cachedMapCard = mapCard;
@@ -727,16 +1008,18 @@ class BmwCardataVehicleCard extends HTMLElement {
     const hass = this._hass;
     const cfg = this._config || {};
     const deviceId = cfg.device_id;
+    const lang = resolveLang(cfg, hass);
+    const t = (key) => localize(lang, key);
 
     if (!deviceId) {
-      this._renderMessage("Select a vehicle in the card editor.");
+      this._renderMessage(t("select_vehicle"));
       return;
     }
 
     const vehicles = this._vehicles || [];
     const vehicle = vehicles.find((v) => v && v.device_id === deviceId);
     if (!vehicle) {
-      this._renderMessage("Vehicle not found yet. Try again in a few seconds.");
+      this._renderMessage(t("vehicle_not_found"));
       return;
     }
 
@@ -770,12 +1053,12 @@ class BmwCardataVehicleCard extends HTMLElement {
 
     const lockState = normalizeState(read("doors_lock"));
     const doorsOverallStateObj = read("doors_overall");
-    const doorsOverallState = compactStateLabel(doorsOverallStateObj);
+    const doorsOverallState = compactStateLabel(doorsOverallStateObj, t);
     const doorsOverallRaw = normalizeState(doorsOverallStateObj);
     const alarmActiveStateObj = read("alarm_active");
     const alarmArmingStateObj = read("alarm_arming");
     const alarmActiveState = normalizeState(alarmActiveStateObj);
-    const alarmArmingLabel = compactStateLabel(alarmArmingStateObj);
+    const alarmArmingLabel = compactStateLabel(alarmArmingStateObj, t);
     const chargingState = normalizeState(read("charging_state"));
     const lockEntity = entities.doors_lock || "";
     const doorsOverallEntity = entities.doors_overall || "";
@@ -870,41 +1153,41 @@ class BmwCardataVehicleCard extends HTMLElement {
             : "alert",
         entity: doorsOverallEntity || lockEntity,
         title: doorsOverallKnown
-          ? `Doors overall: ${doorsOverallState}`
-          : `Lock: ${isLocked ? "Locked" : "Unlocked"}`,
+          ? `${t("doors_overall")}: ${doorsOverallState}`
+          : `${t("lock")}: ${isLocked ? t("locked") : t("unlocked")}`,
       },
       {
         icon: "mdi:shield-lock",
         stateClass: hasAlarm ? (alarmIsActive ? "alert" : alarmIsArmed ? "good" : "ok") : "",
         entity: alarmArmingEntity || alarmActiveEntity,
         title: hasAlarm
-          ? (alarmIsActive ? "Alarm: TRIGGERED" : `Alarm: ${alarmArmingLabel || "unknown"}`)
-          : "Alarm status unavailable",
+          ? (alarmIsActive ? t("alarm_triggered") : `${t("alarm")}: ${alarmArmingLabel || t("unknown")}`)
+          : t("alarm_unavailable"),
       },
       {
         icon: openWindows > 0 ? "mdi:car-windshield-outline" : "mdi:car-windshield",
         stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 ? "" : "ok",
         entity: windowEntity,
-        title: `Windows: ${openWindows > 0 ? `${openWindows} open` : "closed"}`,
+        title: `${t("windows")}: ${openWindows > 0 ? `${openWindows} ${t("windows_open_count")}` : t("windows_closed")}`,
       },
       hasCharging
         ? {
             icon: "mdi:ev-station",
             stateClass: chargingActive ? "ok charging" : "",
             entity: chargingEntity,
-            title: `Charging: ${chargingActive ? "active" : compactStateLabel(read("charging_state"))}`,
+            title: `${t("charging")}: ${chargingActive ? t("charging_active") : compactStateLabel(read("charging_state"), t)}`,
           }
         : {
             icon: "mdi:car-light-high",
             stateClass: lightsOn ? "ok" : "placeholder",
             entity: lightsEntity,
-            title: lightsEntity ? `Lights: ${lightsOn ? "on" : "off"}` : "",
+            title: lightsEntity ? `${t("lights")}: ${lightsOn ? t("lights_on") : t("lights_off")}` : "",
           },
       {
         icon: hoodOpen && tailgateOpen ? "mdi:car" : hoodOpen ? "mdi:engine-outline" : tailgateOpen ? "mdi:car-back" : "mdi:car",
         stateClass: (hoodOpen || tailgateOpen) && !isMoving && isLocked ? "alert" : (hoodOpen || tailgateOpen) ? "" : "ok",
         entity: hoodOpen ? (hoodEntity || tailgateEntity) : tailgateOpen ? (tailgateEntity || hoodEntity) : (hoodEntity || tailgateEntity),
-        title: hoodOpen && tailgateOpen ? "Hood and tailgate open" : hoodOpen ? "Hood open" : tailgateOpen ? "Tailgate open" : "Hood and tailgate: closed",
+        title: hoodOpen && tailgateOpen ? t("hood_tailgate_open") : hoodOpen ? t("hood_open") : tailgateOpen ? t("tailgate_open") : t("hood_tailgate_closed"),
       },
     ].filter(Boolean);
 
@@ -946,11 +1229,11 @@ class BmwCardataVehicleCard extends HTMLElement {
         this._setHtml(rangeEl, `
           <div class="box range-box phev">
             <div class="range-top">
-              <div class="bar-wrap-unified ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(rangeEntity)}" title="Total Range: ${escapeHtml(totalRangeText)}">
-                <div class="bar-segment-unified ev" style="width:${evRangePercent}%;" data-entity-id="${escapeHtml(rangeElectricEntity)}" title="EV: ${escapeHtml(evRangeText)} (${socValue}%)"></div>
-                <div class="bar-segment-unified fuel" style="width:${fuelRangePercent}%;" data-entity-id="${escapeHtml(rangeFuelEntity)}" title="Fuel: ${escapeHtml(fuelRangeText)} (${fuelLevelValue}%)"></div>
+              <div class="bar-wrap-unified ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(rangeEntity)}" title="${escapeHtml(t("total_range"))}: ${escapeHtml(totalRangeText)}">
+                <div class="bar-segment-unified ev" style="width:${evRangePercent}%;" data-entity-id="${escapeHtml(rangeElectricEntity)}" title="${escapeHtml(t("ev"))}: ${escapeHtml(evRangeText)} (${socValue}%)"></div>
+                <div class="bar-segment-unified fuel" style="width:${fuelRangePercent}%;" data-entity-id="${escapeHtml(rangeFuelEntity)}" title="${escapeHtml(t("fuel"))}: ${escapeHtml(fuelRangeText)} (${fuelLevelValue}%)"></div>
               </div>
-              <div class="range-value" data-entity-id="${escapeHtml(rangeEntity)}" title="Total Range">
+              <div class="range-value" data-entity-id="${escapeHtml(rangeEntity)}" title="${escapeHtml(t("total_range"))}">
                 <ha-icon icon="mdi:arrow-left-right"></ha-icon>
                 <span>${escapeHtml(totalRangeText)}</span>
               </div>
@@ -1011,7 +1294,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     }
 
     if (showMap) {
-      this._renderMap(mapEl, hass, mapEntityId);
+      this._renderMap(mapEl, hass, mapEntityId, t);
     } else {
       this._setHtml(mapEl, "");
     }
@@ -1061,45 +1344,45 @@ class BmwCardataVehicleCard extends HTMLElement {
       const quickItems = [
         {
           icon: "mdi:map-marker",
-          label: "Location",
-          value: humanizeLocationState(read("device_tracker")?.state),
+          label: t("location"),
+          value: humanizeLocationState(read("device_tracker")?.state, t),
           entity: entities.device_tracker || "",
         },
         {
           icon: hasRange ? "mdi:arrow-left-right" : "mdi:gas-station",
-          label: hasRange ? "Range" : "Fuel",
+          label: hasRange ? t("range") : t("fuel"),
           value: primaryRangeText,
           entity: primaryRangeEntity,
         },
         {
           icon: "mdi:motion-sensor",
-          label: "Motion",
-          value: motionKnown ? (isMoving ? "Moving" : "Parked") : "—",
+          label: t("motion"),
+          value: motionKnown ? (isMoving ? t("moving") : t("parked")) : "—",
           entity: motionEntity || "",
         },
         hasCharging
           ? {
               icon: "mdi:ev-station",
-              label: "Charging",
-              value: humanizeStateValue(chargingState),
+              label: t("charging"),
+              value: humanizeStateValue(chargingState, t),
               entity: entities.charging_state || "",
             }
           : {
               icon: "mdi:fuel",
-              label: "Level",
+              label: t("level"),
               value: primaryLevelLabel,
               entity: primaryLevelEntity,
             },
         {
           icon: "mdi:car-tire-alert",
-          label: tireAlert ? `Tire ${tireLabels[lowTire.key]}` : "Tires",
+          label: tireAlert ? `${t("tire")} ${tireLabels[lowTire.key]}` : t("tires"),
           value: tireValue,
           entity: tireEntity,
           alert: tireAlert,
         },
         {
           icon: "mdi:counter",
-          label: "Mileage",
+          label: t("mileage"),
           value: formatState(read("mileage"), hass),
           entity: entities.mileage || "",
         },
@@ -1125,6 +1408,122 @@ class BmwCardataVehicleCard extends HTMLElement {
     } else {
       this._setHtml(buttonsEl, "");
     }
+
+    const leasingEl = this.shadowRoot.getElementById("leasing");
+    const leasingEntityId = typeof cfg.leasing_entity === "string" ? cfg.leasing_entity : "";
+    if (leasingEntityId) {
+      const leaseState = hass?.states?.[leasingEntityId];
+      const leaseAvailable = hasUsableState(leaseState);
+      const attr = (key) => (leaseAvailable ? attrNumber(leaseState, key) : NaN);
+      const daysRemaining = attr("days_remaining");
+      const monthsRemaining = attr("months_remaining");
+      const monthlyRemaining = attr("monthly_remaining");
+      const monthlyAverage = attr("monthly_average");
+      const deviation = attr("deviation");
+      const drivenKm = attr("actual");
+      const targetKm = attr("target");
+      const projectedDelta = leaseAvailable ? Number(leaseState.state) : NaN;
+      const projectedCost = attr("projected_cost");
+      const distanceUnit = leaseState?.attributes?.unit_of_measurement || "km";
+      const currency = hass?.config?.currency || "EUR";
+      const projectedDirection = leaseDeltaClass(projectedDelta);
+      const costDirection = leaseDeltaClass(projectedCost);
+      const plainDistance = (value) =>
+        Number.isFinite(value) ? `${Math.round(value).toLocaleString()} ${distanceUnit}` : "—";
+      const tileDefs = {
+        lease_remaining: {
+          icon: "mdi:calendar-clock",
+          label: t("lease_remaining"),
+          value: formatLeaseRemaining(daysRemaining, monthsRemaining, t),
+          cls: "",
+        },
+        monthly_budget: {
+          icon: "mdi:speedometer",
+          label: t("monthly_budget"),
+          value: plainDistance(monthlyRemaining),
+          cls: Number.isFinite(monthlyRemaining) && monthlyRemaining < 0 ? "alert" : "",
+        },
+        monthly_average: {
+          icon: "mdi:chart-timeline-variant",
+          label: t("monthly_average"),
+          value: plainDistance(monthlyAverage),
+          cls: "",
+        },
+        km_balance: {
+          icon: "mdi:map-marker-distance",
+          label: t("km_balance"),
+          value: formatSignedDistance(deviation, distanceUnit),
+          cls: leaseDeltaClass(deviation),
+        },
+        driven: {
+          icon: "mdi:counter",
+          label: t("driven"),
+          value: plainDistance(drivenKm),
+          cls: "",
+        },
+        target: {
+          icon: "mdi:bullseye-arrow",
+          label: t("target_today"),
+          value: plainDistance(targetKm),
+          cls: "",
+        },
+        total: {
+          icon: "mdi:road-variant",
+          label: t("total_distance"),
+          value: plainDistance(attr("total_distance")),
+          cls: "",
+        },
+        lease_start: {
+          icon: "mdi:calendar-start",
+          label: t("lease_start"),
+          value: formatLeaseDate(leaseState?.attributes?.lease_start, lang),
+          cls: "",
+        },
+        lease_end: {
+          icon: "mdi:calendar-end",
+          label: t("lease_end"),
+          value: formatLeaseDate(leaseState?.attributes?.lease_end, lang),
+          cls: "",
+        },
+        projected: {
+          icon: "mdi:chart-line",
+          // Directional label ("excess"/"under") carries the sign, so the value goes unsigned;
+          // neutral/unknown keeps the generic label with the signed value.
+          label: projectedDirection === "alert" ? t("excess_km") : projectedDirection === "good" ? t("shortfall_km") : t("projected_at_end"),
+          value: projectedDirection ? formatAbsDistance(projectedDelta, distanceUnit) : formatSignedDistance(projectedDelta, distanceUnit),
+          cls: projectedDirection,
+        },
+        cost: {
+          icon: "mdi:cash",
+          label: costDirection === "alert" ? t("payment_due") : costDirection === "good" ? t("refund") : t("cost_refund"),
+          value: costDirection ? formatLeaseCost(Math.abs(projectedCost), currency) : formatLeaseCost(projectedCost, currency),
+          cls: costDirection,
+        },
+      };
+      const selectedTiles = Array.isArray(cfg.leasing_tiles) && cfg.leasing_tiles.length
+        ? cfg.leasing_tiles.filter((key) => tileDefs[key])
+        : DEFAULT_LEASE_TILES;
+      const leasingItems = selectedTiles.map((key) => tileDefs[key]);
+      this._setHtml(leasingEl, `
+        <div class="buttons-grid">
+          ${leasingItems
+            .map(
+              (item) => `
+            <button class="btn-item${item.cls ? ` ${item.cls}` : ""}" data-entity-id="${escapeHtml(leasingEntityId)}" title="${escapeHtml(leasingEntityId)}">
+              <div class="btn-icon"><ha-icon icon="${item.icon}"></ha-icon></div>
+              <div class="btn-text">
+                <div class="btn-title">${escapeHtml(item.label)}</div>
+                <div class="btn-value">${escapeHtml(item.value)}</div>
+              </div>
+            </button>
+          `
+            )
+            .join("")}
+        </div>
+      `);
+    } else {
+      this._setHtml(leasingEl, "");
+    }
   }
 
   _renderMessage(message) {
@@ -1137,6 +1536,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const imageEl = this.shadowRoot.getElementById("images");
     const mapEl = this.shadowRoot.getElementById("mini_map");
     const buttonsEl = this.shadowRoot.getElementById("buttons");
+    const leasingEl = this.shadowRoot.getElementById("leasing");
 
     nameEl.textContent = "BMW CarData";
     vinEl.textContent = message;
@@ -1145,6 +1545,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     this._setHtml(imageEl, "");
     this._setHtml(mapEl, "");
     this._setHtml(buttonsEl, "");
+    this._setHtml(leasingEl, "");
   }
 }
 

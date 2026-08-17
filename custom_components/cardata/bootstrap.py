@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -549,6 +550,10 @@ async def async_seed_telematic_data(
         if merged_data:
             await coordinator.async_handle_message({"vin": vin, "data": merged_data})
             coordinator.record_telematic_poll(vin)
+            # The seed is a successful telematic API call, so the diagnostic
+            # sensor should show it instead of staying unknown until the first
+            # scheduled poll succeeds.
+            coordinator.last_telematic_api_at = datetime.now(UTC)
             created = True
             _LOGGER.debug(
                 "Bootstrap seeded %d descriptor(s) for VIN %s from %d container(s)",

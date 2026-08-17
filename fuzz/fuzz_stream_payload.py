@@ -24,12 +24,19 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import asyncio
+import logging
 import os
 import sys
 import types
 from datetime import datetime
+from enum import StrEnum
 
 import atheris
+
+# Rejected input warns on nearly every iteration, which buried the CI job log
+# under gigabytes. Disabled globally because the effective logger name differs
+# with each harness's import style.
+logging.disable(logging.CRITICAL)
 
 # Default fuzz duration in seconds (4 hours) - exits cleanly when reached
 DEFAULT_MAX_TIME = 4 * 60 * 60
@@ -44,6 +51,7 @@ def _install_homeassistant_stubs() -> None:
         return
 
     homeassistant = types.ModuleType("homeassistant")
+    const = types.ModuleType("homeassistant.const")
     core = types.ModuleType("homeassistant.core")
     helpers = types.ModuleType("homeassistant.helpers")
     dispatcher = types.ModuleType("homeassistant.helpers.dispatcher")
@@ -51,6 +59,28 @@ def _install_homeassistant_stubs() -> None:
     entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
     util = types.ModuleType("homeassistant.util")
     util_dt = types.ModuleType("homeassistant.util.dt")
+    unit_conversion = types.ModuleType("homeassistant.util.unit_conversion")
+
+    class UnitOfLength(StrEnum):
+        # Must stay a StrEnum with these exact values: the coordinator compares
+        # raw BMW unit strings such as "km" against these members.
+        KILOMETERS = "km"
+        MILES = "mi"
+
+    class DistanceConverter:
+        # Only km and mi are reachable from the coordinator, so anything else
+        # is stub drift and should be loud rather than silently wrong.
+        _KM_PER_MILE = 1.609344
+
+        @staticmethod
+        def convert(value: float, from_unit: str | None, to_unit: str | None) -> float:
+            if from_unit == to_unit:
+                return value
+            if from_unit == UnitOfLength.MILES and to_unit == UnitOfLength.KILOMETERS:
+                return value * DistanceConverter._KM_PER_MILE
+            if from_unit == UnitOfLength.KILOMETERS and to_unit == UnitOfLength.MILES:
+                return value / DistanceConverter._KM_PER_MILE
+            raise ValueError(f"unsupported conversion: {from_unit} to {to_unit}")
 
     class HomeAssistant:
         def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -93,16 +123,21 @@ def _install_homeassistant_stubs() -> None:
     event.async_call_later = async_call_later
     util_dt.parse_datetime = parse_datetime
     util.dt = util_dt
+    util.unit_conversion = unit_conversion
+    const.UnitOfLength = UnitOfLength
+    unit_conversion.DistanceConverter = DistanceConverter
     entity_registry.async_get = async_get_entity_registry
     entity_registry.async_entries_for_config_entry = async_entries_for_config_entry
     helpers.dispatcher = dispatcher
     helpers.event = event
     helpers.entity_registry = entity_registry
+    homeassistant.const = const
     homeassistant.core = core
     homeassistant.helpers = helpers
     homeassistant.util = util
 
     sys.modules["homeassistant"] = homeassistant
+    sys.modules["homeassistant.const"] = const
     sys.modules["homeassistant.core"] = core
     sys.modules["homeassistant.helpers"] = helpers
     sys.modules["homeassistant.helpers.dispatcher"] = dispatcher
@@ -110,6 +145,7 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.helpers.entity_registry"] = entity_registry
     sys.modules["homeassistant.util"] = util
     sys.modules["homeassistant.util.dt"] = util_dt
+    sys.modules["homeassistant.util.unit_conversion"] = unit_conversion
 
 
 def _install_cardata_package() -> None:
@@ -138,6 +174,15 @@ KNOWN_DESCRIPTORS = list(const.HV_BATTERY_DESCRIPTORS) + [
     const.LOCATION_ALTITUDE_DESCRIPTOR,
     "vehicle.vehicleIdentification.basicVehicleData",
     "vehicle.isMoving",
+]
+
+# Syntactically valid VINs (17 chars, no I/O/Q), reused from the tests. The
+# coordinator drops every message whose VIN fails that format check, so the
+# fuzzer needs well formed VINs to reach message ingestion at all.
+VALID_VINS = [
+    "WBA12345678901234",
+    "WBY00000000006306",
+    "WBA00000000008448",
 ]
 
 
@@ -194,6 +239,12 @@ def _consume_unit(fdp: atheris.FuzzedDataProvider):
     if fdp.ConsumeBool():
         return choices[fdp.ConsumeIntInRange(0, len(choices) - 1)]
     return _consume_text(fdp, 8)
+
+
+def _consume_vin(fdp: atheris.FuzzedDataProvider) -> str:
+    if fdp.ConsumeBool():
+        return VALID_VINS[fdp.ConsumeIntInRange(0, len(VALID_VINS) - 1)]
+    return _consume_text(fdp, 20)
 
 
 def _consume_descriptor(fdp: atheris.FuzzedDataProvider) -> str:
@@ -256,6 +307,25 @@ def _existing_max_total_time(args):
     return existing
 
 
+def _check_ingestion_reachable() -> None:
+    """Fail loudly if the coordinator drops the seeded VINs.
+
+    async_handle_message discards a message whose VIN fails the format check,
+    and it does so without the fuzzer noticing. A pool that drifted out of the
+    accepted format would leave a whole run exercising the rejection path only,
+    which is how this harness spent every night doing nothing.
+    """
+    coordinator = coordinator_module.CardataCoordinator(hass=HomeAssistant(_LOOP), entry_id="reach-check")
+    vin = VALID_VINS[0]
+    descriptor = "vehicle.fuzz.reachCheck"
+    _LOOP.run_until_complete(coordinator.async_handle_message({"vin": vin, "data": {descriptor: {"value": 1}}}))
+    if coordinator.get_state(vin, descriptor) is None:
+        raise RuntimeError(f"coordinator ingestion unreachable: VIN {vin} was dropped")
+
+
+_check_ingestion_reachable()
+
+
 def TestOneInput(data: bytes) -> None:
     fdp = atheris.FuzzedDataProvider(data)
     hass = HomeAssistant(_LOOP)
@@ -263,7 +333,7 @@ def TestOneInput(data: bytes) -> None:
 
     message_count = fdp.ConsumeIntInRange(1, 3)
     for _ in range(message_count):
-        vin = _consume_text(fdp, 20) or "FUZZVIN1234567890"
+        vin = _consume_vin(fdp)
         descriptor_count = fdp.ConsumeIntInRange(0, 40)
         data_map = {}
         for _ in range(descriptor_count):
