@@ -265,9 +265,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         # energy_storage only allows MEASUREMENT (never total_increasing),
         # unlike plain "energy" which is gated on unit alone below and would
         # be invalid here.
-        if getattr(self, "_attr_device_class", None) == getattr(
-            SensorDeviceClass, "ENERGY_STORAGE", object()
-        ):
+        if getattr(self, "_attr_device_class", None) == getattr(SensorDeviceClass, "ENERGY_STORAGE", object()):
             return SensorStateClass.MEASUREMENT
 
         # Check unit of measurement
