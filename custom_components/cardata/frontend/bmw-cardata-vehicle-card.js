@@ -186,6 +186,9 @@ const TRANSLATIONS = {
     "editor.show_indicators": "Show indicator row",
     "editor.show_range": "Show SOC and range bar",
     "editor.show_image": "Show vehicle image",
+    "editor.image_crop_top": "Image crop top",
+    "editor.image_crop_bottom": "Image crop bottom",
+    "editor.image_zoom": "Image zoom",
     "editor.show_map": "Show mini map",
     "editor.map_height": "Mini map height",
     "editor.show_buttons": "Show quick info buttons",
@@ -275,6 +278,9 @@ const TRANSLATIONS = {
     "editor.show_indicators": "Statuszeile anzeigen",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
     "editor.show_image": "Fahrzeugbild anzeigen",
+    "editor.image_crop_top": "Bild oben zuschneiden",
+    "editor.image_crop_bottom": "Bild unten zuschneiden",
+    "editor.image_zoom": "Bildzoom",
     "editor.show_map": "Mini-Karte anzeigen",
     "editor.map_height": "Höhe der Mini-Karte",
     "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
@@ -436,6 +442,42 @@ class BmwCardataVehicleCard extends HTMLElement {
         { name: "show_indicators", selector: { boolean: {} } },
         { name: "show_range", selector: { boolean: {} } },
         { name: "show_image", selector: { boolean: {} } },
+        {
+          name: "image_crop_top",
+          selector: {
+            number: {
+              mode: "box",
+              min: 0,
+              max: 40,
+              step: 1,
+              unit_of_measurement: "%",
+                    },
+          },
+        },
+        {
+          name: "image_crop_bottom",
+          selector: {
+            number: {
+              mode: "box",
+              min: 0,
+              max: 40,
+              step: 1,
+              unit_of_measurement: "%",
+            },
+          },
+        },
+        {
+          name: "image_zoom",
+          selector: {
+            number: {
+              mode: "box",
+              min: 50,
+              max: 200,
+              step: 5,
+              unit_of_measurement: "%",
+            },
+          },
+        },		
         { name: "show_map", selector: { boolean: {} } },
         {
           name: "map_height",
@@ -724,6 +766,9 @@ class BmwCardataVehicleCard extends HTMLElement {
             object-position: center;
             background: transparent;
             transform-origin: center center;
+            transform: scale(var(--image-zoom, 1));
+            margin-top: calc(-1 * var(--image-crop-top, 0%));
+            margin-bottom: calc(-1 * var(--image-crop-bottom, 0%));
           }
           .image.charging img {
             animation: chargingImagePulse 2.2s ease-in-out infinite;
@@ -1047,6 +1092,22 @@ class BmwCardataVehicleCard extends HTMLElement {
     const showMap = boolConfig(cfg, "show_map", true);
     const showButtons = boolConfig(cfg, "show_buttons", true);
     const mapEntityId = entities.device_tracker;
+
+    const imageCropTop = Number.isFinite(Number(cfg.image_crop_top))
+      ? Number(cfg.image_crop_top)
+      : 0;
+
+    const imageCropBottom = Number.isFinite(Number(cfg.image_crop_bottom))
+      ? Number(cfg.image_crop_bottom)
+      : 0;
+
+    const imageZoom = Number.isFinite(Number(cfg.image_zoom))
+      ? Number(cfg.image_zoom)
+      : 100;
+
+    imageEl.style.setProperty("--image-crop-top", `${imageCropTop}%`);
+    imageEl.style.setProperty("--image-crop-bottom", `${imageCropBottom}%`);
+    imageEl.style.setProperty("--image-zoom", imageZoom / 100);
 
     mapEl.style.setProperty("--map-height", `${mapHeightConfig(cfg)}px`);
 
