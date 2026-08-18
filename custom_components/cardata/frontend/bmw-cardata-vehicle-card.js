@@ -1380,13 +1380,15 @@ class BmwCardataVehicleCard extends HTMLElement {
               value: primaryLevelLabel,
               entity: primaryLevelEntity,
             },
-        {
-          icon: "mdi:car-tire-alert",
-          label: tireAlert ? `${t("tire")} ${tireLabels[lowTire.key]}` : t("tires"),
-          value: tireValue,
-          entity: tireEntity,
-          alert: tireAlert,
-        },
+        tireEntries.length
+          ? {
+              icon: "mdi:car-tire-alert",
+              label: tireAlert ? `${t("tire")} ${tireLabels[lowTire.key]}` : t("tires"),
+              value: tireValue,
+              entity: tireEntity,
+              alert: tireAlert,
+            }
+          : null,
         {
           icon: "mdi:counter",
           label: t("mileage"),
