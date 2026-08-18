@@ -35,6 +35,7 @@ from custom_components.cardata.const import (
     DESC_CHARGING_PORT_PLUGGED,
     DESC_CHARGING_PORT_STATUS,
     DESC_CHARGING_POWER,
+    DESC_CHARGING_STATUS,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.soc_prediction import SOCPredictor
@@ -42,8 +43,8 @@ from custom_components.cardata.soc_types import PHASES_ASSUMED, PHASES_CARRIED
 from custom_components.cardata.soc_wiring import (
     _apply_ac_power,
     _carried_over_phases,
+    _charge_phases,
     _descriptor_phases,
-    _plug_in_phases,
 )
 
 
@@ -89,8 +90,8 @@ class TestDescriptorPhases:
         assert _descriptor_phases(_state(None)) is None
 
 
-class TestPlugInPhases:
-    """Tests for _plug_in_phases – rejecting phase counts from an earlier plug-in."""
+class TestChargePhases:
+    """Tests for _charge_phases – rejecting phase counts from an earlier charge."""
 
     PLUGGED_IN = "2026-08-15T17:43:17Z"
     LAST_CHARGE_END = "2026-08-15T13:47:55Z"
@@ -102,7 +103,7 @@ class TestPlugInPhases:
             DESC_CHARGING_PHASES: _state("1-PHASES", self.LAST_CHARGE_END),
             DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
         }
-        assert _plug_in_phases(vehicle_state) is None
+        assert _charge_phases(vehicle_state) is None
 
     def test_reading_from_the_same_message_is_accepted(self):
         """A phase count reported as the cable goes in belongs to this charge."""
@@ -110,7 +111,7 @@ class TestPlugInPhases:
             DESC_CHARGING_PHASES: _state("3-PHASES", self.PLUGGED_IN),
             DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
         }
-        assert _plug_in_phases(vehicle_state) == 3
+        assert _charge_phases(vehicle_state) == 3
 
     def test_reading_from_mid_charge_survives_a_pause(self):
         """The plug stays connected across a pause, so the phase count stays valid."""
@@ -118,7 +119,7 @@ class TestPlugInPhases:
             DESC_CHARGING_PHASES: _state("3-PHASES", self.MID_CHARGE),
             DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
         }
-        assert _plug_in_phases(vehicle_state) == 3
+        assert _charge_phases(vehicle_state) == 3
 
     def test_disconnected_port_falls_through_to_the_next_signal(self):
         """A contradictory port state must not become the plug-in reference."""
@@ -127,7 +128,7 @@ class TestPlugInPhases:
             DESC_CHARGING_PORT_STATUS: _state("DISCONNECTED", self.LAST_CHARGE_END),
             DESC_CHARGING_PORT_PLUGGED: _state(True, self.PLUGGED_IN),
         }
-        assert _plug_in_phases(vehicle_state) == 3
+        assert _charge_phases(vehicle_state) == 3
 
     def test_plug_event_is_used_when_no_port_state_is_reported(self):
         """plugEventId carries the plug-in moment for vehicles without port status."""
@@ -135,12 +136,12 @@ class TestPlugInPhases:
             DESC_CHARGING_PHASES: _state("1-PHASES", self.LAST_CHARGE_END),
             DESC_CHARGING_PORT_PLUG_EVENT: _state(42, self.PLUGGED_IN),
         }
-        assert _plug_in_phases(vehicle_state) is None
+        assert _charge_phases(vehicle_state) is None
 
     def test_no_plug_state_keeps_the_raw_value(self):
         """Vehicles reporting no plug state at all behave as they did before."""
         vehicle_state = {DESC_CHARGING_PHASES: _state("1-PHASES", self.LAST_CHARGE_END)}
-        assert _plug_in_phases(vehicle_state) == 1
+        assert _charge_phases(vehicle_state) == 1
 
     def test_missing_timestamps_keep_the_raw_value(self):
         """Without timestamps there is nothing to compare, so nothing is discarded."""
@@ -148,7 +149,7 @@ class TestPlugInPhases:
             DESC_CHARGING_PHASES: _state("3-PHASES"),
             DESC_CHARGING_PORT_STATUS: _state("CONNECTED"),
         }
-        assert _plug_in_phases(vehicle_state) == 3
+        assert _charge_phases(vehicle_state) == 3
 
     def test_mixed_naive_and_aware_timestamps_keep_the_raw_value(self):
         """An uncomparable pair must not silently discard the phase count."""
@@ -156,11 +157,68 @@ class TestPlugInPhases:
             DESC_CHARGING_PHASES: _state("3-PHASES", "2026-08-15T17:55:02"),
             DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
         }
-        assert _plug_in_phases(vehicle_state) == 3
+        assert _charge_phases(vehicle_state) == 3
 
     def test_absent_descriptor(self):
         """Returns None when the vehicle never reported a phase count."""
-        assert _plug_in_phases({}) is None
+        assert _charge_phases({}) is None
+
+
+class TestChargeStartReference:
+    """Tests for the charge start as the reference a phase count is judged against."""
+
+    PLUGGED_IN = "2026-08-17T18:03:43Z"
+    CHARGE_END = "2026-08-17T18:06:45Z"
+    CHARGE_START = "2026-08-17T18:08:46Z"
+
+    def _state_at(self, phases, phases_at, status="CHARGINGACTIVE", status_at=None):
+        """Build a vehicle state for a cable that never left the socket."""
+        return {
+            DESC_CHARGING_PHASES: _state(phases, phases_at),
+            # BMW re-stamps the port as connected at every start and stop.
+            DESC_CHARGING_PORT_STATUS: _state("CONNECTED", status_at or self.CHARGE_START),
+            DESC_CHARGING_STATUS: _state(status, status_at or self.CHARGE_START),
+        }
+
+    def test_reset_sharing_the_plug_timestamp_is_rejected(self):
+        """The end-of-charge reset is stamped with the plug state it would beat."""
+        vehicle_state = self._state_at("1-PHASES", self.CHARGE_END)
+        vehicle_state[DESC_CHARGING_PORT_STATUS] = _state("CONNECTED", self.CHARGE_END)
+        assert _charge_phases(vehicle_state) is None
+
+    def test_count_reported_as_the_charge_starts_is_accepted(self):
+        """BMW stamps the real count at the transition, so equal timestamps count."""
+        assert _charge_phases(self._state_at("3-PHASES", self.CHARGE_START)) == 3
+
+    def test_count_reported_during_the_charge_is_accepted(self):
+        """A reading taken after the charge began describes it."""
+        assert _charge_phases(self._state_at("3-PHASES", "2026-08-17T18:20:00Z")) == 3
+
+    def test_count_from_an_earlier_charge_is_carried_not_reported(self):
+        """A three phase count from the last charge is a guess, not a report."""
+        vehicle_state = self._state_at("3-PHASES", self.CHARGE_END)
+        assert _charge_phases(vehicle_state) is None
+        assert _carried_over_phases(vehicle_state) == 3
+
+    def test_idle_status_falls_back_to_the_plug_in(self):
+        """With no charge running there is no start to measure against."""
+        vehicle_state = self._state_at(
+            "3-PHASES",
+            "2026-08-17T18:20:00Z",
+            status="NOCHARGING",
+            status_at=self.CHARGE_END,
+        )
+        vehicle_state[DESC_CHARGING_PORT_STATUS] = _state("CONNECTED", self.PLUGGED_IN)
+        assert _charge_phases(vehicle_state) == 3
+
+    def test_status_without_a_timestamp_falls_back_to_the_plug_in(self):
+        """A status that carries no timestamp cannot be a reference."""
+        vehicle_state = {
+            DESC_CHARGING_PHASES: _state("1-PHASES", self.CHARGE_END),
+            DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.CHARGE_START),
+            DESC_CHARGING_STATUS: _state("CHARGINGACTIVE"),
+        }
+        assert _charge_phases(vehicle_state) is None
 
 
 class TestApplyAcPower:

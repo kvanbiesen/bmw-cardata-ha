@@ -148,34 +148,67 @@ def _plug_in_timestamp(vehicle_state: dict[str, DescriptorState]) -> datetime | 
     return _descriptor_timestamp(vehicle_state.get(DESC_CHARGING_PORT_PLUG_EVENT))
 
 
-def _belongs_to_plug_in(state: DescriptorState, vehicle_state: dict[str, DescriptorState]) -> bool:
-    """Whether a reading was taken since the cable went in.
+def _is_at_or_after(state: DescriptorState, reference: datetime | None) -> bool:
+    """Whether a reading was taken at or after a reference moment.
 
-    Vehicles that report no plug state, or no usable timestamps, get the benefit
-    of the doubt so their behaviour does not change.
+    A reading or a reference without a usable timestamp gets the benefit of the
+    doubt, so vehicles that report neither keep the behaviour they had.
     """
-    plugged_at = _plug_in_timestamp(vehicle_state)
     reported_at = _descriptor_timestamp(state)
-    if plugged_at is None or reported_at is None:
+    if reference is None or reported_at is None:
         return True
     try:
-        return reported_at >= plugged_at
+        return reported_at >= reference
     except TypeError:
         # Naive and aware timestamps mixed: keep the value rather than discard
         # data we cannot compare.
         return True
 
 
-def _plug_in_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
-    """Return the phase count only when it belongs to the current plug-in.
+def _belongs_to_plug_in(state: DescriptorState, vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Whether a reading was taken since the cable went in."""
+    return _is_at_or_after(state, _plug_in_timestamp(vehicle_state))
 
-    BMW resets phaseNumber to '1-PHASES' when a charge ends and only re-sends it
-    when it changes, so a reading older than the plug-in says nothing about the
-    charge now running.  Trusting it turns a 3-phase charge into a 1-phase one
-    and divides every derived power figure by three.
+
+def _charge_start_timestamp(vehicle_state: dict[str, DescriptorState]) -> datetime | None:
+    """Return when the charge now running began, as reported by BMW.
+
+    Only a status that says the car is charging qualifies.  The timestamp on any
+    other status marks the end of the last charge rather than the start of one.
+    """
+    state = vehicle_state.get(DESC_CHARGING_STATUS)
+    if state is None:
+        return None
+    if str(state.value or "").strip().upper() not in SOCPredictor.CHARGING_ACTIVE_STATES:
+        return None
+    return _descriptor_timestamp(state)
+
+
+def _phase_count_reference(vehicle_state: dict[str, DescriptorState]) -> datetime | None:
+    """The moment a phase count has to be at or after to describe this charge.
+
+    BMW resets phaseNumber to '1-PHASES' when a charge ends and reports the real
+    count when the next charge starts.  It re-stamps the charge port as CONNECTED
+    at both of those moments even though the cable never moved, so the plug-in
+    cannot tell the two apart: the reset carries the same timestamp as the plug
+    state it would be compared against, and an equal timestamp reads as current.
+    The start of the charge now running is the line that separates them.
+
+    Vehicles that report no usable charging status timestamp fall back to the
+    plug-in, which is as much as is known about them.
+    """
+    return _charge_start_timestamp(vehicle_state) or _plug_in_timestamp(vehicle_state)
+
+
+def _charge_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
+    """Return the phase count only when it describes the charge now running.
+
+    A count from before this charge began says nothing about it, and BMW leaves
+    one phase behind at the end of every charge.  Trusting that turns a 3-phase
+    charge into a 1-phase one and divides every derived power figure by three.
     """
     state = vehicle_state.get(DESC_CHARGING_PHASES)
-    if state is None or not _belongs_to_plug_in(state, vehicle_state):
+    if state is None or not _is_at_or_after(state, _phase_count_reference(vehicle_state)):
         return None
     return _descriptor_phases(state)
 
@@ -189,7 +222,7 @@ def _carried_over_phases(vehicle_state: dict[str, DescriptorState]) -> int | Non
     guess than assuming a single phase.
     """
     state = vehicle_state.get(DESC_CHARGING_PHASES)
-    if state is None or _belongs_to_plug_in(state, vehicle_state):
+    if state is None or _is_at_or_after(state, _phase_count_reference(vehicle_state)):
         return None
     phases = _descriptor_phases(state)
     return phases if phases and phases > 1 else None
@@ -262,7 +295,7 @@ def _apply_ac_power(
     aux_kw = _get_aux_kw()
     voltage = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_VOLTAGE))
     current = _descriptor_float(vehicle_state.get(DESC_CHARGING_AC_AMPERE))
-    phases = _plug_in_phases(vehicle_state)
+    phases = _charge_phases(vehicle_state)
 
     if voltage and current and phases is not None:
         return soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)

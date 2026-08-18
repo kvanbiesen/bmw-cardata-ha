@@ -401,7 +401,7 @@ Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or volt
 
 ### Charging Phases
 
-For AC charging the power is worked out from the voltage and current BMW reports, multiplied by the number of phases in use. BMW resets `phaseNumber` to `1-PHASES` when a charge ends and only re-sends it when it changes, so a new charge often starts with no usable value. Any reading older than the moment the cable went in is therefore discarded, and the charge is modelled at a single phase until something better arrives.
+For AC charging the power is worked out from the voltage and current BMW reports, multiplied by the number of phases in use. BMW resets `phaseNumber` to `1-PHASES` when a charge ends and reports the real count when the next charge starts, so a reading older than the start of the charge now running says nothing about it and is discarded. The cable is no help in telling the two apart, since BMW re-stamps the charge port as connected at every start and stop without it ever moving. Until something better arrives the charge is modelled at a single phase.
 
 A count left over from an earlier charge is not simply thrown away. BMW resets `phaseNumber` to `1-PHASES` at the end of a charge, so a leftover of one says nothing, but anything higher was reported while a real charge was running, most likely at the same wallbox, and is a better opening guess than assuming a single phase. It is held as the integration's own rather than as BMW's, so the measurement below can take it back when this charge turns out to be a different supply.
 
@@ -409,7 +409,7 @@ If BMW stays silent, the battery itself gives the answer away. Inverting the mod
 
 Raising the count is the risky direction, so withdrawing one is deliberately easier: a single window is enough, and the withdrawal re-anchors the prediction to the BMW reading that disproved it. Putting only the phase count back would fix the rate while leaving the level, since during a charge the prediction never comes down of its own accord, so an inflated value would stay on screen for hours.
 
-Anything BMW reports for the current plug-in always wins over an inferred value, and a session whose phase count changed partway through is excluded from efficiency learning, since its energy was integrated under two different assumptions.
+Anything BMW reports for the charge now running always wins over an inferred value, and a session whose phase count changed partway through is excluded from efficiency learning, since its energy was integrated under two different assumptions.
 
 The inference deliberately holds back where the evidence is not clear cut, in which case the charge simply stays modelled at one phase as before:
 
@@ -422,7 +422,7 @@ The inference deliberately holds back where the evidence is not clear cut, in wh
 - A battery capacity set by hand that BMW's own reported figure contradicts by more than 20%, since the result scales directly with it
 - Plug-in hybrids, which almost never have a three-phase charger
 
-The diagnostic sensor attributes report `phases_source` alongside `phases`, showing whether the count was `reported` by BMW, `carried` over from an earlier charge, `derived` from the energy, or merely `assumed`, so a count the integration worked out is never mistaken for one BMW gave.
+The `Charging Efficiency Matrix` sensor, which is hidden by default and can be enabled in the device settings, reports `phases_source` alongside `phases`: whether the count was `reported` by BMW, `carried` over from an earlier charge, `derived` from the energy, or merely `assumed`, so a count the integration worked out is never mistaken for one BMW gave. The charging phases sensor itself only ever repeats what BMW reports and is not written by any of this.
 
 ### How Learning Works
 
