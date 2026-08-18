@@ -235,7 +235,13 @@ def _install_homeassistant_stubs() -> None:
     device_tracker.SourceType = SourceType
     device_tracker.TrackerEntity = TrackerEntity
     config_entries.ConfigEntry = ConfigEntry
+    def callback(func):
+        """Mark a function as safe to run inside the event loop, as HA's does."""
+        func._hass_callback = True
+        return func
+
     core.HomeAssistant = HomeAssistant
+    core.callback = callback
     dispatcher.async_dispatcher_connect = async_dispatcher_connect
     dispatcher.async_dispatcher_send = async_dispatcher_send
     event.async_call_later = async_call_later

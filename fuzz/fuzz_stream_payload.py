@@ -118,7 +118,13 @@ def _install_homeassistant_stubs() -> None:
         except ValueError:
             return None
 
+    def callback(func):
+        """Mark a function as safe to run inside the event loop, as HA's does."""
+        func._hass_callback = True
+        return func
+
     core.HomeAssistant = HomeAssistant
+    core.callback = callback
     dispatcher.async_dispatcher_send = async_dispatcher_send
     event.async_call_later = async_call_later
     util_dt.parse_datetime = parse_datetime
