@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.const import UnitOfLength
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.event import async_call_later
@@ -50,6 +50,7 @@ from .const import (
     LOCATION_LATITUDE_DESCRIPTOR,
     LOCATION_LONGITUDE_DESCRIPTOR,
     MAGIC_SOC_DESCRIPTOR,
+    PHASE_POLL_DELAY_SECONDS,
     PREDICTED_SOC_DESCRIPTOR,
 )
 from .coordinator_housekeeping import (
@@ -75,6 +76,7 @@ from .soc_wiring import (
     get_magic_soc as _sw_get_magic_soc,
     get_magic_soc_attributes as _sw_get_magic_soc_attrs,
     get_predicted_soc as _sw_get_predicted_soc,
+    needs_phase_count_poll,
     process_soc_descriptors,
 )
 from .units import normalize_unit
@@ -120,6 +122,8 @@ class CardataCoordinator:
 
     # Debouncing and pending update management
     _update_debounce_handle: Callable[[], None] | None = field(default=None, init=False)
+    # VIN -> pending phase count poll, cancelled if the charge restarts first
+    _phase_poll_handles: dict[str, Callable[[], None]] = field(default_factory=dict, init=False)
     _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _pending_manager: UpdateBatcher = field(default_factory=UpdateBatcher, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
@@ -945,6 +949,50 @@ class CardataCoordinator:
 
         return abs(comparable_value - old_value) >= self._MIN_CHANGE_THRESHOLD
 
+    def schedule_phase_count_poll(self, vin: str) -> None:
+        """Ask BMW for the AC phase count shortly after a charge starts.
+
+        Some vehicles never send phaseNumber over the stream, and BMW resets it
+        to one phase when a charge ends, so the count on hand when the next
+        charge starts is the one the last charge left behind and only a poll
+        replaces it.  A charge that already knows its count needs nothing, which
+        is checked again when the request falls due: a vehicle that does report
+        the count has done so long before then.
+
+        The request is deferred rather than made at once because BMW answers it
+        from its own snapshot of the vehicle, which lags the transition.  The
+        per-VIN cooldown in request_trip_poll still applies, so a wallbox
+        flapping between start and stop cannot spend the daily quota on this.
+        """
+        if not needs_phase_count_poll(self.data.get(vin, {})):
+            return
+
+        handle = self._phase_poll_handles.pop(vin, None)
+        if handle is not None:
+            handle()
+
+        @callback
+        def _request(_now: datetime) -> None:
+            self._phase_poll_handles.pop(vin, None)
+            if not self._soc_predictor.is_charging(vin):
+                return
+            # A phase count means nothing to a DC charge, and the method is
+            # settled by now even when it arrived after the status did.
+            if self._soc_predictor.get_charging_method(vin) == "DC":
+                return
+            if not needs_phase_count_poll(self.data.get(vin, {})):
+                return
+            runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
+            if runtime is None:
+                return
+            _LOGGER.debug(
+                "No phase count for the charge running on %s, requesting API poll",
+                redact_vin(vin),
+            )
+            runtime.request_trip_poll(vin, force=True)
+
+        self._phase_poll_handles[vin] = async_call_later(self.hass, PHASE_POLL_DELAY_SECONDS, _request)
+
     async def _async_schedule_debounced_update(self) -> None:
         """Schedule debounced coordinator update."""
         async with self._debounce_lock:
@@ -1083,6 +1131,10 @@ class CardataCoordinator:
             except asyncio.CancelledError:
                 pass
             self.watchdog_task = None
+
+        for handle in self._phase_poll_handles.values():
+            handle()
+        self._phase_poll_handles.clear()
 
         async with self._debounce_lock:
             if self._update_debounce_handle is not None:

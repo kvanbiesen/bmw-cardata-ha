@@ -228,6 +228,16 @@ def _carried_over_phases(vehicle_state: dict[str, DescriptorState]) -> int | Non
     return phases if phases and phases > 1 else None
 
 
+def needs_phase_count_poll(vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Whether the charge now running has no phase count to work from.
+
+    True means every power figure for this charge is being modelled on a single
+    phase because nothing better is known, which is worth an API call to settle
+    on the vehicles that only report the count when asked.
+    """
+    return _charge_phases(vehicle_state) is None
+
+
 def _capacity_is_trusted(capacity_kwh: float, vehicle_state: dict[str, DescriptorState]) -> bool:
     """Whether the battery capacity is fit to infer a phase count from.
 
@@ -753,6 +763,7 @@ def process_soc_descriptors(
                 if soc_predictor.is_charging(vin):
                     anchor_soc_session(soc_predictor, magic_soc_pred, vin, vehicle_state, manual_cap)
                     end_driving_session(magic_soc_pred, vin, vehicle_state)
+                    coordinator.schedule_phase_count_poll(vin)
                 elif was_charging:
                     end_soc_session(soc_predictor, vin, vehicle_state, coordinator._last_predicted_soc_sent)
                     runtime = coordinator.hass.data.get(DOMAIN, {}).get(coordinator.entry_id)

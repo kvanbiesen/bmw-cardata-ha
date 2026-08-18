@@ -108,6 +108,12 @@ BOOTSTRAP_COMPLETE = "bootstrap_complete"
 TARGET_DAILY_POLLS = 24
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 DEFAULT_TRIP_POLL_COOLDOWN_MINUTES = 10  # Default cooldown between trip-end polls
+# How long to wait after a charge starts before asking the API for the phase
+# count, when the vehicle did not report one.  The poll is answered from BMW's
+# own snapshot of the vehicle, which lags the transition by a few seconds; one
+# that overtook it would write the state from before the charge over the live
+# one and end the session that just started.
+PHASE_POLL_DELAY_SECONDS = 60
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"

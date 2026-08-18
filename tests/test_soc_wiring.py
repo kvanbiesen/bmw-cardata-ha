@@ -45,6 +45,7 @@ from custom_components.cardata.soc_wiring import (
     _carried_over_phases,
     _charge_phases,
     _descriptor_phases,
+    needs_phase_count_poll,
 )
 
 
@@ -219,6 +220,38 @@ class TestChargeStartReference:
             DESC_CHARGING_STATUS: _state("CHARGINGACTIVE"),
         }
         assert _charge_phases(vehicle_state) is None
+
+
+class TestNeedsPhaseCountPoll:
+    """Tests for the decision to ask BMW for a phase count."""
+
+    CHARGE_END = "2026-08-17T18:06:45Z"
+    CHARGE_START = "2026-08-17T18:08:46Z"
+
+    def _charging(self, phases=None, phases_at=None):
+        vehicle_state = {
+            DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.CHARGE_START),
+            DESC_CHARGING_STATUS: _state("CHARGINGACTIVE", self.CHARGE_START),
+        }
+        if phases is not None:
+            vehicle_state[DESC_CHARGING_PHASES] = _state(phases, phases_at)
+        return vehicle_state
+
+    def test_a_count_left_over_from_the_last_charge_is_not_enough(self):
+        """The reset BMW leaves behind says nothing about the charge now running."""
+        assert needs_phase_count_poll(self._charging("1-PHASES", self.CHARGE_END)) is True
+
+    def test_no_count_at_all_needs_one(self):
+        """Vehicles that never report the count are the case this exists for."""
+        assert needs_phase_count_poll(self._charging()) is True
+
+    def test_a_count_reported_for_this_charge_is_enough(self):
+        """Nothing to ask for once BMW has reported the count for this charge."""
+        assert needs_phase_count_poll(self._charging("3-PHASES", self.CHARGE_START)) is False
+
+    def test_a_single_phase_reported_for_this_charge_is_enough(self):
+        """A genuine single phase charge is answered, not merely assumed."""
+        assert needs_phase_count_poll(self._charging("1-PHASES", self.CHARGE_START)) is False
 
 
 class TestApplyAcPower:
