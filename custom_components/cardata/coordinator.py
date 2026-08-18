@@ -717,10 +717,13 @@ class CardataCoordinator:
                     "telematic_poll" if is_telematic else "mqtt",
                 )
                 if not is_new:
-                    accept, resolved_unit = self._resolve_mileage_reading(vin, redacted_vin, value, unit, is_telematic)
+                    accept, resolved_unit, resolved_value = self._resolve_mileage_reading(
+                        vin, redacted_vin, value, unit, is_telematic
+                    )
                     if not accept:
                         continue
                     unit = resolved_unit
+                    value = resolved_value
 
             # Preserve existing unit when new message doesn't include one
             if unit is None and not is_new:
@@ -799,18 +802,14 @@ class CardataCoordinator:
 
     def _resolve_mileage_reading(
         self, vin: str, redacted_vin: str, value: float, unit: str | None, is_telematic: bool
-    ) -> tuple[bool, str | None]:
-        """Validate a travelledDistance reading against the last known value.
-
-        Returns (accept, unit_to_store). When accept is False, the caller
-        should drop the reading and keep the previous value.
-        """
+    ) -> tuple[bool, str | None, float]:
+        """Validate a travelledDistance reading. Returns (accept, unit, value)."""
         existing_state = self.data.get(vin, {}).get(DESC_TRAVELLED_DISTANCE)
         existing_value = existing_state.value if existing_state is not None else None
         existing_unit = existing_state.unit if existing_state is not None else None
 
         if not isinstance(existing_value, (int, float)):
-            return True, unit
+            return True, unit, value
 
         if vin in self._mileage_restored_unconfirmed:
             # MQTT reports this descriptor with a real, trustworthy unit, so
@@ -825,20 +824,24 @@ class CardataCoordinator:
             if not is_telematic:
                 self._mileage_restored_unconfirmed.discard(vin)
                 self._mileage_pending_reading.pop(vin, None)
-                return True, unit
+                return True, unit, value
 
-        # An explicit unit that differs from what we've previously stored is a
-        # genuine unit change (e.g. the user changed HA's display unit) -
-        # trust it and let Home Assistant's own unit converter (device_class
-        # DISTANCE) handle the display maths, rather than fighting it here.
-        if unit is not None and unit != existing_unit:
-            self._mileage_pending_reading.pop(vin, None)
-            return True, unit
+        # Normalize into the stored unit so mi/km readings compare on the same scale (#429)
+        compare_value = value
+        store_unit = unit if unit is not None else existing_unit
+        if (
+            unit is not None
+            and unit != existing_unit
+            and unit in (UnitOfLength.MILES, UnitOfLength.KILOMETERS)
+            and existing_unit in (UnitOfLength.MILES, UnitOfLength.KILOMETERS)
+        ):
+            compare_value = DistanceConverter.convert(value, unit, existing_unit)
+            store_unit = existing_unit
 
-        delta = value - existing_value
+        delta = compare_value - existing_value
         if self._MILEAGE_DECREASE_TOLERANCE <= delta <= self._MAX_PLAUSIBLE_MILEAGE_JUMP:
             self._mileage_pending_reading.pop(vin, None)
-            return True, unit
+            return True, store_unit, compare_value
 
         # Implausible jump. BMW's telematicData API always reports this
         # descriptor with unit=null, so when we don't know the incoming unit,
@@ -863,7 +866,7 @@ class CardataCoordinator:
                     value,
                     other_unit,
                 )
-                return True, other_unit
+                return True, other_unit, value
 
         # Not resolvable as a unit-swap. Require a second, corroborating
         # reading before accepting a jump this large - a single implausible
@@ -872,8 +875,8 @@ class CardataCoordinator:
         pending = self._mileage_pending_reading.get(vin)
         if (
             pending is not None
-            and pending[1] == unit
-            and abs(value - pending[0]) < self._MILEAGE_CORROBORATION_TOLERANCE
+            and pending[1] == store_unit
+            and abs(compare_value - pending[0]) < self._MILEAGE_CORROBORATION_TOLERANCE
         ):
             self._mileage_pending_reading.pop(vin, None)
             _LOGGER.warning(
@@ -882,22 +885,22 @@ class CardataCoordinator:
                 redacted_vin,
                 existing_value,
                 existing_unit,
-                value,
-                unit,
+                compare_value,
+                store_unit,
             )
-            return True, unit
+            return True, store_unit, compare_value
 
-        self._mileage_pending_reading[vin] = (value, unit, time.time())
+        self._mileage_pending_reading[vin] = (compare_value, store_unit, time.time())
         _LOGGER.warning(
             "Ignoring implausible odometer reading for VIN %s: %s %s -> %s %s; keeping previous value "
             "pending a corroborating reading",
             redacted_vin,
             existing_value,
             existing_unit,
-            value,
-            unit,
+            compare_value,
+            store_unit,
         )
-        return False, None
+        return False, None, 0.0
 
     def _is_significant_change(self, vin: str, descriptor: str, new_value: Any) -> bool:
         """Check if value change is significant enough to send to sensors."""

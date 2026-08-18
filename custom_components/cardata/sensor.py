@@ -32,6 +32,7 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
@@ -39,6 +40,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
+    UnitOfLength,
     UnitOfPower,
     UnitOfPressure,
     UnitOfTemperature,
@@ -135,7 +137,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
 
                 if last_state is not None and unit is not None:
                     original_unit = unit
-                    unit = map_unit_to_ha(unit)
+                    unit = map_unit_to_ha(unit, self._descriptor)
                     self._attr_native_value = convert_value_for_unit(self._attr_native_value, original_unit, unit)
 
                     existing_device_class = getattr(self, "_attr_device_class", None)
@@ -210,7 +212,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             return
 
         original_unit = state.unit
-        normalized_unit = map_unit_to_ha(state.unit)
+        normalized_unit = map_unit_to_ha(state.unit, self._descriptor)
         converted_value = convert_value_for_unit(state.value, original_unit, normalized_unit)
         # SMART FILTERING: Check if sensor's current state differs from new value
         current_value = getattr(self, "_attr_native_value", None)
@@ -258,6 +260,14 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         if self._descriptor == MAGIC_SOC_DESCRIPTOR:
             return SensorStateClass.MEASUREMENT
 
+        # Stored-energy sensors (battery capacity / max energy content) are a
+        # point-in-time value, not a cumulative total. device_class
+        # energy_storage only allows MEASUREMENT (never total_increasing),
+        # unlike plain "energy" which is gated on unit alone below and would
+        # be invalid here.
+        if getattr(self, "_attr_device_class", None) == getattr(SensorDeviceClass, "ENERGY_STORAGE", object()):
+            return SensorStateClass.MEASUREMENT
+
         # Check unit of measurement
         unit = getattr(self, "_attr_native_unit_of_measurement", None)
 
@@ -274,6 +284,8 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             UnitOfElectricPotential.VOLT,
             UnitOfVolume.LITERS,
             UnitOfVolume.GALLONS,
+            UnitOfLength.KILOMETERS,
+            UnitOfLength.MILES,
             "%",  # Battery percentage
         ):
             return SensorStateClass.MEASUREMENT
