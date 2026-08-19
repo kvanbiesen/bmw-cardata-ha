@@ -66,7 +66,7 @@ REAUTH_CHECK_INTERVAL = 60.0  # seconds
 TELEMATIC_FETCH_TIMEOUT = 300.0  # 5 minutes
 
 # If data for a VIN arrived within this window, a fetch asked for without a VIN
-# skips that one.  Each VIN is checked on its own so a stale VIN in a multi-car
+# skips that one. Each VIN is checked on its own so a stale VIN in a multi-car
 # account still gets fetched while fresh ones are left alone.
 FRESH_DATA_THRESHOLD = 300.0  # 5 minutes
 
@@ -83,7 +83,7 @@ def _seconds_since_fresh_data(coordinator: CardataCoordinator, vin: str) -> floa
     """Age of the newest data on hand for a VIN, from the stream or from a poll.
 
     Either source answers the only question a fetch has to ask, which is whether
-    a call would bring back anything that is not already here.  None means
+    a call would bring back anything that is not already here. None means
     nothing has ever arrived for this VIN.
     """
     ages = [
@@ -220,10 +220,10 @@ async def async_perform_telematic_fetch(
             )
             continue
 
-        # Skip VINs whose data is already fresh.  Only a caller that names no
+        # Skip VINs whose data is already fresh. Only a caller that names no
         # VIN gets here, which is the fetch service: the poll loop and the
         # trip-end path both name theirs and have already worked out that the
-        # VIN is due.  Stream traffic and an earlier poll both count as fresh,
+        # VIN is due. Stream traffic and an earlier poll both count as fresh,
         # since either means a call now would fetch what is already on hand.
         if not vin_override:
             age = _seconds_since_fresh_data(runtime.coordinator, vin)

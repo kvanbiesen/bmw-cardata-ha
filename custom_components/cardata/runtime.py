@@ -139,7 +139,7 @@ class CardataRuntimeData:
         The trip-end cooldown counts any poll, which makes it the wrong guard for
         a poll asked for because a particular fact is missing: an earlier poll
         that predates the charge cannot carry that fact, so blocking on it drops
-        the request for nothing.  Each purpose gets its own interval instead,
+        the request for nothing. Each purpose gets its own interval instead,
         which still stops a wallbox flapping on solar surplus from spending the
         daily quota one short charge at a time.
         """

@@ -243,7 +243,7 @@ def _charge_estimate_expired(vehicle_state: dict[str, DescriptorState]) -> bool:
     """Whether BMW's own estimate of the time left in this charge has run out.
 
     The estimate arrives only in an API poll, stamped with the moment it was
-    taken, so it expires that many minutes later.  One from before this charge
+    taken, so it expires that many minutes later. One from before this charge
     began describes the charge before it and says nothing here.
     """
     state = vehicle_state.get(DESC_CHARGING_TIME_REMAINING)

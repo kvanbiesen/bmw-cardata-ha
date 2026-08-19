@@ -968,7 +968,7 @@ class CardataCoordinator:
         the count has done so long before then.
 
         The request is deferred rather than made at once because BMW answers it
-        from its own snapshot of the vehicle, which lags the transition.  It goes
+        from its own snapshot of the vehicle, which lags the transition. It goes
         out on its own cooldown rather than the trip-end one: a poll taken before
         this charge began cannot carry its phase count, so counting it would drop
         the request for nothing, which is what a poll on arriving home does to the
