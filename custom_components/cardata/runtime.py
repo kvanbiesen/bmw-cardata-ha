@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from .const import PHASE_POLL_COOLDOWN_SECONDS
+from .const import CHARGE_END_POLL_COOLDOWN_SECONDS, PHASE_POLL_COOLDOWN_SECONDS
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .pending_manager import PendingManager
@@ -165,6 +165,13 @@ class CardataRuntimeData:
         Returns whether the poll was queued.
         """
         return self._request_poll_for(vin, "phase count", PHASE_POLL_COOLDOWN_SECONDS)
+
+    def request_charge_end_poll(self, vin: str) -> bool:
+        """Request a poll to settle whether a charge that ought to be over has ended.
+
+        Returns whether the poll was queued.
+        """
+        return self._request_poll_for(vin, "charge end", CHARGE_END_POLL_COOLDOWN_SECONDS)
 
     def request_trip_poll(self, vin: str, *, force: bool = False) -> None:
         """Request an immediate API poll for a VIN after trip or charge ends.

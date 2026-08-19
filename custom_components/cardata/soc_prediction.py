@@ -992,6 +992,19 @@ class SOCPredictor:
         """
         return self._is_charging.get(vin, False)
 
+    def prediction_reached_ceiling(self, vin: str) -> bool:
+        """Whether the prediction for this charge has run into its ceiling.
+
+        The prediction is capped at the charge target, so sitting on it means the
+        energy modelled since the anchor already fills the battery to where this
+        charge was meant to stop.
+        """
+        session = self._sessions.get(vin)
+        if session is None or not self._is_charging.get(vin, False):
+            return False
+        ceiling = session.target_soc if session.target_soc else self.MAX_SOC
+        return session.last_predicted_soc >= ceiling
+
     def get_charging_method(self, vin: str) -> str | None:
         """Get current charging method for vehicle.
 

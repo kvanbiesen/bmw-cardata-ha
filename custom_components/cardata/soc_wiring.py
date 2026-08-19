@@ -33,7 +33,7 @@ reference for access to broader state.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .const import (
@@ -47,6 +47,7 @@ from .const import (
     DESC_CHARGING_PORT_STATUS,
     DESC_CHARGING_POWER,
     DESC_CHARGING_STATUS,
+    DESC_CHARGING_TIME_REMAINING,
     DESC_FUEL_LEVEL,
     DESC_MAX_ENERGY,
     DESC_REMAINING_FUEL,
@@ -236,6 +237,46 @@ def needs_phase_count_poll(vehicle_state: dict[str, DescriptorState]) -> bool:
     on the vehicles that only report the count when asked.
     """
     return _charge_phases(vehicle_state) is None
+
+
+def _charge_estimate_expired(vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Whether BMW's own estimate of the time left in this charge has run out.
+
+    The estimate arrives only in an API poll, stamped with the moment it was
+    taken, so it expires that many minutes later.  One from before this charge
+    began describes the charge before it and says nothing here.
+    """
+    state = vehicle_state.get(DESC_CHARGING_TIME_REMAINING)
+    started_at = _charge_start_timestamp(vehicle_state)
+    if state is None or started_at is None or not _is_at_or_after(state, started_at):
+        return False
+    minutes = _descriptor_float(state)
+    reported_at = _descriptor_timestamp(state)
+    if minutes is None or reported_at is None:
+        return False
+    try:
+        return datetime.now(UTC) >= reported_at + timedelta(minutes=minutes)
+    except TypeError:
+        # A naive timestamp cannot be compared against the clock, and a charge
+        # left running costs less than one ended on a guess.
+        return False
+
+
+def charge_should_have_ended(
+    soc_predictor: SOCPredictor,
+    vin: str,
+    vehicle_state: dict[str, DescriptorState],
+) -> bool:
+    """Whether this charge ought to be over, while BMW still calls it running.
+
+    BMW pushes the end of a charge over the stream when it feels like it, and on
+    some vehicles never, so a finished charge can leave the prediction climbing
+    on modelled power until the next scheduled poll, which may be hours away.
+    Two independent signs are worth an API call to settle: BMW's own estimate of
+    the time left has run out, or the prediction has reached the target and has
+    nothing left to add.
+    """
+    return _charge_estimate_expired(vehicle_state) or soc_predictor.prediction_reached_ceiling(vin)
 
 
 def _capacity_is_trusted(capacity_kwh: float, vehicle_state: dict[str, DescriptorState]) -> bool:
@@ -764,6 +805,7 @@ def process_soc_descriptors(
                     anchor_soc_session(soc_predictor, magic_soc_pred, vin, vehicle_state, manual_cap)
                     end_driving_session(magic_soc_pred, vin, vehicle_state)
                     coordinator.schedule_phase_count_poll(vin)
+                    coordinator._charge_end_poll_asked.discard(vin)
                 elif was_charging:
                     end_soc_session(soc_predictor, vin, vehicle_state, coordinator._last_predicted_soc_sent)
                     runtime = coordinator.hass.data.get(DOMAIN, {}).get(coordinator.entry_id)

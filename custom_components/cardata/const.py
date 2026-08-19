@@ -37,6 +37,7 @@ DESC_CHARGING_PHASES = "vehicle.drivetrain.electricEngine.charging.phaseNumber"
 DESC_CHARGING_STATUS = "vehicle.drivetrain.electricEngine.charging.status"
 DESC_CHARGING_LEVEL = "vehicle.drivetrain.electricEngine.charging.level"
 DESC_CHARGING_POWER = "vehicle.powertrain.electric.battery.charging.power"
+DESC_CHARGING_TIME_REMAINING = "vehicle.drivetrain.electricEngine.charging.timeRemaining"
 DESC_REMAINING_FUEL = "vehicle.drivetrain.fuelSystem.remainingFuel"
 DESC_FUEL_LEVEL = "vehicle.drivetrain.fuelSystem.level"
 DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
@@ -119,6 +120,10 @@ PHASE_POLL_DELAY_SECONDS = 60
 # a wallbox that starts and stops on solar surplus: without it, such a wallbox
 # would spend the daily quota one short charge at a time.
 PHASE_POLL_COOLDOWN_SECONDS = 3600
+# Least time between two polls asking whether a charge that ought to be over
+# has in fact ended.  One is asked for per charge, so this only matters to a
+# wallbox that starts and stops on solar surplus.
+CHARGE_END_POLL_COOLDOWN_SECONDS = 3600
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
@@ -176,7 +181,7 @@ HV_BATTERY_DESCRIPTORS = [
     DESC_TRIP_HVSOC,
     "vehicle.trip.segment.accumulated.drivetrain.electricEngine.recuperationTotal",
     "vehicle.drivetrain.electricEngine.remainingElectricRange",
-    "vehicle.drivetrain.electricEngine.charging.timeRemaining",
+    DESC_CHARGING_TIME_REMAINING,
     "vehicle.drivetrain.electricEngine.charging.hvStatus",
     "vehicle.drivetrain.electricEngine.charging.lastChargingReason",
     "vehicle.drivetrain.electricEngine.charging.lastChargingResult",

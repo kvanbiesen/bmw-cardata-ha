@@ -124,6 +124,9 @@ class CardataCoordinator:
     _update_debounce_handle: Callable[[], None] | None = field(default=None, init=False)
     # VIN -> pending phase count poll, cancelled if the charge restarts first
     _phase_poll_handles: dict[str, Callable[[], None]] = field(default_factory=dict, init=False)
+    # VINs already asked about once for the charge they are running, so a charge
+    # BMW never reports the end of costs one poll rather than one per heartbeat
+    _charge_end_poll_asked: set[str] = field(default_factory=set, init=False)
     _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _pending_manager: UpdateBatcher = field(default_factory=UpdateBatcher, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max

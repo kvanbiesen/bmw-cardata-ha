@@ -42,6 +42,7 @@ from .debug import debug_enabled
 from .soc_wiring import (
     _apply_ac_power,
     anchor_soc_session,
+    charge_should_have_ended,
 )
 from .utils import redact_vin
 
@@ -186,6 +187,24 @@ async def async_log_diagnostics(coordinator: CardataCoordinator) -> None:
                             f"{last_soc_sent:.1f}%" if last_soc_sent else "None",
                         )
 
+    # BMW pushes the end of a charge over the stream when it feels like it, and
+    # on some vehicles never, so a charge that ought to be over is settled with
+    # one API call rather than left climbing until the next scheduled poll.
+    for vin in coordinator._soc_predictor.get_tracked_vins():
+        if not coordinator._soc_predictor.is_charging(vin) or vin in coordinator._charge_end_poll_asked:
+            continue
+        if not charge_should_have_ended(coordinator._soc_predictor, vin, coordinator.data.get(vin, {})):
+            continue
+        runtime = coordinator.hass.data.get(DOMAIN, {}).get(coordinator.entry_id)
+        if runtime is None:
+            continue
+        coordinator._charge_end_poll_asked.add(vin)
+        if runtime.request_charge_end_poll(vin):
+            _LOGGER.debug(
+                "Charge running on %s should be over, requesting API poll",
+                redact_vin(vin),
+            )
+
     if schedule_soc_debounce:
         await coordinator._async_schedule_debounced_update()
 
@@ -237,12 +256,14 @@ async def async_cleanup_stale_vins(coordinator: CardataCoordinator) -> None:
         stale_vins.update(vin for vin in coordinator._soc_predictor.get_tracked_vins() if vin not in valid_vins)
         stale_vins.update(vin for vin in coordinator._magic_soc.get_tracked_vins() if vin not in valid_vins)
         stale_vins.update(vin for vin in coordinator._mileage_restored_unconfirmed if vin not in valid_vins)
+        stale_vins.update(vin for vin in coordinator._charge_end_poll_asked if vin not in valid_vins)
 
         if stale_vins:
             for vin in stale_vins:
                 for d in tracking_dicts:
                     d.pop(vin, None)
                 coordinator._mileage_restored_unconfirmed.discard(vin)
+                coordinator._charge_end_poll_asked.discard(vin)
                 coordinator._motion_detector.cleanup_vin(vin)
                 coordinator._soc_predictor.cleanup_vin(vin)
                 coordinator._magic_soc.cleanup_vin(vin)

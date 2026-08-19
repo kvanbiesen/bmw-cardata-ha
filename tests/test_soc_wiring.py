@@ -25,6 +25,8 @@
 
 """Tests for soc_wiring helpers, focusing on charging phase handling."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from custom_components.cardata.const import (
@@ -36,6 +38,7 @@ from custom_components.cardata.const import (
     DESC_CHARGING_PORT_STATUS,
     DESC_CHARGING_POWER,
     DESC_CHARGING_STATUS,
+    DESC_CHARGING_TIME_REMAINING,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.soc_prediction import SOCPredictor
@@ -45,6 +48,7 @@ from custom_components.cardata.soc_wiring import (
     _carried_over_phases,
     _charge_phases,
     _descriptor_phases,
+    charge_should_have_ended,
     needs_phase_count_poll,
 )
 
@@ -391,3 +395,68 @@ class TestCarriedOverPhases:
         assert _apply_ac_power(predictor, self.VIN, vehicle_state)
         assert session.last_power_kw == pytest.approx(7.4)
         assert session.last_current == 32
+
+
+class TestChargeShouldHaveEnded:
+    """Tests for charge_should_have_ended, which asks BMW to settle a finished charge."""
+
+    VIN = "WMW00000000000000"
+
+    @staticmethod
+    def _ago(minutes):
+        return (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
+
+    def _charging_state(self, started_minutes_ago=120):
+        return {DESC_CHARGING_STATUS: _state("CHARGINGACTIVE", self._ago(started_minutes_ago))}
+
+    def _predictor(self, target_soc=None, predicted=50.0):
+        predictor = SOCPredictor()
+        predictor.update_charging_status(self.VIN, "CHARGINGACTIVE")
+        predictor.anchor_session(self.VIN, predicted, 30.0, "AC", target_soc=target_soc)
+        return predictor
+
+    def test_expired_estimate_ends_the_charge(self):
+        """BMW said 22 minutes half an hour ago, so the charge is over by its own account."""
+        predictor = self._predictor()
+        vehicle_state = self._charging_state()
+        vehicle_state[DESC_CHARGING_TIME_REMAINING] = _state(22, self._ago(30), unit="min")
+        assert charge_should_have_ended(predictor, self.VIN, vehicle_state)
+
+    def test_running_estimate_leaves_it_alone(self):
+        """Seventeen minutes still to go is no reason to spend an API call."""
+        predictor = self._predictor()
+        vehicle_state = self._charging_state()
+        vehicle_state[DESC_CHARGING_TIME_REMAINING] = _state(22, self._ago(5), unit="min")
+        assert not charge_should_have_ended(predictor, self.VIN, vehicle_state)
+
+    def test_estimate_from_before_this_charge_is_ignored(self):
+        """It describes the charge before this one and has long since expired."""
+        predictor = self._predictor()
+        vehicle_state = self._charging_state(started_minutes_ago=10)
+        vehicle_state[DESC_CHARGING_TIME_REMAINING] = _state(22, self._ago(180), unit="min")
+        assert not charge_should_have_ended(predictor, self.VIN, vehicle_state)
+
+    def test_nothing_reported_leaves_it_alone(self):
+        """A vehicle that reports neither an estimate nor a target keeps its charge."""
+        predictor = self._predictor()
+        assert not charge_should_have_ended(predictor, self.VIN, self._charging_state())
+
+    def test_prediction_at_the_target_ends_the_charge(self):
+        """The model says there is nothing left to put in, so BMW is asked to confirm."""
+        predictor = self._predictor(target_soc=80.0, predicted=80.0)
+        assert charge_should_have_ended(predictor, self.VIN, self._charging_state())
+
+    def test_prediction_short_of_the_target_leaves_it_alone(self):
+        predictor = self._predictor(target_soc=80.0, predicted=79.0)
+        assert not charge_should_have_ended(predictor, self.VIN, self._charging_state())
+
+    def test_prediction_at_full_ends_a_charge_with_no_target(self):
+        """Without a target the ceiling is a full battery."""
+        predictor = self._predictor(predicted=100.0)
+        assert charge_should_have_ended(predictor, self.VIN, self._charging_state())
+
+    def test_a_charge_that_already_ended_asks_nothing(self):
+        """The session is closed, so there is nothing left to settle."""
+        predictor = self._predictor(predicted=100.0)
+        predictor.update_charging_status(self.VIN, "NOCHARGING")
+        assert not charge_should_have_ended(predictor, self.VIN, self._charging_state())
