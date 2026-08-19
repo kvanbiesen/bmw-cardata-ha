@@ -668,9 +668,12 @@ class CardataCoordinator:
         schedule_debounce = False
 
         self.last_message_at = datetime.now(UTC)
-        self._last_vin_message_at[vin] = time.time()
 
         if not is_telematic:
+            # An API poll is not stream traffic: this clock answers how long the
+            # stream has been quiet for this VIN, so a poll stamping it would be
+            # answering with its own arrival.
+            self._last_vin_message_at[vin] = time.time()
             self._motion_detector.update_mqtt_activity(vin)
 
         if self.connection_status != "connected":

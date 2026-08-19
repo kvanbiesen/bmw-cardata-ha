@@ -32,6 +32,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -52,6 +53,9 @@ from .http_retry import async_request_with_retry
 from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import is_valid_vin, redact_vin, redact_vin_in_text, redact_vin_payload
 
+if TYPE_CHECKING:
+    from .coordinator import CardataCoordinator
+
 _LOGGER = logging.getLogger(__name__)
 
 # Max consecutive auth failures before pausing polling until reauth completes
@@ -61,11 +65,10 @@ REAUTH_CHECK_INTERVAL = 60.0  # seconds
 # Outer timeout for entire telematic fetch operation (allows for retries across VINs)
 TELEMATIC_FETCH_TIMEOUT = 300.0  # 5 minutes
 
-# If MQTT delivered data for a VIN within this window, skip the API poll
-# for that specific VIN.  The stream is working and will deliver post-trip
-# state on its own.  Each VIN is checked independently so a stale VIN in a
-# multi-car account still gets polled while fresh VINs are skipped.
-MQTT_FRESH_THRESHOLD = 300.0  # 5 minutes
+# If data for a VIN arrived within this window, a fetch asked for without a VIN
+# skips that one.  Each VIN is checked on its own so a stale VIN in a multi-car
+# account still gets fetched while fresh ones are left alone.
+FRESH_DATA_THRESHOLD = 300.0  # 5 minutes
 
 
 @dataclass
@@ -74,6 +77,24 @@ class TelematicFetchResult:
 
     status: bool | None
     reason: str | None = None
+
+
+def _seconds_since_fresh_data(coordinator: CardataCoordinator, vin: str) -> float | None:
+    """Age of the newest data on hand for a VIN, from the stream or from a poll.
+
+    Either source answers the only question a fetch has to ask, which is whether
+    a call would bring back anything that is not already here.  None means
+    nothing has ever arrived for this VIN.
+    """
+    ages = [
+        age
+        for age in (
+            coordinator.seconds_since_last_mqtt(vin),
+            coordinator.seconds_since_last_poll(vin),
+        )
+        if age is not None
+    ]
+    return min(ages) if ages else None
 
 
 async def async_perform_telematic_fetch(
@@ -199,13 +220,16 @@ async def async_perform_telematic_fetch(
             )
             continue
 
-        # Skip VINs with fresh MQTT data — stream is delivering updates.
-        # Only applies to scheduled polls (no vin_override), not service calls.
+        # Skip VINs whose data is already fresh.  Only a caller that names no
+        # VIN gets here, which is the fetch service: the poll loop and the
+        # trip-end path both name theirs and have already worked out that the
+        # VIN is due.  Stream traffic and an earlier poll both count as fresh,
+        # since either means a call now would fetch what is already on hand.
         if not vin_override:
-            age = runtime.coordinator.seconds_since_last_mqtt(vin)
-            if age is not None and age < MQTT_FRESH_THRESHOLD:
+            age = _seconds_since_fresh_data(runtime.coordinator, vin)
+            if age is not None and age < FRESH_DATA_THRESHOLD:
                 _LOGGER.debug(
-                    "Skipping scheduled poll for VIN %s: MQTT fresh (%.0fs)",
+                    "Skipping requested fetch for VIN %s: data is %.0fs old",
                     redacted_vin,
                     age,
                 )
