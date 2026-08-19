@@ -667,18 +667,20 @@ class CardataCoordinator:
         immediate_updates: list[tuple[str, str]] = []
         schedule_debounce = False
 
-        self.last_message_at = datetime.now(UTC)
-
         if not is_telematic:
-            # An API poll is not stream traffic: this clock answers how long the
-            # stream has been quiet for this VIN, so a poll stamping it would be
-            # answering with its own arrival.
+            # None of this describes an API poll. It says the stream is alive
+            # and when it last delivered, which is what the diagnostic sensors
+            # are read for when someone is working out whether a car has gone
+            # quiet or the stream has died. A poll answering on the stream's
+            # behalf makes a dead stream look healthy, and the poll has a clock
+            # of its own in last_telematic_api_at.
+            self.last_message_at = datetime.now(UTC)
             self._last_vin_message_at[vin] = time.time()
             self._motion_detector.update_mqtt_activity(vin)
 
-        if self.connection_status != "connected":
-            self.connection_status = "connected"
-            self.last_disconnect_reason = None
+            if self.connection_status != "connected":
+                self.connection_status = "connected"
+                self.last_disconnect_reason = None
 
         if debug_enabled():
             _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
