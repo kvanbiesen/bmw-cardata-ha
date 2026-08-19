@@ -960,9 +960,11 @@ class CardataCoordinator:
         the count has done so long before then.
 
         The request is deferred rather than made at once because BMW answers it
-        from its own snapshot of the vehicle, which lags the transition.  The
-        per-VIN cooldown in request_trip_poll still applies, so a wallbox
-        flapping between start and stop cannot spend the daily quota on this.
+        from its own snapshot of the vehicle, which lags the transition.  It goes
+        out on its own cooldown rather than the trip-end one: a poll taken before
+        this charge began cannot carry its phase count, so counting it would drop
+        the request for nothing, which is what a poll on arriving home does to the
+        charge that follows it.
         """
         if not needs_phase_count_poll(self.data.get(vin, {})):
             return
@@ -985,11 +987,11 @@ class CardataCoordinator:
             runtime = self.hass.data.get(DOMAIN, {}).get(self.entry_id)
             if runtime is None:
                 return
-            _LOGGER.debug(
-                "No phase count for the charge running on %s, requesting API poll",
-                redact_vin(vin),
-            )
-            runtime.request_trip_poll(vin, force=True)
+            if runtime.request_phase_poll(vin):
+                _LOGGER.debug(
+                    "No phase count for the charge running on %s, requested an API poll",
+                    redact_vin(vin),
+                )
 
         self._phase_poll_handles[vin] = async_call_later(self.hass, PHASE_POLL_DELAY_SECONDS, _request)
 

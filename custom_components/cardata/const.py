@@ -114,6 +114,11 @@ DEFAULT_TRIP_POLL_COOLDOWN_MINUTES = 10  # Default cooldown between trip-end pol
 # that overtook it would write the state from before the charge over the live
 # one and end the session that just started.
 PHASE_POLL_DELAY_SECONDS = 60
+# Least time between two phase count polls for the same vehicle.  The poll is
+# asked for once per charge that starts without a count, so this only matters to
+# a wallbox that starts and stops on solar surplus: without it, such a wallbox
+# would spend the daily quota one short charge at a time.
+PHASE_POLL_COOLDOWN_SECONDS = 3600
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
