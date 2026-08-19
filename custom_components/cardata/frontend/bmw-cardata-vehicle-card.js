@@ -80,7 +80,6 @@ const iconBadge = (icon, statusClass = "", entityId = "", title = "") => `
   </button>
 `;
 
-const INDICATOR_COUNT = 5;
 
 const hasUsableState = (stateObj) => {
   const state = normalizeState(stateObj);
@@ -187,6 +186,9 @@ const TRANSLATIONS = {
     "editor.show_indicators": "Show indicator row",
     "editor.show_range": "Show SOC and range bar",
     "editor.show_image": "Show vehicle image",
+    "editor.image_crop_top": "Image crop top",
+    "editor.image_crop_bottom": "Image crop bottom",
+    "editor.image_zoom": "Image zoom",
     "editor.show_map": "Show mini map",
     "editor.map_height": "Mini map height",
     "editor.show_buttons": "Show quick info buttons",
@@ -276,6 +278,9 @@ const TRANSLATIONS = {
     "editor.show_indicators": "Statuszeile anzeigen",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
     "editor.show_image": "Fahrzeugbild anzeigen",
+    "editor.image_crop_top": "Bild oben zuschneiden",
+    "editor.image_crop_bottom": "Bild unten zuschneiden",
+    "editor.image_zoom": "Bildzoom",
     "editor.show_map": "Mini-Karte anzeigen",
     "editor.map_height": "Höhe der Mini-Karte",
     "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
@@ -437,6 +442,42 @@ class BmwCardataVehicleCard extends HTMLElement {
         { name: "show_indicators", selector: { boolean: {} } },
         { name: "show_range", selector: { boolean: {} } },
         { name: "show_image", selector: { boolean: {} } },
+        {
+          name: "image_crop_top",
+          selector: {
+            number: {
+              mode: "box",
+              min: 0,
+              max: 40,
+              step: 1,
+              unit_of_measurement: "%",
+                    },
+          },
+        },
+        {
+          name: "image_crop_bottom",
+          selector: {
+            number: {
+              mode: "box",
+              min: 0,
+              max: 40,
+              step: 1,
+              unit_of_measurement: "%",
+            },
+          },
+        },
+        {
+          name: "image_zoom",
+          selector: {
+            number: {
+              mode: "box",
+              min: 50,
+              max: 200,
+              step: 5,
+              unit_of_measurement: "%",
+            },
+          },
+        },		
         { name: "show_map", selector: { boolean: {} } },
         {
           name: "map_height",
@@ -543,7 +584,7 @@ class BmwCardataVehicleCard extends HTMLElement {
 
           .indicators {
             display: grid;
-            grid-template-columns: repeat(${INDICATOR_COUNT}, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
             gap: 8px;
           }
           .indicator {
@@ -725,6 +766,9 @@ class BmwCardataVehicleCard extends HTMLElement {
             object-position: center;
             background: transparent;
             transform-origin: center center;
+            transform: scale(var(--image-zoom, 1));
+            margin-top: calc(-1 * var(--image-crop-top, 0%));
+            margin-bottom: calc(-1 * var(--image-crop-bottom, 0%));
           }
           .image.charging img {
             animation: chargingImagePulse 2.2s ease-in-out infinite;
@@ -1049,6 +1093,22 @@ class BmwCardataVehicleCard extends HTMLElement {
     const showButtons = boolConfig(cfg, "show_buttons", true);
     const mapEntityId = entities.device_tracker;
 
+    const imageCropTop = Number.isFinite(Number(cfg.image_crop_top))
+      ? Number(cfg.image_crop_top)
+      : 0;
+
+    const imageCropBottom = Number.isFinite(Number(cfg.image_crop_bottom))
+      ? Number(cfg.image_crop_bottom)
+      : 0;
+
+    const imageZoom = Number.isFinite(Number(cfg.image_zoom))
+      ? Number(cfg.image_zoom)
+      : 100;
+
+    imageEl.style.setProperty("--image-crop-top", `${imageCropTop}%`);
+    imageEl.style.setProperty("--image-crop-bottom", `${imageCropBottom}%`);
+    imageEl.style.setProperty("--image-zoom", imageZoom / 100);
+
     mapEl.style.setProperty("--map-height", `${mapHeightConfig(cfg)}px`);
 
     const lockState = normalizeState(read("doors_lock"));
@@ -1156,14 +1216,16 @@ class BmwCardataVehicleCard extends HTMLElement {
           ? `${t("doors_overall")}: ${doorsOverallState}`
           : `${t("lock")}: ${isLocked ? t("locked") : t("unlocked")}`,
       },
-      {
-        icon: "mdi:shield-lock",
-        stateClass: hasAlarm ? (alarmIsActive ? "alert" : alarmIsArmed ? "good" : "ok") : "",
-        entity: alarmArmingEntity || alarmActiveEntity,
-        title: hasAlarm
-          ? (alarmIsActive ? t("alarm_triggered") : `${t("alarm")}: ${alarmArmingLabel || t("unknown")}`)
-          : t("alarm_unavailable"),
-      },
+      hasAlarm
+        ? {
+            icon: "mdi:shield-lock",
+            stateClass: alarmIsActive ? "alert" : alarmIsArmed ? "good" : "ok",
+            entity: alarmArmingEntity || alarmActiveEntity,
+            title: alarmIsActive
+              ? t("alarm_triggered")
+              : `${t("alarm")}: ${alarmArmingLabel || t("unknown")}`,
+          }
+        : null,
       {
         icon: openWindows > 0 ? "mdi:car-windshield-outline" : "mdi:car-windshield",
         stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 ? "" : "ok",
@@ -1175,14 +1237,20 @@ class BmwCardataVehicleCard extends HTMLElement {
             icon: "mdi:ev-station",
             stateClass: chargingActive ? "ok charging" : "",
             entity: chargingEntity,
-            title: `${t("charging")}: ${chargingActive ? t("charging_active") : compactStateLabel(read("charging_state"), t)}`,
+            title: `${t("charging")}: ${
+              chargingActive
+                ? t("charging_active")
+                : compactStateLabel(read("charging_state"), t)
+            }`,
           }
-        : {
-            icon: "mdi:car-light-high",
-            stateClass: lightsOn ? "ok" : "placeholder",
-            entity: lightsEntity,
-            title: lightsEntity ? `${t("lights")}: ${lightsOn ? t("lights_on") : t("lights_off")}` : "",
-          },
+        : lightsEntity
+          ? {
+              icon: "mdi:car-light-high",
+              stateClass: lightsOn ? "ok" : "",
+              entity: lightsEntity,
+              title: `${t("lights")}: ${lightsOn ? t("lights_on") : t("lights_off")}`,
+            }
+          : null,	
       {
         icon: hoodOpen && tailgateOpen ? "mdi:car" : hoodOpen ? "mdi:engine-outline" : tailgateOpen ? "mdi:car-back" : "mdi:car",
         stateClass: (hoodOpen || tailgateOpen) && !isMoving && isLocked ? "alert" : (hoodOpen || tailgateOpen) ? "" : "ok",
@@ -1373,13 +1441,15 @@ class BmwCardataVehicleCard extends HTMLElement {
               value: primaryLevelLabel,
               entity: primaryLevelEntity,
             },
-        {
-          icon: "mdi:car-tire-alert",
-          label: tireAlert ? `${t("tire")} ${tireLabels[lowTire.key]}` : t("tires"),
-          value: tireValue,
-          entity: tireEntity,
-          alert: tireAlert,
-        },
+        tireEntries.length
+          ? {
+              icon: "mdi:car-tire-alert",
+              label: tireAlert ? `${t("tire")} ${tireLabels[lowTire.key]}` : t("tires"),
+              value: tireValue,
+              entity: tireEntity,
+              alert: tireAlert,
+            }
+          : null,
         {
           icon: "mdi:counter",
           label: t("mileage"),
