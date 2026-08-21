@@ -57,6 +57,7 @@ from .const import (
     DESC_TRIP_HVSOC,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
+    PHASE_COUNT_LEAD_SECONDS,
     PREDICTED_SOC_DESCRIPTOR,
 )
 from .descriptor_state import DescriptorState
@@ -201,6 +202,25 @@ def _phase_count_reference(vehicle_state: dict[str, DescriptorState]) -> datetim
     return _charge_start_timestamp(vehicle_state) or _plug_in_timestamp(vehicle_state)
 
 
+def _describes_this_charge(state: DescriptorState, vehicle_state: dict[str, DescriptorState]) -> bool:
+    """Whether a stored phase count belongs to the charge now running.
+
+    A count stamped at or after the charge began plainly does. Vehicles that
+    send the count over the stream can stamp it a moment ahead of the status it
+    belongs to, and judging that one stale costs a poll asking BMW for what the
+    vehicle already reported, so a count above one is allowed a short lead. One
+    phase never is: that is what BMW leaves behind at the end of a charge, and
+    the two are indistinguishable.
+    """
+    reference = _phase_count_reference(vehicle_state)
+    if reference is None or _is_at_or_after(state, reference):
+        return True
+    phases = _descriptor_phases(state)
+    if phases is None or phases <= 1:
+        return False
+    return _is_at_or_after(state, reference - timedelta(seconds=PHASE_COUNT_LEAD_SECONDS))
+
+
 def _charge_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
     """Return the phase count only when it describes the charge now running.
 
@@ -209,7 +229,7 @@ def _charge_phases(vehicle_state: dict[str, DescriptorState]) -> int | None:
     charge into a 1-phase one and divides every derived power figure by three.
     """
     state = vehicle_state.get(DESC_CHARGING_PHASES)
-    if state is None or not _is_at_or_after(state, _phase_count_reference(vehicle_state)):
+    if state is None or not _describes_this_charge(state, vehicle_state):
         return None
     return _descriptor_phases(state)
 
@@ -223,7 +243,7 @@ def _carried_over_phases(vehicle_state: dict[str, DescriptorState]) -> int | Non
     guess than assuming a single phase.
     """
     state = vehicle_state.get(DESC_CHARGING_PHASES)
-    if state is None or _is_at_or_after(state, _phase_count_reference(vehicle_state)):
+    if state is None or _describes_this_charge(state, vehicle_state):
         return None
     phases = _descriptor_phases(state)
     return phases if phases and phases > 1 else None

@@ -258,6 +258,43 @@ class TestNeedsPhaseCountPoll:
         assert needs_phase_count_poll(self._charging("1-PHASES", self.CHARGE_START)) is False
 
 
+class TestPhaseCountLead:
+    """A count stamped a moment ahead of the status it belongs to."""
+
+    CHARGE_START = "2026-08-17T18:08:46Z"
+    A_MOMENT_EARLY = "2026-08-17T18:08:43Z"
+    WELL_BEFORE = "2026-08-17T18:08:16Z"
+
+    def _charging(self, phases, phases_at):
+        return {
+            DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.CHARGE_START),
+            DESC_CHARGING_STATUS: _state("CHARGINGACTIVE", self.CHARGE_START),
+            DESC_CHARGING_PHASES: _state(phases, phases_at),
+        }
+
+    def test_three_phases_a_moment_early_describes_this_charge(self):
+        """Descriptors from one event can be stamped seconds apart."""
+        assert _charge_phases(self._charging("3-PHASES", self.A_MOMENT_EARLY)) == 3
+
+    def test_no_poll_is_asked_for_when_the_count_arrived_early(self):
+        """The point of the lead: do not ask BMW for what the vehicle just sent."""
+        assert needs_phase_count_poll(self._charging("3-PHASES", self.A_MOMENT_EARLY)) is False
+
+    def test_the_end_of_charge_reset_gets_no_lead(self):
+        """One phase is what BMW leaves behind, so it earns no benefit of the doubt."""
+        assert _charge_phases(self._charging("1-PHASES", self.A_MOMENT_EARLY)) is None
+        assert needs_phase_count_poll(self._charging("1-PHASES", self.A_MOMENT_EARLY)) is True
+
+    def test_a_count_older_than_the_lead_is_still_rejected(self):
+        """The lead covers descriptor skew, not a count from the charge before."""
+        assert _charge_phases(self._charging("3-PHASES", self.WELL_BEFORE)) is None
+
+    def test_a_count_within_the_lead_is_not_also_carried_over(self):
+        """The two paths stay exclusive, so a count is used once and only once."""
+        assert _carried_over_phases(self._charging("3-PHASES", self.A_MOMENT_EARLY)) is None
+        assert _carried_over_phases(self._charging("3-PHASES", self.WELL_BEFORE)) == 3
+
+
 class TestApplyAcPower:
     """Tests for the AC power source preference."""
 
