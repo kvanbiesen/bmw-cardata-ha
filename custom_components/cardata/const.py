@@ -124,6 +124,13 @@ PHASE_POLL_COOLDOWN_SECONDS = 3600
 # has in fact ended. One is asked for per charge, so this only matters to a
 # wallbox that starts and stops on solar surplus.
 CHARGE_END_POLL_COOLDOWN_SECONDS = 3600
+# How far ahead of the charging status a phase count may be stamped and still
+# describe that charge. Descriptors from one event can carry timestamps a moment
+# apart, and a count judged stale costs an API poll that asks BMW what the
+# vehicle already said. Only counts above one get the lead: the reset BMW leaves
+# at the end of a charge is always one phase, so nothing reading higher can be
+# that reset, whatever its timestamp.
+PHASE_COUNT_LEAD_SECONDS = 10
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
