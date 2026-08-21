@@ -38,7 +38,15 @@ from .const import (
     LOCAL_POWER_TTL_SECONDS,
     MAX_ENERGY_GAP_SECONDS,
 )
-from .soc_types import ChargingSession, LearnedEfficiency, PendingSession
+from .soc_types import (
+    PHASES_ASSUMED,
+    PHASES_CARRIED,
+    PHASES_DERIVED,
+    PHASES_REPORTED,
+    ChargingSession,
+    LearnedEfficiency,
+    PendingSession,
+)
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -50,6 +58,27 @@ _LOGGER = logging.getLogger(__name__)
 __all__ = ["ChargingSession", "LearnedEfficiency", "PendingSession", "SOCPredictor"]
 
 
+# At or above this the vehicle is quoting a line-to-line voltage, which already
+# carries the sqrt(3) between two phases of the same supply.
+LINE_TO_LINE_MIN_VOLTAGE = 250.0
+
+
+def _ac_phase_multiplier(session: ChargingSession) -> float:
+    """Power multiplier for the phase count the session currently believes.
+
+    A line-neutral voltage scales with the number of phases in use.  A
+    line-to-line voltage already carries the sqrt(3) between two phases of the
+    same supply, and is left as the three phase case: BMW does report a two phase
+    count, but charging on two phases of a 400 V supply is not a combination this
+    can confirm.
+    """
+    if not session.phases or session.phases <= 1:
+        return 1.0
+    if session.last_voltage and session.last_voltage >= LINE_TO_LINE_MIN_VOLTAGE:
+        return 1.732
+    return float(min(session.phases, 3))
+
+
 def _calc_ac_power_kw(session: ChargingSession) -> float | None:
     """Calculate AC power in kW from session voltage, current, and phases.
 
@@ -57,10 +86,7 @@ def _calc_ac_power_kw(session: ChargingSession) -> float | None:
     """
     if not session.last_voltage or not session.last_current or session.last_voltage <= 0 or session.last_current <= 0:
         return None
-    power_kw = (session.last_voltage * session.last_current) / 1000.0
-    if session.phases and session.phases > 1:
-        power_kw *= 3.0 if session.last_voltage < 250 else 1.732
-    return power_kw
+    return (session.last_voltage * session.last_current) / 1000.0 * _ac_phase_multiplier(session)
 
 
 class SOCPredictor:
@@ -86,6 +112,29 @@ class SOCPredictor:
 
     # Staleness thresholds
     BMW_SOC_STALE_MINUTES: ClassVar[float] = 30.0  # BMW SOC considered stale
+
+    # Phase count inference (see update_phase_inference).  The estimator returns
+    # the number of phases the energy actually stored would need, so the
+    # thresholds sit either side of the 1 and 3 it chooses between, far enough out
+    # to absorb the whole-percent SOC steps BMW reports and an uncertain
+    # efficiency.  Two phases estimate close to 2 and so fall between the two
+    # thresholds, leaving that charge understated rather than overstated as three.
+    PHASE_DERIVE_MIN: ClassVar[float] = 2.5
+    # Beyond this the arithmetic itself is suspect, most likely a battery capacity
+    # that is wrong rather than a supply with more than three phases.
+    PHASE_DERIVE_MAX: ClassVar[float] = 4.5
+    PHASE_REVERT_MAX: ClassVar[float] = 1.5
+    # Whole percentage points mean a short window is mostly rounding error.  At
+    # 8 points the two endpoints can be out by at most a quarter of the gain,
+    # which is why one window is not enough to act on.
+    PHASE_MIN_SOC_GAIN: ClassVar[float] = 8.0
+    # Rounding, a stalled integration or a swap between SOC sources can each push
+    # a single window over the line.  None of them repeat reliably, so two
+    # windows in a row have to agree before the count is raised.
+    PHASE_REQUIRED_VOTES: ClassVar[int] = 2
+    # Approaching the target the current tapers and the SOC stops tracking the
+    # energy going in, so the last stretch of a charge proves nothing.
+    PHASE_TAPER_MARGIN: ClassVar[float] = 5.0
 
     # Cap predicted SOC
     MAX_SOC: ClassVar[float] = 100.0
@@ -343,6 +392,9 @@ class SOCPredictor:
         now = time.time()
         if from_local:
             self._last_local_power_update[vin] = now
+            local_session = self._sessions.get(vin)
+            if local_session is not None:
+                local_session.local_power_seen = True
         else:
             last_local = self._last_local_power_update.get(vin)
             if last_local is not None and now - last_local <= LOCAL_POWER_TTL_SECONDS:
@@ -489,6 +541,221 @@ class SOCPredictor:
 
         # Try to finalize pending session if one exists
         self.try_finalize_pending_session(vin, soc, time.time())
+
+    def use_reported_power(
+        self,
+        vin: str,
+        power_kw: float,
+        voltage: float | None,
+        current: float | None,
+        aux_power_kw: float,
+    ) -> None:
+        """Apply BMW's own charging power, noting the conditions behind it.
+
+        The voltage and current still have to be recorded, because they key the
+        efficiency matrix and pick the efficiency the prediction uses, or a 32 A
+        charge ends up filed under whatever the last one drew.  They must not be
+        turned back into a power figure though: the heartbeat recomputes the
+        product every 30 seconds and would undo this choice almost at once.
+        """
+        session = self._sessions.get(vin)
+        if session is not None:
+            if voltage:
+                session.last_voltage = voltage
+            if current:
+                session.last_current = current
+            session.power_is_reported = True
+        self.update_power_reading(vin, power_kw, aux_power_kw=aux_power_kw)
+
+    def adopt_carried_over_phases(self, vin: str, phases: int | None) -> None:
+        """Take a phase count left over from an earlier charge as a starting point.
+
+        BMW resets phaseNumber to one phase when a charge ends, so a leftover of
+        one says nothing.  Anything higher was reported while a real charge was
+        running, most likely at the same wallbox, and beats assuming a single
+        phase.  It is held the same way an inferred count is, so the same
+        measurement withdraws it if this charge turns out to be a different
+        supply, which is the part BMW's own stale value cannot do.
+
+        Only taken before any energy has been integrated, so the whole session is
+        accounted for under one count.
+        """
+        session = self._sessions.get(vin)
+        if session is None or phases is None or phases <= 1:
+            return
+        if session.phases_source != PHASES_ASSUMED or session.phases > 1:
+            return
+        if session.session_total_energy_kwh > 0:
+            return
+        session.phases = phases
+        session.phases_source = PHASES_CARRIED
+        _LOGGER.debug(
+            "SOC: %s starting from the %d phases left over from an earlier charge",
+            redact_vin(vin),
+            phases,
+        )
+
+    def update_phase_inference(self, vin: str, bmw_soc: float) -> None:
+        """Infer the AC phase count from the energy the battery actually took.
+
+        BMW does not always send phaseNumber for a charge, and the value it left
+        behind from the previous one is discarded as stale, so the session falls
+        back to a single phase.  On a three phase charge that understates the
+        power by a factor of three and every estimate built on it.
+
+        The battery gives the answer away.  Inverting the model that produced the
+        prediction says how many phases the energy stored would have needed:
+
+            phases = m x (stored / efficiency + auxiliary) / gross modelled
+
+        where m is the multiplier the model has been applying over the window.
+        Comparing gross to gross matters: measuring both sides after auxiliary
+        load is deducted biases the answer upward, worst at low current, which is
+        the direction that would wrongly call a charge three phase.
+
+        Auxiliary energy comes from the difference between the two accumulators
+        rather than from elapsed time, so a capped gap in the integration is
+        reflected on both sides instead of inventing energy that was never
+        counted.  The window opens once energy tracking is running, so a late
+        first power reading cannot masquerade as extra gain.  The efficiency is
+        the fixed default rather than the learned figure, which is itself keyed on
+        the phase count and would feed the guess back into its own input.
+
+        Only used where the evidence is unambiguous, and it takes two windows in
+        a row to act, because rounding and stalled integration can each carry a
+        single window over the line but neither repeats reliably.
+
+        Withdrawing an inferred count re-anchors the prediction to the BMW reading
+        that disproved it.  Putting the phase count back would otherwise fix the
+        rate while leaving the level: energy banked under the wrong multiplier
+        stays in the accumulator, and during a charge the prediction never comes
+        down of its own accord.
+
+        A session reloaded from disk is judged too, unlike learning.  Each verdict
+        rests on what was gathered since the window opened, which is after the
+        reload, so the gaps that make a restored session unfit to learn from do
+        not reach it.  Barring them would freeze an inferred count with no way
+        back.
+        """
+        session = self._sessions.get(vin)
+        if session is None or not self._is_charging.get(vin, False):
+            return
+        if session.charging_method == "DC":
+            return
+        # A plug-in hybrid is very unlikely to have a three phase charger, and its
+        # header updates are filtered against the prediction this would produce.
+        if self._is_phev.get(vin, False):
+            return
+        if session.battery_capacity_kwh <= 0 or not session.capacity_trusted:
+            return
+        # A line-to-line reading means a wiring convention this cannot confirm.
+        if not session.last_voltage or session.last_voltage >= LINE_TO_LINE_MIN_VOLTAGE:
+            return
+        # Meter readings are not scaled by the phase count, so any session
+        # carrying them has nothing here to correct and no usable evidence.
+        if session.local_power_seen:
+            return
+        # Near the ceiling the SOC stops keeping up with the energy going in, which
+        # would read as a charge storing far less than the model says it should.
+        ceiling = session.target_soc if session.target_soc else self.MAX_SOC
+        if bmw_soc >= ceiling - self.PHASE_TAPER_MARGIN:
+            return
+
+        if session.phase_probe_soc is None:
+            if session.session_gross_energy_kwh > 0:
+                self._open_phase_probe(session, bmw_soc)
+            return
+
+        # Energy the integration could not count is missing from the modelled
+        # side only, so the window would read as a charge storing more than it
+        # should.  Unlike rounding this repeats for as long as the sampling stays
+        # slow, so voting cannot absorb it and the window has to be abandoned.
+        if session.energy_uncounted:
+            session.phase_votes = 0
+            self._open_phase_probe(session, bmw_soc)
+            return
+
+        soc_gain = bmw_soc - session.phase_probe_soc
+        gross = session.session_gross_energy_kwh - session.phase_probe_gross
+        if soc_gain < self.PHASE_MIN_SOC_GAIN or gross <= 0:
+            return
+
+        auxiliary = max(gross - (session.session_total_energy_kwh - session.phase_probe_energy), 0.0)
+        stored = soc_gain / 100.0 * session.battery_capacity_kwh
+        multiplier = _ac_phase_multiplier(session)
+        needed = multiplier * (stored / self.AC_EFFICIENCY + auxiliary) / gross
+
+        derivable = session.phases_source == PHASES_ASSUMED and session.phases <= 1
+        too_low = self.PHASE_DERIVE_MIN <= needed <= self.PHASE_DERIVE_MAX
+        # A count carried over from an earlier charge is ours to withdraw too:
+        # BMW never confirmed it for this plug-in.
+        ours = session.phases_source in (PHASES_DERIVED, PHASES_CARRIED)
+        too_high = ours and needed <= self.PHASE_REVERT_MAX
+
+        if not (derivable and too_low) and not too_high:
+            session.phase_votes = 0
+            self._open_phase_probe(session, bmw_soc)
+            return
+
+        session.phase_votes += 1
+        self._open_phase_probe(session, bmw_soc)
+        # Raising the count is the risky direction and has to be voted for twice.
+        # Withdrawing one only returns to the conservative default, so it is acted
+        # on at once rather than leaving the prediction running away meanwhile.
+        if not too_high and session.phase_votes < self.PHASE_REQUIRED_VOTES:
+            return
+
+        session.phase_votes = 0
+        session.phases_changed_gross_kwh = session.session_gross_energy_kwh
+        if too_high:
+            was = session.phases
+            source = session.phases_source
+            session.phases = 1
+            session.phases_source = PHASES_ASSUMED
+            self._unwind_derived_phases(vin, session, bmw_soc)
+            _LOGGER.info(
+                "SOC: %s stored only %.2f kWh, which needs %.1f phases; withdrawing the %s "
+                "%d-phase charge and re-anchoring to %.1f%%",
+                redact_vin(vin),
+                stored,
+                needed,
+                source,
+                was,
+                bmw_soc,
+            )
+            return
+
+        session.phases = 3
+        session.phases_source = PHASES_DERIVED
+        _LOGGER.info(
+            "SOC: %s stored %.2f kWh while charging on what looked like one phase, which needs "
+            "%.1f phases to explain; treating the charge as 3-phase until BMW says otherwise",
+            redact_vin(vin),
+            stored,
+            needed,
+        )
+
+    @staticmethod
+    def _open_phase_probe(session: ChargingSession, bmw_soc: float) -> None:
+        """Start a fresh measuring window for the phase inference."""
+        session.phase_probe_soc = bmw_soc
+        session.phase_probe_energy = session.session_total_energy_kwh
+        session.phase_probe_gross = session.session_gross_energy_kwh
+        session.energy_uncounted = False
+
+    def _unwind_derived_phases(self, vin: str, session: ChargingSession, bmw_soc: float) -> None:
+        """Drop the prediction back to the reading that disproved the inference.
+
+        The energy banked while the count was too high cannot be picked apart from
+        the rest, and during a charge nothing brings the prediction down again, so
+        the session re-anchors on BMW's own figure the same way it would if that
+        figure had overtaken the prediction.
+        """
+        session.anchor_soc = bmw_soc
+        session.last_predicted_soc = bmw_soc
+        session.total_energy_kwh = 0.0
+        session.last_energy_update = time.time()
+        self._last_predicted_soc[vin] = bmw_soc
 
     def _derive_power_from_soc_change(
         self,
@@ -725,6 +992,19 @@ class SOCPredictor:
         """
         return self._is_charging.get(vin, False)
 
+    def prediction_reached_ceiling(self, vin: str) -> bool:
+        """Whether the prediction for this charge has run into its ceiling.
+
+        The prediction is capped at the charge target, so sitting on it means the
+        energy modelled since the anchor already fills the battery to where this
+        charge was meant to stop.
+        """
+        session = self._sessions.get(vin)
+        if session is None or not self._is_charging.get(vin, False):
+            return False
+        ceiling = session.target_soc if session.target_soc else self.MAX_SOC
+        return session.last_predicted_soc >= ceiling
+
     def get_charging_method(self, vin: str) -> str | None:
         """Get current charging method for vehicle.
 
@@ -821,13 +1101,18 @@ class SOCPredictor:
         if current is not None:
             session.last_current = current
         if phases is not None:
+            # A count BMW reported for this plug-in outranks anything inferred here.
+            if int(phases) != session.phases and session.session_total_energy_kwh > 0:
+                session.phases_changed_gross_kwh = session.session_gross_energy_kwh
             session.phases = int(phases)
+            session.phases_source = PHASES_REPORTED
         if aux_power_kw is not None:
             session.last_aux_kw = aux_power_kw
 
         # Calculate power if we have both voltage and current
         power_kw = _calc_ac_power_kw(session)
         if power_kw is not None:
+            session.power_is_reported = False
             _LOGGER.debug(
                 "Calculated AC power for %s: %.2f kW (%.1fV × %.1fA, %d phases)",
                 redact_vin(vin),
@@ -862,7 +1147,7 @@ class SOCPredictor:
             # Path 1: live V×A (AC sessions only). DC is excluded because a
             # session that flipped AC → DC mid-life can carry stale V×A and
             # _calc_ac_power_kw would compute a meaningless number for it.
-            if session.charging_method != "DC":
+            if session.charging_method != "DC" and not session.power_is_reported:
                 power_kw = _calc_ac_power_kw(session)
                 if power_kw is not None:
                     self.update_power_reading(vin, power_kw, aux_power_kw=session.last_aux_kw)

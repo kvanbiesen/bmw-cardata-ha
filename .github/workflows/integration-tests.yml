@@ -1,4 +1,4 @@
-name: Config flow tests
+name: Tests
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  config-flow:
+  tests:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
@@ -26,7 +26,11 @@ jobs:
           python -m pip uninstall -y pycares aiodns || true
           python -m pip install --no-binary=pycares "pycares==4.4.0" "aiodns==3.2.0"
 
-      - name: Run mocked config/setup tests
+      # Named individually rather than running the whole directory: the stream
+      # and coordinator tests still call a pre-refactor API and fail, so a bare
+      # "pytest tests/" would be red from the start. Add files here as they are
+      # brought back into line.
+      - name: Run unit and mocked setup tests
         env:
           PYTHONPATH: "."
-        run: pytest -q tests/test_config_flow.py
+        run: pytest -q tests/test_config_flow.py tests/test_soc_wiring.py tests/test_soc_phase_inference.py

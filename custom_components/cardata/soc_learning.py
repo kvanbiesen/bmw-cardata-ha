@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from .const import (
     AC_SESSION_FINALIZE_MINUTES,
     DC_SESSION_FINALIZE_MINUTES,
+    MAX_MISATTRIBUTED_ENERGY_SHARE,
     MAX_VALID_EFFICIENCY,
     MIN_LEARNING_SOC_GAIN,
     MIN_VALID_EFFICIENCY,
@@ -174,6 +175,21 @@ def reset_learned_efficiency(predictor: SOCPredictor, vin: str, charging_method:
     return True
 
 
+def _phase_count_misattributed(session: ChargingSession) -> bool:
+    """Whether enough of the session ran under a phase count it later corrected.
+
+    Energy integrated under two different counts belongs to neither, but the
+    correction usually arrives moments after the charge starts, and refusing to
+    learn from a three hour session because its first minute was accounted for
+    at one phase would quietly switch learning off altogether.
+    """
+    misattributed = session.phases_changed_gross_kwh
+    if misattributed <= 0:
+        return False
+    total = session.session_gross_energy_kwh
+    return total <= 0 or misattributed / total > MAX_MISATTRIBUTED_ENERGY_SHARE
+
+
 def end_session(
     predictor: SOCPredictor,
     vin: str,
@@ -198,10 +214,12 @@ def end_session(
     # Preserve last predicted for stale fallback
     predictor._last_predicted_soc[vin] = session.last_predicted_soc
 
-    if session.restored:
+    if session.restored or _phase_count_misattributed(session):
+        reason = "energy data incomplete" if session.restored else "phase count changed mid-charge"
         _LOGGER.info(
-            "SOC: Ending restored session for %s without learning (energy data incomplete)",
+            "SOC: Ending session for %s without learning (%s)",
             redact_vin(vin),
+            reason,
         )
         del predictor._sessions[vin]
         predictor._charging_method.pop(vin, None)

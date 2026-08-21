@@ -548,7 +548,8 @@ async def async_seed_telematic_data(
             break
 
         if merged_data:
-            await coordinator.async_handle_message({"vin": vin, "data": merged_data})
+            # The seed is an API response, not something the stream delivered.
+            await coordinator.async_handle_message({"vin": vin, "data": merged_data}, is_telematic=True)
             coordinator.record_telematic_poll(vin)
             # The seed is a successful telematic API call, so the diagnostic
             # sensor should show it instead of staying unknown until the first

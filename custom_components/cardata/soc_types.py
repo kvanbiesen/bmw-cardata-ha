@@ -33,10 +33,28 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .const import DEFAULT_DC_EFFICIENCY, LEARNING_RATE, MAX_ENERGY_GAP_SECONDS
+from .const import DEFAULT_DC_EFFICIENCY, LEARNING_RATE, MAX_ENERGY_GAP_SECONDS, MAX_VALID_EFFICIENCY
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
+
+# Where a session's AC phase count came from.  Only a count BMW reported for the
+# current plug-in is authoritative; the other two are the integration's own.
+PHASES_ASSUMED = "assumed"  # nothing reported, modelled as single phase
+PHASES_REPORTED = "reported"  # BMW reported it for this plug-in
+PHASES_DERIVED = "derived"  # inferred from the energy the battery took
+PHASES_CARRIED = "carried"  # left over from an earlier charge, kept as a starting point
+
+# Bumped when a change to the AC power multiplier makes an efficiency learned
+# under the old one mean something different.  Revision 1 corrected two phase
+# charging from three times the single phase product to twice, so an efficiency
+# learned before it had absorbed the one and a half times overstatement and has
+# to be scaled back up rather than applied to the corrected power.
+PHASE_MULTIPLIER_REVISION = 1
+_TWO_PHASE_CORRECTION = 3.0 / 2.0
+# Above this bracket the vehicle quotes a line-to-line voltage, where the
+# multiplier did not change and nothing needs correcting.
+_LINE_NEUTRAL_MAX_BRACKET = 410
 
 
 @dataclass
@@ -219,6 +237,28 @@ class LearnedEfficiency:
 
         return total_efficiency_weighted / total_samples
 
+    def _correct_two_phase_efficiency(self) -> None:
+        """Rescale two phase entries learned against the old power multiplier.
+
+        A two phase charge used to be modelled at three times the single phase
+        product rather than twice, and the efficiency learned for it absorbed the
+        overstatement, so the two errors cancelled and the prediction came out
+        right.  Applying that same figure to the corrected power would leave it a
+        third low for a dozen sessions, so it is scaled back to what it was
+        measuring all along.
+        """
+        for condition, entry in self.efficiency_matrix.items():
+            if condition.phases != 2 or condition.voltage_bracket >= _LINE_NEUTRAL_MAX_BRACKET:
+                continue
+            entry.efficiency = min(entry.efficiency * _TWO_PHASE_CORRECTION, MAX_VALID_EFFICIENCY)
+            entry.history = [min(value * _TWO_PHASE_CORRECTION, MAX_VALID_EFFICIENCY) for value in entry.history]
+            _LOGGER.info(
+                "Rescaled the 2-phase efficiency learned at %dV/%dA to %.2f for the corrected power multiplier",
+                condition.voltage_bracket,
+                condition.current_bracket,
+                entry.efficiency,
+            )
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence (matrix-only storage)."""
         matrix_serialized = {
@@ -233,6 +273,7 @@ class LearnedEfficiency:
             "efficiency_matrix": matrix_serialized,
             "voltage_brackets": self.voltage_brackets,
             "current_brackets": self.current_brackets,
+            "phase_multiplier_revision": PHASE_MULTIPLIER_REVISION,
         }
 
     @classmethod
@@ -262,6 +303,9 @@ class LearnedEfficiency:
                         learned.efficiency_matrix[condition] = entry
                     except (ValueError, KeyError) as err:
                         _LOGGER.warning("Failed to deserialize efficiency entry %s: %s", key, err)
+
+                if data.get("phase_multiplier_revision", 0) < PHASE_MULTIPLIER_REVISION:
+                    learned._correct_two_phase_efficiency()
 
             # Backward compatibility: migrate old flat AC efficiency to matrix
             elif "ac_efficiency" in data and data.get("ac_session_count", 0) > 0:
@@ -363,11 +407,46 @@ class ChargingSession:
     # Session-level tracking (never reset by re-anchors, used for learning)
     session_start_soc: float | None = None  # Original SOC at session creation
     session_total_energy_kwh: float = 0.0  # Cumulative energy across all re-anchors
+    # As above but before auxiliary load is deducted.  The difference between the
+    # two is the auxiliary energy actually integrated, which the phase inference
+    # needs and cannot get from wall clock time because energy accumulation caps
+    # long gaps.
+    session_gross_energy_kwh: float = 0.0
 
     # AC charging state (for vehicles without direct power streaming)
     last_voltage: float | None = None
     last_current: float | None = None
     phases: int = 1
+
+    # Phase count inference, used when BMW never reports one for this plug-in.
+    # See SOCPredictor.update_phase_inference.
+    phases_source: str = PHASES_ASSUMED  # where the count above came from
+    # True when the power came from BMW's own reading rather than the voltage and
+    # current product.  The conditions above are still recorded because they key
+    # the efficiency matrix, but they must not be turned back into a power figure.
+    power_is_reported: bool = False
+    phase_probe_soc: float | None = None  # BMW SOC when the measuring window opened
+    phase_probe_energy: float = 0.0  # session_total_energy_kwh at that moment
+    phase_probe_gross: float = 0.0  # session_gross_energy_kwh at that moment
+    phase_votes: int = 0  # consecutive windows agreeing the count is too low
+    # Gross energy already integrated when the phase count last changed, so it
+    # was accounted for under a count the session no longer believes.  Learning
+    # weighs it against the session total rather than refusing outright, because
+    # a count arriving a minute into a three hour charge misattributes almost
+    # nothing.  Not persisted: a session reloaded from disk is already barred.
+    phases_changed_gross_kwh: float = 0.0
+    # Power pushed in by the user's own meter owes nothing to the phase count and
+    # is not scaled by it, so it makes the energy unusable as evidence.
+    local_power_seen: bool = False
+    # Energy the integration could not count, because the gap was capped or the
+    # clock went backwards.  It leaves the modelled side of a window short while
+    # the SOC gained over the same period counts in full, which reads as a charge
+    # storing more than it should.  Cleared whenever a measuring window opens.
+    energy_uncounted: bool = False
+    # False when the battery capacity is the user's own figure and BMW's own
+    # disagrees with it.  The inferred phase count scales directly with capacity,
+    # so a figure known to be contradicted cannot support one.
+    capacity_trusted: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for persistence."""
@@ -384,9 +463,14 @@ class ChargingSession:
             "target_soc": self.target_soc,
             "session_start_soc": self.session_start_soc,
             "session_total_energy_kwh": self.session_total_energy_kwh,
+            "session_gross_energy_kwh": self.session_gross_energy_kwh,
             "last_voltage": self.last_voltage,
             "last_current": self.last_current,
             "phases": self.phases,
+            "phases_source": self.phases_source,
+            "power_is_reported": self.power_is_reported,
+            "local_power_seen": self.local_power_seen,
+            "capacity_trusted": self.capacity_trusted,
         }
 
     @classmethod
@@ -406,9 +490,20 @@ class ChargingSession:
             restored=True,
             session_start_soc=data.get("session_start_soc"),
             session_total_energy_kwh=data.get("session_total_energy_kwh", 0.0),
+            session_gross_energy_kwh=data.get("session_gross_energy_kwh", 0.0),
             last_voltage=data.get("last_voltage"),
             last_current=data.get("last_current"),
             phases=data.get("phases", 1),
+            # State written before the source was tracked can only have got a
+            # count above one from BMW, so say so rather than claiming it was
+            # assumed and leaving it open to being withdrawn.
+            power_is_reported=data.get("power_is_reported", False),
+            phases_source=data.get(
+                "phases_source",
+                PHASES_REPORTED if data.get("phases", 1) > 1 else PHASES_ASSUMED,
+            ),
+            local_power_seen=data.get("local_power_seen", False),
+            capacity_trusted=data.get("capacity_trusted", True),
         )
 
     def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
@@ -424,8 +519,15 @@ class ChargingSession:
         """
         if self.last_energy_update is not None and power_kw > 0:
             gap = timestamp - self.last_energy_update
+            if gap < 0:
+                # A clock that went backwards still moves the reference below, so
+                # this interval's energy is lost.  A gap of exactly zero is two
+                # calls at the same instant and loses nothing.
+                self.energy_uncounted = True
             if gap > 0:
                 # Cap gap to avoid massive energy jumps after restart
+                if gap > MAX_ENERGY_GAP_SECONDS:
+                    self.energy_uncounted = True
                 capped_hours = min(gap, MAX_ENERGY_GAP_SECONDS) / 3600.0
                 # Trapezoidal integration: average of last and current power
                 avg_power = (self.last_power_kw + power_kw) / 2.0
@@ -433,6 +535,7 @@ class ChargingSession:
                 energy = net_power * capped_hours
                 self.total_energy_kwh += energy
                 self.session_total_energy_kwh += energy
+                self.session_gross_energy_kwh += avg_power * capped_hours
         self.last_power_kw = power_kw
         self.last_aux_kw = aux_power_kw
         self.last_energy_update = timestamp

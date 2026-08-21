@@ -378,7 +378,18 @@ show_buttons: false
 ```
 
 ## Debug Logging
-Set `DEBUG_LOG = True` in `custom_components/cardata/const.py` for detailed MQTT/auth logs (disabled by default). To reduce noise, change it to `False` and reload HA.
+Detailed MQTT and auth logs are off by default. Turn them on the usual Home Assistant way, either from **Settings → Devices & Services → BMW CarData → Enable debug logging**, or by adding this to `configuration.yaml` and restarting:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.cardata: debug
+```
+
+Remember to turn it off again once you have captured what you need, since the output is verbose.
+
+For development there is also `DEBUG_LOG` in `custom_components/cardata/const.py`. Setting it to `True` forces debug logging on regardless of the Home Assistant configuration, and additionally lets entity update failures propagate instead of being logged and swallowed.
 
 ## Predicted SOC with Learning
 
@@ -387,6 +398,39 @@ The integration includes a predicted SOC (State of Charge) sensor that estimates
 ### Vehicles Without Power Telemetry
 
 Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or voltage/current via MQTT. For these vehicles, the integration derives an implied charging power from BMW SOC changes: when an API poll delivers a higher SOC than the previous anchor and no real power data exists, the average power is back-calculated from the SOC delta, elapsed time, and default efficiency. The heartbeat then extrapolates between polls using this derived value, giving smooth SOC progression instead of staircase jumps every 30 minutes. Real power data (if it arrives later) overwrites the derived value automatically.
+
+### Charging Phases
+
+For AC charging the power is worked out from the voltage and current BMW reports, multiplied by the number of phases in use. BMW resets `phaseNumber` to `1-PHASES` when a charge ends and reports the real count when the next charge starts, so a reading older than the start of the charge now running says nothing about it and is discarded. The cable is no help in telling the two apart, since BMW re-stamps the charge port as connected at every start and stop without it ever moving. Until something better arrives the charge is modelled at a single phase.
+
+Some vehicles never send `phaseNumber` over the stream and only report it when the API is asked. A charge that starts without a count for itself is therefore given a minute and then polled once, which is when the value BMW writes at the start of a charge is picked up. This poll deliberately ignores the trip-end cooldown, since a poll taken before the charge began cannot carry its phase count and blocking on one would drop the request for nothing, which is exactly what happens on arriving home and plugging in. It has its own cooldown of an hour per vehicle instead, so a wallbox switching on and off cannot spend the day's calls on this.
+
+A count left over from an earlier charge is not simply thrown away. BMW resets `phaseNumber` to `1-PHASES` at the end of a charge, so a leftover of one says nothing, but anything higher was reported while a real charge was running, most likely at the same wallbox, and is a better opening guess than assuming a single phase. It is held as the integration's own rather than as BMW's, so the measurement below can take it back when this charge turns out to be a different supply.
+
+If BMW stays silent, the battery itself gives the answer away. Inverting the model against the energy actually stored says how many phases the charge would have needed, measured over a window of at least 8% SOC gain. Because whole-percent SOC steps can carry a single window over the line, two consecutive windows have to agree before the count is raised to three.
+
+Raising the count is the risky direction, so withdrawing one is deliberately easier: a single window is enough, and the withdrawal re-anchors the prediction to the BMW reading that disproved it. Putting only the phase count back would fix the rate while leaving the level, since during a charge the prediction never comes down of its own accord, so an inflated value would stay on screen for hours.
+
+Anything BMW reports for the charge now running always wins over an inferred value, and a session whose phase count changed partway through is excluded from efficiency learning, since its energy was integrated under two different assumptions.
+
+The inference deliberately holds back where the evidence is not clear cut, in which case the charge simply stays modelled at one phase as before:
+
+- Vehicles reporting a line-to-line voltage (250 V and above), where the wiring convention behind the power formula cannot be confirmed
+- The last few percent before the target, where the current tapers and the SOC no longer tracks the energy going in
+- Charges below roughly 75% efficiency, which no longer stand out clearly enough
+- Two-phase charging, which lands between the thresholds and so stays understated rather than being overstated as three
+- Any session fed by an external power meter, since injected power is not scaled by the phase count and makes the energy unusable as evidence
+- Windows containing a long gap in the energy integration, which leaves the modelled side short while the SOC gain over the same period counts in full
+- A battery capacity set by hand that BMW's own reported figure contradicts by more than 20%, since the result scales directly with it
+- Plug-in hybrids, which almost never have a three-phase charger
+
+The `Charging Efficiency Matrix` sensor, which is hidden by default and can be enabled in the device settings, reports `phases_source` alongside `phases`: whether the count was `reported` by BMW, `carried` over from an earlier charge, `derived` from the energy, or merely `assumed`, so a count the integration worked out is never mistaken for one BMW gave. The charging phases sensor itself only ever repeats what BMW reports and is not written by any of this.
+
+### Charges BMW Never Ends
+
+BMW pushes the end of a charge over the stream when it feels like it, and on some vehicles never at all. The predicted SOC then keeps climbing on modelled power alone until the next scheduled poll, which on a multi-car setup can be hours away, and the sensor reads high the whole time.
+
+Two independent signs that a charge is over are each worth one API call to settle: BMW's own estimate of the time left, which arrives with every poll, has run out, or the prediction has reached the charge target and has nothing left to add. Whichever comes first, the integration asks the API once whether the charge is still running and lets the answer end the session. The question is asked once per charge, so a charge BMW insists is still running costs a single call rather than one every heartbeat.
 
 ### How Learning Works
 
@@ -513,7 +557,7 @@ The integration can fetch tyre health and wear data from BMW's Smart Maintenance
 
 Home Assistant's Developer Tools expose helper services for manual API checks:
 
-- `cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload.
+- `cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload. Called without a VIN it fetches every known vehicle, and skips any whose data already arrived in the last five minutes, whether over the stream or from an earlier poll, so repeated calls cannot empty the daily quota.
 - `cardata.fetch_vehicle_mappings` calls `GET /customers/vehicles/mappings` and logs the mapping details (including PRIMARY or SECONDARY status). Only primary mappings return data; some vehicles do not support secondary users, in which case the mapped user is considered the primary one.
 - `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN.
 - `cardata.fetch_charging_history` fetches the last 30 days of charging sessions for a VIN. Uses 1 API call per vehicle.
@@ -528,9 +572,12 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 BMW imposes a **50 calls/day** limit on the CarData API. This integration does not enforce the limit client-side — BMW's own 429 response is respected via backoff. API usage is minimized through MQTT freshness gating and rate limiting:
 
 - **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages. In direct BMW mode, token refresh during MQTT reconnection is lock-free to avoid blocking the connection, and the MQTT connection is proactively reconnected with fresh credentials to prevent session expiry (~1 hour).
+- **Telling a quiet car from a dead stream**: the CarData Debug Device carries `Last Message Received`, `Last Telematics API Call` and `Stream Connection Status`. Only real stream messages write the first and the third of those, so a car that has merely gone quiet shows a recent API call next to an older message, while a stream that has died keeps the status it failed with instead of being painted green by the next poll.
 - **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state. This ensures SOC is updated even when the MQTT stream only delivers GPS/mileage but not SOC (common on some models). A configurable per-VIN cooldown (default 10 minutes) prevents GPS burst flapping from burning API quota. A 30-second grace period after door unlock prevents brief intermediate stops (e.g. picking up a passenger) from fragmenting a trip and wasting API calls. Trip-end polling can be **disabled entirely** or the cooldown can be **increased** via Settings → Devices & Services → BMW CarData → Configure → Settings. Disabling it is useful for vehicles making many short trips (e.g. delivery drivers, nurses) that would otherwise exhaust the daily API quota.
 - **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor, subject to the same per-VIN cooldown.
-- **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. VINs with fresh MQTT data are skipped individually, so in multi-car setups only stale VINs consume API calls.
+- **Charge-finish polling**: Some vehicles never report the end of a charge over the stream, which leaves the predicted SOC climbing until the next scheduled poll. When BMW's own estimate of the time left runs out, or the prediction reaches the charge target, the integration asks once whether the charge is still running. At most one call per charge, and no more than one an hour per vehicle.
+- **Charge-start polling**: BMW resets the AC phase count when a charge ends and reports the real one when the next charge starts, and some vehicles only ever send it in response to an API call. When a charge starts without a phase count for that charge, the integration polls once a minute later. This one is not subject to the trip-end cooldown, which would otherwise swallow it whenever a car is plugged in shortly after arriving home; it has its own cooldown of an hour per vehicle. Charges whose phase count is already known, and DC charges, poll nothing.
+- **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. Each VIN is judged on its own, and only VINs whose last poll is older than the staleness threshold are fetched, so in multi-car setups the fresh ones consume no API calls.
 - **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
 - **Multi-VIN setups**: All vehicles share the same 50 call/day limit. The poll interval scales with VIN count plus any enabled daily features. Each VIN is guaranteed at least 1 poll per day; BMW's 429 backoff handles actual quota enforcement.
 - **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay (1h, 2h, 4h, 8h, up to 24h). Because the quota resets at midnight UTC, a backoff that would run past the reset is shortened to end at it, so API calls resume as soon as the quota is back instead of sitting out the rest of a long backoff. A `Retry-After` header sent by BMW is honoured as-is.

@@ -29,11 +29,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from .const import CHARGE_END_POLL_COOLDOWN_SECONDS, PHASE_POLL_COOLDOWN_SECONDS
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
 from .pending_manager import PendingManager
@@ -92,6 +94,10 @@ class CardataRuntimeData:
     _trip_poll_vins: set | None = None
     enable_trip_poll: bool = True
     trip_poll_cooldown_seconds: int = 600
+    # (VIN, purpose) -> unix time of the last poll asked for outside the
+    # trip-end cooldown, one bucket per purpose so that a poll for one reason
+    # cannot swallow a poll needed for another.
+    _immediate_poll_at: dict[tuple[str, str], float] = field(default_factory=dict, init=False)
 
     def __post_init__(self):
         """Initialize rate limiters if not provided."""
@@ -120,6 +126,53 @@ class CardataRuntimeData:
         """Get the image fetch pending manager."""
         return self._image_fetch_pending
 
+    def _enqueue_poll(self, vin: str) -> None:
+        """Queue a VIN for an immediate poll and wake the telematic loop."""
+        if self._trip_poll_vins is not None:
+            self._trip_poll_vins.add(vin)
+        if self._trip_poll_event is not None:
+            self._trip_poll_event.set()
+
+    def _request_poll_for(self, vin: str, purpose: str, cooldown: float) -> bool:
+        """Queue a poll the trip-end cooldown must not swallow, at most one per cooldown.
+
+        The trip-end cooldown counts any poll, which makes it the wrong guard for
+        a poll asked for because a particular fact is missing: an earlier poll
+        that predates the charge cannot carry that fact, so blocking on it drops
+        the request for nothing. Each purpose gets its own interval instead,
+        which still stops a wallbox flapping on solar surplus from spending the
+        daily quota one short charge at a time.
+        """
+        now = time.time()
+        last = self._immediate_poll_at.get((vin, purpose))
+        if last is not None and now - last < cooldown:
+            _LOGGER.debug(
+                "Skipping %s poll for VIN %s (asked for %.0fs ago, cooldown %.0fs)",
+                purpose,
+                redact_vin(vin),
+                now - last,
+                cooldown,
+            )
+            return False
+
+        self._immediate_poll_at[(vin, purpose)] = now
+        self._enqueue_poll(vin)
+        return True
+
+    def request_phase_poll(self, vin: str) -> bool:
+        """Request a poll for the AC phase count of a charge that started without one.
+
+        Returns whether the poll was queued.
+        """
+        return self._request_poll_for(vin, "phase count", PHASE_POLL_COOLDOWN_SECONDS)
+
+    def request_charge_end_poll(self, vin: str) -> bool:
+        """Request a poll to settle whether a charge that ought to be over has ended.
+
+        Returns whether the poll was queued.
+        """
+        return self._request_poll_for(vin, "charge end", CHARGE_END_POLL_COOLDOWN_SECONDS)
+
     def request_trip_poll(self, vin: str, *, force: bool = False) -> None:
         """Request an immediate API poll for a VIN after trip or charge ends.
 
@@ -147,10 +200,7 @@ class CardataRuntimeData:
             )
             return
 
-        if self._trip_poll_vins is not None:
-            self._trip_poll_vins.add(vin)
-        if self._trip_poll_event is not None:
-            self._trip_poll_event.set()
+        self._enqueue_poll(vin)
         _LOGGER.debug("Trip ended for VIN %s, requesting immediate API poll", redact_vin(vin))
 
     def get_trip_poll_vins(self) -> set:

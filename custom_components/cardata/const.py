@@ -37,11 +37,17 @@ DESC_CHARGING_PHASES = "vehicle.drivetrain.electricEngine.charging.phaseNumber"
 DESC_CHARGING_STATUS = "vehicle.drivetrain.electricEngine.charging.status"
 DESC_CHARGING_LEVEL = "vehicle.drivetrain.electricEngine.charging.level"
 DESC_CHARGING_POWER = "vehicle.powertrain.electric.battery.charging.power"
+DESC_CHARGING_TIME_REMAINING = "vehicle.drivetrain.electricEngine.charging.timeRemaining"
 DESC_REMAINING_FUEL = "vehicle.drivetrain.fuelSystem.remainingFuel"
 DESC_FUEL_LEVEL = "vehicle.drivetrain.fuelSystem.level"
 DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
 DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
 DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
+
+# Charge port descriptors, used to tell one plug-in apart from the next
+DESC_CHARGING_PORT_STATUS = "vehicle.body.chargingPort.status"
+DESC_CHARGING_PORT_PLUGGED = "vehicle.powertrain.tractionBattery.charging.port.anyPosition.isPlugged"
+DESC_CHARGING_PORT_PLUG_EVENT = "vehicle.body.chargingPort.plugEventId"
 
 # Lock acquisition timeout (seconds) — used for connect, credential, and token refresh locks
 LOCK_ACQUIRE_TIMEOUT = 60.0
@@ -103,6 +109,21 @@ BOOTSTRAP_COMPLETE = "bootstrap_complete"
 TARGET_DAILY_POLLS = 24
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 DEFAULT_TRIP_POLL_COOLDOWN_MINUTES = 10  # Default cooldown between trip-end polls
+# How long to wait after a charge starts before asking the API for the phase
+# count, when the vehicle did not report one.  The poll is answered from BMW's
+# own snapshot of the vehicle, which lags the transition by a few seconds; one
+# that overtook it would write the state from before the charge over the live
+# one and end the session that just started.
+PHASE_POLL_DELAY_SECONDS = 60
+# Least time between two phase count polls for the same vehicle. The poll is
+# asked for once per charge that starts without a count, so this only matters to
+# a wallbox that starts and stops on solar surplus: without it, such a wallbox
+# would spend the daily quota one short charge at a time.
+PHASE_POLL_COOLDOWN_SECONDS = 3600
+# Least time between two polls asking whether a charge that ought to be over
+# has in fact ended. One is asked for per charge, so this only matters to a
+# wallbox that starts and stops on solar surplus.
+CHARGE_END_POLL_COOLDOWN_SECONDS = 3600
 VEHICLE_METADATA = "vehicle_metadata"
 OPTION_MQTT_KEEPALIVE = "mqtt_keepalive"
 OPTION_DEBUG_LOG = "debug_log"
@@ -150,17 +171,17 @@ HV_BATTERY_DESCRIPTORS = [
     "vehicle.powertrain.electric.battery.preconditioning.automaticMode.statusFeedback",
     "vehicle.vehicle.avgAuxPower",
     "vehicle.powertrain.tractionBattery.charging.port.anyPosition.flap.isOpen",
-    "vehicle.powertrain.tractionBattery.charging.port.anyPosition.isPlugged",
+    DESC_CHARGING_PORT_PLUGGED,
     "vehicle.drivetrain.electricEngine.charging.timeToFullyCharged",
     "vehicle.powertrain.electric.battery.charging.acLimit.selected",
     "vehicle.drivetrain.electricEngine.charging.method",
     "vehicle.drivetrain.electricEngine.charging.profile.mode",
-    "vehicle.body.chargingPort.plugEventId",
+    DESC_CHARGING_PORT_PLUG_EVENT,
     DESC_CHARGING_PHASES,
     DESC_TRIP_HVSOC,
     "vehicle.trip.segment.accumulated.drivetrain.electricEngine.recuperationTotal",
     "vehicle.drivetrain.electricEngine.remainingElectricRange",
-    "vehicle.drivetrain.electricEngine.charging.timeRemaining",
+    DESC_CHARGING_TIME_REMAINING,
     "vehicle.drivetrain.electricEngine.charging.hvStatus",
     "vehicle.drivetrain.electricEngine.charging.lastChargingReason",
     "vehicle.drivetrain.electricEngine.charging.lastChargingResult",
@@ -198,6 +219,11 @@ DEFAULT_DC_EFFICIENCY = 0.93
 LEARNING_RATE = 0.2
 # Minimum SOC gain required to learn from a session (percentage)
 MIN_LEARNING_SOC_GAIN = 5.0
+# Share of a session's energy that may have been integrated under a phase count
+# the session later corrected, before its efficiency stops being worth learning
+# from.  A count arriving a minute into a three hour charge misattributes almost
+# nothing and should not cost the session.
+MAX_MISATTRIBUTED_ENERGY_SHARE = 0.05
 # Valid efficiency bounds - reject outliers outside this range
 MIN_VALID_EFFICIENCY = 0.40
 MAX_VALID_EFFICIENCY = 0.98
