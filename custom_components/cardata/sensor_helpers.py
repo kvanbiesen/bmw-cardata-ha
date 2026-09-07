@@ -132,12 +132,10 @@ def get_device_class_for_unit(unit: str | None, descriptor: str | None = None) -
         descriptor_lower = descriptor.lower()
         if unit is None:
             return None
-        # Fuel tank volume is a stored volume, not a flowing volume
         if descriptor in FUEL_VOLUME_DESCRIPTORS:
-            return getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME)
-        # Battery energy content/capacity is stored energy, not a flowing total
+            return getattr(SensorDeviceClass, "VOLUME_STORAGE", None)
         if descriptor in ENERGY_STORAGE_DESCRIPTORS:
-            return getattr(SensorDeviceClass, "ENERGY_STORAGE", SensorDeviceClass.ENERGY)
+            return getattr(SensorDeviceClass, "ENERGY_STORAGE", None)
         # Check if this is a battery-related descriptor with % unit
         if descriptor in BATTERY_DESCRIPTORS:
             # Only apply battery class if unit is % (percentage)
@@ -187,12 +185,14 @@ _DISPLAY_PRECISION: dict[SensorDeviceClass, int] = {
     SensorDeviceClass.TEMPERATURE: 1,
     SensorDeviceClass.PRESSURE: 1,
     SensorDeviceClass.VOLUME: 1,
-    getattr(SensorDeviceClass, "VOLUME_STORAGE", SensorDeviceClass.VOLUME): 1,
-    getattr(SensorDeviceClass, "ENERGY_STORAGE", SensorDeviceClass.ENERGY): 2,
     SensorDeviceClass.DURATION: 0,
     SensorDeviceClass.ENERGY_DISTANCE: 1,
     SensorDeviceClass.BATTERY: 0,
 }
+if _volume_storage := getattr(SensorDeviceClass, "VOLUME_STORAGE", None):
+    _DISPLAY_PRECISION[_volume_storage] = 1
+if _energy_storage := getattr(SensorDeviceClass, "ENERGY_STORAGE", None):
+    _DISPLAY_PRECISION[_energy_storage] = 2
 
 
 def get_display_precision(device_class: SensorDeviceClass | None) -> int | None:

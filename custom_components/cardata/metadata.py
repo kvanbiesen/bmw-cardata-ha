@@ -497,12 +497,12 @@ async def async_cleanup_ghost_devices(
     """
     import time
 
+    from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
 
     entity_registry = er.async_get(hass)
 
-    # Get all devices for this config entry
-    devices = device_registry.devices.get_devices_for_config_entry_id(entry.entry_id)
+    devices = dr.async_entries_for_config_entry(device_registry, entry.entry_id)
 
     # Only cleanup devices that have been around for at least 10 minutes
     # This prevents removing new cars that are still receiving telemetry
@@ -661,7 +661,7 @@ async def async_cleanup_deduplicated_devices(
         return
 
     device_registry = dr.async_get(hass)
-    devices = device_registry.devices.get_devices_for_config_entry_id(entry.entry_id)
+    devices = dr.async_entries_for_config_entry(device_registry, entry.entry_id)
 
     removed_count = 0
 
