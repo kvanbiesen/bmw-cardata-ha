@@ -497,8 +497,7 @@ async def async_cleanup_ghost_devices(
     """
     import time
 
-    from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers import entity_registry as er
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
 
     entity_registry = er.async_get(hass)
 
