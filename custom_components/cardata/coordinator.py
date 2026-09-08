@@ -670,6 +670,13 @@ class CardataCoordinator:
         new_sensor: list[str] = []
         immediate_updates: list[tuple[str, str]] = []
         schedule_debounce = False
+        # The SOC wiring reads the raw payload a second time, so whatever the
+        # odometer checks below decide has to reach it too. A reading they
+        # threw out would otherwise still drive motion detection and reset the
+        # Magic SOC trip baseline, and one they converted between miles and
+        # kilometres would arrive on the wrong scale.
+        mileage_rejected = False
+        mileage_resolved: tuple[float, str | None] | None = None
 
         if not is_telematic:
             # None of this describes an API poll. It says the stream is alive
@@ -746,9 +753,11 @@ class CardataCoordinator:
                         vin, redacted_vin, value, unit, is_telematic
                     )
                     if not accept:
+                        mileage_rejected = True
                         continue
                     unit = resolved_unit
                     value = resolved_value
+                    mileage_resolved = (resolved_value, resolved_unit)
 
             # Preserve existing unit when new message doesn't include one
             if unit is None and not is_new:
@@ -820,10 +829,42 @@ class CardataCoordinator:
                         schedule_debounce = True
 
         # Delegate all SOC-related descriptor processing
-        if process_soc_descriptors(self, vin, data, vehicle_state):
+        if process_soc_descriptors(
+            self, vin, self._mileage_corrected(data, mileage_rejected, mileage_resolved), vehicle_state
+        ):
             schedule_debounce = True
 
         return immediate_updates, schedule_debounce
+
+    @staticmethod
+    def _mileage_corrected(
+        data: dict[str, Any],
+        rejected: bool,
+        resolved: tuple[float, str | None] | None,
+    ) -> dict[str, Any]:
+        """Return the message as the odometer checks left it.
+
+        The same payload is walked twice, once here and once by the SOC
+        wiring, and only the first pass knows whether a travelledDistance
+        reading survived. Hand the second pass the verdict rather than the raw
+        number: the original dictionary is returned untouched whenever there
+        is nothing to say, which is every message that does not carry a
+        corrected odometer.
+        """
+        if rejected:
+            return {key: value for key, value in data.items() if key != DESC_TRAVELLED_DISTANCE}
+
+        if resolved is None:
+            return data
+
+        raw = data.get(DESC_TRAVELLED_DISTANCE)
+        resolved_value, resolved_unit = resolved
+        if not isinstance(raw, dict) or raw.get("value") == resolved_value:
+            return data
+
+        corrected = dict(data)
+        corrected[DESC_TRAVELLED_DISTANCE] = {**raw, "value": resolved_value, "unit": resolved_unit}
+        return corrected
 
     def _resolve_mileage_reading(
         self, vin: str, redacted_vin: str, value: float, unit: str | None, is_telematic: bool
