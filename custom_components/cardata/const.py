@@ -47,11 +47,14 @@ DESC_AVG_ELECTRIC_CONSUMPTION = "vehicle.drivetrain.avgElectricRangeConsumption"
 DESC_HVS_MAX_ENERGY = "vehicle.drivetrain.electricEngine.hvsMaxEnergyAbsolute"
 DESC_ENERGY_TO_FULL_CHARGE = "vehicle.drivetrain.electricEngine.charging.smeEnergyDeltaFullyCharged"
 
-# Lifetime grid energy counters BMW keeps for OBFCM reporting. They only ever
-# climb, which is what makes them usable as an energy dashboard source.
+# Lifetime counters BMW keeps for OBFCM reporting, in grid energy and in fuel.
+# They only ever climb, which is what makes them a cumulative total.
 DESC_GRID_ENERGY_TOTAL = "vehicle.drivetrain.electricEngine.charging.consumptionOverLifeTime.overall.gridEnergy"
 DESC_GRID_ENERGY_ENGINE_ON = "vehicle.drivetrain.electricEngine.charging.consumptionOverLifeTime.engineOn.gridEnergy"
 DESC_GRID_ENERGY_ENGINE_OFF = "vehicle.drivetrain.electricEngine.charging.consumptionOverLifeTime.engineOff.gridEnergy"
+DESC_FUEL_CONSUMED_TOTAL = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.overall.fuel"
+DESC_FUEL_CONSUMED_CHARGE_DEPLETING = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.fuel"
+DESC_FUEL_CONSUMED_CHARGE_INCREASING = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeIncreasing.fuel"
 
 # Ranges BMW's own data catalogue declares for a descriptor. A value outside
 # one of these is not a reading, it is a placeholder: every Neue Klasse car

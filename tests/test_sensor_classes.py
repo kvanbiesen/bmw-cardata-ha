@@ -31,11 +31,15 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from custom_components.cardata.const import (
     DESC_BATTERY_SIZE_MAX,
     DESC_ENERGY_TO_FULL_CHARGE,
+    DESC_FUEL_CONSUMED_CHARGE_DEPLETING,
+    DESC_FUEL_CONSUMED_CHARGE_INCREASING,
+    DESC_FUEL_CONSUMED_TOTAL,
     DESC_GRID_ENERGY_ENGINE_OFF,
     DESC_GRID_ENERGY_ENGINE_ON,
     DESC_GRID_ENERGY_TOTAL,
     DESC_HVS_MAX_ENERGY,
     DESC_MAX_ENERGY,
+    DESC_REMAINING_FUEL,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.sensor import CardataSensor
@@ -48,6 +52,12 @@ LIFETIME_GRID_ENERGY = [
     DESC_GRID_ENERGY_TOTAL,
     DESC_GRID_ENERGY_ENGINE_ON,
     DESC_GRID_ENERGY_ENGINE_OFF,
+]
+
+LIFETIME_FUEL = [
+    DESC_FUEL_CONSUMED_TOTAL,
+    DESC_FUEL_CONSUMED_CHARGE_DEPLETING,
+    DESC_FUEL_CONSUMED_CHARGE_INCREASING,
 ]
 
 STORED_ENERGY = [
@@ -110,6 +120,23 @@ class TestLifetimeGridEnergy:
         """BMW reports the trip on its own, so adding the values up means nothing."""
         sensor = build_sensor(TRIP_ENERGY_COMFORT, 3.2, "kWh")
         assert sensor.state_class is None
+
+
+class TestLifetimeFuel:
+    """The OBFCM fuel counters, which climb the same way."""
+
+    @pytest.mark.parametrize("descriptor", LIFETIME_FUEL)
+    def test_counts_as_a_cumulative_total(self, descriptor):
+        """HA does not allow a measurement on a volume, so these need a total."""
+        sensor = build_sensor(descriptor, 812.25, "l")
+        assert sensor.device_class == SensorDeviceClass.VOLUME
+        assert sensor.state_class == SensorStateClass.TOTAL_INCREASING
+
+    def test_the_tank_level_is_left_as_stored_volume(self):
+        """The tank reading is a level, so it must not follow the counters."""
+        sensor = build_sensor(DESC_REMAINING_FUEL, 12.0, "l")
+        assert sensor.device_class == SensorDeviceClass.VOLUME_STORAGE
+        assert sensor.state_class == SensorStateClass.MEASUREMENT
 
 
 class TestStoredEnergy:

@@ -49,6 +49,9 @@ from .const import (
     BATTERY_DESCRIPTORS,
     DESC_BATTERY_SIZE_MAX,
     DESC_ENERGY_TO_FULL_CHARGE,
+    DESC_FUEL_CONSUMED_CHARGE_DEPLETING,
+    DESC_FUEL_CONSUMED_CHARGE_INCREASING,
+    DESC_FUEL_CONSUMED_TOTAL,
     DESC_GRID_ENERGY_ENGINE_OFF,
     DESC_GRID_ENERGY_ENGINE_ON,
     DESC_GRID_ENERGY_TOTAL,
@@ -106,16 +109,19 @@ ENERGY_STORAGE_DESCRIPTORS = {
     DESC_ENERGY_TO_FULL_CHARGE,
 }
 
-# The grid energy counters run for the life of the car, so they are the one
-# kind of energy reading the HA energy dashboard can take as a source: a
-# cumulative meter carrying the "energy" device class. The other kWh readings
-# stay out of it. Most are a stored level, and the trip consumption is the
-# figure for the last trip on its own, so treating it as a counter would have
-# HA read every new trip as either a delta or a reset.
-ENERGY_TOTAL_DESCRIPTORS = {
+# The counters BMW keeps for the life of the car, in grid energy and in fuel.
+# Both are cumulative meters, and the grid energy trio is the only reading
+# this integration has that the HA energy dashboard will take as a source.
+# The other readings in these units stay out: most are a stored level, and the
+# trip consumption is the figure for the last trip on its own, so treating it
+# as a counter would have HA read every new trip as a delta or a reset.
+LIFETIME_TOTAL_DESCRIPTORS = {
     DESC_GRID_ENERGY_TOTAL,
     DESC_GRID_ENERGY_ENGINE_ON,
     DESC_GRID_ENERGY_ENGINE_OFF,
+    DESC_FUEL_CONSUMED_TOTAL,
+    DESC_FUEL_CONSUMED_CHARGE_DEPLETING,
+    DESC_FUEL_CONSUMED_CHARGE_INCREASING,
 }
 
 # Descriptors BMW reports without any unit at all, even though the value is
