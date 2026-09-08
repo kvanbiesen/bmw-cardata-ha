@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.cardata import stream_reconnect
-from custom_components.cardata.stream import CardataStreamManager
+from custom_components.cardata.stream import CardataStreamManager, ConnectionState
 
 
 def test_schedule_retry_skips_when_circuit_breaker_open() -> None:
@@ -93,5 +93,48 @@ def test_custom_broker_auth_retries_are_limited() -> None:
         assert manager._custom_auth_failures == manager._CUSTOM_BROKER_MAX_AUTH_RETRIES
         # Last failure blocks and does not schedule another retry.
         assert schedule_retry.call_count == manager._CUSTOM_BROKER_MAX_AUTH_RETRIES - 1
+    finally:
+        loop.close()
+
+
+def test_a_refused_subscription_is_not_stored_as_a_live_client() -> None:
+    """The broker can answer the connection and refuse the subscription at once.
+
+    Both callbacks then run before the connecting thread is scheduled again,
+    so the client it was about to take ownership of has already been stopped.
+    Keeping it would block the retry the subscribe callback just asked for.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+
+        manager = CardataStreamManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def connect_async(_host, _port, keepalive=None):
+                manager._handle_connect(client, userdata, {}, 0)
+                manager._handle_subscribe(client, userdata, 1, (0x80,))
+
+            client.connect_async = connect_async
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            with pytest.raises(ConnectionError):
+                manager._start_client()
+
+        assert manager.client is None
+        assert manager._connection_state is ConnectionState.FAILED
     finally:
         loop.close()

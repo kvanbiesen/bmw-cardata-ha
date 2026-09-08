@@ -573,6 +573,16 @@ class CardataStreamManager:
                 _LOGGER.warning("BMW MQTT connection failed (entry %s): %s", self._entry_id, error_reason)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
 
+            # The broker can accept the connection and refuse the subscription
+            # straight after it, and when both answers arrive together the
+            # subscribe callback runs before this thread is scheduled again.
+            # It has already stopped the client and asked for a retry, so
+            # storing the client here would leave a dead one on record and the
+            # retry skips a manager that still holds one, leaving the stream
+            # down until the next token refresh.
+            if self._connection_state is ConnectionState.FAILED:
+                raise ConnectionError("MQTT connection failed: subscription refused")
+
             # Success - transfer ownership to self._client
             self._client = client
             loop_started = False  # Loop now managed by self._client
