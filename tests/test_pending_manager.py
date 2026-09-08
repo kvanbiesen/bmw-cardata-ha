@@ -304,3 +304,25 @@ class TestPendingSnapshot:
         assert updates == {"VIN1": {"desc.a"}}
         assert new_sensors == {}
         assert new_binary == {}
+
+
+class TestStalenessClock:
+    """Every kind of pending item has to start the clock."""
+
+    def test_a_new_sensor_batch_can_go_stale(self):
+        """A batch of nothing but entity notifications is stuck just the same."""
+        batcher = UpdateBatcher()
+        batcher.add_new_sensor("WBA00000000000001", "vehicle.speed")
+        assert batcher.check_and_clear_stale(datetime.now(UTC) + timedelta(seconds=120)) == 1
+        assert batcher.get_total_count() == 0
+
+    def test_a_new_binary_batch_can_go_stale(self):
+        batcher = UpdateBatcher()
+        batcher.add_new_binary("WBA00000000000001", "vehicle.isMoving")
+        assert batcher.check_and_clear_stale(datetime.now(UTC) + timedelta(seconds=120)) == 1
+
+    def test_a_fresh_batch_is_left_alone(self):
+        batcher = UpdateBatcher()
+        batcher.add_new_sensor("WBA00000000000001", "vehicle.speed")
+        assert batcher.check_and_clear_stale(datetime.now(UTC)) == 0
+        assert batcher.get_total_count() == 1
