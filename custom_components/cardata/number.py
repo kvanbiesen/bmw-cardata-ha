@@ -116,7 +116,7 @@ async def async_setup_entry(
 
         # Restore manual battery capacity entities
         if unique_id.endswith(f"_{MANUAL_CAPACITY_DESCRIPTOR}"):
-            vin = unique_id.replace(f"_{MANUAL_CAPACITY_DESCRIPTOR}", "")
+            vin = unique_id.removesuffix(f"_{MANUAL_CAPACITY_DESCRIPTOR}")
             if vin not in created_battery_vins:
                 vehicle_name = coordinator.names.get(vin, redact_vin(vin))
                 entities.append(
@@ -135,7 +135,7 @@ async def async_setup_entry(
 
         # Restore manual tank capacity entities
         if unique_id.endswith(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}"):
-            vin = unique_id.replace(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}", "")
+            vin = unique_id.removesuffix(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}")
             if vin not in created_tank_vins:
                 vehicle_name = coordinator.names.get(vin, redact_vin(vin))
                 entities.append(
