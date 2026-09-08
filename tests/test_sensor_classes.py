@@ -42,6 +42,8 @@ from custom_components.cardata.sensor import CardataSensor
 
 VIN = "WBA00000000000001"
 
+TRIP_ENERGY_COMFORT = "vehicle.trip.segment.accumulated.drivetrain.electricEngine.energyConsumptionComfort"
+
 LIFETIME_GRID_ENERGY = [
     DESC_GRID_ENERGY_TOTAL,
     DESC_GRID_ENERGY_ENGINE_ON,
@@ -103,6 +105,11 @@ class TestLifetimeGridEnergy:
         """The guard is per descriptor, so nothing else changes class."""
         sensor = build_sensor(DESC_MAX_ENERGY, 21.5, "kWh")
         assert sensor.state_class == SensorStateClass.MEASUREMENT
+
+    def test_the_last_trip_figure_is_not_a_counter(self):
+        """BMW reports the trip on its own, so adding the values up means nothing."""
+        sensor = build_sensor(TRIP_ENERGY_COMFORT, 3.2, "kWh")
+        assert sensor.state_class is None
 
 
 class TestStoredEnergy:

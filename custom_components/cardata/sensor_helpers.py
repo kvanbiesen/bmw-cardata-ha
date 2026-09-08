@@ -108,8 +108,10 @@ ENERGY_STORAGE_DESCRIPTORS = {
 
 # The grid energy counters run for the life of the car, so they are the one
 # kind of energy reading the HA energy dashboard can take as a source: a
-# cumulative meter carrying the "energy" device class. Everything else this
-# integration reports in kWh is a level, which the dashboard has no use for.
+# cumulative meter carrying the "energy" device class. The other kWh readings
+# stay out of it. Most are a stored level, and the trip consumption is the
+# figure for the last trip on its own, so treating it as a counter would have
+# HA read every new trip as either a delta or a reset.
 ENERGY_TOTAL_DESCRIPTORS = {
     DESC_GRID_ENERGY_TOTAL,
     DESC_GRID_ENERGY_ENGINE_ON,
