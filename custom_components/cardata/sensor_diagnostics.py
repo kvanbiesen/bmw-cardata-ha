@@ -440,16 +440,17 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
         summarised.sort(key=lambda s: s.get("startTime") or 0, reverse=True)
 
         attrs = {"sessions": summarised}
-        serialised_len = len(json.dumps(attrs, default=str))
-        while summarised and serialised_len > _MAX_ATTRIBUTES_BYTES:
+        while summarised and len(json.dumps(attrs, default=str)) > _MAX_ATTRIBUTES_BYTES:
             summarised.pop()
             attrs = {"sessions": summarised}
-            serialised_len = len(json.dumps(attrs, default=str))
-            if not summarised:
-                _LOGGER.debug(
-                    "Charging history attributes still exceed %d bytes after removing all sessions",
-                    _MAX_ATTRIBUTES_BYTES,
-                )
+
+        if not summarised:
+            # Only reachable if one session on its own is over the limit, which
+            # would mean the fields kept above have grown.
+            _LOGGER.debug(
+                "Charging history dropped every session to stay under %d bytes",
+                _MAX_ATTRIBUTES_BYTES,
+            )
         return attrs
 
 

@@ -109,6 +109,9 @@ PREDICTED_SOC_DESCRIPTOR = "vehicle.predicted_soc"
 # Magic SOC sensor (driving consumption prediction)
 MAGIC_SOC_DESCRIPTOR = "vehicle.magic_soc"
 
+# Cumulative grid energy counter built from the charging session history
+CHARGING_ENERGY_DESCRIPTOR = "charging_history_energy"
+
 # Manual battery capacity (user input, takes priority over automatic detection)
 MANUAL_CAPACITY_DESCRIPTOR = "vehicle.manual_battery_capacity"
 
@@ -190,11 +193,6 @@ LOCAL_POWER_TTL_SECONDS = 120
 ERR_TOKEN_REFRESH_IN_PROGRESS = "Token refresh already in progress"
 
 # Container Management
-# If True, search for existing containers to reuse (prevents accumulation)
-CONTAINER_REUSE_EXISTING = True
-# If False, always create new container (saves 1 API call but may accumulate containers)
-# Set to False for testing if you frequently change descriptors
-
 HV_BATTERY_CONTAINER_NAME = "BMW CarData HV Battery"
 HV_BATTERY_CONTAINER_PURPOSE = "High voltage battery telemetry"
 HV_BATTERY_DESCRIPTORS = [

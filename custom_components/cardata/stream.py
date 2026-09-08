@@ -166,6 +166,23 @@ class CardataStreamManager:
         future = asyncio.run_coroutine_threadsafe(coro, self.hass.loop)
         future.add_done_callback(_done_callback)
 
+    def _cancel_retry_threadsafe(self) -> None:
+        """Cancel a scheduled retry from the MQTT network thread.
+
+        The retry is an asyncio task, so cancelling it reaches into the event
+        loop and has to be handed over rather than done here, the way every
+        other callback on this thread hands its work over.
+        """
+        self.hass.loop.call_soon_threadsafe(stream_reconnect.cancel_retry, self)
+
+    def _schedule_retry_threadsafe(self, delay: float) -> None:
+        """Schedule a retry from the MQTT network thread.
+
+        Creating the task belongs to the loop, and doing it from here leaves
+        it queued without waking the loop.
+        """
+        self.hass.loop.call_soon_threadsafe(stream_reconnect.schedule_retry, self, delay)
+
     def _safe_loop_stop(self, client: mqtt.Client) -> None:
         """Safely stop the MQTT loop, handling any exceptions.
 
@@ -556,6 +573,16 @@ class CardataStreamManager:
                 _LOGGER.warning("BMW MQTT connection failed (entry %s): %s", self._entry_id, error_reason)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
 
+            # The broker can accept the connection and refuse the subscription
+            # straight after it, and when both answers arrive together the
+            # subscribe callback runs before this thread is scheduled again.
+            # It has already stopped the client and asked for a retry, so
+            # storing the client here would leave a dead one on record and the
+            # retry skips a manager that still holds one, leaving the stream
+            # down until the next token refresh.
+            if self._connection_state is ConnectionState.FAILED:
+                raise ConnectionError("MQTT connection failed: subscription refused")
+
             # Success - transfer ownership to self._client
             self._client = client
             loop_started = False  # Loop now managed by self._client
@@ -600,7 +627,7 @@ class CardataStreamManager:
             if self._reauth_notified:
                 # Schedule async reset of flags with proper locking
                 self._run_coro_safe(stream_reconnect.async_clear_reauth_state(self))
-            stream_reconnect.cancel_retry(self)
+            self._cancel_retry_threadsafe()
             self._last_disconnect = None
             self._retry_backoff = 3
             self._consecutive_reconnect_failures = 0
@@ -645,7 +672,7 @@ class CardataStreamManager:
                             self._status_callback("connection_failed", mqtt.connack_string(rc).rstrip(".")),
                         )
                     )
-                stream_reconnect.schedule_retry(self, 10)
+                self._schedule_retry_threadsafe(10)
                 return
 
             now = time.monotonic()
@@ -654,7 +681,7 @@ class CardataStreamManager:
                     _LOGGER.debug("BMW MQTT connection refused shortly after disconnect; scheduling retry")
                 self._safe_loop_stop(client)
                 self._client = None
-                stream_reconnect.schedule_retry(self, 3)
+                self._schedule_retry_threadsafe(3)
                 return
 
             # Auth Faliure - Log as debug to reduce alarm, its self-healing
@@ -694,7 +721,7 @@ class CardataStreamManager:
                 )
             self._safe_loop_stop(client)
             self._client = None
-            stream_reconnect.schedule_retry(self, 3)
+            self._schedule_retry_threadsafe(3)
             return
 
         self._circuit_breaker.record_success()

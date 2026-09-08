@@ -412,10 +412,8 @@ class MagicSOCPredictor:
         # sub-integer when within rounding range (< 0.5pp) to avoid cosmetic
         # jumps. Monotonicity cap in get_magic_soc handles the anchor > display
         # gap (~1 km catchup).
-        if abs(new_soc - session.last_predicted_soc) < 0.5:
-            session.anchor_soc = new_soc
-        else:
-            session.anchor_soc = new_soc
+        session.anchor_soc = new_soc
+        if abs(new_soc - session.last_predicted_soc) >= 0.5:
             session.last_predicted_soc = new_soc
         session.anchor_mileage = current_mileage
         # Reset GPS distance so fallback doesn't use pre-re-anchor distance

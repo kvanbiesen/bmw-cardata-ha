@@ -38,6 +38,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from .config_flow import _sanitize_error_for_user, _validate_client_id
 from .const import (
     BOOTSTRAP_COMPLETE,
+    CHARGING_ENERGY_DESCRIPTOR,
     DEFAULT_CUSTOM_MQTT_PORT,
     DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
     DEFAULT_TRIP_POLL_COOLDOWN_MINUTES,
@@ -153,7 +154,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             # Remove entities for features being disabled
             toggles = [
                 (OPTION_ENABLE_MAGIC_SOC, ("_vehicle.magic_soc", "_reset_consumption_learning")),
-                (OPTION_ENABLE_CHARGING_HISTORY, ("_diagnostics_charging_history",)),
+                (OPTION_ENABLE_CHARGING_HISTORY, ("_diagnostics_charging_history", f"_{CHARGING_ENERGY_DESCRIPTOR}")),
                 (OPTION_ENABLE_TYRE_DIAGNOSIS, ("_diagnostics_tyre_diagnosis",)),
             ]
             for option_key, suffixes in toggles:
@@ -484,18 +485,24 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                     entry_id,
                     f"{', '.join(entity_ids_deleted[:10])}{'...' if deleted_count > 10 else ''}",
                 )
+                message = f"Removed {deleted_count} orphaned {'entity' if deleted_count == 1 else 'entities'}."
             else:
                 _LOGGER.info("No orphaned entities found for entry %s", entry_id)
+                message = "No orphaned entities were found."
 
-            return self.async_show_form(
-                step_id="action_cleanup_entities",
-                data_schema=vol.Schema({}),
-                description_placeholders={
-                    "success": f"[OK] Found and deleted {deleted_count} orphaned entities."
-                    if deleted_count > 0
-                    else "[OK] No orphaned entities found - everything is clean!",
-                },
+            # Report through a notification and close the flow. The result used
+            # to go into a form with an empty schema, which had a submit button
+            # that could only land back on the confirmation error, leaving no
+            # way to finish the flow.
+            from homeassistant.components import persistent_notification
+
+            persistent_notification.async_create(
+                self.hass,
+                message,
+                title="BMW CarData",
+                notification_id=f"{DOMAIN}_cleanup_{entry_id}",
             )
+            return self._finish()
 
         except Exception as err:
             _LOGGER.error("Failed to clean up entities: %s", err, exc_info=True)

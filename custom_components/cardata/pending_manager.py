@@ -130,15 +130,23 @@ class UpdateBatcher:
     MAX_TOTAL: int = 2000  # Hard cap on total pending items
     MAX_AGE_SECONDS: float = 60.0  # Force-clear pending updates older than this
 
+    def _mark_started(self) -> None:
+        """Note when this batch began, for the staleness check.
+
+        Every kind of pending item stamps it: a batch of nothing but new
+        entity notifications is just as stuck as one of updates if the
+        debounce timer never fires, and would otherwise never be swept.
+        """
+        if self._started_at is None:
+            self._started_at = datetime.now(UTC)
+
     def add_update(self, vin: str, descriptor: str) -> bool:
         """Add a pending update. Returns True if added, False if evicted."""
         # Check limits and evict if needed
         if not self._ensure_capacity(vin):
             return False
 
-        # Track when updates started accumulating
-        if self._started_at is None:
-            self._started_at = datetime.now(UTC)
+        self._mark_started()
 
         # Add to pending set
         if vin not in self._updates:
@@ -151,6 +159,8 @@ class UpdateBatcher:
         if not self._ensure_capacity(vin):
             return False
 
+        self._mark_started()
+
         if vin not in self._new_sensors:
             self._new_sensors[vin] = set()
         self._new_sensors[vin].add(descriptor)
@@ -160,6 +170,8 @@ class UpdateBatcher:
         """Add a pending new binary sensor notification. Returns True if added."""
         if not self._ensure_capacity(vin):
             return False
+
+        self._mark_started()
 
         if vin not in self._new_binary:
             self._new_binary[vin] = set()

@@ -50,6 +50,20 @@ def is_valid_vin(vin: str | None) -> bool:
     return bool(_VALID_VIN_PATTERN.match(vin))
 
 
+# BMW documents a container id only as a string, so nothing here assumes a
+# shape beyond what can safely be dropped into a URL path. Letters, digits,
+# hyphens and underscores cover every id BMW has been seen to issue and leave
+# no way to reach a different endpoint.
+_VALID_CONTAINER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def is_valid_container_id(container_id: str | None) -> bool:
+    """Check a container id is safe to put in a request path."""
+    if not isinstance(container_id, str):
+        return False
+    return bool(_VALID_CONTAINER_ID_PATTERN.match(container_id))
+
+
 def redact_vin(vin: str | None) -> str:
     """Return a redacted VIN suitable for logs (first 3 + last 4 characters)."""
     if not isinstance(vin, str) or not vin:

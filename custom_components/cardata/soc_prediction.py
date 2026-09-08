@@ -1060,6 +1060,7 @@ class SOCPredictor:
         self._pending_sessions.pop(vin, None)
         self._is_phev.pop(vin, None)
         self._charging_method.pop(vin, None)
+        self._last_local_power_update.pop(vin, None)
         # Note: We don't remove learned efficiency - that's persistent data
 
     def get_tracked_vins(self) -> set[str]:
@@ -1076,6 +1077,7 @@ class SOCPredictor:
             | self._entity_signaled
             | set(self._pending_sessions.keys())
             | set(self._is_phev.keys())
+            | set(self._last_local_power_update.keys())
         )
 
     def update_ac_charging_data(
