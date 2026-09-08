@@ -33,4 +33,4 @@ jobs:
       - name: Run unit and mocked setup tests
         env:
           PYTHONPATH: "."
-        run: pytest -q tests/test_config_flow.py tests/test_soc_wiring.py tests/test_soc_phase_inference.py tests/test_opening_binary_sensors.py tests/test_sensor_classes.py tests/test_charging_energy.py tests/test_mileage_guard.py tests/test_button_restore.py tests/test_stream_retry.py
+        run: pytest -q tests/test_config_flow.py tests/test_soc_wiring.py tests/test_soc_phase_inference.py tests/test_opening_binary_sensors.py tests/test_sensor_classes.py tests/test_charging_energy.py tests/test_mileage_guard.py tests/test_button_restore.py tests/test_stream_retry.py tests/test_container_id.py

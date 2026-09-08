@@ -60,6 +60,7 @@ from .const import (
 )
 from .runtime import CardataRuntimeData, async_update_entry_data
 from .utils import (
+    is_valid_container_id,
     is_valid_vin,
     redact_sensitive_data,
     redact_vin,
@@ -483,6 +484,13 @@ async def async_handle_clean_containers(call: ServiceCall) -> None:
 
     # Helper: delete a single container id
     async def _delete_container(cid: str) -> tuple[bool, int, str]:
+        # The id lands in the request path, and this service takes one straight
+        # from the caller, so check it before it can point the request somewhere
+        # other than a container.
+        if not is_valid_container_id(cid):
+            _LOGGER.error("clean_hv_containers: refusing malformed container id")
+            return False, 0, "malformed container id"
+
         url = f"{API_BASE_URL}/customers/containers/{cid}"
         try:
             async with session.delete(url, headers=headers, timeout=request_timeout) as resp:
