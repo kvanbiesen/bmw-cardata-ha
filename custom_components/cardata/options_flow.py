@@ -153,7 +153,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             # Remove entities for features being disabled
             toggles = [
                 (OPTION_ENABLE_MAGIC_SOC, ("_vehicle.magic_soc", "_reset_consumption_learning")),
-                (OPTION_ENABLE_CHARGING_HISTORY, ("_diagnostics_charging_history",)),
+                (OPTION_ENABLE_CHARGING_HISTORY, ("_diagnostics_charging_history", "_charging_history_energy")),
                 (OPTION_ENABLE_TYRE_DIAGNOSIS, ("_diagnostics_tyre_diagnosis",)),
             ]
             for option_key, suffixes in toggles:

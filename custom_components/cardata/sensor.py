@@ -69,6 +69,7 @@ from .const import (
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
+from .sensor_charging_energy import CardataChargingEnergySensor
 from .sensor_diagnostics import (
     CardataChargingHistorySensor,
     CardataDiagnosticsSensor,
@@ -355,16 +356,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     metadata_entities: dict[str, CardataVehicleMetadataSensor] = {}
     efficiency_entities: dict[str, CardataEfficiencyLearningSensor] = {}
     charging_history_entities: dict[str, CardataChargingHistorySensor] = {}
+    charging_energy_entities: dict[str, CardataChargingEnergySensor] = {}
     tyre_diagnosis_entities: dict[str, CardataTyreDiagnosisSensor] = {}
 
-    def ensure_charging_history_sensor(vin: str) -> None:
-        """Ensure charging history sensor exists for VIN when option is enabled."""
+    def ensure_charging_history_sensors(vin: str) -> None:
+        """Ensure the charging history entities exist for VIN when option is enabled.
+
+        Both read the one daily fetch the option already pays for: the
+        diagnostic sensor summarises the sessions, the energy sensor adds them
+        up into a counter the energy dashboard can use.
+        """
         if vin in charging_history_entities:
             return
         if not coordinator.enable_charging_history:
             return
         charging_history_entities[vin] = CardataChargingHistorySensor(coordinator, vin)
-        async_add_entities([charging_history_entities[vin]], True)
+        charging_energy_entities[vin] = CardataChargingEnergySensor(coordinator, vin)
+        async_add_entities([charging_history_entities[vin], charging_energy_entities[vin]], True)
 
     def ensure_tyre_diagnosis_sensor(vin: str) -> None:
         """Ensure tyre diagnosis sensor exists for VIN when option is enabled."""
@@ -483,13 +491,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async def async_handle_metadata_update(vin: str) -> None:
         ensure_metadata_sensor(vin)
         ensure_efficiency_learning_sensor(vin)
-        ensure_charging_history_sensor(vin)
+        ensure_charging_history_sensors(vin)
         ensure_tyre_diagnosis_sensor(vin)
 
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_metadata, async_handle_metadata_update))
 
     async def async_handle_charging_history(vin: str) -> None:
-        ensure_charging_history_sensor(vin)
+        ensure_charging_history_sensors(vin)
 
     entry.async_on_unload(
         async_dispatcher_connect(hass, coordinator.signal_charging_history, async_handle_charging_history)
@@ -537,7 +545,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 continue
 
             if descriptor == "diagnostics_charging_history":
-                ensure_charging_history_sensor(vin)
+                ensure_charging_history_sensors(vin)
                 continue
 
             if descriptor == "diagnostics_tyre_diagnosis":
@@ -566,7 +574,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for vin in all_vins:
             ensure_metadata_sensor(vin)
             ensure_efficiency_learning_sensor(vin)
-            ensure_charging_history_sensor(vin)
+            ensure_charging_history_sensors(vin)
             ensure_tyre_diagnosis_sensor(vin)
     except Exception as err:
         _LOGGER.warning("Error creating metadata sensors: %s", err)
