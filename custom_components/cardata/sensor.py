@@ -55,6 +55,7 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
+    CHARGING_ENERGY_DESCRIPTOR,
     DESC_TRAVELLED_DISTANCE,
     DOMAIN,
     LOCATION_ALTITUDE_DESCRIPTOR,
@@ -88,6 +89,17 @@ from .sensor_helpers import (
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
+
+# Registry rows the charging history helper owns, since it builds both of
+# its entities together. A row missing from here falls through to
+# ensure_entity on restore, and the plain sensor that comes back claims the
+# counter's own unique_id, so Home Assistant drops one of the two.
+CHARGING_HISTORY_RESTORE_DESCRIPTORS = frozenset(
+    {
+        "diagnostics_charging_history",
+        CHARGING_ENERGY_DESCRIPTOR,
+    }
+)
 
 
 class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
@@ -544,7 +556,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 ensure_efficiency_learning_sensor(vin)
                 continue
 
-            if descriptor == "diagnostics_charging_history":
+            if descriptor in CHARGING_HISTORY_RESTORE_DESCRIPTORS:
                 ensure_charging_history_sensors(vin)
                 continue
 

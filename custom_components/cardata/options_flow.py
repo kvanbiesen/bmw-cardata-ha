@@ -38,6 +38,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from .config_flow import _sanitize_error_for_user, _validate_client_id
 from .const import (
     BOOTSTRAP_COMPLETE,
+    CHARGING_ENERGY_DESCRIPTOR,
     DEFAULT_CUSTOM_MQTT_PORT,
     DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
     DEFAULT_TRIP_POLL_COOLDOWN_MINUTES,
@@ -153,7 +154,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             # Remove entities for features being disabled
             toggles = [
                 (OPTION_ENABLE_MAGIC_SOC, ("_vehicle.magic_soc", "_reset_consumption_learning")),
-                (OPTION_ENABLE_CHARGING_HISTORY, ("_diagnostics_charging_history", "_charging_history_energy")),
+                (OPTION_ENABLE_CHARGING_HISTORY, ("_diagnostics_charging_history", f"_{CHARGING_ENERGY_DESCRIPTOR}")),
                 (OPTION_ENABLE_TYRE_DIAGNOSIS, ("_diagnostics_tyre_diagnosis",)),
             ]
             for option_key, suffixes in toggles:

@@ -32,6 +32,8 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 from custom_components.cardata import entity as entity_module
 from custom_components.cardata import sensor_charging_energy as counter_module
+from custom_components.cardata.const import CHARGING_ENERGY_DESCRIPTOR
+from custom_components.cardata.sensor import CHARGING_HISTORY_RESTORE_DESCRIPTORS
 from custom_components.cardata.sensor_charging_energy import (
     MAX_SESSION_ENERGY_KWH,
     CardataChargingEnergySensor,
@@ -108,6 +110,23 @@ class LastState:
 
 def build(sessions: list | None = None, last_state=None, last_extra=None) -> OfflineCounter:
     return OfflineCounter(FakeCoordinator(sessions), VIN, last_state, last_extra)
+
+
+class TestRestoreRouting:
+    """Which platform helper a restored registry row reaches."""
+
+    def test_the_counter_row_reaches_its_own_helper(self):
+        """A row routed anywhere else comes back as a plain sensor.
+
+        The sensor platform splits a registry unique_id the same way, and the
+        plain sensor it would build claims the identifier the counter already
+        owns, so Home Assistant keeps whichever was added first and drops the
+        other.
+        """
+        counter = build()
+        _vin, descriptor = counter._attr_unique_id.split("_", 1)
+        assert descriptor == CHARGING_ENERGY_DESCRIPTOR
+        assert descriptor in CHARGING_HISTORY_RESTORE_DESCRIPTORS
 
 
 class TestClasses:

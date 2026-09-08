@@ -41,6 +41,7 @@ from homeassistant.const import UnitOfEnergy
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
+from .const import CHARGING_ENERGY_DESCRIPTOR
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .utils import redact_vin
@@ -97,7 +98,7 @@ class CardataChargingEnergySensor(CardataEntity, RestoreEntity, SensorEntity):
     _attr_suggested_display_precision = 2
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
-        super().__init__(coordinator, vin, "charging_history_energy")
+        super().__init__(coordinator, vin, CHARGING_ENERGY_DESCRIPTOR)
         self._base_name = "Charging History Energy"
         self._update_name(write_state=False)
         self._total = 0.0

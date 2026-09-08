@@ -109,6 +109,9 @@ PREDICTED_SOC_DESCRIPTOR = "vehicle.predicted_soc"
 # Magic SOC sensor (driving consumption prediction)
 MAGIC_SOC_DESCRIPTOR = "vehicle.magic_soc"
 
+# Cumulative grid energy counter built from the charging session history
+CHARGING_ENERGY_DESCRIPTOR = "charging_history_energy"
+
 # Manual battery capacity (user input, takes priority over automatic detection)
 MANUAL_CAPACITY_DESCRIPTOR = "vehicle.manual_battery_capacity"
 
