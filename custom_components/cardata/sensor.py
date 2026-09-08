@@ -77,6 +77,7 @@ from .sensor_diagnostics import (
     CardataVehicleMetadataSensor,
 )
 from .sensor_helpers import (
+    LIFETIME_TOTAL_DESCRIPTORS,
     convert_value_for_unit,
     get_device_class_for_unit,
     get_display_precision,
@@ -259,6 +260,14 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         """Automatically determine state class based on unit."""
         # Special case: mileage
         if self._descriptor == DESC_TRAVELLED_DISTANCE:
+            return SensorStateClass.TOTAL_INCREASING
+
+        # The lifetime grid energy and fuel counters only ever climb, so they
+        # are a cumulative total. The grid energy trio had no state class at
+        # all, which kept it out of long-term statistics and out of the energy
+        # dashboard; the fuel trio read as a measurement, which HA does not
+        # allow on a volume.
+        if self._descriptor in LIFETIME_TOTAL_DESCRIPTORS:
             return SensorStateClass.TOTAL_INCREASING
 
         # Special case: predicted SOC
