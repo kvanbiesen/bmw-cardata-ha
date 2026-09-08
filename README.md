@@ -231,6 +231,7 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 - Sensors/binary sensors are auto-created and named from descriptors (e.g. `Cabin Door Row1 Driver Is Open`).
 - The device tracker (location entity) is restored from the entity registry on restart, so it keeps its last known position even before MQTT data arrives.
 - The windows and the sunroof get a binary sensor with the `window` device class, which reports open or closed and can drive a `window.opened` trigger. The string sensor that reports the raw BMW enum (`CLOSED`, `INTERMEDIATE`, `OPEN`) is still there but hidden on a new install, so unhide it from the entity settings if you want the intermediate position.
+- The lifetime grid energy counters (`Charging EV Energy supplied total` and the engine on/off pair) are cumulative meters, so they carry the `energy` device class with a `total_increasing` state class and can be picked as a source in the Home Assistant energy dashboard. BMW documents them for plug-in hybrids, so a full electric car may not report them at all.
 - Additional attributes include the source timestamp.
 - All numeric sensors declare `suggested_display_precision`, so unit conversions (e.g. km to miles) display clean rounded values in standard HA cards and the built-in vehicle card. You can override the display unit per entity via the gear icon in the entity settings, or switch your HA unit system to imperial for a global change.
 

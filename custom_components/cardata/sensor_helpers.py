@@ -48,6 +48,9 @@ from homeassistant.const import (
 from .const import (
     BATTERY_DESCRIPTORS,
     DESC_BATTERY_SIZE_MAX,
+    DESC_GRID_ENERGY_ENGINE_OFF,
+    DESC_GRID_ENERGY_ENGINE_ON,
+    DESC_GRID_ENERGY_TOTAL,
     DESC_MAX_ENERGY,
     DESC_REMAINING_FUEL,
     MAGIC_SOC_DESCRIPTOR,
@@ -97,6 +100,16 @@ FUEL_VOLUME_DESCRIPTORS = {
 ENERGY_STORAGE_DESCRIPTORS = {
     DESC_MAX_ENERGY,
     DESC_BATTERY_SIZE_MAX,
+}
+
+# The grid energy counters run for the life of the car, so they are the one
+# kind of energy reading the HA energy dashboard can take as a source: a
+# cumulative meter carrying the "energy" device class. Everything else this
+# integration reports in kWh is a level, which the dashboard has no use for.
+ENERGY_TOTAL_DESCRIPTORS = {
+    DESC_GRID_ENERGY_TOTAL,
+    DESC_GRID_ENERGY_ENGINE_ON,
+    DESC_GRID_ENERGY_ENGINE_OFF,
 }
 
 # Descriptors BMW reports without any unit at all, even though the value is

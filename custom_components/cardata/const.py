@@ -45,6 +45,12 @@ DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
 DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
 DESC_AVG_ELECTRIC_CONSUMPTION = "vehicle.drivetrain.avgElectricRangeConsumption"
 
+# Lifetime grid energy counters BMW keeps for OBFCM reporting. They only ever
+# climb, which is what makes them usable as an energy dashboard source.
+DESC_GRID_ENERGY_TOTAL = "vehicle.drivetrain.electricEngine.charging.consumptionOverLifeTime.overall.gridEnergy"
+DESC_GRID_ENERGY_ENGINE_ON = "vehicle.drivetrain.electricEngine.charging.consumptionOverLifeTime.engineOn.gridEnergy"
+DESC_GRID_ENERGY_ENGINE_OFF = "vehicle.drivetrain.electricEngine.charging.consumptionOverLifeTime.engineOff.gridEnergy"
+
 # Ranges BMW's own data catalogue declares for a descriptor. A value outside
 # one of these is not a reading, it is a placeholder: every Neue Klasse car
 # seen so far reports the same 2777774 kWh/100km average consumption against
