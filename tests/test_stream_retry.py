@@ -83,7 +83,9 @@ def test_custom_broker_auth_retries_are_limited() -> None:
         manager._run_coro_safe = lambda coro: coro.close()
         client = MagicMock()
 
-        with patch("custom_components.cardata.stream.stream_reconnect.schedule_retry") as schedule_retry:
+        # The callback runs on the MQTT network thread, so it hands the retry
+        # to the loop rather than scheduling it in place.
+        with patch.object(manager, "_schedule_retry_threadsafe") as schedule_retry:
             for _ in range(manager._CUSTOM_BROKER_MAX_AUTH_RETRIES):
                 manager._handle_connect(client, {}, {}, 4)
 
