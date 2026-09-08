@@ -30,6 +30,8 @@ import time
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
+from custom_components.cardata import entity as entity_module
+from custom_components.cardata import sensor_charging_energy as counter_module
 from custom_components.cardata.sensor_charging_energy import (
     MAX_SESSION_ENERGY_KWH,
     CardataChargingEnergySensor,
@@ -38,6 +40,17 @@ from custom_components.cardata.sensor_charging_energy import (
 
 VIN = "WBA00000000000001"
 NOW = time.time()
+
+
+@pytest.fixture(autouse=True)
+def no_dispatcher(monkeypatch):
+    """Let the counter subscribe without a running Home Assistant.
+
+    Adding the entity only has to reach the signal wiring, not fire it, and the
+    real helper reads hass.data on the way in.
+    """
+    for module in (entity_module, counter_module):
+        monkeypatch.setattr(module, "async_dispatcher_connect", lambda *args, **kwargs: (lambda: None))
 
 
 def session(start_offset_days: float, energy: object) -> dict:
