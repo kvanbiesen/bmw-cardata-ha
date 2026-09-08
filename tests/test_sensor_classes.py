@@ -29,9 +29,13 @@ import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 from custom_components.cardata.const import (
+    DESC_BATTERY_SIZE_MAX,
+    DESC_ENERGY_TO_FULL_CHARGE,
     DESC_GRID_ENERGY_ENGINE_OFF,
     DESC_GRID_ENERGY_ENGINE_ON,
     DESC_GRID_ENERGY_TOTAL,
+    DESC_HVS_MAX_ENERGY,
+    DESC_MAX_ENERGY,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.sensor import CardataSensor
@@ -42,6 +46,13 @@ LIFETIME_GRID_ENERGY = [
     DESC_GRID_ENERGY_TOTAL,
     DESC_GRID_ENERGY_ENGINE_ON,
     DESC_GRID_ENERGY_ENGINE_OFF,
+]
+
+STORED_ENERGY = [
+    DESC_MAX_ENERGY,
+    DESC_BATTERY_SIZE_MAX,
+    DESC_HVS_MAX_ENERGY,
+    DESC_ENERGY_TO_FULL_CHARGE,
 ]
 
 
@@ -90,5 +101,16 @@ class TestLifetimeGridEnergy:
 
     def test_a_reading_that_is_not_a_counter_keeps_measurement(self):
         """The guard is per descriptor, so nothing else changes class."""
-        sensor = build_sensor("vehicle.drivetrain.batteryManagement.maxEnergy", 21.5, "kWh")
+        sensor = build_sensor(DESC_MAX_ENERGY, 21.5, "kWh")
+        assert sensor.state_class == SensorStateClass.MEASUREMENT
+
+
+class TestStoredEnergy:
+    """The kWh readings that describe how full the battery is."""
+
+    @pytest.mark.parametrize("descriptor", STORED_ENERGY)
+    def test_counts_as_stored_energy(self, descriptor):
+        """A level goes up and down, so the energy device class cannot hold it."""
+        sensor = build_sensor(descriptor, 21.5, "kWh")
+        assert sensor.device_class == SensorDeviceClass.ENERGY_STORAGE
         assert sensor.state_class == SensorStateClass.MEASUREMENT

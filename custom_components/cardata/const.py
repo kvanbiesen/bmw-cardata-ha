@@ -44,6 +44,8 @@ DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
 DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
 DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
 DESC_AVG_ELECTRIC_CONSUMPTION = "vehicle.drivetrain.avgElectricRangeConsumption"
+DESC_HVS_MAX_ENERGY = "vehicle.drivetrain.electricEngine.hvsMaxEnergyAbsolute"
+DESC_ENERGY_TO_FULL_CHARGE = "vehicle.drivetrain.electricEngine.charging.smeEnergyDeltaFullyCharged"
 
 # Lifetime grid energy counters BMW keeps for OBFCM reporting. They only ever
 # climb, which is what makes them usable as an energy dashboard source.
