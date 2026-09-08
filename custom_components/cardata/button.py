@@ -49,6 +49,11 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# The kinds of charging efficiency learning a reset button can clear. Both are
+# offered to every vehicle with an HV battery, so the platform looks for their
+# rows together when it restores from the entity registry.
+LEARNING_RESET_KINDS = ("ac", "dc")
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -61,34 +66,38 @@ async def async_setup_entry(
 
     entities: list[ButtonEntity] = []
 
+    # Track learning reset buttons created to prevent duplicates
+    learning_reset_created: set[str] = set()
+
+    def create_learning_reset_buttons(vin: str) -> None:
+        """Queue the AC and DC reset buttons for a vehicle with an HV battery."""
+        if vin in learning_reset_created:
+            return
+        learning_reset_created.add(vin)
+        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+        entities.append(
+            ResetACLearningButton(
+                coordinator=coordinator,
+                vin=vin,
+                vehicle_name=vehicle_name,
+                entry_id=entry.entry_id,
+            )
+        )
+        entities.append(
+            ResetDCLearningButton(
+                coordinator=coordinator,
+                vin=vin,
+                vehicle_name=vehicle_name,
+                entry_id=entry.entry_id,
+            )
+        )
+        _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, redact_vin(vin))
+
     # Create reset buttons for each known EV/PHEV vehicle
-    for vin in coordinator.data.keys():
+    for vin, vehicle_data in coordinator.data.items():
         # Check if this vehicle has HV battery (EV/PHEV)
-        vehicle_data = coordinator.data.get(vin, {})
         if DESC_SOC_HEADER in vehicle_data:
-            vehicle_name = coordinator.names.get(vin, redact_vin(vin))
-
-            entities.append(
-                ResetACLearningButton(
-                    coordinator=coordinator,
-                    vin=vin,
-                    vehicle_name=vehicle_name,
-                    entry_id=entry.entry_id,
-                )
-            )
-            entities.append(
-                ResetDCLearningButton(
-                    coordinator=coordinator,
-                    vin=vin,
-                    vehicle_name=vehicle_name,
-                    entry_id=entry.entry_id,
-                )
-            )
-            _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, redact_vin(vin))
-
-    if entities:
-        async_add_entities(entities)
-        _LOGGER.debug("Added %d button entities", len(entities))
+            create_learning_reset_buttons(vin)
 
     # Track consumption reset buttons created to prevent duplicates
     consumption_reset_created: set[str] = set()
@@ -111,17 +120,33 @@ async def async_setup_entry(
         )
         _LOGGER.debug("Created consumption reset button for %s (%s)", vehicle_name, redact_vin(vin))
 
-    # Restore consumption reset buttons for VINs that already have a Magic SOC sensor
-    # in the entity registry (restart case — sensor was restored by sensor.py)
+    # Restore buttons from the rows they left in the entity registry. A restart
+    # skips bootstrap, so coordinator.data is still empty while the platforms
+    # load and the loop above finds no vehicle at all; the registry is then the
+    # only record that these buttons belong here, and without it they come back
+    # unavailable for the rest of the session.
     entity_registry = async_get(hass)
     for entity_entry in async_entries_for_config_entry(entity_registry, entry.entry_id):
-        if (
-            entity_entry.domain == "sensor"
-            and entity_entry.unique_id
-            and entity_entry.unique_id.endswith(f"_{MAGIC_SOC_DESCRIPTOR}")
-        ):
-            vin = entity_entry.unique_id.split("_", 1)[0]
-            create_consumption_reset_button(vin)
+        unique_id = entity_entry.unique_id
+        if not unique_id:
+            continue
+
+        if entity_entry.domain == "button":
+            for kind in LEARNING_RESET_KINDS:
+                suffix = f"_reset_{kind}_learning"
+                if unique_id.endswith(suffix):
+                    create_learning_reset_buttons(unique_id.removesuffix(suffix))
+                    break
+            continue
+
+        # The consumption button follows the Magic SOC sensor, which sensor.py
+        # restores from the registry in the same way.
+        if entity_entry.domain == "sensor" and unique_id.endswith(f"_{MAGIC_SOC_DESCRIPTOR}"):
+            create_consumption_reset_button(unique_id.removesuffix(f"_{MAGIC_SOC_DESCRIPTOR}"))
+
+    if entities:
+        async_add_entities(entities)
+        _LOGGER.debug("Added %d button entities", len(entities))
 
     # Register callback for dynamic creation (bootstrap + MQTT-driven Magic SOC sensor creation)
     coordinator._create_consumption_reset_callback = create_consumption_reset_button
