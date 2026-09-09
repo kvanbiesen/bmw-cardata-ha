@@ -110,16 +110,20 @@ jobs:
         run: pip install -r requirements-fuzz.txt
 
       # The nightly fuzzing only notices a broken harness at 01:00, and a
-      # harness that dies at import wastes a whole matrix job. Import each one
-      # here instead. The glob must match the one the fuzzing workflow uses to
-      # build its matrix. run_name keeps main() from starting a real fuzz run,
-      # and each harness needs its own process because the homeassistant stub
-      # installers skip their work when the module is already imported.
-      - name: Import every fuzz harness
+      # harness that dies wastes a whole matrix job. Give each one a five
+      # second run here instead. Importing alone used to be enough for the
+      # stale homeassistant stubs, but it leaves TestOneInput uncalled, so a
+      # harness reaching for production code that has since been deleted still
+      # got through. The glob must match the one the fuzzing workflow uses to
+      # build its matrix, FUZZ_MAX_TIME is the budget every harness reads, and
+      # -timeout mirrors the nightly so one slow input cannot stall the job.
+      - name: Fuzz every harness briefly
+        env:
+          FUZZ_MAX_TIME: "5"
         run: |
           status=0
           for harness in fuzz/fuzz_*.py; do
             echo "== $harness"
-            python -c "import runpy, sys; runpy.run_path(sys.argv[1], run_name='smoke')" "$harness" || status=1
+            python "$harness" -timeout=30 || status=1
           done
           exit $status

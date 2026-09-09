@@ -201,14 +201,10 @@ def TestOneInput(data: bytes) -> None:
     payload = _consume_payload_shape(fdp)
     containers = api_parsing.extract_container_items(payload)
 
-    manager = object.__new__(container_module.CardataContainerManager)
-    # An empty signature is a state production cannot reach, since __init__
-    # always stores a sha1 hexdigest, so compute one either way.
-    desired = list(const.HV_BATTERY_DESCRIPTORS) if fdp.ConsumeBool() else str_only
-    manager._descriptor_signature = container_module.CardataContainerManager.compute_signature(desired)
+    manager = container_module.CardataContainerManager(session=None, entry_id="fuzz")
 
     for container in containers:
-        manager._matches_hv_container(container)
+        manager._matches_hv_container_name_purpose(container)
 
 
 def main() -> None:
