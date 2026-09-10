@@ -138,3 +138,191 @@ def test_a_refused_subscription_is_not_stored_as_a_live_client() -> None:
         assert manager._connection_state is ConnectionState.FAILED
     finally:
         loop.close()
+
+
+def test_the_connect_target_is_set_before_the_network_loop_starts() -> None:
+    """paho does the connecting on the network loop's first pass.
+
+    A loop started before connect_async finds no socket, returns at once and,
+    with paho's own reconnect turned off, stops there. No CONNACK ever arrives
+    and every attempt runs into the connect timeout.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+
+        manager = CardataStreamManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+
+        calls: list[str] = []
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def connect_async(_host, _port, keepalive=None):
+                calls.append("connect_async")
+
+            def loop_start():
+                calls.append("loop_start")
+                manager._handle_connect(client, userdata, {}, 0)
+
+            client.connect_async = connect_async
+            client.loop_start = loop_start
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            manager._start_client()
+
+        assert calls == ["connect_async", "loop_start"]
+        assert manager.client is not None
+    finally:
+        loop.close()
+
+
+def test_a_subscription_refused_as_the_client_is_stored_is_not_kept() -> None:
+    """The subscribe callback runs on the MQTT network thread.
+
+    It can land either side of the line that stores the client, and it clears
+    the field itself, so a store landing after it would put a stopped client
+    back on record and the retry it asked for skips a manager that still holds
+    one. The setter below lands it on the store itself.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+
+        class RacingManager(CardataStreamManager):
+            """Fires the refused SUBACK exactly as the client is stored."""
+
+            @property
+            def _client(self):
+                return self.__dict__.get("_stored_client")
+
+            @_client.setter
+            def _client(self, value):
+                if value is not None and self.__dict__.pop("_arm", False):
+                    self._handle_subscribe(value, {"topic": "gcid/+"}, 1, (0x80,))
+                self.__dict__["_stored_client"] = value
+
+        manager = RacingManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+        manager.__dict__["_arm"] = True
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def loop_start():
+                manager._handle_connect(client, userdata, {}, 0)
+
+            client.loop_start = loop_start
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            with pytest.raises(ConnectionError):
+                manager._start_client()
+
+        assert manager.client is None
+        assert manager._connection_state is ConnectionState.FAILED
+    finally:
+        loop.close()
+
+
+def test_a_failing_callback_does_not_leave_the_stream_looking_connected() -> None:
+    """paho re-raises whatever a callback lets through.
+
+    That unwinds its network loop and ends the thread, and a manager still
+    holding a client in a connected state never reconnects, so the callback
+    has to bring the connection down instead of letting the error out.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+
+        manager = CardataStreamManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+
+        created = []
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def loop_start():
+                manager._handle_connect(client, userdata, {}, 0)
+
+            client.loop_start = loop_start
+            created.append(client)
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            manager._start_client()
+
+        client = created[0]
+        assert manager.client is client
+
+        # The callback paho holds is the guarded one, and a userdata it cannot
+        # read stands in for anything going wrong inside the handler.
+        with patch.object(manager, "_schedule_retry_threadsafe") as schedule_retry:
+            client.on_connect(client, "not a dict", {}, 0)
+
+        assert manager.client is None
+        assert manager._connection_state is ConnectionState.FAILED
+        client.loop_stop.assert_called_once()
+        assert schedule_retry.call_count == 1
+    finally:
+        loop.close()
+
+
+def test_the_loop_handovers_survive_a_closed_event_loop() -> None:
+    """The callbacks hand their work to the event loop from the MQTT thread.
+
+    By the time Home Assistant has shut down that loop is closed, and the
+    error it raises would end the network thread on the way out.
+    """
+    loop = asyncio.new_event_loop()
+    loop.close()
+    hass = MagicMock()
+    hass.loop = loop
+
+    manager = CardataStreamManager(
+        hass=hass,
+        client_id="client",
+        gcid="gcid",
+        id_token="token",
+        host="localhost",
+        port=8883,
+        keepalive=30,
+    )
+
+    async def work() -> None:  # pragma: no cover - never scheduled
+        return None
+
+    manager._cancel_retry_threadsafe()
+    manager._schedule_retry_threadsafe(3)
+    manager._run_coro_safe(work())
