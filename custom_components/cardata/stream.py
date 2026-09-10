@@ -458,18 +458,15 @@ class CardataStreamManager:
             topic = f"{self._gcid}/+"
             client_id = self._gcid
 
-        # reconnect_on_failure=False: after a lost connection paho would run its
-        # own reconnect loop in the network thread, in parallel with ours and
-        # without the backoff, the circuit breaker or the token refresh. Both
-        # would then connect under the same client id, and the broker drops the
-        # older session whenever the newer one arrives.
+        # reconnect_on_failure stays default (True): it also gates paho's
+        # retry of a first connect that never gets a CONNACK. Disabled later
+        # in _handle_connect once we're actually connected instead.
         client = mqtt.Client(
             client_id=client_id,
             clean_session=True,
             userdata={"topic": topic},
             protocol=mqtt.MQTTv311,
             transport="tcp",
-            reconnect_on_failure=False,
         )
         if debug_enabled():
             _LOGGER.debug(
@@ -606,6 +603,10 @@ class CardataStreamManager:
 
         if rc == 0:
             self._connection_state = ConnectionState.CONNECTED
+            # Stop paho's own reconnect loop now that we're connected, so it
+            # can't race our reconnect/backoff/circuit-breaker after a drop.
+            # No public setter for this, only the constructor flag.
+            client._reconnect_on_failure = False
             # Circuit breaker success is recorded on the SUBACK grant, not here.
             # The broker can accept the connection and then refuse the
             # subscription, which would leave us connected but receiving nothing.
