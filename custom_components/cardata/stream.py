@@ -163,7 +163,15 @@ class CardataStreamManager:
             except Exception as err:
                 _LOGGER.exception("Exception in MQTT async callback: %s", err)
 
-        future = asyncio.run_coroutine_threadsafe(coro, self.hass.loop)
+        try:
+            future = asyncio.run_coroutine_threadsafe(coro, self.hass.loop)
+        except RuntimeError as err:
+            # The loop is closed, which happens while Home Assistant shuts
+            # down. Letting this out would end the MQTT network thread.
+            coro.close()
+            if debug_enabled():
+                _LOGGER.debug("Event loop gone; dropping MQTT callback work: %s", err)
+            return
         future.add_done_callback(_done_callback)
 
     def _cancel_retry_threadsafe(self) -> None:
@@ -173,7 +181,7 @@ class CardataStreamManager:
         loop and has to be handed over rather than done here, the way every
         other callback on this thread hands its work over.
         """
-        self.hass.loop.call_soon_threadsafe(stream_reconnect.cancel_retry, self)
+        self._call_on_loop(stream_reconnect.cancel_retry, self)
 
     def _schedule_retry_threadsafe(self, delay: float) -> None:
         """Schedule a retry from the MQTT network thread.
@@ -181,7 +189,49 @@ class CardataStreamManager:
         Creating the task belongs to the loop, and doing it from here leaves
         it queued without waking the loop.
         """
-        self.hass.loop.call_soon_threadsafe(stream_reconnect.schedule_retry, self, delay)
+        self._call_on_loop(stream_reconnect.schedule_retry, self, delay)
+
+    def _call_on_loop(self, callback: Callable[..., Any], *args: Any) -> None:
+        """Hand a call to the event loop from the MQTT network thread.
+
+        The loop can already be closed when Home Assistant shuts down, and the
+        error that raises would leave the callback and end the network thread.
+        """
+        try:
+            self.hass.loop.call_soon_threadsafe(callback, *args)
+        except RuntimeError as err:
+            if debug_enabled():
+                _LOGGER.debug("Event loop gone; dropping MQTT callback work: %s", err)
+
+    def _guarded_callback(self, handler: Callable[..., None], name: str) -> Callable[..., None]:
+        """Keep a failing callback from taking the network thread with it.
+
+        paho logs what a callback lets through and re-raises it, which unwinds
+        its network loop and ends the thread. Nothing reports that, so the
+        manager would go on holding a client it believes is connected and
+        nothing would reconnect until the next token refresh. Fail the
+        connection instead and let the retry rebuild it. _handle_message keeps
+        its own guard, so a payload it cannot read never reaches this one.
+        """
+
+        def _run(client: mqtt.Client, *args: Any) -> None:
+            try:
+                handler(client, *args)
+            except Exception:
+                _LOGGER.exception("BMW MQTT %s callback failed; dropping the connection", name)
+                self._connection_state = ConnectionState.FAILED
+                self._safe_loop_stop(client)
+                self._client = None
+                if self._status_callback:
+                    self._run_coro_safe(
+                        cast(
+                            Coroutine[Any, Any, None],
+                            self._status_callback("connection_failed", f"MQTT {name} callback failed"),
+                        )
+                    )
+                self._schedule_retry_threadsafe(3)
+
+        return _run
 
     def _safe_loop_stop(self, client: mqtt.Client) -> None:
         """Safely stop the MQTT loop, handling any exceptions.
@@ -458,15 +508,18 @@ class CardataStreamManager:
             topic = f"{self._gcid}/+"
             client_id = self._gcid
 
-        # reconnect_on_failure stays default (True): it also gates paho's
-        # retry of a first connect that never gets a CONNACK. Disabled later
-        # in _handle_connect once we're actually connected instead.
+        # reconnect_on_failure=False: after a lost connection paho would run its
+        # own reconnect loop in the network thread, in parallel with ours and
+        # without the backoff, the circuit breaker or the token refresh. Both
+        # would then connect under the same client id, and the broker drops the
+        # older session whenever the newer one arrives.
         client = mqtt.Client(
             client_id=client_id,
             clean_session=True,
             userdata={"topic": topic},
             protocol=mqtt.MQTTv311,
             transport="tcp",
+            reconnect_on_failure=False,
         )
         if debug_enabled():
             _LOGGER.debug(
@@ -496,10 +549,10 @@ class CardataStreamManager:
                     len(self._password or ""),
                 )
 
-        client.on_connect = self._handle_connect
-        client.on_subscribe = self._handle_subscribe
-        client.on_message = self._handle_message
-        client.on_disconnect = self._handle_disconnect
+        client.on_connect = self._guarded_callback(self._handle_connect, "connect")
+        client.on_subscribe = self._guarded_callback(self._handle_subscribe, "subscribe")
+        client.on_message = self._guarded_callback(self._handle_message, "message")
+        client.on_disconnect = self._guarded_callback(self._handle_disconnect, "disconnect")
 
         if self._custom_broker:
             # Custom broker: configure TLS based on user setting
@@ -535,13 +588,17 @@ class CardataStreamManager:
         self._connect_event = threading.Event()
         self._connect_rc = None
 
-        # Start the network loop first (required for connect_async)
-        client.loop_start()
-        loop_started = True
+        loop_started = False
 
         try:
-            # Initiate async connection - actual connection happens in loop thread
+            # connect_async() only records where to connect; the network loop
+            # does the connecting on its first pass, so it has to be told
+            # before the loop starts. Started first, the loop finds no socket,
+            # gives up on the pass and, with paho's own reconnect turned off,
+            # never comes back.
             client.connect_async(self._host, self._port, keepalive=self._keepalive)
+            client.loop_start()
+            loop_started = True
 
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
@@ -570,18 +627,19 @@ class CardataStreamManager:
                 _LOGGER.warning("BMW MQTT connection failed (entry %s): %s", self._entry_id, error_reason)
                 raise ConnectionError(f"MQTT connection failed: {error_reason}")
 
+            self._client = client
+
             # The broker can accept the connection and refuse the subscription
-            # straight after it, and when both answers arrive together the
-            # subscribe callback runs before this thread is scheduled again.
-            # It has already stopped the client and asked for a retry, so
-            # storing the client here would leave a dead one on record and the
-            # retry skips a manager that still holds one, leaving the stream
-            # down until the next token refresh.
+            # straight after it, and that callback runs on the network thread,
+            # so it can land either side of the line above. It stops the client
+            # and clears the field itself, so anything left here is a client
+            # nobody drives, and the retry it just asked for skips a manager
+            # that still holds one. Check after the store to cover both
+            # orderings.
             if self._connection_state is ConnectionState.FAILED:
+                self._client = None
                 raise ConnectionError("MQTT connection failed: subscription refused")
 
-            # Success - transfer ownership to self._client
-            self._client = client
             loop_started = False  # Loop now managed by self._client
 
         except Exception as err:
@@ -603,10 +661,6 @@ class CardataStreamManager:
 
         if rc == 0:
             self._connection_state = ConnectionState.CONNECTED
-            # Stop paho's own reconnect loop now that we're connected, so it
-            # can't race our reconnect/backoff/circuit-breaker after a drop.
-            # No public setter for this, only the constructor flag.
-            client._reconnect_on_failure = False
             # Circuit breaker success is recorded on the SUBACK grant, not here.
             # The broker can accept the connection and then refuse the
             # subscription, which would leave us connected but receiving nothing.
