@@ -76,9 +76,26 @@ const escapeHtml = (input) =>
 
 const iconBadge = (icon, statusClass = "", entityId = "", title = "") => `
   <button class="indicator ${statusClass}" data-entity-id="${escapeHtml(entityId)}" title="${escapeHtml(title)}">
+    <ha-ripple></ha-ripple>
     <ha-icon icon="${icon}"></ha-icon>
   </button>
 `;
+
+// One quick-info tile built from the same elements as the native tile card.
+// The background button is the tap target for the row, the icon keeps its own.
+const tileItem = ({ icon, label, value, entity, cls = "" }) => {
+  const entityAttr = escapeHtml(entity || "");
+  return `
+  <ha-card class="tile-item${cls ? ` ${cls}` : ""}">
+    <div class="tile-item-bg" role="button" tabindex="0" data-entity-id="${entityAttr}" title="${entityAttr}"><ha-ripple></ha-ripple></div>
+    <div class="tile-item-content">
+      <ha-tile-icon interactive data-entity-id="${entityAttr}"><ha-icon slot="icon" icon="${escapeHtml(icon)}"></ha-icon></ha-tile-icon>
+      <ha-tile-info primary="${escapeHtml(label)}" secondary="${escapeHtml(value)}"></ha-tile-info>
+    </div>
+  </ha-card>`;
+};
+
+const tileGrid = (items) => `<div class="tile-grid">${items.map(tileItem).join("")}</div>`;
 
 
 const hasUsableState = (stateObj) => {
@@ -548,120 +565,123 @@ class BmwCardataVehicleCard extends HTMLElement {
       this.shadowRoot.innerHTML = `
         <style>
           :host { display: block; }
-          ha-card {
-            background: linear-gradient(
-              180deg,
-              color-mix(in srgb, var(--card-background-color) 90%, transparent),
-              color-mix(in srgb, var(--card-background-color) 72%, transparent)
-            );
-            border: 0;
-            box-shadow: none;
-            backdrop-filter: blur(6px);
-            -webkit-backdrop-filter: blur(6px);
-          }
-          .card-header {
-            font-size: 22px;
-            font-weight: 700;
-            line-height: 1.15;
-            color: var(--primary-text-color);
-            margin: 0 0 12px;
-          }
+
+          /* Sizes and radii mirror the native tile card and its features:
+           * 56px tile rows, 42px feature controls, 36px icon circles, 20% tint. */
           .vin {
-            margin-top: 2px;
-            font-size: 12px;
             color: var(--secondary-text-color);
+            font-size: var(--ha-font-size-s, 12px);
+            font-weight: var(--ha-font-weight-normal, 400);
+            line-height: var(--ha-line-height-condensed, 1.2);
+            letter-spacing: 0.4px;
           }
+          .vin:empty { display: none; }
           #main-wrapper {
             display: grid;
-            gap: 12px;
+            gap: var(--ha-space-3, 12px);
           }
-          .box {
-            border: 0;
-            border-radius: var(--ha-card-border-radius, 12px);
-            background: color-mix(in srgb, var(--card-background-color) 62%, transparent);
-            padding: 10px;
+          .vin:not(:empty) + #main-wrapper {
+            margin-top: var(--ha-space-3, 12px);
           }
+          #main-wrapper > :empty { display: none; }
 
           .indicators {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
-            gap: 8px;
+            gap: var(--ha-space-3, 12px);
           }
           .indicator {
+            --tile-color: var(--state-inactive-color);
+            --ha-ripple-color: var(--tile-color);
+            --mdc-icon-size: 20px;
             appearance: none;
+            position: relative;
+            overflow: hidden;
             cursor: pointer;
-            border-radius: 999px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border: 1px solid transparent;
-            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 58%, transparent);
-            color: var(--secondary-text-color);
             width: 100%;
-            height: 34px;
+            height: 42px;
+            margin: 0;
             padding: 0;
-            transition: background 0.2s ease;
+            border: 0;
+            border-radius: var(--ha-border-radius-lg, 12px);
+            background: none;
+            color: var(--tile-color);
+            -webkit-tap-highlight-color: transparent;
+            transition: color 180ms ease-in-out;
           }
-          .indicator:hover {
-            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 78%, transparent);
-          }
-          .indicator.ok {
-            color: var(--primary-color);
-            border-color: transparent;
-          }
-          .indicator.alert {
-            color: var(--error-color);
-            border-color: transparent;
-          }
-          .indicator.good {
-            color: var(--success-color);
-            border-color: transparent;
-          }
-          .indicator.placeholder {
-            opacity: 0;
+          .indicator::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-color: var(--tile-color);
+            opacity: 0.2;
+            transition: background-color 180ms ease-in-out, opacity 180ms ease-in-out;
             pointer-events: none;
-            cursor: default;
           }
+          .indicator ha-icon {
+            position: relative;
+          }
+          .indicator:focus { outline: none; }
+          .indicator:focus-visible { box-shadow: 0 0 0 2px var(--tile-color); }
+          .indicator.ok { --tile-color: var(--state-icon-color); }
+          .indicator.alert { --tile-color: var(--error-color); }
+          .indicator.good { --tile-color: var(--success-color); }
           .indicator.charging {
             animation: chargingBadgePulse 1.4s ease-in-out infinite;
           }
 
           .range-box {
             display: grid;
-            gap: 8px;
+            gap: var(--ha-space-2, 8px);
           }
           .range-top {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: var(--ha-space-3, 12px);
           }
-          .bar-wrap {
+          .bar-wrap,
+          .bar-wrap-unified {
+            --tile-color: var(--state-icon-color);
             position: relative;
-            border-radius: 8px;
-            height: 18px;
             flex: 1 1 auto;
-            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 66%, transparent);
+            height: 42px;
+            border-radius: var(--ha-border-radius-lg, 12px);
             overflow: hidden;
             cursor: pointer;
+          }
+          .bar-wrap-unified {
+            display: flex;
+          }
+          .bar-wrap::before,
+          .bar-wrap-unified::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-color: var(--tile-color);
+            opacity: 0.2;
           }
           .bar-level {
             position: relative;
             height: 100%;
-            background: var(--primary-color);
-            transition: width 0.2s ease;
+            background: var(--tile-color);
+            transition: width 180ms ease-in-out;
             overflow: hidden;
           }
           .bar-wrap.charging .bar-level {
             animation: chargingBarPulse 1.8s ease-in-out infinite;
           }
-          .bar-wrap.charging .bar-level::after {
+          .bar-wrap.charging .bar-level::after,
+          .bar-wrap-unified.charging .bar-segment-unified.ev::after {
             content: "";
             position: absolute;
             inset: 0;
             background: linear-gradient(
               110deg,
               transparent 10%,
-              color-mix(in srgb, var(--primary-color) 45%, white) 45%,
+              rgba(255, 255, 255, 0.35) 45%,
               transparent 80%
             );
             transform: translateX(-120%);
@@ -670,101 +690,73 @@ class BmwCardataVehicleCard extends HTMLElement {
           }
           .energy-text {
             position: absolute;
-            left: 8px;
+            left: var(--ha-space-3, 12px);
             top: 50%;
             transform: translateY(-50%);
             color: var(--text-primary-color, #fff);
-            font-size: 12px;
-            font-weight: 600;
+            font-size: var(--ha-font-size-m, 14px);
+            font-weight: var(--ha-font-weight-medium, 500);
             text-shadow: 0 1px 2px rgb(0 0 0 / 35%);
           }
           .range-value {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: var(--ha-space-2, 8px);
             color: var(--primary-text-color);
-            font-size: 14px;
+            font-size: var(--ha-font-size-m, 14px);
+            font-weight: var(--ha-font-weight-medium, 500);
             white-space: nowrap;
             cursor: pointer;
           }
 
-          /* PHEV unified bar styles */
-          .bar-wrap-unified {
-            position: relative;
-            display: flex;
-            flex: 1 1 auto;
-            height: 18px;
-            border-radius: 8px;
-            overflow: hidden;
-            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 66%, transparent);
-            cursor: pointer;
-          }
+          /* PHEV unified bar */
           .bar-wrap-unified.charging {
             animation: chargingBarPulse 1.8s ease-in-out infinite;
           }
           .bar-segment-unified {
+            position: relative;
             height: 100%;
-            transition: width 0.3s ease;
+            overflow: hidden;
+            transition: width 180ms ease-in-out;
           }
           .bar-segment-unified.ev {
-            background: linear-gradient(90deg, #4CAF50, #45a049);
+            background: var(--success-color, #4caf50);
           }
           .bar-segment-unified.fuel {
-            background: linear-gradient(90deg, #FF9800, #f57c00);
+            background: var(--warning-color, #ff9800);
           }
-          .bar-wrap-unified.charging .bar-segment-unified.ev::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background: linear-gradient(
-              110deg,
-              transparent 10%,
-              rgba(255, 255, 255, 0.3) 45%,
-              transparent 80%
-            );
-            transform: translateX(-120%);
-            animation: chargingSweep 2.3s linear infinite;
-            pointer-events: none;
-          }
-
-          /* PHEV range labels */
           .range-split-labels {
             display: flex;
             justify-content: space-between;
-            gap: 12px;
-            margin-top: 8px;
+            gap: var(--ha-space-3, 12px);
           }
           .range-split-label {
+            --mdc-icon-size: 18px;
             display: flex;
             align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            cursor: pointer;
+            gap: var(--ha-space-2, 8px);
             flex: 1;
+            cursor: pointer;
+            font-size: var(--ha-font-size-s, 12px);
           }
           .range-split-label.ev {
-            color: #4CAF50;
+            color: var(--success-color, #4caf50);
           }
           .range-split-label.fuel {
-            color: #FF9800;
-          }
-          .range-split-label ha-icon {
-            --mdc-icon-size: 18px;
+            color: var(--warning-color, #ff9800);
           }
 
           .image {
             width: 100%;
-            border-radius: 10px;
+            border-radius: var(--ha-border-radius-lg, 12px);
             overflow: hidden;
-            border: 0;
-            background: transparent;
+            cursor: pointer;
           }
           .image img {
             width: 100%;
             display: block;
             object-fit: cover;
             object-position: center;
-            background: transparent;
             transform-origin: center center;
             transform: scale(var(--image-zoom, 1));
             margin-top: calc(-1 * var(--image-crop-top, 0%));
@@ -775,12 +767,12 @@ class BmwCardataVehicleCard extends HTMLElement {
           }
 
           .map {
-            border-radius: 10px;
+            border-radius: var(--ha-border-radius-lg, 12px);
             overflow: hidden;
-            border: 0;
-            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 56%, transparent);
+            background: var(--secondary-background-color);
           }
           .map hui-map-card {
+            --ha-card-border-width: 0;
             display: block;
             width: 100%;
             height: var(--map-height, ${MAP_HEIGHT_DEFAULT}px);
@@ -798,71 +790,64 @@ class BmwCardataVehicleCard extends HTMLElement {
             align-items: center;
             justify-content: center;
             color: var(--secondary-text-color);
-            font-size: 13px;
+            font-size: var(--ha-font-size-s, 12px);
           }
-          .buttons-grid {
+
+          .tile-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+            gap: var(--ha-space-2, 8px);
           }
-          .btn-item {
-            appearance: none;
+          .tile-item {
+            --tile-color: var(--state-icon-color);
+            --ha-ripple-color: var(--tile-color);
+            --ha-ripple-hover-opacity: 0.04;
+            --ha-ripple-pressed-opacity: 0.12;
+            -webkit-tap-highlight-color: transparent;
+            transition: box-shadow 180ms ease-in-out, border-color 180ms ease-in-out;
+          }
+          .tile-item.alert { --tile-color: var(--error-color); }
+          .tile-item.good { --tile-color: var(--success-color); }
+          .tile-item:has(.tile-item-bg:focus-visible) {
+            border-color: var(--tile-color);
+            box-shadow: var(--ha-card-box-shadow, 0 0 0 0 transparent), 0 0 0 1px var(--tile-color);
+          }
+          /* Both layers extend under the card border, like the native tile container. */
+          .tile-item-bg {
+            position: absolute;
+            inset: 0;
+            margin: calc(-1 * var(--ha-card-border-width, 1px));
+            border-radius: inherit;
+            overflow: hidden;
             cursor: pointer;
-            border: 0;
-            border-radius: 10px;
-            padding: 10px;
+          }
+          .tile-item-bg:focus { outline: none; }
+          .tile-item-content {
+            position: relative;
             display: flex;
             align-items: center;
             gap: 10px;
+            padding: 0 10px;
+            margin: calc(-1 * var(--ha-card-border-width, 1px));
+            min-height: 56px;
             min-width: 0;
-            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 52%, transparent);
-            text-align: left;
-            transition: background 0.2s ease;
+            box-sizing: border-box;
+            pointer-events: none;
           }
-          .btn-item:hover {
-            background: color-mix(in srgb, var(--secondary-background-color, #90909040) 74%, transparent);
+          .tile-item-content ha-tile-icon {
+            --tile-icon-color: var(--tile-color);
+            position: relative;
+            padding: 6px;
+            margin: -6px;
+            flex: none;
+            pointer-events: auto;
           }
-          .btn-item.alert .btn-icon {
-            color: var(--error-color);
-          }
-          .btn-item.alert .btn-value {
-            color: var(--error-color);
-          }
-          .btn-item.good .btn-icon {
-            color: var(--success-color);
-          }
-          .btn-item.good .btn-value {
-            color: var(--success-color);
-          }
-          .btn-icon {
-            width: 34px;
-            height: 34px;
-            border-radius: 999px;
-            border: 0;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--secondary-text-color);
-            flex: 0 0 auto;
-            background: color-mix(in srgb, var(--card-background-color) 50%, transparent);
-          }
-          .btn-text {
+          .tile-item-content ha-tile-info {
             min-width: 0;
-          }
-          .btn-title {
-            font-size: 12px;
-            color: var(--secondary-text-color);
-          }
-          .btn-value {
-            font-size: 14px;
-            color: var(--primary-text-color);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
           }
 
           @media (max-width: 520px) {
-            .buttons-grid {
+            .tile-grid {
               grid-template-columns: 1fr;
             }
             .indicators {
@@ -894,8 +879,8 @@ class BmwCardataVehicleCard extends HTMLElement {
           }
         </style>
         <ha-card>
+          <h1 class="card-header" id="name"></h1>
           <div class="card-content">
-            <div class="card-header" id="name"></div>
             <div class="vin" id="vin"></div>
             <main id="main-wrapper">
               <div id="indicators"></div>
@@ -908,6 +893,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           </div>
         </ha-card>
       `;
+      this._nameEl = this.shadowRoot.getElementById("name");
       this._bindInteractions();
     }
 
@@ -941,15 +927,43 @@ class BmwCardataVehicleCard extends HTMLElement {
   _bindInteractions() {
     if (!this.shadowRoot || this._interactionsBound) return;
     this._interactionsBound = true;
-    this.shadowRoot.addEventListener("click", (event) => {
-      const node = event.target;
-      if (!(node instanceof Element)) return;
+    const entityIdFrom = (node) => {
+      if (!(node instanceof Element)) return "";
       const target = node.closest("[data-entity-id]");
-      if (!target) return;
-      const entityId = target.getAttribute("data-entity-id");
+      return target ? target.getAttribute("data-entity-id") || "" : "";
+    };
+    const insideTileIcon = (node) => node instanceof Element && Boolean(node.closest("ha-tile-icon"));
+    // ha-tile-icon runs Home Assistant's action handler, which cancels the
+    // synthesized click on touch devices, so its taps arrive as "action" events.
+    this.shadowRoot.addEventListener("click", (event) => {
+      if (insideTileIcon(event.target)) return;
+      this._openMoreInfo(entityIdFrom(event.target));
+    });
+    this.shadowRoot.addEventListener("action", (event) => {
+      if (event.detail?.action !== "tap" || !insideTileIcon(event.target)) return;
+      this._openMoreInfo(entityIdFrom(event.target));
+    });
+    this.shadowRoot.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const node = event.target;
+      if (!(node instanceof Element) || node.getAttribute("role") !== "button") return;
+      const entityId = entityIdFrom(node);
       if (!entityId) return;
+      event.preventDefault();
       this._openMoreInfo(entityId);
     });
+  }
+
+  // The header must leave the DOM when hidden: ha-card spaces .card-content
+  // by sibling position, so a hidden header would still pull the content up.
+  _setTitleVisible(visible) {
+    const nameEl = this._nameEl;
+    if (!nameEl) return;
+    if (visible) {
+      if (!nameEl.isConnected) this.shadowRoot.querySelector("ha-card").prepend(nameEl);
+    } else if (nameEl.isConnected) {
+      nameEl.remove();
+    }
   }
 
   _openMoreInfo(entityId) {
@@ -988,6 +1002,8 @@ class BmwCardataVehicleCard extends HTMLElement {
 
   _renderMap(target, hass, trackerEntityId, t) {
     if (!target) return;
+    // This method writes the DOM directly, so the _setHtml cache is stale.
+    target._lastHtml = undefined;
 
     if (!trackerEntityId) {
       this._cachedMapCard = null;
@@ -1046,8 +1062,15 @@ class BmwCardataVehicleCard extends HTMLElement {
     });
   }
 
+  // Compare against the string written last time, not against the live DOM.
+  // The browser serializes attributes differently from the template (for
+  // example `interactive` comes back as `interactive=""`), and a false
+  // mismatch would rebuild the section on every state update, which drops
+  // hover state and swallows clicks in progress.
   _setHtml(el, html) {
-    if (el && el.innerHTML !== html) el.innerHTML = html;
+    if (!el || el._lastHtml === html) return;
+    el._lastHtml = html;
+    el.innerHTML = html;
   }
 
   _render() {
@@ -1071,7 +1094,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       return;
     }
 
-    const nameEl = this.shadowRoot.getElementById("name");
+    const nameEl = this._nameEl;
     const vinEl = this.shadowRoot.getElementById("vin");
     const indicatorsEl = this.shadowRoot.getElementById("indicators");
     const rangeEl = this.shadowRoot.getElementById("range_info");
@@ -1086,7 +1109,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const read = (key) => hass?.states?.[entities[key]];
 
     const showTitle = boolConfig(cfg, "show_title", true);
-    nameEl.style.display = showTitle ? "" : "none";
+    this._setTitleVisible(showTitle);
     nameEl.textContent = showTitle ? name : "";
     vinEl.textContent = cfg.license_plate || vin;
 
@@ -1265,7 +1288,7 @@ class BmwCardataVehicleCard extends HTMLElement {
 
     if (showIndicators) {
       this._setHtml(indicatorsEl, `
-        <div class="box indicators">
+        <div class="indicators">
           ${indicatorItems
             .map((item) => iconBadge(item.icon, item.stateClass, item.entity, item.title))
             .join("")}
@@ -1299,7 +1322,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         const totalRangeText = totalRangeValue > 0 ? `${totalRangeValue} ${totalRangeUnit}` : "—";
         
         this._setHtml(rangeEl, `
-          <div class="box range-box phev">
+          <div class="range-box phev">
             <div class="range-top">
               <div class="bar-wrap-unified ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(rangeEntity)}" title="${escapeHtml(t("total_range"))}: ${escapeHtml(totalRangeText)}">
                 <div class="bar-segment-unified ev" style="width:${evRangePercent}%;" data-entity-id="${escapeHtml(rangeElectricEntity)}" title="${escapeHtml(t("ev"))}: ${escapeHtml(evRangeText)} (${socValue}%)"></div>
@@ -1325,7 +1348,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       } else if (primaryLevelHasBar) {
         // Standard display with progress bar (SOC, fuel %, or fuel litres with manual tank capacity)
         this._setHtml(rangeEl, `
-          <div class="box range-box">
+          <div class="range-box">
             <div class="range-top">
               <div class="bar-wrap ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(primaryLevelEntity)}" title="${escapeHtml(primaryLevelEntity)}">
                 <div class="bar-level" style="width:${primaryLevelValue}%;"></div>
@@ -1341,7 +1364,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       } else {
         // No percentage available — show range value only (no progress bar)
         this._setHtml(rangeEl, `
-          <div class="box range-box">
+          <div class="range-box">
             <div class="range-top">
               <div class="range-value" data-entity-id="${escapeHtml(primaryRangeEntity)}" title="${escapeHtml(primaryRangeEntity)}">
                 <ha-icon icon="${primaryRangeIcon}"></ha-icon>
@@ -1462,23 +1485,10 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
       ].filter((item) => item && firstDefined(item.entity, item.value) !== "");
 
-      this._setHtml(buttonsEl, `
-        <div class="buttons-grid">
-          ${quickItems
-            .map(
-              (item) => `
-            <button class="btn-item${item.alert ? " alert" : ""}" data-entity-id="${escapeHtml(item.entity)}" title="${escapeHtml(item.entity)}">
-              <div class="btn-icon"><ha-icon icon="${item.icon}"></ha-icon></div>
-              <div class="btn-text">
-                <div class="btn-title">${escapeHtml(item.label)}</div>
-                <div class="btn-value">${escapeHtml(item.value)}</div>
-              </div>
-            </button>
-          `
-            )
-            .join("")}
-        </div>
-      `);
+      this._setHtml(
+        buttonsEl,
+        tileGrid(quickItems.map((item) => ({ ...item, cls: item.alert ? "alert" : "" })))
+      );
     } else {
       this._setHtml(buttonsEl, "");
     }
@@ -1578,23 +1588,10 @@ class BmwCardataVehicleCard extends HTMLElement {
         ? cfg.leasing_tiles.filter((key) => tileDefs[key])
         : DEFAULT_LEASE_TILES;
       const leasingItems = selectedTiles.map((key) => tileDefs[key]);
-      this._setHtml(leasingEl, `
-        <div class="buttons-grid">
-          ${leasingItems
-            .map(
-              (item) => `
-            <button class="btn-item${item.cls ? ` ${item.cls}` : ""}" data-entity-id="${escapeHtml(leasingEntityId)}" title="${escapeHtml(leasingEntityId)}">
-              <div class="btn-icon"><ha-icon icon="${item.icon}"></ha-icon></div>
-              <div class="btn-text">
-                <div class="btn-title">${escapeHtml(item.label)}</div>
-                <div class="btn-value">${escapeHtml(item.value)}</div>
-              </div>
-            </button>
-          `
-            )
-            .join("")}
-        </div>
-      `);
+      this._setHtml(
+        leasingEl,
+        tileGrid(leasingItems.map((item) => ({ ...item, entity: leasingEntityId })))
+      );
     } else {
       this._setHtml(leasingEl, "");
     }
@@ -1603,7 +1600,7 @@ class BmwCardataVehicleCard extends HTMLElement {
   _renderMessage(message) {
     if (!this.shadowRoot) return;
 
-    const nameEl = this.shadowRoot.getElementById("name");
+    const nameEl = this._nameEl;
     const vinEl = this.shadowRoot.getElementById("vin");
     const indicatorsEl = this.shadowRoot.getElementById("indicators");
     const rangeEl = this.shadowRoot.getElementById("range_info");
@@ -1612,6 +1609,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const buttonsEl = this.shadowRoot.getElementById("buttons");
     const leasingEl = this.shadowRoot.getElementById("leasing");
 
+    this._setTitleVisible(true);
     nameEl.textContent = "BMW CarData";
     vinEl.textContent = message;
     this._setHtml(indicatorsEl, "");
