@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW CarData",
+        "description": "Ange ditt BMW CarData-klient-ID."
+      },
+      "authorize": {
+        "title": "Auktorisera BMW CarData",
+        "description": "Öppna {verification_url} och ange användarkoden {user_code} om du blir ombedd. När du har godkänt enheten klickar du på Skicka. Om godkännandet redan är klart klickar du på Skicka igen för att fortsätta."
+      },
+      "blocked": {
+        "title": "Bootstrap inaktiverad på grund av API-anropsgräns",
+        "description": "Integrationen har tidigare nått BMW:s dagliga API-anropsgräns och automatisk bootstrap (skapande och mappning av containrar) har tillfälligt inaktiverats för {entry_title} till {until}. Du kan vänta tills dess och försöka igen, eller ta bort flaggan nedan för att försöka omedelbart igen (du kan då nå anropsgränsen på nytt)."
+      },
+      "cleared": {
+        "title": "Nytt bootstrap-försök schemalagt",
+        "description": "Du har tagit bort den tillfälliga inaktiveringsflaggan för {entry_title}. Integrationen kommer att försöka genomföra bootstrap igen. Om BMW:s API-anropsgräns fortfarande nås kommer bootstrap att inaktiveras fram till nästa återställningstid. Alternativt kan du använda utvecklartjänsten `cardata.clean_hv_containers` för att lista eller ta bort gamla containrar (tänk på API-anropsgränserna)."
+      },
+      "blocked_fallback": {
+        "description": "Automatisk bootstrap är inaktiverad till {until}. Ta bort flaggan för att försöka nu, eller avbryt och försök igen efter återställningen."
+      }
+    },
+    "error": {
+      "authorization_failed": "BMW-auktoriseringen slutfördes inte. Det kan hända om du klickade på ”Neka”, stängde sidan innan godkännandet, begäran löpte ut eller BMW:s servrar tillfälligt hade problem (det är inte alltid ditt fel). Felinformation: {error}. En ny auktoriseringslänk har skapats nedan. Öppna den och godkänn, och klicka sedan på Skicka igen.",
+      "device_code_failed": "BMW avvisade enhetsauktoriseringsbegäran ({error}). Kontrollera att klient-ID:t är giltigt och försök igen."
+    },
+    "abort": {
+      "auth_failed": "BMW-auktoriseringssvaret var ofullständigt (token saknas). Försök igen.",
+      "reauth_device_code_failed": "BMW avvisade enhetsauktoriseringsbegäran ({error}). Uppdatera klient-ID:t under Konfigurera > Starta enhetsauktorisering igen, eller ta bort och lägg till integreringen på nytt.",
+      "reauth_missing_client_id": "Klient-ID saknas för denna integrering. Ta bort och lägg till integreringen på nytt för att auktorisera igen.",
+      "reauth_failed": "Det gick inte att starta om auktoriseringen. Försök igen från integreringens alternativ."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manuella åtgärder",
+        "description": "Välj den åtgärd du vill köra. Uppdatera token försöker bara uppdatera token utan ny auktorisering. Vi rekommenderar att du startar om HA efteråt om du får problem."
+      },
+      "action_settings": {
+        "title": "Inställningar",
+        "data": {
+          "enable_magic_soc": "Aktivera Magic SOC (prognos för förbrukning under körning)",
+          "enable_charging_history": "Aktivera laddningshistorik (dagligt API-anrop)",
+          "enable_tyre_diagnosis": "Aktivera däckdiagnostik (dagligt API-anrop)",
+          "enable_trip_end_polling": "Aktivera avfrågning efter avslutad körning",
+          "trip_poll_cooldown_minutes": "Väntetid mellan avfrågningar efter avslutad körning (minuter)",
+          "enable_external_power_injection": "Använd extern effektmätare för laddning"
+        },
+        "data_description": {
+          "enable_charging_history": "Hämtar historik över laddningstillfällen från BMW en gång per dag. Använder 1 extra API-anrop per fordon och dag från din dagliga kvot på 50 anrop.",
+          "enable_tyre_diagnosis": "Hämtar information om däckens hälsa och slitage från BMW en gång per dag. Använder 1 extra API-anrop per fordon och dag från din dagliga kvot på 50 anrop.",
+          "enable_trip_end_polling": "När detta är aktiverat utlöses en omedelbar API-avfrågning varje gång fordonet stannar. Inaktivera detta om du kör många korta sträckor och når den dagliga API-gränsen. Schemalagda avfrågningar körs oavsett.",
+          "trip_poll_cooldown_minutes": "Minsta väntetid mellan avfrågningar efter avslutad körning för samma fordon (standard: 10). Öka värdet för att minska API-användningen vid många korta körningar.",
+          "enable_external_power_injection": "Tillåt en automatisering att skicka lokalt uppmätt laddeffekt till SOC-prognosen via tjänsten cardata.update_charging_power. Så länge färska lokala mätvärden kommer in undertrycks BMW:s V×A-värde. Låt detta vara inaktiverat om du inte använder en smart mätare och har anslutit den."
+        }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT-broker",
+        "description": "Konfigurera en anpassad MQTT-broker i stället för BMW:s slutpunkt. Använd detta tillsammans med bmw-mqtt-bridge för att spela upp BMW-data från en lokal broker, så att flera konsumenter kan dela på en enda BMW MQTT-anslutning.",
+        "data": {
+          "custom_mqtt_enabled": "Använd anpassad MQTT-broker",
+          "custom_mqtt_host": "Broker-värd",
+          "custom_mqtt_port": "Broker-port",
+          "custom_mqtt_username": "Användarnamn (valfritt)",
+          "custom_mqtt_password": "Lösenord (valfritt)",
+          "custom_mqtt_tls": "TLS-läge",
+          "custom_mqtt_topic_prefix": "Ämnesprefix (t.ex. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "När detta är aktiverat ansluter integreringen till din anpassade broker i stället för BMW:s MQTT-slutpunkt.",
+          "custom_mqtt_host": "Värdnamn eller IP-adress till din MQTT-broker.",
+          "custom_mqtt_port": "Portnummer (standard: 1883 för vanlig TCP, 8883 för TLS).",
+          "custom_mqtt_username": "Lämna tomt för anonym åtkomst.",
+          "custom_mqtt_password": "Lämna tomt för anonym åtkomst.",
+          "custom_mqtt_tls": "Av = vanlig TCP, TLS = verifierat certifikat, TLS (självsignerat) = hoppa över certifikatvalidering.",
+          "custom_mqtt_topic_prefix": "Bridge-ämnesprefixet. Meddelanden förväntas finnas på '{prefix}{vin}'. Standard: bmw/"
+        }
+      }
+    },
+    "error": {
+      "refresh_failed": "Det gick inte att uppdatera token: {error}",
+      "runtime_missing": "Integreringens körmiljö är inte klar. Försök igen när konfigurationen är slutförd.",
+      "no_vins": "Inga VIN-nummer är kända ännu. Vänta tills dataströmmen upptäcker ett fordon eller utlös den manuellt en gång.",
+      "invalid_int": "Ange ett positivt heltal",
+      "invalid_client_id": "Ange BMW CarData-klient-ID:t.",
+      "mqtt_host_required": "Broker-värd måste anges när anpassad MQTT är aktiverad."
+    },
+    "abort": {
+      "auth_failed": "BMW-auktoriseringssvaret var ofullständigt (token saknas). Försök igen.",
+      "reauth_started": "Auktoriseringen har startats om. Slutför det nya inloggningsflödet från aviseringen.",
+      "reauth_device_code_failed": "BMW avvisade enhetsauktoriseringsbegäran ({error}). Uppdatera klient-ID:t i integreringens alternativ och försök igen.",
+      "reauth_missing_client_id": "Klient-ID saknas för denna integrering. Ta bort och lägg till integreringen på nytt för att auktorisera igen.",
+      "reauth_failed": "Det gick inte att starta om auktoriseringen. Försök igen från integreringens alternativ."
+    }
+  }
+}
