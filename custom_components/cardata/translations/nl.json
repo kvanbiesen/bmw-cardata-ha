@@ -42,8 +42,18 @@
         "title": "Instellingen",
         "data": {
           "enable_magic_soc": "Magic SOC inschakelen (rijverbruiksvoorspelling)",
+          "enable_charging_history": "Laadgeschiedenis inschakelen (dagelijkse API-aanroep)",
+          "enable_tyre_diagnosis": "Bandendiagnose inschakelen (dagelijkse API-aanroep)",
           "enable_trip_end_polling": "Ritbeëindiging polling inschakelen",
-          "trip_poll_cooldown_minutes": "Ritbeëindiging polling wachttijd (minuten)"
+          "trip_poll_cooldown_minutes": "Ritbeëindiging polling wachttijd (minuten)",
+          "enable_external_power_injection": "Externe vermogensmeter gebruiken voor laden"
+        },
+        "data_description": {
+          "enable_charging_history": "Haalt eenmaal per dag de geschiedenis van laadsessies op bij BMW. Gebruikt 1 extra API-aanroep per voertuig per dag uit uw dagelijkse quotum van 50 aanroepen.",
+          "enable_tyre_diagnosis": "Haalt eenmaal per dag gegevens over bandenconditie en slijtage op bij BMW. Gebruikt 1 extra API-aanroep per voertuig per dag uit uw dagelijkse quotum van 50 aanroepen.",
+          "enable_trip_end_polling": "Wanneer ingeschakeld, wordt er onmiddellijk een API-aanroep gedaan telkens wanneer het voertuig stopt. Schakel dit uit als u veel korte ritten maakt en de dagelijkse API-limiet bereikt. De geplande polling loopt hoe dan ook door.",
+          "trip_poll_cooldown_minutes": "Minimale wachttijd tussen ritbeëindiging-pollings voor hetzelfde voertuig (standaard: 10). Verhoog deze om het API-gebruik bij frequente korte ritten te verminderen.",
+          "enable_external_power_injection": "Staat een automatisering toe om lokaal gemeten laadvermogen naar de SOC-voorspelling te sturen via de service cardata.update_charging_power. Zolang er verse lokale metingen binnenkomen, wordt de V×A-waarde van BMW onderdrukt. Laat dit uitgeschakeld tenzij u een slimme meter gebruikt en deze hebt aangesloten."
         }
       },
       "action_mqtt_broker": {

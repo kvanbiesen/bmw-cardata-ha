@@ -42,8 +42,18 @@
         "title": "Einstellungen",
         "data": {
           "enable_magic_soc": "Magic SOC aktivieren (Fahrverbrauchsvorhersage)",
+          "enable_charging_history": "Ladeverlauf aktivieren (tägliche API-Abfrage)",
+          "enable_tyre_diagnosis": "Reifendiagnose aktivieren (tägliche API-Abfrage)",
           "enable_trip_end_polling": "Fahrtende-Abfrage aktivieren",
-          "trip_poll_cooldown_minutes": "Fahrtende-Abfrage Abklingzeit (Minuten)"
+          "trip_poll_cooldown_minutes": "Fahrtende-Abfrage Abklingzeit (Minuten)",
+          "enable_external_power_injection": "Externen Leistungsmesser für das Laden verwenden"
+        },
+        "data_description": {
+          "enable_charging_history": "Ruft einmal täglich den Verlauf der Ladevorgänge von BMW ab. Verbraucht 1 zusätzlichen API-Aufruf pro Fahrzeug und Tag aus Ihrem Tageskontingent von 50 Aufrufen.",
+          "enable_tyre_diagnosis": "Ruft einmal täglich Daten zu Reifenzustand und Verschleiß von BMW ab. Verbraucht 1 zusätzlichen API-Aufruf pro Fahrzeug und Tag aus Ihrem Tageskontingent von 50 Aufrufen.",
+          "enable_trip_end_polling": "Wenn aktiviert, wird jedes Mal, wenn das Fahrzeug anhält, sofort eine API-Abfrage ausgelöst. Deaktivieren Sie dies, wenn Sie viele kurze Fahrten machen und das tägliche API-Limit erreichen. Die geplante Abfrage läuft davon unabhängig weiter.",
+          "trip_poll_cooldown_minutes": "Mindestwartezeit zwischen Fahrtende-Abfragen für dasselbe Fahrzeug (Standard: 10). Erhöhen Sie den Wert, um bei häufigen Kurzfahrten API-Aufrufe zu sparen.",
+          "enable_external_power_injection": "Erlaubt einer Automatisierung, die lokal gemessene Ladeleistung über den Dienst cardata.update_charging_power an die SOC-Vorhersage zu senden. Solange frische lokale Messwerte eintreffen, wird der von BMW stammende V×A-Wert unterdrückt. Lassen Sie dies deaktiviert, sofern Sie keinen intelligenten Zähler betreiben und ihn angebunden haben."
         }
       },
       "action_mqtt_broker": {

@@ -42,8 +42,18 @@
         "title": "Paramètres",
         "data": {
           "enable_magic_soc": "Activer Magic SOC (prédiction de consommation en conduite)",
+          "enable_charging_history": "Activer l'historique de charge (interrogation quotidienne de l'API)",
+          "enable_tyre_diagnosis": "Activer le diagnostic des pneus (interrogation quotidienne de l'API)",
           "enable_trip_end_polling": "Activer l'interrogation en fin de trajet",
-          "trip_poll_cooldown_minutes": "Délai entre interrogations fin de trajet (minutes)"
+          "trip_poll_cooldown_minutes": "Délai entre interrogations fin de trajet (minutes)",
+          "enable_external_power_injection": "Utiliser un compteur de puissance externe pour la charge"
+        },
+        "data_description": {
+          "enable_charging_history": "Récupère auprès de BMW l'historique des sessions de charge une fois par jour. Consomme 1 appel d'API supplémentaire par véhicule et par jour sur votre quota quotidien de 50 appels.",
+          "enable_tyre_diagnosis": "Récupère auprès de BMW les données d'état et d'usure des pneus une fois par jour. Consomme 1 appel d'API supplémentaire par véhicule et par jour sur votre quota quotidien de 50 appels.",
+          "enable_trip_end_polling": "Lorsque cette option est activée, une interrogation de l'API est déclenchée immédiatement chaque fois que le véhicule s'arrête. Désactivez-la si vous faites beaucoup de trajets courts et atteignez la limite quotidienne de l'API. L'interrogation planifiée continue de s'exécuter.",
+          "trip_poll_cooldown_minutes": "Délai minimal entre deux interrogations de fin de trajet pour le même véhicule (par défaut : 10). Augmentez-le pour réduire l'utilisation de l'API sur des trajets courts fréquents.",
+          "enable_external_power_injection": "Permet à une automatisation d'envoyer la puissance de charge mesurée localement au prédicteur de SOC via le service cardata.update_charging_power. Tant que des relevés locaux récents arrivent, la valeur V×A issue de BMW est ignorée. Laissez cette option désactivée sauf si vous disposez d'un compteur intelligent et l'avez raccordé."
         }
       },
       "action_mqtt_broker": {
