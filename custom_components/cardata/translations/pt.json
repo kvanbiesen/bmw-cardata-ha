@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "A autorização BMW não foi concluída. Isto pode acontecer se clicou em \"Recusar\", fechou a página antes de aprovar, o pedido expirou, ou os servidores da BMW tiveram um problema temporário (nem sempre é culpa sua). Detalhes do erro: {error}. Foi gerada uma nova ligação de autorização abaixo — abra-a e aprove, depois clique novamente em Submeter.",
+      "authorization_failed": "A autorização BMW não foi concluída. Isto pode acontecer se clicou em \"Recusar\", fechou a página antes de aprovar, o pedido expirou, ou os servidores da BMW tiveram um problema temporário (nem sempre é culpa sua). Detalhes do erro: {error}. Foi gerada uma nova ligação de autorização abaixo. Abra-a e aprove, depois clique novamente em Submeter.",
       "device_code_failed": "A BMW rejeitou o pedido de autorização do dispositivo ({error}). Verifique se o ID de cliente é válido e tente novamente."
     },
     "abort": {
@@ -42,8 +42,18 @@
         "title": "Definições",
         "data": {
           "enable_magic_soc": "Ativar Magic SOC (previsão de consumo em condução)",
+          "enable_charging_history": "Ativar histórico de carregamento (consulta diária à API)",
+          "enable_tyre_diagnosis": "Ativar diagnóstico dos pneus (consulta diária à API)",
           "enable_trip_end_polling": "Ativar consulta no fim da viagem",
-          "trip_poll_cooldown_minutes": "Intervalo entre consultas de fim de viagem (minutos)"
+          "trip_poll_cooldown_minutes": "Intervalo entre consultas de fim de viagem (minutos)",
+          "enable_external_power_injection": "Usar um medidor de potência externo para o carregamento"
+        },
+        "data_description": {
+          "enable_charging_history": "Obtém da BMW o histórico das sessões de carregamento uma vez por dia. Consome 1 chamada adicional à API por veículo por dia da sua quota diária de 50 chamadas.",
+          "enable_tyre_diagnosis": "Obtém da BMW os dados de estado e desgaste dos pneus uma vez por dia. Consome 1 chamada adicional à API por veículo por dia da sua quota diária de 50 chamadas.",
+          "enable_trip_end_polling": "Quando ativado, desencadeia uma consulta imediata à API sempre que o veículo para. Desative esta opção se fizer muitas viagens curtas e atingir o limite diário da API. A consulta agendada continua a ser executada.",
+          "trip_poll_cooldown_minutes": "Espera mínima entre consultas de fim de viagem para o mesmo veículo (predefinido: 10). Aumente-a para reduzir a utilização da API em viagens curtas frequentes.",
+          "enable_external_power_injection": "Permite que uma automatização envie a potência de carregamento medida localmente para o preditor de SOC através do serviço cardata.update_charging_power. Enquanto chegarem leituras locais recentes, o valor V×A proveniente da BMW é ignorado. Deixe desativado a menos que utilize um contador inteligente e o tenha ligado."
         }
       },
       "action_mqtt_broker": {

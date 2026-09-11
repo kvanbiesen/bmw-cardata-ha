@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW CarData",
+        "description": "Zadejte své ID klienta pro BMW CarData."
+      },
+      "authorize": {
+        "title": "Autorizovat BMW CarData",
+        "description": "Otevřete {verification_url} a zadejte uživatelský kód {user_code}, pokud budete vyzváni. Jakmile zařízení schválíte, klikněte na Odeslat. Pokud už je schválení hotové, klikněte na Odeslat znovu a pokračujte."
+      },
+      "blocked": {
+        "title": "Bootstrap zakázán kvůli limitu API požadavků",
+        "description": "Integrace dříve dosáhla denního limitu API požadavků BMW a automatický bootstrap (vytvoření a mapování kontejnerů) byl dočasně zakázán pro {entry_title} do {until}. Můžete buď počkat do té doby a zkusit to znovu, nebo zrušit příznak níže a zkusit to hned (limit můžete vyčerpat znovu)."
+      },
+      "cleared": {
+        "title": "Naplánován další pokus o bootstrap",
+        "description": "Zrušili jste příznak dočasného zákazu pro {entry_title}. Integrace se o bootstrap pokusí znovu. Pokud limit API požadavků BMW opět vyčerpá, bootstrap bude znovu zakázán až do času obnovení limitu. Případně použijte vývojářskou službu `cardata.clean_hv_containers` k vypsání nebo smazání starých kontejnerů (mějte na paměti limity API požadavků)."
+      },
+      "blocked_fallback": {
+        "description": "Automatický bootstrap je zakázán do {until}. Zrušte příznak a zkuste to hned, nebo akci zrušte a zkuste to po obnovení limitu."
+      }
+    },
+    "error": {
+      "authorization_failed": "Autorizace BMW nebyla dokončena. To se může stát, pokud jste klikli na „Odmítnout“, zavřeli stránku před schválením, vypršel časový limit požadavku, nebo měly servery BMW dočasný výpadek (nemusí to být vaše chyba). Podrobnosti chyby: {error}. Níže byl vygenerován nový autorizační odkaz. Otevřete jej, schvalte a poté znovu klikněte na Odeslat.",
+      "device_code_failed": "BMW odmítlo požadavek na autorizaci zařízení ({error}). Zkontrolujte, že je ID klienta platné, a zkuste to znovu."
+    },
+    "abort": {
+      "auth_failed": "Autorizační odpověď BMW byla neúplná (chybí tokeny). Zkuste to prosím znovu.",
+      "reauth_device_code_failed": "BMW odmítlo požadavek na autorizaci zařízení ({error}). Aktualizujte ID klienta v Nastavit > Znovu spustit autorizaci zařízení, nebo integraci odeberte a znovu přidejte.",
+      "reauth_missing_client_id": "Pro tuto položku integrace chybí ID klienta. Odeberte integraci a znovu ji přidejte, abyste ji autorizovali.",
+      "reauth_failed": "Opětovnou autorizaci se nepodařilo spustit. Zkuste to znovu z možností integrace."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ruční akce",
+        "description": "Vyberte akci, kterou chcete spustit. Obnovení tokenů se pokusí pouze obnovit tokeny bez opětovné autorizace. Pokud máte potíže, doporučujeme poté restartovat HA."
+      },
+      "action_settings": {
+        "title": "Nastavení",
+        "data": {
+          "enable_magic_soc": "Zapnout Magic SOC (predikce spotřeby za jízdy)",
+          "enable_charging_history": "Zapnout historii nabíjení (denní API požadavek)",
+          "enable_tyre_diagnosis": "Zapnout diagnostiku pneumatik (denní API požadavek)",
+          "enable_trip_end_polling": "Zapnout dotazování po skončení jízdy",
+          "trip_poll_cooldown_minutes": "Prodleva mezi dotazy po skončení jízdy (minuty)",
+          "enable_external_power_injection": "Použít externí měřič výkonu pro nabíjení"
+        },
+        "data_description": {
+          "enable_charging_history": "Jednou denně načte z BMW historii nabíjecích relací. Spotřebuje 1 API požadavek navíc na vozidlo a den z vaší denní kvóty 50 požadavků.",
+          "enable_tyre_diagnosis": "Jednou denně načte z BMW data o stavu a opotřebení pneumatik. Spotřebuje 1 API požadavek navíc na vozidlo a den z vaší denní kvóty 50 požadavků.",
+          "enable_trip_end_polling": "Když je zapnuto, spustí okamžitý API dotaz pokaždé, když vozidlo zastaví. Vypněte to, pokud jezdíte hodně krátkých jízd a vyčerpáváte denní limit API. Plánované dotazování běží nezávisle.",
+          "trip_poll_cooldown_minutes": "Minimální prodleva mezi dotazy po skončení jízdy u stejného vozidla (výchozí: 10). Zvyšte ji, abyste snížili spotřebu API při častých krátkých jízdách.",
+          "enable_external_power_injection": "Umožní automatizaci posílat lokálně naměřený nabíjecí výkon do predikce SOC pomocí služby cardata.update_charging_power. Dokud přicházejí čerstvé lokální hodnoty, hodnota V×A z BMW se potlačí. Nechte vypnuté, pokud nemáte chytrý elektroměr a nezapojili jste ho."
+        }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT broker",
+        "description": "Nastavte vlastní MQTT broker místo koncového bodu BMW. Použijte to spolu s bmw-mqtt-bridge k přehrávání dat BMW z lokálního brokeru, aby více konzumentů mohlo sdílet jedno MQTT připojení k BMW.",
+        "data": {
+          "custom_mqtt_enabled": "Použít vlastní MQTT broker",
+          "custom_mqtt_host": "Adresa brokeru",
+          "custom_mqtt_port": "Port brokeru",
+          "custom_mqtt_username": "Uživatelské jméno (volitelné)",
+          "custom_mqtt_password": "Heslo (volitelné)",
+          "custom_mqtt_tls": "Režim TLS",
+          "custom_mqtt_topic_prefix": "Předpona tématu (např. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Když je zapnuto, integrace se připojí k vašemu vlastnímu brokeru místo ke koncovému bodu MQTT od BMW.",
+          "custom_mqtt_host": "Název hostitele nebo IP adresa vašeho MQTT brokeru.",
+          "custom_mqtt_port": "Číslo portu (výchozí: 1883 pro běžné TCP, 8883 pro TLS).",
+          "custom_mqtt_username": "Nechte prázdné pro anonymní přístup.",
+          "custom_mqtt_password": "Nechte prázdné pro anonymní přístup.",
+          "custom_mqtt_tls": "Off (plain TCP) = běžné TCP, TLS (verified) = ověřený certifikát, TLS (self-signed) = přeskočit ověření certifikátu.",
+          "custom_mqtt_topic_prefix": "Předpona tématu mostu. Zprávy se očekávají na '{prefix}{vin}'. Výchozí: bmw/"
+        }
+      }
+    },
+    "error": {
+      "refresh_failed": "Obnovení tokenů selhalo: {error}",
+      "runtime_missing": "Běhové prostředí integrace není připraveno. Zkuste to znovu po dokončení nastavení.",
+      "no_vins": "Zatím nejsou známa žádná VIN. Počkejte, až stream objeví vozidlo, nebo jej jednou spusťte ručně.",
+      "invalid_int": "Zadejte kladné celé číslo",
+      "invalid_client_id": "Zadejte ID klienta pro BMW CarData.",
+      "mqtt_host_required": "Adresa brokeru je povinná, když je zapnutý vlastní MQTT broker."
+    },
+    "abort": {
+      "auth_failed": "Autorizační odpověď BMW byla neúplná (chybí tokeny). Zkuste to prosím znovu.",
+      "reauth_started": "Autorizace byla restartována. Dokončete nové přihlášení z oznámení.",
+      "reauth_device_code_failed": "BMW odmítlo požadavek na autorizaci zařízení ({error}). Aktualizujte ID klienta v možnostech integrace a zkuste to znovu.",
+      "reauth_missing_client_id": "Pro tuto položku integrace chybí ID klienta. Odeberte integraci a znovu ji přidejte, abyste ji autorizovali.",
+      "reauth_failed": "Opětovnou autorizaci se nepodařilo spustit. Zkuste to znovu z možností integrace."
+    }
+  }
+}

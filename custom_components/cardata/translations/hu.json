@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW CarData",
+        "description": "Adja meg a BMW CarData ügyfélazonosítóját."
+      },
+      "authorize": {
+        "title": "BMW CarData engedélyezése",
+        "description": "Nyissa meg a következőt: {verification_url}, és adja meg a(z) {user_code} felhasználói kódot, ha a rendszer kéri. Miután jóváhagyta az eszközt, kattintson a Mehet gombra. Ha a jóváhagyás már megtörtént, kattintson újra a Mehet gombra a folytatáshoz."
+      },
+      "blocked": {
+        "title": "A bootstrap letiltva az API-hívási korlát miatt",
+        "description": "Az integráció korábban elérte a BMW napi API-hívási korlátját, ezért az automatikus bootstrap (a konténerek létrehozása és hozzárendelése) átmenetileg le van tiltva a következőhöz: {entry_title}, eddig: {until}. Megvárhatja ezt az időpontot és újrapróbálkozhat, vagy törölheti az alábbi jelzőt az azonnali újrapróbálkozáshoz (a korlátot ismét elérheti)."
+      },
+      "cleared": {
+        "title": "Újabb bootstrap-kísérlet ütemezve",
+        "description": "Törölte a(z) {entry_title} átmeneti letiltási jelzőjét. Az integráció újra megkísérli a bootstrapot. Ha továbbra is eléri a BMW API-hívási korlátját, a bootstrap ismét letiltásra kerül a korlát visszaállításáig. Másik lehetőségként használja a `cardata.clean_hv_containers` fejlesztői szolgáltatást a régi konténerek listázásához vagy törléséhez (ügyeljen az API-hívási korlátokra)."
+      },
+      "blocked_fallback": {
+        "description": "Az automatikus bootstrap le van tiltva eddig: {until}. Törölje a jelzőt az azonnali újrapróbálkozáshoz, vagy szakítsa meg, és próbálja újra a visszaállítás után."
+      }
+    },
+    "error": {
+      "authorization_failed": "A BMW engedélyezése nem fejeződött be. Ez akkor fordulhat elő, ha az „Elutasítás” lehetőségre kattintott, bezárta az oldalt a jóváhagyás előtt, a kérés túllépte az időkorlátot, vagy a BMW kiszolgálóinál átmeneti hiba lépett fel (nem mindig az Ön hibája). Hibarészletek: {error}. Alább új engedélyezési hivatkozás jött létre. Nyissa meg, hagyja jóvá, majd kattintson újra a Mehet gombra.",
+      "device_code_failed": "A BMW elutasította az eszközengedélyezési kérést ({error}). Ellenőrizze, hogy az ügyfélazonosító érvényes-e, majd próbálja újra."
+    },
+    "abort": {
+      "auth_failed": "A BMW engedélyezési válasza hiányos volt (hiányoznak a tokenek). Próbálja újra.",
+      "reauth_device_code_failed": "A BMW elutasította az eszközengedélyezési kérést ({error}). Frissítse az ügyfélazonosítót a Konfigurálás > Eszközengedélyezés újraindítása menüpontban, vagy távolítsa el és adja hozzá újra az integrációt.",
+      "reauth_missing_client_id": "Ehhez az integrációs bejegyzéshez hiányzik az ügyfélazonosító. Távolítsa el és adja hozzá újra az integrációt az ismételt engedélyezéshez.",
+      "reauth_failed": "Az ismételt engedélyezést nem sikerült elindítani. Próbálja újra az integráció beállításaiból."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kézi műveletek",
+        "description": "Válassza ki a futtatni kívánt műveletet. A tokenek frissítése csak a tokenek megújítását kísérli meg ismételt engedélyezés nélkül. Ha problémái vannak, javasoljuk, hogy utána indítsa újra a HA-t."
+      },
+      "action_settings": {
+        "title": "Beállítások",
+        "data": {
+          "enable_magic_soc": "Magic SOC bekapcsolása (menet közbeni fogyasztás előrejelzése)",
+          "enable_charging_history": "Töltési előzmények bekapcsolása (napi API-hívás)",
+          "enable_tyre_diagnosis": "Gumiabroncs-diagnosztika bekapcsolása (napi API-hívás)",
+          "enable_trip_end_polling": "Út végi lekérdezés bekapcsolása",
+          "trip_poll_cooldown_minutes": "Várakozás az út végi lekérdezések között (perc)",
+          "enable_external_power_injection": "Külső teljesítménymérő használata a töltéshez"
+        },
+        "data_description": {
+          "enable_charging_history": "Naponta egyszer lekéri a BMW-től a töltési alkalmak előzményeit. Naponta és járművenként 1 további API-hívást használ fel a napi 50 hívásos keretéből.",
+          "enable_tyre_diagnosis": "Naponta egyszer lekéri a BMW-től az abroncsok állapotára és kopására vonatkozó adatokat. Naponta és járművenként 1 további API-hívást használ fel a napi 50 hívásos keretéből.",
+          "enable_trip_end_polling": "Bekapcsolva minden alkalommal azonnali API-lekérdezést indít, amikor a jármű megáll. Kapcsolja ki, ha sok rövid utat tesz meg, és eléri a napi API-korlátot. Az ütemezett lekérdezés ettől függetlenül fut.",
+          "trip_poll_cooldown_minutes": "Minimális várakozási idő ugyanazon jármű út végi lekérdezései között (alapértelmezett: 10). Növelje az API-használat csökkentéséhez gyakori rövid utak esetén.",
+          "enable_external_power_injection": "Lehetővé teszi, hogy egy automatizmus a helyben mért töltési teljesítményt a cardata.update_charging_power szolgáltatáson keresztül átadja a SOC-előrejelzésnek. Amíg friss helyi mérések érkeznek, a BMW-től származó V×A érték háttérbe szorul. Hagyja kikapcsolva, hacsak nem használ okosmérőt, és nem kötötte be azt."
+        }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT-bróker",
+        "description": "Állítson be saját MQTT-brókert a BMW végpontja helyett. Használja ezt a bmw-mqtt-bridge megoldással a BMW-adatok helyi brókerről történő továbbjátszásához, így több fogyasztó oszthat meg egyetlen BMW MQTT-kapcsolatot.",
+        "data": {
+          "custom_mqtt_enabled": "Saját MQTT-bróker használata",
+          "custom_mqtt_host": "Bróker gazdagépe",
+          "custom_mqtt_port": "Bróker portja",
+          "custom_mqtt_username": "Felhasználónév (nem kötelező)",
+          "custom_mqtt_password": "Jelszó (nem kötelező)",
+          "custom_mqtt_tls": "TLS-mód",
+          "custom_mqtt_topic_prefix": "Topik előtag (pl. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Bekapcsolva az integráció a saját brókeréhez csatlakozik a BMW MQTT-végpontja helyett.",
+          "custom_mqtt_host": "Az MQTT-bróker gazdagépneve vagy IP-címe.",
+          "custom_mqtt_port": "Portszám (alapértelmezett: 1883 egyszerű TCP esetén, 8883 TLS esetén).",
+          "custom_mqtt_username": "Hagyja üresen a névtelen hozzáféréshez.",
+          "custom_mqtt_password": "Hagyja üresen a névtelen hozzáféréshez.",
+          "custom_mqtt_tls": "Off (plain TCP) = egyszerű TCP, TLS (verified) = ellenőrzött tanúsítvány, TLS (self-signed) = a tanúsítvány ellenőrzésének kihagyása.",
+          "custom_mqtt_topic_prefix": "A híd topik előtagja. Az üzenetek a következő helyen várhatók: '{prefix}{vin}'. Alapértelmezett: bmw/"
+        }
+      }
+    },
+    "error": {
+      "refresh_failed": "A tokenek frissítése sikertelen: {error}",
+      "runtime_missing": "Az integráció futtatókörnyezete nem áll készen. Próbálja újra a beállítás befejezése után.",
+      "no_vins": "Még nem ismert egyetlen alvázszám (VIN) sem. Várja meg, amíg az adatfolyam felfedez egy járművet, vagy indítsa el egyszer kézzel.",
+      "invalid_int": "Adjon meg egy pozitív egész számot",
+      "invalid_client_id": "Adja meg a BMW CarData ügyfélazonosítót.",
+      "mqtt_host_required": "A bróker gazdagépét meg kell adni, ha a saját MQTT-bróker be van kapcsolva."
+    },
+    "abort": {
+      "auth_failed": "A BMW engedélyezési válasza hiányos volt (hiányoznak a tokenek). Próbálja újra.",
+      "reauth_started": "Az engedélyezés újraindult. Fejezze be az új bejelentkezési folyamatot az értesítésből.",
+      "reauth_device_code_failed": "A BMW elutasította az eszközengedélyezési kérést ({error}). Frissítse az ügyfélazonosítót az integráció beállításaiban, majd próbálja újra.",
+      "reauth_missing_client_id": "Ehhez az integrációs bejegyzéshez hiányzik az ügyfélazonosító. Távolítsa el és adja hozzá újra az integrációt az ismételt engedélyezéshez.",
+      "reauth_failed": "Az ismételt engedélyezést nem sikerült elindítani. Próbálja újra az integráció beállításaiból."
+    }
+  }
+}
