@@ -31,7 +31,12 @@ import pytest
 
 from custom_components.cardata import button as button_module
 from custom_components.cardata.button import LEARNING_RESET_KINDS, async_setup_entry
-from custom_components.cardata.const import DESC_SOC_HEADER, DOMAIN, MAGIC_SOC_DESCRIPTOR
+from custom_components.cardata.const import (
+    DESC_SOC_DISPLAYED,
+    DESC_SOC_HEADER,
+    DOMAIN,
+    MAGIC_SOC_DESCRIPTOR,
+)
 
 VIN = "WBA00000000000001"
 
@@ -83,8 +88,17 @@ class TestLearningResetRestore:
         data = {VIN: {DESC_SOC_HEADER: object()}}
         assert platform(rows, data) == {f"{VIN}_reset_ac_learning", f"{VIN}_reset_dc_learning"}
 
+    def test_a_neue_klasse_car_gets_them_on_a_first_install(self, platform):
+        """NK never sends the header, so displayed SOC has to be enough."""
+        data = {VIN: {DESC_SOC_DISPLAYED: object()}}
+        assert platform([], data) == {f"{VIN}_reset_ac_learning", f"{VIN}_reset_dc_learning"}
+
     def test_no_rows_and_no_battery_builds_nothing(self, platform):
         assert platform([]) == set()
+
+    def test_a_car_with_no_battery_descriptor_still_builds_nothing(self, platform):
+        data = {VIN: {"vehicle.travelledDistance": object()}}
+        assert platform([], data) == set()
 
 
 class TestConsumptionResetRestore:
