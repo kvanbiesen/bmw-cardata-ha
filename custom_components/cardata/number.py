@@ -41,10 +41,10 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DESC_REMAINING_FUEL,
-    DESC_SOC_HEADER,
     DOMAIN,
     MANUAL_CAPACITY_DESCRIPTOR,
     MANUAL_TANK_CAPACITY_DESCRIPTOR,
+    has_hv_battery,
 )
 from .utils import redact_vin
 
@@ -81,7 +81,7 @@ async def async_setup_entry(
         vehicle_name = coordinator.names.get(vin, redact_vin(vin))
 
         # Manual battery capacity for EV/PHEV vehicles
-        if DESC_SOC_HEADER in vehicle_data:
+        if has_hv_battery(vehicle_data):
             entities.append(
                 ManualBatteryCapacityNumber(
                     coordinator=coordinator,
