@@ -59,6 +59,7 @@ from .const import (
     MAGIC_SOC_DESCRIPTOR,
     PHASE_COUNT_LEAD_SECONDS,
     PREDICTED_SOC_DESCRIPTOR,
+    has_hv_battery,
 )
 from .descriptor_state import DescriptorState
 from .magic_soc import MagicSOCPredictor
@@ -1055,15 +1056,14 @@ def process_soc_descriptors(
                 anchor_soc_session(soc_predictor, magic_soc_pred, vin, vehicle_state, manual_cap)
 
     # Check if predicted_soc sensor should be created
-    if DESC_SOC_HEADER in vehicle_state or DESC_SOC_DISPLAYED in vehicle_state:
+    if has_hv_battery(vehicle_state):
         if PREDICTED_SOC_DESCRIPTOR not in vehicle_state:
             if pending.add_new_sensor(vin, PREDICTED_SOC_DESCRIPTOR):
                 schedule_debounce = True
 
     # Detect PHEV
-    has_hv_battery = DESC_SOC_HEADER in vehicle_state or DESC_SOC_DISPLAYED in vehicle_state
     has_fuel_system = DESC_REMAINING_FUEL in vehicle_state or DESC_FUEL_LEVEL in vehicle_state
-    if has_hv_battery:
+    if has_hv_battery(vehicle_state):
         is_phev = has_fuel_system and not coordinator._is_metadata_bev(vin)
         soc_predictor.set_vehicle_is_phev(vin, is_phev)
         magic_soc_pred.set_vehicle_is_phev(vin, is_phev)
