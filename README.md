@@ -49,7 +49,7 @@ Turn your BMW CarData stream into native Home Assistant entities. This integrati
 
 > **Note:** This base of the plugin was generated with the assistance of AI to quickly solve issues with the legacy implementation. The code is intentionally open—to-modify, fork, or build a new integration from it. PRs are welcome unless otherwise noted in the future.
 
-> **Tested Environment:** Home Assistant 2025.3+ is required. Brand logos are included since HA 2026.3 via the `brand/` directory.
+> **Tested Environment:** Home Assistant 2025.4+ is required. Brand logos are included since HA 2026.3 via the `brand/` directory.
 
 <a href="https://www.buymeacoffee.com/sadisticpandabear" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
@@ -62,7 +62,7 @@ Please try to post only issues relevant to the integration itself on the [Issues
 
 ### Configure button actions
 On the integration main page, there is now a "Configure" button. You can use it to:
-- **Refresh authentication tokens** (always requests a new set of tokens from BMW, even when the current ones have not expired yet; will reload integration, might also need HA restart in some problem cases)
+- **Refresh tokens** (always requests a new set of tokens from BMW, even when the current ones have not expired yet; the new credentials are swapped in without reloading the integration or reconnecting the stream, so a HA restart may still be needed in some problem cases)
 - **Start device authorization again** (redo the whole auth flow)
 - **MQTT Broker** (switch stream source to a custom broker, including TLS mode and topic prefix)
 - **Reset telemetry container** (delete and recreate the BMW telemetry container)
@@ -83,7 +83,7 @@ If a vehicle is sold or removed from your BMW account but its device lingers in 
 # <u>Installation Instructions</u>
 
 
-## BMW Portal Setup (DON'T SKIP, DO THIS FIRST - All Steps 1-13 before continuing)
+## BMW Portal Setup (DON'T SKIP, DO THIS FIRST - All Steps 1-14 before continuing)
 
 The CarData web portal isn’t available everywhere (e.g., it’s disabled in Finland). You can still enable streaming by logging in by using supported region. It doesn't matter which language you select - all the generated Id and configuration is shared between all of them. 
 
@@ -200,12 +200,12 @@ pierceShadow(document);
 
 Or:
 1. Add this repo to HACS as a **custom repository** (type: Integration).
-2. Install "Bmw cardata" from the Custom section.
+2. Install "BMW CarData" from the Custom section.
 3. Restart Home Assistant.
 
 ## Configuration Flow
 
-1. Go to **Settings → Devices & Services → Add Integration** and pick **Bmw cardata**.
+1. Go to **Settings → Devices & Services → Add Integration** and pick **BMW Cardata**.
 2. Enter your CarData **client ID** (created in the BMW portal and seen under section CARDATA API and there copied to your clipboard).
 3. The flow displays a `verification_url` and `user_code`. Open the link, enter the code, and approve the device.
 4. Once the BMW portal confirms the approval, return to HA and click Submit. If you accidentally submit before finishing the BMW login, the flow will hang until the device-code exchange times out; cancel it and start over after completing the BMW login.
@@ -228,14 +228,14 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 ## Entity Naming & Structure
 
 - Each VIN becomes a device in HA (`VIN` pulled from CarData).
-- Sensors/binary sensors are auto-created and named from descriptors (e.g. `Cabin Door Row1 Driver Is Open`).
+- Sensors/binary sensors are auto-created from the descriptors that emit data. Most get a readable title from BMW's catalogue (e.g. `Door state (front driver)`); a descriptor with no catalogue title falls back to a name derived from the descriptor path.
 - The device tracker (location entity) is restored from the entity registry on restart, so it keeps its last known position even before MQTT data arrives.
 - The windows and the sunroof get a binary sensor with the `window` device class, which reports open or closed and can drive a `window.opened` trigger. The string sensor that reports the raw BMW enum (`CLOSED`, `INTERMEDIATE`, `OPEN`) is still there but hidden on a new install, so unhide it from the entity settings if you want the intermediate position.
 - The lifetime grid energy counters (`Charging EV Energy supplied total` and the engine on/off pair) are cumulative meters, so they carry the `energy` device class with a `total_increasing` state class and can be picked as a source in the Home Assistant energy dashboard. BMW documents them for plug-in hybrids, so a full electric car may not report them at all.
 - The OBFCM fuel counters (`OBFCM Fuel consumption total` and the two PHEV variants) are cumulative meters as well, and now carry `total_increasing` in place of the `measurement` that Home Assistant does not allow on a volume reading. Their long-term statistics change from an average to a total, so the figures recorded before the change will not line up with the ones after it.
 - The battery energy readings (installed size, current and maximum energy content, energy still needed for a full charge) are a stored level rather than consumption, so they use the `energy_storage` device class. The energy dashboard cannot take them as a source: it needs a figure that only climbs, and a charge level goes up and down.
 - Additional attributes include the source timestamp.
-- All numeric sensors declare `suggested_display_precision`, so unit conversions (e.g. km to miles) display clean rounded values in standard HA cards and the built-in vehicle card. You can override the display unit per entity via the gear icon in the entity settings, or switch your HA unit system to imperial for a global change.
+- Numeric sensors whose unit maps to a known device class (distance, energy, power, current, voltage, temperature, pressure, volume, duration and battery) declare `suggested_display_precision`, so unit conversions (e.g. km to miles) display clean rounded values in standard HA cards and the built-in vehicle card. Readings that map to no device class, such as speed, are shown as BMW sends them. You can override the display unit per entity via the gear icon in the entity settings, or switch your HA unit system to imperial for a global change.
 
 ## Vehicle Dashboard Card (Lovelace)
 
@@ -261,12 +261,15 @@ Available configuration options:
 | `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm). Windows, tailgate, and hood only show red when the car is parked and locked with the item open (walked-away alert). Alarm indicator: green when armed, blue when unarmed, red when triggered. |
 | `show_range` | `true` | Battery / fuel level bar with range |
 | `show_image` | `true` | Vehicle image |
+| `image_crop_top` | `0` | Crop the top of the vehicle image, 0-40% |
+| `image_crop_bottom` | `0` | Crop the bottom of the vehicle image, 0-40% |
+| `image_zoom` | `100` | Zoom the vehicle image, 50-200% |
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
-| `show_buttons` | `true` | Quick-info tiles (location, mileage, service) |
+| `show_buttons` | `true` | Quick-info tiles: location, range or fuel, motion, charging state or level, tyres (only when tyre sensors exist), and mileage |
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
 | `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
-| `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, or `de`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome — each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
+| `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, `de`, or `sv`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome. Each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
 
 ### Custom Map Marker (optional)
 
@@ -396,10 +399,19 @@ soc_source: predicted
 show_indicators: true
 show_range: true
 show_image: true
+image_crop_top: 0
+image_crop_bottom: 0
+image_zoom: 100
 show_map: true
 map_height: 120
 show_buttons: true
 leasing_entity: sensor.leasing_mini
+leasing_tiles:
+  - lease_remaining
+  - monthly_budget
+  - projected
+  - cost
+language: auto
 ```
 
 To hide the map and quick-info tiles:
@@ -503,7 +515,7 @@ For Plug-in Hybrid Electric Vehicles (PHEVs), the predicted SOC has special hand
 - **Sync down on battery depletion**: If the actual BMW SOC is lower than the predicted value, the prediction syncs down immediately. This handles scenarios where the hybrid system depletes the battery (e.g., battery recovery mode, engine-priority driving)
 - **Header filtering during charging**: When `charging.level` is available and fresh, `batteryManagement.header` is only allowed through if it would sync UP (header above prediction). Stale header values frozen at the pre-charge level are always below the prediction and get blocked, while legitimate mid-charge header updates above the prediction are allowed through for re-anchoring
 - **Charging level ignored for sync-down**: During charging, `charging.level` (BMW's own prediction) is ignored when lower than our energy-based prediction, which tracks the real battery more accurately
-- **BEVs**: For pure electric vehicles, the predicted SOC only syncs when not actively charging (standard behavior)
+- **BEVs**: For pure electric vehicles the prediction never syncs downward during a charge. It still syncs upward whenever BMW's reported SOC comes in above the prediction, which is how efficiency losses and missed updates get corrected
 
 This ensures the predicted SOC stays accurate for PHEVs even when the hybrid system uses battery power in ways that don't register as "discharging" in the BMW API.
 
@@ -615,13 +627,13 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. Each VIN is judged on its own, and only VINs whose last poll is older than the staleness threshold are fetched, so in multi-car setups the fresh ones consume no API calls.
 - **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
 - **Multi-VIN setups**: All vehicles share the same 50 call/day limit. The poll interval scales with VIN count plus any enabled daily features. Each VIN is guaranteed at least 1 poll per day; BMW's 429 backoff handles actual quota enforcement.
-- **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay (1h, 2h, 4h, 8h, up to 24h). Because the quota resets at midnight UTC, a backoff that would run past the reset is shortened to end at it, so API calls resume as soon as the quota is back instead of sitting out the rest of a long backoff. A `Retry-After` header sent by BMW is honoured as-is.
+- **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay (1h, 2h, 4h, 8h, up to 24h). Because the quota resets at midnight UTC, a backoff that would run past the reset is shortened to end at it, so API calls resume as soon as the quota is back instead of sitting out the rest of a long backoff. A `Retry-After` header sent by BMW takes precedence over that backoff and is not shortened to the quota reset, but it is still floored at 60 seconds and capped at 24 hours.
 
 ## Requirements
 
 - BMW CarData account with streaming access (CarData API + CarData Streaming subscribed in the portal).
 - Client ID created in the BMW portal (see "BMW Portal Setup").
-- Home Assistant 2025.3+.
+- Home Assistant 2025.4+.
 - TLS 1.3 capable SSL library (required for direct BMW MQTT mode): OpenSSL 1.1.1+, LibreSSL 3.2.0+, or equivalent.
 - Familiarity with BMW's CarData documentation: https://bmw-cardata.bmwgroup.com/customer/public/api-documentation/Id-Introduction
 
