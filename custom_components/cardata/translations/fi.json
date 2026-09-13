@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW CarData",
+        "description": "Anna BMW CarData -asiakastunnuksesi."
+      },
+      "authorize": {
+        "title": "Valtuuta BMW CarData",
+        "description": "Avaa {verification_url} ja anna käyttäjäkoodi {user_code}, jos sitä kysytään. Kun olet hyväksynyt laitteen, napsauta Lähetä. Jos hyväksyntä on jo tehty, napsauta Lähetä uudelleen jatkaaksesi."
+      },
+      "blocked": {
+        "title": "Bootstrap poistettu käytöstä API-kutsurajan vuoksi",
+        "description": "Integraatio on aiemmin saavuttanut BMW:n päivittäisen API-kutsurajan, ja automaattinen bootstrap (containerien luonti ja määritys) on väliaikaisesti poistettu käytöstä kohteelle {entry_title} {until} asti. Voit joko odottaa siihen asti ja yrittää uudelleen tai poistaa alla olevan merkinnän yrittääksesi heti (kutsuraja voi tulla vastaan uudestaan)."
+      },
+      "cleared": {
+        "title": "Uusi bootstrap-yritys ajastettu",
+        "description": "Olet poistanut kohteen {entry_title} väliaikaisen eston merkinnän. Integraatio yrittää bootstrapia uudelleen. Jos BMW:n API-kutsuraja tulee edelleen vastaan, bootstrap poistetaan taas käytöstä nollausaikaan asti. Vaihtoehtoisesti voit käyttää kehittäjäpalvelua `cardata.clean_hv_containers` vanhojen containerien listaamiseen tai poistamiseen (huomioi API-kutsurajat)."
+      },
+      "blocked_fallback": {
+        "description": "Automaattinen bootstrap on poistettu käytöstä {until} asti. Poista merkintä yrittääksesi nyt tai peruuta ja yritä uudelleen nollauksen jälkeen."
+      }
+    },
+    "error": {
+      "authorization_failed": "BMW-valtuutusta ei saatu päätökseen. Näin voi käydä, jos napsautit ”Hylkää”, suljit sivun ennen hyväksyntää, pyyntö aikakatkaistiin tai BMW:n palvelimissa oli tilapäinen häiriö (vika ei ole aina sinun). Virheen tiedot: {error}. Alle on luotu uusi valtuutuslinkki. Avaa se ja hyväksy, napsauta sitten Lähetä uudelleen.",
+      "device_code_failed": "BMW hylkäsi laitevaltuutuspyynnön ({error}). Tarkista, että asiakastunnus on kelvollinen, ja yritä uudelleen."
+    },
+    "abort": {
+      "auth_failed": "BMW:n valtuutusvastaus oli puutteellinen (tokenit puuttuvat). Yritä uudelleen.",
+      "reauth_device_code_failed": "BMW hylkäsi laitevaltuutuspyynnön ({error}). Päivitä asiakastunnus kohdasta Määrittele > Käynnistä laitevaltuutus uudelleen tai poista integraatio ja lisää se uudelleen.",
+      "reauth_missing_client_id": "Tältä integraation tietueelta puuttuu asiakastunnus. Poista integraatio ja lisää se uudelleen valtuuttaaksesi sen.",
+      "reauth_failed": "Uudelleenvaltuutusta ei voitu käynnistää. Yritä uudelleen integraation asetuksista."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manuaaliset toiminnot",
+        "description": "Valitse suoritettava toiminto. Tokenien päivitys yrittää vain uusia tokenit ilman uudelleenvaltuutusta. Suosittelemme käynnistämään HA:n uudelleen sen jälkeen, jos ilmenee ongelmia."
+      },
+      "action_settings": {
+        "title": "Asetukset",
+        "data": {
+          "enable_magic_soc": "Ota käyttöön Magic SOC (ajonaikaisen kulutuksen ennuste)",
+          "enable_charging_history": "Ota käyttöön lataushistoria (päivittäinen API-kutsu)",
+          "enable_tyre_diagnosis": "Ota käyttöön rengasdiagnostiikka (päivittäinen API-kutsu)",
+          "enable_trip_end_polling": "Ota käyttöön kysely matkan päättyessä",
+          "trip_poll_cooldown_minutes": "Kyselyjen väliaika matkan päättyessä (minuuttia)",
+          "enable_external_power_injection": "Käytä ulkoista tehomittaria latauksessa"
+        },
+        "data_description": {
+          "enable_charging_history": "Hakee lataustapahtumien historian BMW:ltä kerran päivässä. Käyttää 1 ylimääräisen API-kutsun ajoneuvoa ja päivää kohden päivittäisestä 50 kutsun kiintiöstäsi.",
+          "enable_tyre_diagnosis": "Hakee renkaiden kunto- ja kulumistiedot BMW:ltä kerran päivässä. Käyttää 1 ylimääräisen API-kutsun ajoneuvoa ja päivää kohden päivittäisestä 50 kutsun kiintiöstäsi.",
+          "enable_trip_end_polling": "Kun tämä on käytössä, API-kysely tehdään heti aina kun ajoneuvo pysähtyy. Poista tämä käytöstä, jos ajat paljon lyhyitä matkoja ja päivittäinen API-raja tulee vastaan. Ajastettu kysely toimii joka tapauksessa.",
+          "trip_poll_cooldown_minutes": "Vähimmäisväli saman ajoneuvon matkan päättymiskyselyjen välillä (oletus: 10). Kasvata arvoa vähentääksesi API-käyttöä toistuvilla lyhyillä matkoilla.",
+          "enable_external_power_injection": "Sallii automaation lähettää paikallisesti mitatun lataustehon SOC-ennusteelle palvelun cardata.update_charging_power kautta. Niin kauan kuin tuoreita paikallisia lukemia saapuu, BMW:n V×A-arvo ohitetaan. Jätä pois käytöstä, ellet käytä älymittaria ja ole kytkenyt sitä."
+        }
+      },
+      "action_mqtt_broker": {
+        "title": "MQTT-broker",
+        "description": "Määritä oma MQTT-broker BMW:n päätepisteen sijaan. Käytä tätä yhdessä bmw-mqtt-bridgen kanssa toistaaksesi BMW-dataa paikalliselta brokerilta, jolloin useat kuluttajat voivat jakaa yhden BMW:n MQTT-yhteyden.",
+        "data": {
+          "custom_mqtt_enabled": "Käytä omaa MQTT-brokeria",
+          "custom_mqtt_host": "Brokerin osoite",
+          "custom_mqtt_port": "Brokerin portti",
+          "custom_mqtt_username": "Käyttäjätunnus (valinnainen)",
+          "custom_mqtt_password": "Salasana (valinnainen)",
+          "custom_mqtt_tls": "TLS-tila",
+          "custom_mqtt_topic_prefix": "Aiheen etuliite (esim. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Kun tämä on käytössä, yhteys muodostetaan omaan brokeriisi BMW:n MQTT-päätepisteen sijaan.",
+          "custom_mqtt_host": "MQTT-brokerisi isäntänimi tai IP-osoite.",
+          "custom_mqtt_port": "Portin numero (oletus: 1883 tavalliselle TCP:lle, 8883 TLS:lle).",
+          "custom_mqtt_username": "Jätä tyhjäksi anonyymiä käyttöä varten.",
+          "custom_mqtt_password": "Jätä tyhjäksi anonyymiä käyttöä varten.",
+          "custom_mqtt_tls": "Off (plain TCP) = tavallinen TCP, TLS (verified) = varmennettu sertifikaatti, TLS (self-signed) = ohita sertifikaatin tarkistus.",
+          "custom_mqtt_topic_prefix": "Sillan aiheen etuliite. Viestejä odotetaan osoitteesta '{prefix}{vin}'. Oletus: bmw/"
+        }
+      }
+    },
+    "error": {
+      "refresh_failed": "Tokenien päivitys epäonnistui: {error}",
+      "runtime_missing": "Integraation ajonaikainen ympäristö ei ole valmis. Yritä uudelleen, kun asennus on valmis.",
+      "no_vins": "Yhtään VIN-numeroa ei ole vielä tiedossa. Odota, että tietovirta löytää ajoneuvon, tai käynnistä se kerran manuaalisesti.",
+      "invalid_int": "Anna positiivinen kokonaisluku",
+      "invalid_client_id": "Anna BMW CarData -asiakastunnus.",
+      "mqtt_host_required": "Brokerin osoite vaaditaan, kun oma MQTT-broker on käytössä."
+    },
+    "abort": {
+      "auth_failed": "BMW:n valtuutusvastaus oli puutteellinen (tokenit puuttuvat). Yritä uudelleen.",
+      "reauth_started": "Valtuutus käynnistettiin uudelleen. Viimeistele uusi kirjautuminen ilmoituksesta.",
+      "reauth_device_code_failed": "BMW hylkäsi laitevaltuutuspyynnön ({error}). Päivitä asiakastunnus integraation asetuksissa ja yritä uudelleen.",
+      "reauth_missing_client_id": "Tältä integraation tietueelta puuttuu asiakastunnus. Poista integraatio ja lisää se uudelleen valtuuttaaksesi sen.",
+      "reauth_failed": "Uudelleenvaltuutusta ei voitu käynnistää. Yritä uudelleen integraation asetuksista."
+    }
+  }
+}

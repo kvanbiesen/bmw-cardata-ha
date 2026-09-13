@@ -42,8 +42,18 @@
         "title": "Impostazioni",
         "data": {
           "enable_magic_soc": "Abilita Magic SOC (previsione consumo in guida)",
+          "enable_charging_history": "Abilita cronologia di ricarica (interrogazione API giornaliera)",
+          "enable_tyre_diagnosis": "Abilita diagnosi pneumatici (interrogazione API giornaliera)",
           "enable_trip_end_polling": "Abilita polling fine viaggio",
-          "trip_poll_cooldown_minutes": "Attesa tra polling fine viaggio (minuti)"
+          "trip_poll_cooldown_minutes": "Attesa tra polling fine viaggio (minuti)",
+          "enable_external_power_injection": "Usa un misuratore di potenza esterno per la ricarica"
+        },
+        "data_description": {
+          "enable_charging_history": "Recupera da BMW la cronologia delle sessioni di ricarica una volta al giorno. Consuma 1 chiamata API aggiuntiva per veicolo al giorno dalla tua quota giornaliera di 50 chiamate.",
+          "enable_tyre_diagnosis": "Recupera da BMW i dati su stato e usura degli pneumatici una volta al giorno. Consuma 1 chiamata API aggiuntiva per veicolo al giorno dalla tua quota giornaliera di 50 chiamate.",
+          "enable_trip_end_polling": "Quando è abilitato, avvia una chiamata API immediata ogni volta che il veicolo si ferma. Disabilitalo se fai molti viaggi brevi e raggiungi il limite giornaliero dell'API. Il polling pianificato viene comunque eseguito.",
+          "trip_poll_cooldown_minutes": "Attesa minima tra i polling di fine viaggio per lo stesso veicolo (predefinito: 10). Aumentala per ridurre l'uso dell'API con viaggi brevi frequenti.",
+          "enable_external_power_injection": "Consente a un'automazione di inviare la potenza di ricarica misurata localmente al predittore SOC tramite il servizio cardata.update_charging_power. Finché arrivano letture locali recenti, il valore V×A proveniente da BMW viene ignorato. Lascialo disabilitato a meno che tu non usi un contatore intelligente e lo abbia collegato."
         }
       },
       "action_mqtt_broker": {

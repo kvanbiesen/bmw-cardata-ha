@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW CarData",
+        "description": "Introdu ID-ul de client BMW CarData."
+      },
+      "authorize": {
+        "title": "Autorizează BMW CarData",
+        "description": "Deschide {verification_url} și introdu codul de utilizator {user_code}, dacă ți se cere. După ce ai aprobat dispozitivul, apasă pe Trimite. Dacă aprobarea este deja finalizată, apasă din nou pe Trimite pentru a continua."
+      },
+      "blocked": {
+        "title": "Bootstrap dezactivat din cauza limitei de apeluri API",
+        "description": "Integrarea a atins anterior limita zilnică de apeluri API BMW, iar bootstrapul automat (crearea și maparea containerelor) a fost dezactivat temporar pentru {entry_title} până la {until}. Poți fie să aștepți până atunci și să încerci din nou, fie să ștergi indicatorul de mai jos pentru a încerca imediat (este posibil să atingi din nou limita)."
+      },
+      "cleared": {
+        "title": "Reîncercare de bootstrap programată",
+        "description": "Ai șters indicatorul de dezactivare temporară pentru {entry_title}. Integrarea va încerca din nou bootstrapul. Dacă atinge în continuare limita de apeluri API BMW, bootstrapul va fi dezactivat din nou până la momentul resetării. Alternativ, folosește serviciul pentru dezvoltatori `cardata.clean_hv_containers` pentru a lista sau șterge containerele vechi (ține cont de limitele de apeluri API)."
+      },
+      "blocked_fallback": {
+        "description": "Bootstrapul automat este dezactivat până la {until}. Șterge indicatorul pentru a încerca acum sau anulează și încearcă din nou după resetare."
+      }
+    },
+    "error": {
+      "authorization_failed": "Autorizarea BMW nu a fost finalizată. Acest lucru se poate întâmpla dacă ai apăsat pe „Refuză”, ai închis pagina înainte de aprobare, cererea a expirat sau serverele BMW au avut o problemă temporară (nu este întotdeauna vina ta). Detalii despre eroare: {error}. Mai jos a fost generat un link de autorizare nou. Deschide-l și aprobă, apoi apasă din nou pe Trimite.",
+      "device_code_failed": "BMW a respins cererea de autorizare a dispozitivului ({error}). Verifică dacă ID-ul de client este valid și încearcă din nou."
+    },
+    "abort": {
+      "auth_failed": "Răspunsul de autorizare BMW a fost incomplet (lipsesc token-urile). Încearcă din nou.",
+      "reauth_device_code_failed": "BMW a respins cererea de autorizare a dispozitivului ({error}). Actualizează ID-ul de client din Configurare > Pornește din nou autorizarea dispozitivului sau elimină și adaugă din nou integrarea.",
+      "reauth_missing_client_id": "Lipsește ID-ul de client pentru această intrare de integrare. Elimină și adaugă din nou integrarea pentru a o autoriza.",
+      "reauth_failed": "Reautorizarea nu a putut fi pornită. Încearcă din nou din opțiunile integrării."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Acțiuni manuale",
+        "description": "Selectează acțiunea pe care vrei să o rulezi. Reîmprospătarea token-urilor încearcă doar să reînnoiască token-urile fără o nouă autorizare. Îți recomandăm să repornești HA după aceea dacă întâmpini probleme."
+      },
+      "action_settings": {
+        "title": "Setări",
+        "data": {
+          "enable_magic_soc": "Activează Magic SOC (predicția consumului în mers)",
+          "enable_charging_history": "Activează istoricul de încărcare (apel API zilnic)",
+          "enable_tyre_diagnosis": "Activează diagnoza anvelopelor (apel API zilnic)",
+          "enable_trip_end_polling": "Activează interogarea la sfârșitul cursei",
+          "trip_poll_cooldown_minutes": "Pauză între interogările de la sfârșitul cursei (minute)",
+          "enable_external_power_injection": "Folosește un contor de putere extern pentru încărcare"
+        },
+        "data_description": {
+          "enable_charging_history": "Preia de la BMW istoricul sesiunilor de încărcare o dată pe zi. Consumă 1 apel API suplimentar pe vehicul pe zi din cota ta zilnică de 50 de apeluri.",
+          "enable_tyre_diagnosis": "Preia de la BMW datele despre starea și uzura anvelopelor o dată pe zi. Consumă 1 apel API suplimentar pe vehicul pe zi din cota ta zilnică de 50 de apeluri.",
+          "enable_trip_end_polling": "Când este activată, declanșează o interogare API imediată de fiecare dată când vehiculul se oprește. Dezactiveaz-o dacă faci multe curse scurte și atingi limita zilnică de apeluri API. Interogarea programată rulează oricum.",
+          "trip_poll_cooldown_minutes": "Timpul minim de așteptare între interogările de la sfârșitul cursei pentru același vehicul (implicit: 10). Mărește-l pentru a reduce consumul de API în cazul curselor scurte frecvente.",
+          "enable_external_power_injection": "Permite unei automatizări să trimită puterea de încărcare măsurată local către predicția SOC prin serviciul cardata.update_charging_power. Cât timp sosesc citiri locale recente, valoarea V×A de la BMW este ignorată. Lasă opțiunea dezactivată dacă nu folosești un contor inteligent conectat."
+        }
+      },
+      "action_mqtt_broker": {
+        "title": "Broker MQTT",
+        "description": "Configurează un broker MQTT propriu în locul punctului final BMW. Folosește această opțiune împreună cu bmw-mqtt-bridge pentru a reda datele BMW de pe un broker local, astfel încât mai mulți consumatori să poată folosi o singură conexiune MQTT la BMW.",
+        "data": {
+          "custom_mqtt_enabled": "Folosește un broker MQTT propriu",
+          "custom_mqtt_host": "Adresa brokerului",
+          "custom_mqtt_port": "Portul brokerului",
+          "custom_mqtt_username": "Nume de utilizator (opțional)",
+          "custom_mqtt_password": "Parolă (opțional)",
+          "custom_mqtt_tls": "Mod TLS",
+          "custom_mqtt_topic_prefix": "Prefix topic (ex. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Când este activată, conectarea se face la brokerul tău în locul punctului final MQTT al BMW.",
+          "custom_mqtt_host": "Numele de gazdă sau adresa IP a brokerului tău MQTT.",
+          "custom_mqtt_port": "Numărul portului (implicit: 1883 pentru TCP simplu, 8883 pentru TLS).",
+          "custom_mqtt_username": "Lasă gol pentru acces anonim.",
+          "custom_mqtt_password": "Lasă gol pentru acces anonim.",
+          "custom_mqtt_tls": "Off (plain TCP) = TCP simplu, TLS (verified) = certificat verificat, TLS (self-signed) = fără validarea certificatului.",
+          "custom_mqtt_topic_prefix": "Prefixul de topic al punții. Mesajele sunt așteptate la '{prefix}{vin}'. Implicit: bmw/"
+        }
+      }
+    },
+    "error": {
+      "refresh_failed": "Reîmprospătarea token-urilor a eșuat: {error}",
+      "runtime_missing": "Mediul de rulare al integrării nu este pregătit. Încearcă din nou după finalizarea configurării.",
+      "no_vins": "Încă nu se cunoaște niciun VIN. Așteaptă ca fluxul să descopere un vehicul sau declanșează-l o dată manual.",
+      "invalid_int": "Introdu un număr întreg pozitiv",
+      "invalid_client_id": "Introdu ID-ul de client BMW CarData.",
+      "mqtt_host_required": "Adresa brokerului este obligatorie când brokerul MQTT propriu este activat."
+    },
+    "abort": {
+      "auth_failed": "Răspunsul de autorizare BMW a fost incomplet (lipsesc token-urile). Încearcă din nou.",
+      "reauth_started": "Autorizarea a fost repornită. Finalizează noul flux de autentificare din notificare.",
+      "reauth_device_code_failed": "BMW a respins cererea de autorizare a dispozitivului ({error}). Actualizează ID-ul de client în opțiunile integrării și încearcă din nou.",
+      "reauth_missing_client_id": "Lipsește ID-ul de client pentru această intrare de integrare. Elimină și adaugă din nou integrarea pentru a o autoriza.",
+      "reauth_failed": "Reautorizarea nu a putut fi pornită. Încearcă din nou din opțiunile integrării."
+    }
+  }
+}

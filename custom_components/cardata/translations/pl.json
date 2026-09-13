@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BMW CarData",
+        "description": "Wprowadź identyfikator klienta BMW CarData."
+      },
+      "authorize": {
+        "title": "Autoryzuj BMW CarData",
+        "description": "Otwórz {verification_url} i wprowadź kod użytkownika {user_code}, jeśli będzie wymagany. Po zatwierdzeniu urządzenia kliknij Zatwierdź. Jeśli zatwierdzenie zostało już wykonane, kliknij Zatwierdź ponownie, aby kontynuować."
+      },
+      "blocked": {
+        "title": "Bootstrap wyłączony z powodu limitu zapytań API",
+        "description": "Integracja osiągnęła wcześniej dzienny limit zapytań API BMW, więc automatyczny bootstrap (tworzenie i mapowanie kontenerów) został tymczasowo wyłączony dla {entry_title} do {until}. Możesz poczekać do tego czasu i spróbować ponownie albo wyczyścić flagę poniżej, aby spróbować od razu (limit może zostać osiągnięty ponownie)."
+      },
+      "cleared": {
+        "title": "Zaplanowano ponowną próbę bootstrapu",
+        "description": "Flaga tymczasowego wyłączenia dla {entry_title} została wyczyszczona. Integracja ponowi próbę bootstrapu. Jeśli dzienny limit zapytań API BMW zostanie znowu osiągnięty, bootstrap ponownie będzie wyłączony do czasu zerowania limitu. Możesz też użyć usługi deweloperskiej `cardata.clean_hv_containers`, aby wyświetlić lub usunąć stare kontenery (pamiętaj o limitach zapytań API)."
+      },
+      "blocked_fallback": {
+        "description": "Automatyczny bootstrap jest wyłączony do {until}. Wyczyść flagę, aby spróbować teraz, albo anuluj i spróbuj ponownie po zerowaniu limitu."
+      }
+    },
+    "error": {
+      "authorization_failed": "Autoryzacja BMW nie została ukończona. Może się tak zdarzyć, jeśli kliknięto „Odmów”, strona została zamknięta przed zatwierdzeniem, upłynął limit czasu żądania albo serwery BMW miały chwilową awarię (nie zawsze jest to Twoja wina). Szczegóły błędu: {error}. Poniżej wygenerowano nowy link autoryzacyjny. Otwórz go i zatwierdź, a następnie kliknij Zatwierdź ponownie.",
+      "device_code_failed": "BMW odrzuciło żądanie autoryzacji urządzenia ({error}). Sprawdź, czy identyfikator klienta jest prawidłowy, i spróbuj ponownie."
+    },
+    "abort": {
+      "auth_failed": "Odpowiedź autoryzacyjna BMW była niekompletna (brak tokenów). Spróbuj ponownie.",
+      "reauth_device_code_failed": "BMW odrzuciło żądanie autoryzacji urządzenia ({error}). Zaktualizuj identyfikator klienta w Konfiguruj > Uruchom ponownie autoryzację urządzenia albo usuń integrację i dodaj ją ponownie.",
+      "reauth_missing_client_id": "Brak identyfikatora klienta dla tego wpisu integracji. Usuń integrację i dodaj ją ponownie, aby ponowić autoryzację.",
+      "reauth_failed": "Nie udało się rozpocząć ponownej autoryzacji. Spróbuj ponownie z poziomu opcji integracji."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Akcje ręczne",
+        "description": "Wybierz akcję, którą chcesz wykonać. Odświeżenie tokenów próbuje tylko odnowić tokeny bez ponownej autoryzacji. W razie problemów zalecamy późniejsze zrestartowanie HA."
+      },
+      "action_settings": {
+        "title": "Ustawienia",
+        "data": {
+          "enable_magic_soc": "Włącz Magic SOC (prognoza zużycia podczas jazdy)",
+          "enable_charging_history": "Włącz historię ładowania (dzienne zapytanie API)",
+          "enable_tyre_diagnosis": "Włącz diagnostykę opon (dzienne zapytanie API)",
+          "enable_trip_end_polling": "Włącz odpytywanie po zakończeniu jazdy",
+          "trip_poll_cooldown_minutes": "Odstęp między odpytaniami po zakończeniu jazdy (minuty)",
+          "enable_external_power_injection": "Używaj zewnętrznego miernika mocy do ładowania"
+        },
+        "data_description": {
+          "enable_charging_history": "Pobiera z BMW historię sesji ładowania raz dziennie. Zużywa 1 dodatkowe zapytanie API na pojazd dziennie z Twojego dziennego limitu 50 zapytań.",
+          "enable_tyre_diagnosis": "Pobiera z BMW dane o stanie i zużyciu opon raz dziennie. Zużywa 1 dodatkowe zapytanie API na pojazd dziennie z Twojego dziennego limitu 50 zapytań.",
+          "enable_trip_end_polling": "Po włączeniu wyzwala natychmiastowe zapytanie API za każdym razem, gdy pojazd się zatrzyma. Wyłącz tę opcję, jeśli odbywasz wiele krótkich podróży i osiągasz dzienny limit API. Zaplanowane odpytywanie działa niezależnie.",
+          "trip_poll_cooldown_minutes": "Minimalny odstęp między odpytaniami po zakończeniu jazdy dla tego samego pojazdu (domyślnie: 10). Zwiększ tę wartość, aby ograniczyć użycie API przy częstych krótkich podróżach.",
+          "enable_external_power_injection": "Pozwala automatyzacji przesyłać lokalnie zmierzoną moc ładowania do prognozy SOC za pomocą usługi cardata.update_charging_power. Dopóki napływają świeże lokalne odczyty, wartość V×A z BMW jest pomijana. Pozostaw wyłączone, chyba że masz inteligentny licznik i został on podłączony."
+        }
+      },
+      "action_mqtt_broker": {
+        "title": "Broker MQTT",
+        "description": "Skonfiguruj własny broker MQTT zamiast punktu końcowego BMW. Używaj tego razem z bmw-mqtt-bridge, aby odtwarzać dane BMW z lokalnego brokera, dzięki czemu wielu odbiorców może korzystać z jednego połączenia MQTT z BMW.",
+        "data": {
+          "custom_mqtt_enabled": "Używaj własnego brokera MQTT",
+          "custom_mqtt_host": "Host brokera",
+          "custom_mqtt_port": "Port brokera",
+          "custom_mqtt_username": "Nazwa użytkownika (opcjonalnie)",
+          "custom_mqtt_password": "Hasło (opcjonalnie)",
+          "custom_mqtt_tls": "Tryb TLS",
+          "custom_mqtt_topic_prefix": "Prefiks topicu (np. bmw/)"
+        },
+        "data_description": {
+          "custom_mqtt_enabled": "Po włączeniu integracja łączy się z Twoim brokerem zamiast z punktem końcowym MQTT BMW.",
+          "custom_mqtt_host": "Nazwa hosta lub adres IP Twojego brokera MQTT.",
+          "custom_mqtt_port": "Numer portu (domyślnie: 1883 dla zwykłego TCP, 8883 dla TLS).",
+          "custom_mqtt_username": "Pozostaw puste, aby korzystać z dostępu anonimowego.",
+          "custom_mqtt_password": "Pozostaw puste, aby korzystać z dostępu anonimowego.",
+          "custom_mqtt_tls": "Off (plain TCP) = zwykłe TCP, TLS (verified) = zweryfikowany certyfikat, TLS (self-signed) = pominięcie weryfikacji certyfikatu.",
+          "custom_mqtt_topic_prefix": "Prefiks topicu mostka. Wiadomości są oczekiwane pod '{prefix}{vin}'. Domyślnie: bmw/"
+        }
+      }
+    },
+    "error": {
+      "refresh_failed": "Odświeżenie tokenów nie powiodło się: {error}",
+      "runtime_missing": "Środowisko uruchomieniowe integracji nie jest gotowe. Spróbuj ponownie po zakończeniu konfiguracji.",
+      "no_vins": "Nie są jeszcze znane żadne numery VIN. Poczekaj, aż strumień wykryje pojazd, albo wyzwól go raz ręcznie.",
+      "invalid_int": "Wprowadź dodatnią liczbę całkowitą",
+      "invalid_client_id": "Wprowadź identyfikator klienta BMW CarData.",
+      "mqtt_host_required": "Host brokera jest wymagany, gdy włączony jest własny broker MQTT."
+    },
+    "abort": {
+      "auth_failed": "Odpowiedź autoryzacyjna BMW była niekompletna (brak tokenów). Spróbuj ponownie.",
+      "reauth_started": "Autoryzacja została uruchomiona ponownie. Dokończ nowy proces logowania z poziomu powiadomienia.",
+      "reauth_device_code_failed": "BMW odrzuciło żądanie autoryzacji urządzenia ({error}). Zaktualizuj identyfikator klienta w opcjach integracji i spróbuj ponownie.",
+      "reauth_missing_client_id": "Brak identyfikatora klienta dla tego wpisu integracji. Usuń integrację i dodaj ją ponownie, aby ponowić autoryzację.",
+      "reauth_failed": "Nie udało się rozpocząć ponownej autoryzacji. Spróbuj ponownie z poziomu opcji integracji."
+    }
+  }
+}

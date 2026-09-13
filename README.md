@@ -644,6 +644,15 @@ The setup wizard, error messages, and options menu are translated into the follo
 - Dutch (nl)
 - Spanish (es)
 - Portuguese (pt)
+- Danish (da)
+- Swedish (sv)
+- Czech (cs)
+- Finnish (fi)
+- Greek (el)
+- Hungarian (hu)
+- Norwegian Bokmål (nb)
+- Polish (pl)
+- Romanian (ro)
 
 Home Assistant automatically selects the translation matching your configured language. Entity names are not translated as they use BMW descriptor names with values and units.
 

@@ -22,7 +22,7 @@
       }
     },
     "error": {
-      "authorization_failed": "BMW-godkendelsen blev ikke gennemført. Det kan ske, hvis du klikkede på 'Afvis', lukkede siden før godkendelsen, anmodningen udløb, eller BMW's servere midlertidigt havde problemer (det er ikke nødvendigvis din fejl). Fejloplysninger: {error}. Et nyt godkendelseslink er genereret nedenfor – åbn det, godkend, og klik derefter på Indsend igen.",
+      "authorization_failed": "BMW-godkendelsen blev ikke gennemført. Det kan ske, hvis du klikkede på 'Afvis', lukkede siden før godkendelsen, anmodningen udløb, eller BMW's servere midlertidigt havde problemer (det er ikke nødvendigvis din fejl). Fejloplysninger: {error}. Et nyt godkendelseslink er genereret nedenfor. Åbn det, godkend, og klik derefter på Indsend igen.",
       "device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Kontrollér, at klient-ID'et er gyldigt, og prøv igen."
     },
     "abort": {
