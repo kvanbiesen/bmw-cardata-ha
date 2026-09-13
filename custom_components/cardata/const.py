@@ -25,6 +25,8 @@
 
 """Constants for the BMW CarData integration."""
 
+from collections.abc import Container
+
 DOMAIN = "cardata"
 
 # Individual descriptor constants (used across 3+ files)
@@ -46,6 +48,7 @@ DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displaye
 DESC_AVG_ELECTRIC_CONSUMPTION = "vehicle.drivetrain.avgElectricRangeConsumption"
 DESC_HVS_MAX_ENERGY = "vehicle.drivetrain.electricEngine.hvsMaxEnergyAbsolute"
 DESC_ENERGY_TO_FULL_CHARGE = "vehicle.drivetrain.electricEngine.charging.smeEnergyDeltaFullyCharged"
+
 
 # Lifetime counters BMW keeps for OBFCM reporting, in grid energy and in fuel.
 # They only ever climb, which is what makes them a cumulative total.
@@ -357,3 +360,14 @@ DAILY_FETCH_INTERVAL = 86400  # 24 hours
 
 # Key for storing deduplicated allowed VINs in entry data
 ALLOWED_VINS_KEY = "allowed_vins"
+
+
+def has_hv_battery(vehicle_state: Container[str]) -> bool:
+    """Return True when a vehicle reports a high voltage battery.
+
+    Neue Klasse cars never send `batteryManagement.header`, so looking for that
+    descriptor on its own misses them. They report `stateOfCharge.displayed`
+    instead, which is why both count. It lives here rather than in `utils` so
+    that module keeps its standalone import, which the fuzz harnesses rely on.
+    """
+    return DESC_SOC_HEADER in vehicle_state or DESC_SOC_DISPLAYED in vehicle_state

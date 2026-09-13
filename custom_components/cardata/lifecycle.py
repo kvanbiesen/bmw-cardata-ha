@@ -57,7 +57,6 @@ from .const import (
     DEFAULT_TRIP_POLL_COOLDOWN_MINUTES,
     DESC_FUEL_LEVEL,
     DESC_REMAINING_FUEL,
-    DESC_SOC_HEADER,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
@@ -79,6 +78,7 @@ from .const import (
     OPTION_TRIP_POLL_COOLDOWN,
     SOC_LEARNING_STORAGE_KEY,
     SOC_LEARNING_STORAGE_VERSION,
+    has_hv_battery,
 )
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
@@ -555,7 +555,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # and the sensor platform's ensure_entity callback is registered
         if coordinator.enable_magic_soc and coordinator._create_sensor_callback:
             for vin, vehicle_state in list(coordinator.data.items()):
-                has_battery = DESC_SOC_HEADER in vehicle_state
+                has_battery = has_hv_battery(vehicle_state)
                 has_fuel = DESC_REMAINING_FUEL in vehicle_state or DESC_FUEL_LEVEL in vehicle_state
                 is_phev = has_fuel and not coordinator._is_metadata_bev(vin)
                 if has_battery and not is_phev and MAGIC_SOC_DESCRIPTOR not in vehicle_state:
