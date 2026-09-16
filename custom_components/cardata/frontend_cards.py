@@ -259,7 +259,7 @@ def _build_unique_id_map(hass: HomeAssistant) -> dict[str, str]:
         registry = er.async_get(hass)
         mapping: dict[str, str] = {}
         # Keep only entries from this integration's platform to reduce noise.
-        for entry in registry.entities.values():
+        for entry in registry.entities:
             if getattr(entry, "platform", None) != DOMAIN:
                 continue
             if entry.unique_id and entry.entity_id:
@@ -279,7 +279,7 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
     def _find_device_entity_by_suffix(device_id: str | None, suffixes: list[str]) -> str | None:
         if not device_id:
             return None
-        for entry in ent_reg.entities.values():
+        for entry in ent_reg.entities:
             if getattr(entry, "platform", None) != DOMAIN:
                 continue
             if getattr(entry, "device_id", None) != device_id:
