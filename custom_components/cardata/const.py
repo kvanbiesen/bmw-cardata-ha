@@ -46,6 +46,9 @@ DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
 DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
 DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
 DESC_AVG_ELECTRIC_CONSUMPTION = "vehicle.drivetrain.avgElectricRangeConsumption"
+DESC_BATTERY_12V_VOLTAGE = "vehicle.electricalSystem.battery.voltage"
+DESC_BATTERY_12V_SOC = "vehicle.electricalSystem.battery.stateOfCharge"
+DESC_BATTERY_12V_SOC_PLAUSIBILITY = "vehicle.electricalSystem.battery.stateOfChargePlausibility"
 DESC_HVS_MAX_ENERGY = "vehicle.drivetrain.electricEngine.hvsMaxEnergyAbsolute"
 DESC_ENERGY_TO_FULL_CHARGE = "vehicle.drivetrain.electricEngine.charging.smeEnergyDeltaFullyCharged"
 
@@ -241,6 +244,9 @@ HV_BATTERY_DESCRIPTORS = [
     # since the request is scoped to this container's descriptor list.
     DESC_FUEL_LEVEL,
     DESC_REMAINING_FUEL,
+    DESC_BATTERY_12V_VOLTAGE,
+    DESC_BATTERY_12V_SOC,
+    DESC_BATTERY_12V_SOC_PLAUSIBILITY,
 ]
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"
