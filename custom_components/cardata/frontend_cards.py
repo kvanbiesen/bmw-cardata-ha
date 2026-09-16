@@ -294,7 +294,7 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
         return None
 
     vehicles: list[dict[str, Any]] = []
-    for device in dev_reg.devices.values():
+    for device in dev_reg.devices:
         vin = _normalize_vin_from_identifiers(device.identifiers)
         if not vin:
             continue
