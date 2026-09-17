@@ -409,11 +409,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             updated.pop("hv_container_id", None)
             updated.pop("hv_descriptor_signature", None)
         self.hass.config_entries.async_update_entry(entry, data=updated)
-
-        from homeassistant.components import persistent_notification
-
-        notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
-        persistent_notification.async_dismiss(self.hass, notification_id)
+        self.hass.async_create_task(self.hass.config_entries.async_reload(entry.entry_id))
 
         return self._finish()
 

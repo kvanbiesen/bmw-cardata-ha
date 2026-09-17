@@ -701,13 +701,6 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not domain_data or not remaining_entries:
         hass.data.pop(DOMAIN, None)
 
-    # Clean up the per-entry lock
     cleanup_entry_lock(entry.entry_id)
-
-    # Dismiss any container mismatch notifications
-    from homeassistant.components import persistent_notification
-
-    notification_id = f"{DOMAIN}_container_mismatch_{entry.entry_id}"
-    persistent_notification.async_dismiss(hass, notification_id)
 
     return True
