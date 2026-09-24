@@ -293,8 +293,16 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
                     return entity_id
         return None
 
+    # Iterating dev_reg.devices yields entries only from HA 2026.9 on, device
+    # ids before that. Before 2026.8 a device can belong to several entries.
+    devices = {
+        device.id: device
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id)
+    }
+
     vehicles: list[dict[str, Any]] = []
-    for device in dev_reg.devices:
+    for device in devices.values():
         vin = _normalize_vin_from_identifiers(device.identifiers)
         if not vin:
             continue
