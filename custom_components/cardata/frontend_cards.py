@@ -259,7 +259,7 @@ def _build_unique_id_map(hass: HomeAssistant) -> dict[str, str]:
         registry = er.async_get(hass)
         mapping: dict[str, str] = {}
         # Keep only entries from this integration's platform to reduce noise.
-        for entry in registry.entities:
+        for entry in registry.entities.values():
             if getattr(entry, "platform", None) != DOMAIN:
                 continue
             if entry.unique_id and entry.entity_id:
@@ -279,7 +279,7 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
     def _find_device_entity_by_suffix(device_id: str | None, suffixes: list[str]) -> str | None:
         if not device_id:
             return None
-        for entry in ent_reg.entities:
+        for entry in ent_reg.entities.values():
             if getattr(entry, "platform", None) != DOMAIN:
                 continue
             if getattr(entry, "device_id", None) != device_id:
@@ -293,8 +293,16 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
                     return entity_id
         return None
 
+    # Iterating dev_reg.devices yields entries only from HA 2026.9 on, device
+    # ids before that. Before 2026.8 a device can belong to several entries.
+    devices = {
+        device.id: device
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id)
+    }
+
     vehicles: list[dict[str, Any]] = []
-    for device in dev_reg.devices:
+    for device in devices.values():
         vin = _normalize_vin_from_identifiers(device.identifiers)
         if not vin:
             continue
