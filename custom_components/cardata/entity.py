@@ -132,6 +132,8 @@ class CardataEntity(RestoreEntity):
         attrs = {}
         if getattr(state, "timestamp", None):
             attrs["timestamp"] = state.timestamp
+        if state.attributes:
+            attrs.update(state.attributes)
         return attrs
 
     @property

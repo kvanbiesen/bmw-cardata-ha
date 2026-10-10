@@ -54,6 +54,12 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .condition_based_services import (
+    CBS_ATTRIBUTE_KEYS,
+    CBS_DEFAULT_ICON,
+    CBS_ICONS,
+    is_cbs_item_descriptor,
+)
 from .const import (
     CHARGING_ENERGY_DESCRIPTOR,
     DESC_TRAVELLED_DISTANCE,
@@ -111,6 +117,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe: Callable[[], None] | None = None
+        self._published_attributes: dict[str, Any] | None = None
 
         # create Raw data gps Sensors but hidden
         if descriptor in (
@@ -177,12 +184,23 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
                     if not timestamp and last_state.last_changed:
                         timestamp = last_state.last_changed.isoformat()
 
+                    # A CBS item's due date and remaining distance live in its
+                    # attributes; without them it would read as a bare status
+                    # until the next API poll.
+                    restored_attributes = None
+                    if is_cbs_item_descriptor(self._descriptor):
+                        restored_attributes = {
+                            key: last_state.attributes[key]
+                            for key in CBS_ATTRIBUTE_KEYS
+                            if key in last_state.attributes
+                        }
                     await self._coordinator.async_restore_descriptor_state(
                         self.vin,
                         self.descriptor,
                         self._attr_native_value,
                         unit,
                         timestamp,
+                        restored_attributes,
                     )
 
                     # Set state class AFTER unit is restored
@@ -245,14 +263,17 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         value_changed = current_value != converted_value
         unit_changed = current_unit != normalized_unit
         is_unknown = current_value is None
+        # A CBS item keeps its status while its due date or distance moves on.
+        attributes_changed = state.attributes is not None and state.attributes != self._published_attributes
 
-        if not (value_changed or unit_changed or is_unknown):
+        if not (value_changed or unit_changed or is_unknown or attributes_changed):
             # Sensor already has this exact value - skip HA update!
             return
 
         # Value/unit changed OR sensor is unknown - update it!
         self._attr_native_value = converted_value
         self._attr_native_unit_of_measurement = normalized_unit
+        self._published_attributes = state.attributes
 
         existing_device_class = getattr(self, "_attr_device_class", None)
         if existing_device_class is None:
@@ -343,6 +364,9 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
                 return "mdi:car-windshield"
             else:
                 return "mdi:car-windshield-outline"  # intermediate or unknown
+
+        if is_cbs_item_descriptor(self.descriptor):
+            return CBS_ICONS.get(self.descriptor, CBS_DEFAULT_ICON)
 
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)
