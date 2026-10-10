@@ -62,6 +62,7 @@ from .condition_based_services import (
 )
 from .const import (
     CHARGING_ENERGY_DESCRIPTOR,
+    DESC_FAULT_MEMORY,
     DESC_TRAVELLED_DISTANCE,
     DOMAIN,
     LOCATION_ALTITUDE_DESCRIPTOR,
@@ -75,6 +76,7 @@ from .const import (
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
+from .fault_memory import FAULT_MEMORY_ATTRIBUTE_KEYS, FAULT_MEMORY_ICON
 from .runtime import CardataRuntimeData
 from .sensor_charging_energy import CardataChargingEnergySensor
 from .sensor_diagnostics import (
@@ -184,15 +186,18 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
                     if not timestamp and last_state.last_changed:
                         timestamp = last_state.last_changed.isoformat()
 
-                    # A CBS item's due date and remaining distance live in its
-                    # attributes; without them it would read as a bare status
-                    # until the next API poll.
+                    # A CBS item's due date and the fault memory's codes live in
+                    # attributes; without them the state would be bare until the
+                    # next API poll.
                     restored_attributes = None
+                    attribute_keys: tuple[str, ...] = ()
                     if is_cbs_item_descriptor(self._descriptor):
+                        attribute_keys = CBS_ATTRIBUTE_KEYS
+                    elif self._descriptor == DESC_FAULT_MEMORY:
+                        attribute_keys = FAULT_MEMORY_ATTRIBUTE_KEYS
+                    if attribute_keys:
                         restored_attributes = {
-                            key: last_state.attributes[key]
-                            for key in CBS_ATTRIBUTE_KEYS
-                            if key in last_state.attributes
+                            key: last_state.attributes[key] for key in attribute_keys if key in last_state.attributes
                         }
                     await self._coordinator.async_restore_descriptor_state(
                         self.vin,
@@ -367,6 +372,9 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
 
         if is_cbs_item_descriptor(self.descriptor):
             return CBS_ICONS.get(self.descriptor, CBS_DEFAULT_ICON)
+
+        if self.descriptor == DESC_FAULT_MEMORY:
+            return FAULT_MEMORY_ICON
 
         # Return existing icon attribute if set
         return getattr(self, "_attr_icon", None)

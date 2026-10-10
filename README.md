@@ -610,6 +610,14 @@ BMW keeps one entry per service item (engine oil, brake fluid, vehicle check, st
 - **Note**: `Service Distance to next service` is a single figure the car computes and can read tens of thousands of kilometres while oil or brake fluid are already overdue by date. Use the per-item sensors to know what is due.
 - **Existing installs**: The API container is rebuilt once after updating so the new descriptor is requested; the sensors appear after the next poll.
 
+## Fault Memory
+
+The workshop fault memory (`Vehicle Info Fault memory`) is requested in the same API poll, at no extra call.
+
+- **State**: The number of stored diagnostic trouble codes
+- **Attributes**: `ecu_count` and `codes_by_ecu`, the codes grouped by control unit diagnostic address in hex (e.g. `0x30` for the power steering)
+- **Note**: Stored codes are often old or harmless and are meant for a workshop to read with BMW's tools; faults shown to the driver are the check control messages. A rising count is the useful signal for an automation.
+
 ## Developer Tools Services
 
 Home Assistant's Developer Tools expose helper services for manual API checks:
