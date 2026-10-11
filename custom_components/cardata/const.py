@@ -43,6 +43,7 @@ DESC_CHARGING_TIME_REMAINING = "vehicle.drivetrain.electricEngine.charging.timeR
 DESC_REMAINING_FUEL = "vehicle.drivetrain.fuelSystem.remainingFuel"
 DESC_FUEL_LEVEL = "vehicle.drivetrain.fuelSystem.level"
 DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
+DESC_CONDITION_BASED_SERVICES = "vehicle.status.conditionBasedServices"
 DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
 DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
 DESC_AVG_ELECTRIC_CONSUMPTION = "vehicle.drivetrain.avgElectricRangeConsumption"
@@ -247,6 +248,11 @@ HV_BATTERY_DESCRIPTORS = [
     DESC_BATTERY_12V_VOLTAGE,
     DESC_BATTERY_12V_SOC,
     DESC_BATTERY_12V_SOC_PLAUSIBILITY,
+    # Per-item service schedule (engine oil, brake fluid, vehicle check...).
+    # BMW does not stream it, so the API poll is the only way to get it
+    # (issue #466). Expanded into one sensor per item by
+    # condition_based_services.py.
+    DESC_CONDITION_BASED_SERVICES,
 ]
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"

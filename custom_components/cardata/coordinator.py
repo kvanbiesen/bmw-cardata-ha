@@ -42,6 +42,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util.unit_conversion import DistanceConverter
 
+from .condition_based_services import expand_condition_based_services
 from .const import (
     ALLOWED_VINS_KEY,
     DESC_TRAVELLED_DISTANCE,
@@ -696,10 +697,15 @@ class CardataCoordinator:
         if debug_enabled():
             _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
 
+        # The service schedule arrives as one JSON list; split it into one
+        # descriptor per item before anything else looks at the message.
+        data = expand_condition_based_services(data)
+
         for descriptor, descriptor_payload in data.items():
             if not isinstance(descriptor_payload, dict):
                 continue
             value = normalize_boolean_value(descriptor, descriptor_payload.get("value"))
+            attributes = descriptor_payload.get("attributes")
             unit = normalize_unit(descriptor_payload.get("unit"))
             raw_timestamp = descriptor_payload.get("timestamp")
             timestamp = sanitize_timestamp_string(raw_timestamp)
@@ -771,9 +777,14 @@ class CardataCoordinator:
                 value_changed = is_new or self._is_significant_mileage_change(vin, value, unit)
             else:
                 value_changed = is_new or self._is_significant_change(vin, descriptor, value)
+            if not value_changed and attributes is not None:
+                # A CBS item can keep its status while its due date or
+                # remaining distance moves on.
+                existing = vehicle_state.get(descriptor)
+                value_changed = existing is None or existing.attributes != attributes
 
             vehicle_state[descriptor] = DescriptorState(
-                value=value, unit=unit, timestamp=timestamp, last_seen=time.time()
+                value=value, unit=unit, timestamp=timestamp, last_seen=time.time(), attributes=attributes
             )
 
             if descriptor == "vehicle.vehicleIdentification.basicVehicleData" and isinstance(value, dict):
@@ -1147,7 +1158,12 @@ class CardataCoordinator:
             if not state:
                 return None
 
-            return DescriptorState(value=state.value, unit=state.unit, timestamp=state.timestamp)
+            return DescriptorState(
+                value=state.value,
+                unit=state.unit,
+                timestamp=state.timestamp,
+                attributes=dict(state.attributes) if state.attributes else None,
+            )
         except (KeyError, RuntimeError, AttributeError, TypeError):
             return None
 
@@ -1223,9 +1239,10 @@ class CardataCoordinator:
         value: Any,
         unit: str | None,
         timestamp: str | None,
+        attributes: dict[str, Any] | None = None,
     ) -> None:
         """Restore descriptor state from saved data. Must be called while holding _lock."""
-        _di_restore_descriptor_state(self.data, vin, descriptor, value, unit, timestamp)
+        _di_restore_descriptor_state(self.data, vin, descriptor, value, unit, timestamp, attributes)
         if descriptor == DESC_TRAVELLED_DISTANCE:
             self._mileage_restored_unconfirmed.add(vin)
 
@@ -1236,10 +1253,11 @@ class CardataCoordinator:
         value: Any,
         unit: str | None,
         timestamp: str | None,
+        attributes: dict[str, Any] | None = None,
     ) -> None:
         """Thread-safe async version of restore_descriptor_state."""
         async with self._lock:
-            self.restore_descriptor_state(vin, descriptor, value, unit, timestamp)
+            self.restore_descriptor_state(vin, descriptor, value, unit, timestamp, attributes)
 
     def apply_basic_data(self, vin: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         """Apply basic data to coordinator. Must be called while holding _lock or from locked context."""

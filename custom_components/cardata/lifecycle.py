@@ -42,6 +42,7 @@ from homeassistant.helpers.storage import Store
 from .auth import (
     async_ensure_container_for_entry,
     async_token_refresh_loop,
+    container_signature_outdated,
     handle_stream_error,
     refresh_tokens_for_entry,
 )
@@ -423,8 +424,9 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as err:
             raise ConfigEntryNotReady(f"Initial token refresh failed: {err}") from err
 
-        # Ensure HV container if token refresh didn't succeed
-        if not refreshed_token and container_manager:
+        # Ensure HV container if token refresh didn't succeed, or once after an
+        # update changed the descriptor list (no API call when it matches).
+        if container_manager and (not refreshed_token or container_signature_outdated(entry.data)):
             container_ready = await async_ensure_container_for_entry(entry, hass, container_manager)
             if not container_ready and not container_manager.container_id:
                 _LOGGER.error(

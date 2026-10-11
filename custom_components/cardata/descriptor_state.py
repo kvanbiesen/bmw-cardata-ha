@@ -39,3 +39,5 @@ class DescriptorState:
     unit: str | None
     timestamp: str | None
     last_seen: float = 0.0  # Wall clock time when last updated (for age-based eviction)
+    # Extra attributes for synthetic descriptors (e.g. one CBS item's due date)
+    attributes: dict[str, Any] | None = None

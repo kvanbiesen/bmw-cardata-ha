@@ -216,6 +216,7 @@ def restore_descriptor_state(
     value: Any,
     unit: str | None,
     timestamp: str | None,
+    attributes: dict[str, Any] | None = None,
 ) -> None:
     """Restore descriptor state from saved data.
 
@@ -245,4 +246,5 @@ def restore_descriptor_state(
         unit=unit,
         timestamp=timestamp,
         last_seen=time.time(),
+        attributes=attributes,
     )

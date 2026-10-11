@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from contextlib import suppress
 from typing import Any
 
@@ -480,6 +481,18 @@ async def async_manual_refresh_tokens(hass: HomeAssistant, entry: ConfigEntry) -
         runtime.container_manager,
         force=True,
     )
+
+
+def container_signature_outdated(data: Mapping[str, Any]) -> bool:
+    """Return True when the stored container predates the current descriptor list.
+
+    The container is only rebuilt at bootstrap, so an install that has already
+    bootstrapped would otherwise keep polling its original descriptor set and
+    never receive descriptors added by an update.
+    """
+    if not data.get("hv_container_id"):
+        return False
+    return data.get("hv_descriptor_signature") != CardataContainerManager.compute_signature(HV_BATTERY_DESCRIPTORS)
 
 
 async def async_ensure_container_for_entry(

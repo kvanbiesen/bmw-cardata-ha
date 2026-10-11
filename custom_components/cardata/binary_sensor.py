@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -43,6 +44,7 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .condition_based_services import DESC_CBS_SERVICE_DUE
 from .const import DOMAIN, OPENING_STATUS_DESCRIPTORS
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
@@ -137,6 +139,7 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
         self._unsubscribe: Callable[[], None] | None = None
+        self._published_attributes: dict[str, Any] | None = None
 
         if descriptor in DOOR_NON_DOOR_DESCRIPTORS or descriptor in DOOR_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.DOOR
@@ -144,6 +147,8 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
             self._attr_device_class = BinarySensorDeviceClass.MOVING
         elif descriptor in WINDOW_BOOL_DESCRIPTORS:
             self._attr_device_class = BinarySensorDeviceClass.WINDOW
+        elif descriptor == DESC_CBS_SERVICE_DUE:
+            self._attr_device_class = BinarySensorDeviceClass.PROBLEM
         elif descriptor in OPENING_STATUS_DESCRIPTORS:
             # The sunroof is a window too: Home Assistant has no trigger
             # integration for the opening device class.
@@ -241,8 +246,11 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
         # SMART FILTERING: Check if sensor's current state differs from new value
         current_value = getattr(self, "_attr_is_on", None)
 
+        # The service due flag can stay on while the list of due items changes.
+        attributes_changed = state.attributes is not None and state.attributes != self._published_attributes
+
         # Only update HA if state actually changed or sensor is unknown
-        if current_value == new_value:
+        if current_value == new_value and not attributes_changed:
             # Binary sensor already has this state - skip HA update!
             # Example: Door lock stays "locked" for hours
             # - Coordinator sends "locked" every 5 seconds
@@ -252,6 +260,7 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
 
         # State changed or sensor is unknown - update it!
         self._attr_is_on = new_value
+        self._published_attributes = state.attributes
         self.schedule_update_ha_state()
 
     @property
