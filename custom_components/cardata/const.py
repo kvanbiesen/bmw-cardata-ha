@@ -44,6 +44,7 @@ DESC_REMAINING_FUEL = "vehicle.drivetrain.fuelSystem.remainingFuel"
 DESC_FUEL_LEVEL = "vehicle.drivetrain.fuelSystem.level"
 DESC_TRAVELLED_DISTANCE = "vehicle.vehicle.travelledDistance"
 DESC_CONDITION_BASED_SERVICES = "vehicle.status.conditionBasedServices"
+DESC_FAULT_MEMORY = "vehicle.electronicControlUnit.diagnosticTroubleCodes.raw"
 DESC_TRIP_HVSOC = "vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc"
 DESC_SOC_DISPLAYED = "vehicle.powertrain.electric.battery.stateOfCharge.displayed"
 DESC_AVG_ELECTRIC_CONSUMPTION = "vehicle.drivetrain.avgElectricRangeConsumption"
@@ -253,6 +254,9 @@ HV_BATTERY_DESCRIPTORS = [
     # (issue #466). Expanded into one sensor per item by
     # condition_based_services.py.
     DESC_CONDITION_BASED_SERVICES,
+    # Workshop fault memory (XML list of stored codes per control unit),
+    # reported as a count by fault_memory.py.
+    DESC_FAULT_MEMORY,
 ]
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"

@@ -66,6 +66,7 @@ from .device_info import (
     is_metadata_bev as _di_is_metadata_bev,
     restore_descriptor_state as _di_restore_descriptor_state,
 )
+from .fault_memory import expand_fault_memory
 from .magic_soc import MagicSOCPredictor
 from .message_utils import (
     is_within_catalogue_limits,
@@ -697,9 +698,9 @@ class CardataCoordinator:
         if debug_enabled():
             _LOGGER.debug("Processing message for VIN %s: %s", redacted_vin, list(data.keys()))
 
-        # The service schedule arrives as one JSON list; split it into one
-        # descriptor per item before anything else looks at the message.
-        data = expand_condition_based_services(data)
+        # The service schedule arrives as one JSON list and the fault memory as
+        # XML; turn both into states before anything else looks at the message.
+        data = expand_fault_memory(expand_condition_based_services(data))
 
         for descriptor, descriptor_payload in data.items():
             if not isinstance(descriptor_payload, dict):
