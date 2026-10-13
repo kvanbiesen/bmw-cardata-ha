@@ -54,6 +54,17 @@ const mapHeightConfig = (cfg) => {
   return Number.isFinite(value) && value > 0 ? value : MAP_HEIGHT_DEFAULT;
 };
 
+const cssColor = (value) => {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return /^#[0-9a-fA-F]{3,8}$/.test(trimmed) ? trimmed : null;
+};
+
+const pickBarColor = (percent, normalColor, lowColor, threshold) => {
+  const t = Number(threshold);
+  if (lowColor && Number.isFinite(t) && percent < t) return lowColor;
+  return normalColor;
+};
+
 const isOpenState = (stateObj) => {
   const state = normalizeState(stateObj);
   if (!state) return false;
@@ -202,6 +213,11 @@ const TRANSLATIONS = {
     "editor.soc_magic": "Magic SOC (driving)",
     "editor.show_indicators": "Show indicator row",
     "editor.show_range": "Show SOC and range bar",
+    "editor.color_ev": "Battery bar color (hex, e.g. #4caf50 - blank for default)",
+    "editor.color_ev_low": "Battery bar color when low (hex - blank for default)",
+    "editor.color_fuel": "Fuel bar color (hex, e.g. #ff9800 - blank for default)",
+    "editor.color_fuel_low": "Fuel bar color when low (hex - blank for default)",
+    "editor.low_threshold": "Low level threshold (%)",
     "editor.show_image": "Show vehicle image",
     "editor.image_crop_top": "Image crop top",
     "editor.image_crop_bottom": "Image crop bottom",
@@ -294,6 +310,11 @@ const TRANSLATIONS = {
     "editor.soc_magic": "Magisk SOC (kör)",
     "editor.show_indicators": "Visa indikeringsrad",
     "editor.show_range": "Visa SOC och räckviddsbar",
+    "editor.color_ev": "Batteristapel färg (hex, t.ex. #4caf50 - tom = standard)",
+    "editor.color_ev_low": "Batteristapel färg vid låg nivå (hex - tom = standard)",
+    "editor.color_fuel": "Bränslestapel färg (hex, t.ex. #ff9800 - tom = standard)",
+    "editor.color_fuel_low": "Bränslestapel färg vid låg nivå (hex - tom = standard)",
+    "editor.low_threshold": "Tröskel för låg nivå (%)",
     "editor.show_image": "Visa fordonsbild",
     "editor.image_crop_top": "Bildbeskäring uppe",
     "editor.image_crop_bottom": "Bildbeskäring nere",
@@ -386,6 +407,11 @@ const TRANSLATIONS = {
     "editor.soc_magic": "Magic SOC (während der Fahrt)",
     "editor.show_indicators": "Statuszeile anzeigen",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
+    "editor.color_ev": "Batteriebalken-Farbe (Hex, z.B. #4caf50 - leer = Standard)",
+    "editor.color_ev_low": "Batteriebalken-Farbe bei niedrigem Stand (Hex - leer = Standard)",
+    "editor.color_fuel": "Kraftstoffbalken-Farbe (Hex, z.B. #ff9800 - leer = Standard)",
+    "editor.color_fuel_low": "Kraftstoffbalken-Farbe bei niedrigem Stand (Hex - leer = Standard)",
+    "editor.low_threshold": "Schwellenwert für niedrigen Stand (%)",
     "editor.show_image": "Fahrzeugbild anzeigen",
     "editor.image_crop_top": "Bild oben zuschneiden",
     "editor.image_crop_bottom": "Bild unten zuschneiden",
@@ -550,6 +576,22 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
         { name: "show_indicators", selector: { boolean: {} } },
         { name: "show_range", selector: { boolean: {} } },
+        { name: "color_ev", selector: { text: {} } },
+        { name: "color_ev_low", selector: { text: {} } },
+        { name: "color_fuel", selector: { text: {} } },
+        { name: "color_fuel_low", selector: { text: {} } },
+        {
+          name: "low_threshold",
+          selector: {
+            number: {
+              mode: "box",
+              min: 0,
+              max: 100,
+              step: 1,
+              unit_of_measurement: "%",
+            },
+          },
+        },
         { name: "show_image", selector: { boolean: {} } },
         {
           name: "image_crop_top",
@@ -1413,13 +1455,15 @@ class BmwCardataVehicleCard extends HTMLElement {
         const totalRangeValue = Math.round(evRangeCurrent + fuelRangeCurrent);
         const totalRangeUnit = read("range_electric")?.attributes?.unit_of_measurement || "km";
         const totalRangeText = totalRangeValue > 0 ? `${totalRangeValue} ${totalRangeUnit}` : "—";
-        
+        const evBarColor = pickBarColor(socValue, cssColor(cfg.color_ev), cssColor(cfg.color_ev_low), cfg.low_threshold);
+        const fuelBarColor = pickBarColor(fuelLevelValue, cssColor(cfg.color_fuel), cssColor(cfg.color_fuel_low), cfg.low_threshold);
+
         this._setHtml(rangeEl, `
           <div class="range-box phev">
             <div class="range-top">
               <div class="bar-wrap-unified ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(rangeEntity)}" title="${escapeHtml(t("total_range"))}: ${escapeHtml(totalRangeText)}">
-                <div class="bar-segment-unified ev" style="width:${evRangePercent}%;" data-entity-id="${escapeHtml(rangeElectricEntity)}" title="${escapeHtml(t("ev"))}: ${escapeHtml(evRangeText)} (${socValue}%)"></div>
-                <div class="bar-segment-unified fuel" style="width:${fuelRangePercent}%;" data-entity-id="${escapeHtml(rangeFuelEntity)}" title="${escapeHtml(t("fuel"))}: ${escapeHtml(fuelRangeText)} (${fuelLevelValue}%)"></div>
+                <div class="bar-segment-unified ev" style="width:${evRangePercent}%;${evBarColor ? ` background:${escapeHtml(evBarColor)};` : ""}" data-entity-id="${escapeHtml(rangeElectricEntity)}" title="${escapeHtml(t("ev"))}: ${escapeHtml(evRangeText)} (${socValue}%)"></div>
+                <div class="bar-segment-unified fuel" style="width:${fuelRangePercent}%;${fuelBarColor ? ` background:${escapeHtml(fuelBarColor)};` : ""}" data-entity-id="${escapeHtml(rangeFuelEntity)}" title="${escapeHtml(t("fuel"))}: ${escapeHtml(fuelRangeText)} (${fuelLevelValue}%)"></div>
               </div>
               <div class="range-value" data-entity-id="${escapeHtml(rangeEntity)}" title="${escapeHtml(t("total_range"))}">
                 <ha-icon icon="mdi:arrow-left-right"></ha-icon>
@@ -1440,10 +1484,13 @@ class BmwCardataVehicleCard extends HTMLElement {
         `);
       } else if (primaryLevelHasBar) {
         // Standard display with progress bar (SOC, fuel %, or fuel litres with manual tank capacity)
+        const barColor = hasSoc
+          ? pickBarColor(primaryLevelValue, cssColor(cfg.color_ev), cssColor(cfg.color_ev_low), cfg.low_threshold)
+          : pickBarColor(primaryLevelValue, cssColor(cfg.color_fuel), cssColor(cfg.color_fuel_low), cfg.low_threshold);
         this._setHtml(rangeEl, `
           <div class="range-box">
             <div class="range-top">
-              <div class="bar-wrap ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(primaryLevelEntity)}" title="${escapeHtml(primaryLevelEntity)}">
+              <div class="bar-wrap ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(primaryLevelEntity)}" title="${escapeHtml(primaryLevelEntity)}"${barColor ? ` style="--tile-color:${escapeHtml(barColor)};"` : ""}>
                 <div class="bar-level" style="width:${primaryLevelValue}%;"></div>
                 <div class="energy-text">${primaryLevelLabel}</div>
               </div>

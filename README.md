@@ -260,6 +260,11 @@ Available configuration options:
 | `soc_source` | `soc` | Battery level source for the bar: `soc` (BMW last known), `predicted` (charging prediction), or `magic` (driving prediction) |
 | `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm). Windows, tailgate, and hood only show red when the car is parked and locked with the item open (walked-away alert). Alarm indicator: green when armed, blue when unarmed, red when triggered. |
 | `show_range` | `true` | Battery / fuel level bar with range |
+| `color_ev` | *(blank)* | Battery bar color as a hex code (e.g. `#4caf50`). Used for the EV bar on a BEV/PHEV, or the single bar on a pure EV. Leave blank to keep the current look. |
+| `color_ev_low` | *(blank)* | Battery bar color once at or below `low_threshold`. Ignored if `color_ev` isn't set either. |
+| `color_fuel` | *(blank)* | Fuel bar color as a hex code (e.g. `#ff9800`). Used for the fuel bar on a PHEV, or the single bar on a pure ICE car. |
+| `color_fuel_low` | *(blank)* | Fuel bar color once at or below `low_threshold`. Ignored if `color_fuel` isn't set either. |
+| `low_threshold` | *(unset)* | Percentage below which the `_low` colors apply, for both bars on a PHEV. No effect unless a `_low` color is also set. |
 | `show_image` | `true` | Vehicle image |
 | `image_crop_top` | `0` | Crop the top of the vehicle image, 0-40% |
 | `image_crop_bottom` | `0` | Crop the bottom of the vehicle image, 0-40% |
@@ -270,6 +275,16 @@ Available configuration options:
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
 | `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
 | `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, `de`, or `sv`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome. Each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
+
+Bar colors are plain hex codes, settable either in the card's GUI editor or directly in YAML. Leave any of them blank to keep the default look:
+
+```yaml
+color_ev: "#4caf50"
+color_ev_low: "#f44336"
+color_fuel: "#ff9800"
+color_fuel_low: "#f44336"
+low_threshold: 20
+```
 
 ### Custom Map Marker (optional)
 
