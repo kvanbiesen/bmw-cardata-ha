@@ -128,18 +128,26 @@ function pierceShadow(root) {
     'label.chakra-checkbox:not([data-checked])',
     '[role="checkbox"][aria-checked="false"]'
   ];
+  
   selectors.forEach(selector => {
     root.querySelectorAll(selector).forEach(el => {
+      // Skip if the element belongs to or is inside a Chakra switch
+      if (el.closest('.chakra-switch')) {
+        return;
+      }
+      
       console.log('Clicking:', el);
       el.click();
     });
   });
+
   root.querySelectorAll('*').forEach(el => {
     if (el.shadowRoot) {
       pierceShadow(el.shadowRoot);
     }
   });
 }
+
 pierceShadow(document);
 ```
 
