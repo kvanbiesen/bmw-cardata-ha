@@ -625,13 +625,14 @@ The integration can fetch tyre health and wear data from BMW's Smart Maintenance
 
 ## Service Schedule (Condition Based Services)
 
-BMW keeps one entry per service item (engine oil, brake fluid, vehicle check, statutory inspection...), each with its own status and due date. This list is not streamed, so the integration asks for it in its regular API poll; it costs no extra call.
+BMW keeps one entry per service item (engine oil, brake fluid, vehicle check, statutory inspection...), each with its own status and due date, in `vehicle.status.conditionBasedServices`.
 
+- **Status**: Not requested for now. BMW accepts this descriptor in a container but rejects every telematicData request on that container (`CU-400 Bad request`), which stopped the whole API poll in 5.3.0. The per-item sensors below stay in the code and will appear once a working way to fetch the list is found.
 - **Sensors**: One per item, e.g. `Service Engine oil` and `Service Brake fluid`. The state is BMW's status (`OK`, `PENDING`, `OVERDUE`).
 - **Attributes**: `due_date` (year-month), `remaining_distance` (when the item also has a distance limit), `description`, `title`, `cbs_id`
 - **Binary sensor**: `Service due` (problem device class) is on as soon as one item is not `OK`; its `due_items` attribute lists them
-- **Note**: `Service Distance to next service` is a single figure the car computes and can read tens of thousands of kilometres while oil or brake fluid are already overdue by date. Use the per-item sensors to know what is due.
-- **Existing installs**: The API container is rebuilt once after updating so the new descriptor is requested; the sensors appear after the next poll.
+- **Note**: `Service Distance to next service` is a single figure the car computes and can read tens of thousands of kilometres while oil or brake fluid are already overdue by date.
+- **Existing installs**: The API container is rebuilt once after updating, since its descriptor list changed; polling resumes on the next poll.
 
 ## Fault Memory
 
