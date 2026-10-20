@@ -219,10 +219,11 @@ class TestCoordinator:
 
 
 class TestContainer:
-    """The descriptor reaches existing installs, not just new ones."""
+    """Descriptor list changes reach existing installs, not just new ones."""
 
-    def test_cbs_is_requested_from_the_api(self):
-        assert DESC_CONDITION_BASED_SERVICES in HV_BATTERY_DESCRIPTORS
+    def test_cbs_is_not_requested_from_the_api(self):
+        # BMW rejects every telematicData request on a container holding it (CU-400).
+        assert DESC_CONDITION_BASED_SERVICES not in HV_BATTERY_DESCRIPTORS
 
     def test_old_signature_triggers_a_rebuild(self):
         assert container_signature_outdated({"hv_container_id": "c1", "hv_descriptor_signature": "old"})

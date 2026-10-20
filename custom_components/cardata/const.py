@@ -249,11 +249,9 @@ HV_BATTERY_DESCRIPTORS = [
     DESC_BATTERY_12V_VOLTAGE,
     DESC_BATTERY_12V_SOC,
     DESC_BATTERY_12V_SOC_PLAUSIBILITY,
-    # Per-item service schedule (engine oil, brake fluid, vehicle check...).
-    # BMW does not stream it, so the API poll is the only way to get it
-    # (issue #466). Expanded into one sensor per item by
-    # condition_based_services.py.
-    DESC_CONDITION_BASED_SERVICES,
+    # DESC_CONDITION_BASED_SERVICES is deliberately left out: BMW accepts it in
+    # a container but answers every telematicData request on that container
+    # with CU-400, which takes the whole poll down with it.
     # Workshop fault memory (XML list of stored codes per control unit),
     # reported as a count by fault_memory.py.
     DESC_FAULT_MEMORY,
