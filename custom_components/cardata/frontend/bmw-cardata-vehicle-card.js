@@ -85,8 +85,8 @@ const escapeHtml = (input) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-const iconBadge = (icon, statusClass = "", entityId = "", title = "") => `
-  <button class="indicator ${statusClass}" data-entity-id="${escapeHtml(entityId)}" title="${escapeHtml(title)}">
+const iconBadge = (icon, statusClass = "", entityId = "", title = "", borderColor = null) => `
+  <button class="indicator ${statusClass}" data-entity-id="${escapeHtml(entityId)}" title="${escapeHtml(title)}"${borderColor ? ` style="box-shadow: inset 0 0 0 2px ${escapeHtml(borderColor)};"` : ""}>
     <ha-ripple></ha-ripple>
     <ha-icon icon="${icon}"></ha-icon>
   </button>
@@ -212,6 +212,7 @@ const TRANSLATIONS = {
     "editor.soc_predicted": "Predicted SOC (charging)",
     "editor.soc_magic": "Magic SOC (driving)",
     "editor.show_indicators": "Show indicator row",
+    "editor.color_alert_border": "Indicator alert border color (hex, e.g. #f44336 - blank for default)",
     "editor.show_range": "Show SOC and range bar",
     "editor.color_ev": "Battery bar color (hex, e.g. #4caf50 - blank for default)",
     "editor.color_ev_low": "Battery bar color when low (hex - blank for default)",
@@ -309,6 +310,7 @@ const TRANSLATIONS = {
     "editor.soc_predicted": "Beräknad SOC (laddar)",
     "editor.soc_magic": "Magisk SOC (kör)",
     "editor.show_indicators": "Visa indikeringsrad",
+    "editor.color_alert_border": "Varningsram färg (hex, t.ex. #f44336 - tom = standard)",
     "editor.show_range": "Visa SOC och räckviddsbar",
     "editor.color_ev": "Batteristapel färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.color_ev_low": "Batteristapel färg vid låg nivå (hex - tom = standard)",
@@ -406,6 +408,7 @@ const TRANSLATIONS = {
     "editor.soc_predicted": "Prognostizierter Ladestand (beim Laden)",
     "editor.soc_magic": "Magic SOC (während der Fahrt)",
     "editor.show_indicators": "Statuszeile anzeigen",
+    "editor.color_alert_border": "Rahmenfarbe für Warnanzeige (Hex, z.B. #f44336 - leer = Standard)",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
     "editor.color_ev": "Batteriebalken-Farbe (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.color_ev_low": "Batteriebalken-Farbe bei niedrigem Stand (Hex - leer = Standard)",
@@ -575,6 +578,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           },
         },
         { name: "show_indicators", selector: { boolean: {} } },
+        { name: "color_alert_border", selector: { text: {} } },
         { name: "show_range", selector: { boolean: {} } },
         { name: "color_ev", selector: { text: {} } },
         { name: "color_ev_low", selector: { text: {} } },
@@ -1422,10 +1426,19 @@ class BmwCardataVehicleCard extends HTMLElement {
     ].filter(Boolean);
 
     if (showIndicators) {
+      const alertBorderColor = cssColor(cfg.color_alert_border);
       this._setHtml(indicatorsEl, `
         <div class="indicators">
           ${indicatorItems
-            .map((item) => iconBadge(item.icon, item.stateClass, item.entity, item.title))
+            .map((item) =>
+              iconBadge(
+                item.icon,
+                item.stateClass,
+                item.entity,
+                item.title,
+                item.stateClass?.split(" ").includes("alert") ? alertBorderColor : null
+              )
+            )
             .join("")}
         </div>
       `);

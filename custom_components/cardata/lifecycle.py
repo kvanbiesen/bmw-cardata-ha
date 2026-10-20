@@ -323,8 +323,8 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 coordinator.names.pop(vin, None)
                 # Also remove device from registry IF it belongs to this entry
                 # (was created by async_restore_vehicle_metadata for this entry)
-                device = device_registry.async_get_device(identifiers={(DOMAIN, vin)})
-                if device and entry.entry_id in device.config_entries:
+                device = device_registry.async_get_device_by_identifier((DOMAIN, vin), entry.entry_id)
+                if device:
                     device_registry.async_remove_device(device.id)
                     _LOGGER.info(
                         "Removed device for VIN %s (owned by another config entry)",

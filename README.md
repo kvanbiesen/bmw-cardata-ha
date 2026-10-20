@@ -267,6 +267,7 @@ Available configuration options:
 | `show_title` | `true` | Vehicle name / card header. Set to `false` to hide it without the flash-of-unstyled-content you get from hiding it via card-mod. |
 | `soc_source` | `soc` | Battery level source for the bar: `soc` (BMW last known), `predicted` (charging prediction), or `magic` (driving prediction) |
 | `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm). Windows, tailgate, and hood only show red when the car is parked and locked with the item open (walked-away alert). Alarm indicator: green when armed, blue when unarmed, red when triggered. |
+| `color_alert_border` | *(blank)* | Border color (hex, e.g. `#f44336`) drawn around an indicator button whenever it's in its "alert" state (unlocked/open while parked and locked, alarm triggered). Leave blank to keep the current look (no border). |
 | `show_range` | `true` | Battery / fuel level bar with range |
 | `color_ev` | *(blank)* | Battery bar color as a hex code (e.g. `#4caf50`). Used for the EV bar on a BEV/PHEV, or the single bar on a pure EV. Leave blank to keep the current look. |
 | `color_ev_low` | *(blank)* | Battery bar color once at or below `low_threshold`. Ignored if `color_ev` isn't set either. |
@@ -284,7 +285,7 @@ Available configuration options:
 | `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
 | `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, `de`, or `sv`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome. Each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
 
-Bar colors are plain hex codes, settable either in the card's GUI editor or directly in YAML. Leave any of them blank to keep the default look:
+Bar and indicator colors are plain hex codes, settable either in the card's GUI editor or directly in YAML. Leave any of them blank to keep the default look:
 
 ```yaml
 color_ev: "#4caf50"
@@ -292,6 +293,7 @@ color_ev_low: "#f44336"
 color_fuel: "#ff9800"
 color_fuel_low: "#f44336"
 low_threshold: 20
+color_alert_border: "#f44336"
 ```
 
 ### Custom Map Marker (optional)
