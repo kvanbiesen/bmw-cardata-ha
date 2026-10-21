@@ -8,28 +8,20 @@
       "authorize": {
         "title": "Autoriser BMW CarData",
         "description": "Ouvrez {verification_url} et entrez le code utilisateur {user_code} si demandé. Une fois que vous avez approuvé l'appareil, cliquez sur Soumettre. Si l'approbation est déjà terminée, cliquez à nouveau sur Soumettre pour continuer."
-      },
-      "blocked": {
-        "title": "Bootstrap désactivé en raison de la limite de débit API",
-        "description": "L'intégration a précédemment atteint la limite de débit quotidienne de l'API BMW et le bootstrap automatique (création de conteneur et mappage) a été temporairement désactivé pour {entry_title} jusqu'à {until}. Vous pouvez soit attendre ce moment et réessayer, soit effacer le flag ci-dessous pour réessayer immédiatement (vous pourriez atteindre à nouveau la limite de débit)."
-      },
-      "cleared": {
-        "title": "Nouvelle tentative de bootstrap planifiée",
-        "description": "Vous avez effacé le flag de désactivation temporaire pour {entry_title}. L'intégration tentera à nouveau le bootstrap. Si la limite de débit de l'API BMW est à nouveau atteinte, l'intégration désactivera le bootstrap jusqu'à l'heure de réinitialisation. Alternativement, utilisez le service développeur `cardata.clean_hv_containers` pour lister/supprimer les anciens conteneurs (attention aux limites de débit API)."
-      },
-      "blocked_fallback": {
-        "description": "Le bootstrap automatique est désactivé jusqu'à {until}. Effacez le flag pour réessayer maintenant, ou annulez et réessayez après la réinitialisation."
       }
     },
     "error": {
       "authorization_failed": "L'autorisation BMW n'a pas été complétée. Cela peut arriver si vous avez cliqué sur « Refuser », fermé la page avant d'approuver, si la demande a expiré, ou si les serveurs de BMW ont eu un problème temporaire (ce n'est pas toujours de votre faute). Détails de l'erreur : {error}. Un nouveau lien d'autorisation a été généré ci-dessous. Ouvrez-le et approuvez, puis cliquez à nouveau sur Soumettre.",
-      "device_code_failed": "BMW a rejeté la demande d'autorisation de l'appareil ({error}). Vérifiez que l'identifiant client est valide et réessayez."
+      "device_code_failed": "BMW a rejeté la demande d'autorisation de l'appareil ({error}). Vérifiez que l'identifiant client est valide et réessayez.",
+      "invalid_client_id": "Entrez l'identifiant client BMW CarData."
     },
     "abort": {
       "auth_failed": "La réponse d'autorisation BMW était incomplète (jetons manquants). Veuillez réessayer.",
       "reauth_device_code_failed": "BMW a rejeté la demande d'autorisation de l'appareil ({error}). Mettez à jour l'identifiant client sous Configurer > Relancer l'autorisation de l'appareil, ou supprimez et ajoutez à nouveau l'intégration.",
       "reauth_missing_client_id": "L'identifiant client est manquant pour cette entrée d'intégration. Supprimez et ajoutez à nouveau l'intégration pour vous autoriser de nouveau.",
-      "reauth_failed": "La réautorisation n'a pas pu être lancée. Réessayez depuis les options de l'intégration."
+      "reauth_failed": "La réautorisation n'a pas pu être lancée. Réessayez depuis les options de l'intégration.",
+      "reauth_successful": "La réauthentification a réussi",
+      "already_in_progress": "La configuration est déjà en cours. Veuillez terminer la configuration actuelle avant de recommencer."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Échec du rafraîchissement des jetons : {error}",
       "runtime_missing": "L'environnement d'exécution de l'intégration n'est pas prêt. Réessayez une fois la configuration terminée.",
       "no_vins": "Aucun VIN n'est encore connu. Attendez que le flux découvre un véhicule ou déclenchez-le une fois manuellement.",
-      "invalid_int": "Entrez un nombre entier positif",
       "invalid_client_id": "Entrez l'identifiant client BMW CarData.",
-      "mqtt_host_required": "L'hôte du broker est requis lorsque le broker MQTT personnalisé est activé."
+      "mqtt_host_required": "L'hôte du broker est requis lorsque le broker MQTT personnalisé est activé.",
+      "confirm": "Cochez la case pour confirmer.",
+      "reset_failed": "Échec de la réinitialisation du conteneur : {error}",
+      "missing_token": "Aucun jeton d'accès n'est disponible. Autorisez de nouveau l'intégration.",
+      "cleanup_failed": "Échec du nettoyage des entités : {error}"
     },
     "abort": {
       "auth_failed": "La réponse d'autorisation BMW était incomplète (jetons manquants). Veuillez réessayer.",
       "reauth_started": "Autorisation redémarrée. Complétez le nouveau flux de connexion depuis la notification.",
       "reauth_device_code_failed": "BMW a rejeté la demande d'autorisation de l'appareil ({error}). Mettez à jour l'identifiant client dans les options de l'intégration et réessayez.",
       "reauth_missing_client_id": "L'identifiant client est manquant pour cette entrée d'intégration. Supprimez et ajoutez à nouveau l'intégration pour vous autoriser de nouveau.",
-      "reauth_failed": "La réautorisation n'a pas pu être lancée. Réessayez depuis les options de l'intégration."
+      "reauth_failed": "La réautorisation n'a pas pu être lancée. Réessayez depuis les options de l'intégration.",
+      "unknown": "Erreur inattendue"
     }
   }
 }

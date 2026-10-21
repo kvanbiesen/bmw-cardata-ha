@@ -38,6 +38,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .api_parsing import try_parse_json
 from .const import (
+    ALLOWED_VINS_KEY,
     API_BASE_URL,
     BASIC_DATA_ENDPOINT,
     DOMAIN,
@@ -229,7 +230,11 @@ async def async_fetch_and_store_vehicle_images(
         try:
             # CRITICAL: Check if file already exists
             file_size = await hass.async_add_executor_job(lambda p: p.stat().st_size if p.exists() else -1, image_path)
-            if file_size >= 0:
+            if file_size == 0:
+                # Empty marker left by an earlier 404: BMW has no image for this car
+                _LOGGER.debug("No vehicle image available for %s (marker file), skipping", redacted_vin)
+                continue
+            if file_size > 0:
                 _LOGGER.debug(
                     "Vehicle image file already exists for %s (%d bytes) - skipping API call", redacted_vin, file_size
                 )
@@ -350,9 +355,9 @@ async def async_restore_vehicle_images(
     """Restore vehicle images from disk on startup.
 
     This loads cached image files into coordinator memory without making API calls.
-    Called during integration setup to restore images after HA restart.
-
-    Also migrates old stored metadata that doesn't have vehicle_image_path.
+    Called during integration setup to restore images after HA restart. The image
+    directory is shared by every entry, so only the vehicles this entry has
+    metadata for or has saved as its own are considered.
     """
     images_dir = get_images_directory(hass)
 
@@ -362,13 +367,14 @@ async def async_restore_vehicle_images(
         return
 
     restored_count = 0
-    migrated_vins = []
+    stored_vins = entry.data.get(ALLOWED_VINS_KEY)
+    own_vins = set(coordinator.device_metadata) | set(stored_vins if isinstance(stored_vins, list) else [])
 
     # Load all PNG files from images directory
     for image_file, file_size in image_files:
         vin = image_file.stem  # Filename without .png extension
 
-        if not is_valid_vin(vin):
+        if not is_valid_vin(vin) or vin not in own_vins:
             continue
 
         redacted_vin = redact_vin(vin)
@@ -387,13 +393,6 @@ async def async_restore_vehicle_images(
 
             restored_count += 1
 
-            # Check if we need to migrate stored metadata (old format without vehicle_image_path)
-            stored_metadata = entry.data.get(VEHICLE_METADATA, {})
-            if isinstance(stored_metadata, dict) and vin in stored_metadata:
-                vin_metadata = stored_metadata.get(vin, {})
-                if isinstance(vin_metadata, dict) and "vehicle_image_path" not in vin_metadata:
-                    migrated_vins.append(vin)
-
             _LOGGER.debug("Restored vehicle image for %s from %s", redacted_vin, safe_image_file)
         except Exception as err:
             safe_err = redact_vin_in_text(str(err))
@@ -403,27 +402,6 @@ async def async_restore_vehicle_images(
 
     if restored_count > 0:
         _LOGGER.info("Restored %d vehicle images from disk (no API calls needed)", restored_count)
-
-    # Migrate stored metadata to include vehicle_image_path for VINs that have images but missing path
-    if migrated_vins:
-        from .runtime import async_update_entry_data
-
-        stored_metadata = entry.data.get(VEHICLE_METADATA, {})
-        if isinstance(stored_metadata, dict):
-            updated = False
-            for vin in migrated_vins:
-                if vin in stored_metadata and vin in coordinator.device_metadata:
-                    image_path = coordinator.device_metadata[vin].get("vehicle_image_path")
-                    if image_path:
-                        stored_metadata[vin]["vehicle_image_path"] = image_path
-                        updated = True
-
-            if updated:
-                await async_update_entry_data(hass, entry, {VEHICLE_METADATA: stored_metadata})
-                _LOGGER.info(
-                    "Migrated %d vehicle(s) to include vehicle_image_path in stored metadata",
-                    len(migrated_vins),
-                )
 
 
 async def async_restore_vehicle_metadata(
@@ -437,13 +415,13 @@ async def async_restore_vehicle_metadata(
     stored_metadata = entry.data.get(VEHICLE_METADATA, {})
     if not isinstance(stored_metadata, dict):
         _LOGGER.debug("No vehicle metadata to restore for entry %s (not a dict)", entry.entry_id)
-        # Still try to restore images from disk (they might exist from a previous install)
+        # Still restore the images of the entry's own vehicles
         await async_restore_vehicle_images(hass, entry, coordinator)
         return
 
     if not stored_metadata:
         _LOGGER.debug("No vehicle metadata to restore for entry %s (empty)", entry.entry_id)
-        # Still try to restore images from disk (they might exist from a previous install)
+        # Still restore the images of the entry's own vehicles
         await async_restore_vehicle_images(hass, entry, coordinator)
         return
 

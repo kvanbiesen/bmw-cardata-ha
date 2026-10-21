@@ -266,6 +266,9 @@ async def async_handle_fetch_basic_data(call: ServiceCall) -> None:
     target_entry_id, target_entry, runtime = resolved
 
     vin = call.data.get("vin") or target_entry.data.get("vin")
+    if not vin and len(runtime.coordinator._allowed_vins) == 1:
+        # An entry with a single vehicle needs no VIN
+        (vin,) = runtime.coordinator._allowed_vins
     if not vin:
         _LOGGER.error("Cardata fetch_basic_data: no VIN available; provide vin parameter")
         return

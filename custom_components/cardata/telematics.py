@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -178,12 +179,20 @@ async def async_perform_telematic_fetch(
     # Proactively check and refresh token only if expired or about to expire
     from .auth import async_ensure_valid_token
 
-    token_valid = await async_ensure_valid_token(
-        entry,
-        runtime.session,
-        runtime.stream,
-        runtime.container_manager,
-    )
+    try:
+        token_valid = await async_ensure_valid_token(
+            entry,
+            runtime.session,
+            runtime.stream,
+            runtime.container_manager,
+        )
+    except (TimeoutError, aiohttp.ClientError) as err:
+        _LOGGER.warning(
+            "Cardata fetch_telematic_data: token refresh could not reach BMW for entry %s: %s",
+            target_entry_id,
+            err,
+        )
+        return TelematicFetchResult(None, "network_error")
     if not token_valid:
         _LOGGER.error(
             "Cardata fetch_telematic_data: token refresh failed for entry %s",

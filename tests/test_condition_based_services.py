@@ -36,6 +36,7 @@ from custom_components.cardata.binary_sensor import CardataBinarySensor
 from custom_components.cardata.condition_based_services import (
     CBS_DESCRIPTOR_PREFIX,
     DESC_CBS_SERVICE_DUE,
+    cbs_item_key,
     expand_condition_based_services,
     is_cbs_item_descriptor,
     parse_cbs_items,
@@ -170,6 +171,13 @@ class TestExpansion:
     def test_already_decoded_list_is_accepted(self):
         assert len(parse_cbs_items(json.loads(RAW_CBS))) == 4
         assert parse_cbs_items(42) is None
+
+    def test_deeply_nested_json_is_unreadable_not_fatal(self):
+        assert parse_cbs_items("[" * 100000) is None
+
+    @pytest.mark.parametrize("cbs_id", ["Infinity", float("inf"), "1e400"])
+    def test_an_id_too_large_for_an_int_is_ignored(self, cbs_id):
+        assert cbs_item_key({"id": cbs_id, "title": "Brake fluid"}) == ("brakeFluid", "Brake fluid")
 
 
 @pytest.fixture

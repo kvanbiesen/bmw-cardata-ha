@@ -8,28 +8,20 @@
       "authorize": {
         "title": "Auktorisera BMW CarData",
         "description": "Öppna {verification_url} och ange användarkoden {user_code} om du blir ombedd. När du har godkänt enheten klickar du på Skicka. Om godkännandet redan är klart klickar du på Skicka igen för att fortsätta."
-      },
-      "blocked": {
-        "title": "Bootstrap inaktiverad på grund av API-anropsgräns",
-        "description": "Integrationen har tidigare nått BMW:s dagliga API-anropsgräns och automatisk bootstrap (skapande och mappning av containrar) har tillfälligt inaktiverats för {entry_title} till {until}. Du kan vänta tills dess och försöka igen, eller ta bort flaggan nedan för att försöka omedelbart igen (du kan då nå anropsgränsen på nytt)."
-      },
-      "cleared": {
-        "title": "Nytt bootstrap-försök schemalagt",
-        "description": "Du har tagit bort den tillfälliga inaktiveringsflaggan för {entry_title}. Integrationen kommer att försöka genomföra bootstrap igen. Om BMW:s API-anropsgräns fortfarande nås kommer bootstrap att inaktiveras fram till nästa återställningstid. Alternativt kan du använda utvecklartjänsten `cardata.clean_hv_containers` för att lista eller ta bort gamla containrar (tänk på API-anropsgränserna)."
-      },
-      "blocked_fallback": {
-        "description": "Automatisk bootstrap är inaktiverad till {until}. Ta bort flaggan för att försöka nu, eller avbryt och försök igen efter återställningen."
       }
     },
     "error": {
       "authorization_failed": "BMW-auktoriseringen slutfördes inte. Det kan hända om du klickade på ”Neka”, stängde sidan innan godkännandet, begäran löpte ut eller BMW:s servrar tillfälligt hade problem (det är inte alltid ditt fel). Felinformation: {error}. En ny auktoriseringslänk har skapats nedan. Öppna den och godkänn, och klicka sedan på Skicka igen.",
-      "device_code_failed": "BMW avvisade enhetsauktoriseringsbegäran ({error}). Kontrollera att klient-ID:t är giltigt och försök igen."
+      "device_code_failed": "BMW avvisade enhetsauktoriseringsbegäran ({error}). Kontrollera att klient-ID:t är giltigt och försök igen.",
+      "invalid_client_id": "Ange BMW CarData-klient-ID:t."
     },
     "abort": {
       "auth_failed": "BMW-auktoriseringssvaret var ofullständigt (token saknas). Försök igen.",
       "reauth_device_code_failed": "BMW avvisade enhetsauktoriseringsbegäran ({error}). Uppdatera klient-ID:t under Konfigurera > Starta enhetsauktorisering igen, eller ta bort och lägg till integreringen på nytt.",
       "reauth_missing_client_id": "Klient-ID saknas för denna integrering. Ta bort och lägg till integreringen på nytt för att auktorisera igen.",
-      "reauth_failed": "Det gick inte att starta om auktoriseringen. Försök igen från integreringens alternativ."
+      "reauth_failed": "Det gick inte att starta om auktoriseringen. Försök igen från integreringens alternativ.",
+      "reauth_successful": "Återautentisering lyckades",
+      "already_in_progress": "Detta konfigureras redan. Slutför den befintliga konfigurationen innan du börjar igen."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Det gick inte att uppdatera token: {error}",
       "runtime_missing": "Integreringens körmiljö är inte klar. Försök igen när konfigurationen är slutförd.",
       "no_vins": "Inga VIN-nummer är kända ännu. Vänta tills dataströmmen upptäcker ett fordon eller utlös den manuellt en gång.",
-      "invalid_int": "Ange ett positivt heltal",
       "invalid_client_id": "Ange BMW CarData-klient-ID:t.",
-      "mqtt_host_required": "Broker-värd måste anges när anpassad MQTT är aktiverad."
+      "mqtt_host_required": "Broker-värd måste anges när anpassad MQTT är aktiverad.",
+      "confirm": "Markera rutan för att bekräfta.",
+      "reset_failed": "Det gick inte att återställa containern: {error}",
+      "missing_token": "Det finns ingen åtkomsttoken. Auktorisera integreringen igen.",
+      "cleanup_failed": "Det gick inte att rensa entiteterna: {error}"
     },
     "abort": {
       "auth_failed": "BMW-auktoriseringssvaret var ofullständigt (token saknas). Försök igen.",
       "reauth_started": "Auktoriseringen har startats om. Slutför det nya inloggningsflödet från aviseringen.",
       "reauth_device_code_failed": "BMW avvisade enhetsauktoriseringsbegäran ({error}). Uppdatera klient-ID:t i integreringens alternativ och försök igen.",
       "reauth_missing_client_id": "Klient-ID saknas för denna integrering. Ta bort och lägg till integreringen på nytt för att auktorisera igen.",
-      "reauth_failed": "Det gick inte att starta om auktoriseringen. Försök igen från integreringens alternativ."
+      "reauth_failed": "Det gick inte att starta om auktoriseringen. Försök igen från integreringens alternativ.",
+      "unknown": "Oväntat fel"
     }
   }
 }

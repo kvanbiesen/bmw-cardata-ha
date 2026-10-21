@@ -63,6 +63,8 @@ from .condition_based_services import (
 from .const import (
     CHARGING_ENERGY_DESCRIPTOR,
     DESC_FAULT_MEMORY,
+    DESC_SOC_DISPLAYED,
+    DESC_SOC_HEADER,
     DESC_TRAVELLED_DISTANCE,
     DOMAIN,
     LOCATION_ALTITUDE_DESCRIPTOR,
@@ -73,6 +75,7 @@ from .const import (
     OPENING_STATUS_DESCRIPTORS,
     PREDICTED_SOC_DESCRIPTOR,
     WINDOW_DESCRIPTORS,
+    has_hv_battery,
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
@@ -424,14 +427,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         tyre_diagnosis_entities[vin] = CardataTyreDiagnosisSensor(coordinator, vin)
         async_add_entities([tyre_diagnosis_entities[vin]], True)
 
-    def ensure_efficiency_learning_sensor(vin: str) -> None:
-        """Ensure efficiency learning sensor exists for EVs/PHEVs with battery management."""
+    def ensure_efficiency_learning_sensor(vin: str, *, restored: bool = False) -> None:
+        """Ensure efficiency learning sensor exists for EVs/PHEVs with battery management.
+
+        A registry entry already says the vehicle has one, which matters after a
+        restart: no battery reading has arrived yet when the platform is set up.
+        """
         if vin in efficiency_entities:
             return
 
-        # Check if vehicle has battery management descriptor (EVs/PHEVs only)
-        battery_state = coordinator.get_state(vin, "vehicle.drivetrain.batteryManagement.header")
-        if not battery_state:
+        if not restored and not has_hv_battery(coordinator.data.get(vin, {})):
             return
 
         efficiency_entities[vin] = CardataEfficiencyLearningSensor(coordinator, vin)
@@ -511,6 +516,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # and signal subscription
     async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
         ensure_entity(vin, descriptor, from_signal=True)
+        if descriptor in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
+            ensure_efficiency_learning_sensor(vin)
 
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor))
 
@@ -582,7 +589,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 continue
 
             if descriptor == "diagnostics_charging_matrix":
-                ensure_efficiency_learning_sensor(vin)
+                ensure_efficiency_learning_sensor(vin, restored=True)
                 continue
 
             if descriptor in CHARGING_HISTORY_RESTORE_DESCRIPTORS:

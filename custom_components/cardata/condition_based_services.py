@@ -98,7 +98,7 @@ def _to_int(value: Any) -> int | None:
         return None
     try:
         return int(float(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -114,7 +114,7 @@ def parse_cbs_items(value: Any) -> list[dict[str, Any]] | None:
     if isinstance(value, str):
         try:
             value = json.loads(value)
-        except ValueError:
+        except (ValueError, RecursionError):
             return None
     if not isinstance(value, list):
         return None

@@ -120,12 +120,17 @@ class CardataStreamManager:
         self._disconnect_future: asyncio.Future[None] | None = None
         self._retry_backoff = 3
         self._retry_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        self._reconnect_requested = False
+        self._reconnect_waiting: asyncio.Task | None = None
         self._min_reconnect_interval = 10.0
         self._connect_lock = asyncio.Lock()
         # Serialize credential updates and reconnects
         self._credential_lock = asyncio.Lock()
         self._connection_state = ConnectionState.DISCONNECTED
         self._intentional_disconnect = False
+        # Set once the entry stops using this manager, and never cleared
+        self._shut_down = False
         # Circuit breaker for runaway reconnections
         self._circuit_breaker = CircuitBreaker(on_persist=self._persist_circuit_breaker_state)
         # Reconnect attempt tracking for extended backoff
@@ -244,6 +249,16 @@ class CardataStreamManager:
         except Exception as err:
             _LOGGER.warning("Error stopping MQTT loop: %s", err)
 
+    def shut_down(self) -> None:
+        """Retire this manager for good before the entry lets go of it.
+
+        Unload gives the stop a few seconds, and a stop that runs out of time
+        while a connect holds the lock never marks the disconnect intentional.
+        After a reload the entry id is back in hass.data, so nothing else tells
+        a reconnect still in flight that this manager is no longer wanted.
+        """
+        self._shut_down = True
+
     async def async_start(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
         try:
@@ -297,6 +312,9 @@ class CardataStreamManager:
                 await async_update_entry_data(self.hass, entry, {"circuit_breaker_state": state})
 
     async def _async_start_locked(self) -> None:
+        if self._shut_down:
+            return
+
         # Forget the previous verdict so callers cannot read it as the outcome
         # of an attempt that never reached the broker.
         self._last_connack_rc = None
@@ -379,6 +397,10 @@ class CardataStreamManager:
             if self._circuit_breaker.failure_count == failure_count_before:
                 self._circuit_breaker.record_failure()
             raise
+
+        if self._shut_down:
+            # The entry let go of this manager while the connect was running.
+            await self._async_stop_locked()
 
     async def async_stop(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
@@ -884,7 +906,7 @@ class CardataStreamManager:
             return
 
         if should_reconnect and not self._circuit_breaker.check():
-            self._run_coro_safe(stream_reconnect.async_reconnect(self))
+            self._call_on_loop(stream_reconnect.request_reconnect, self)
         if self._status_callback:
             self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("disconnected", reason)))
 

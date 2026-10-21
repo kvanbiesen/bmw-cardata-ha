@@ -161,13 +161,20 @@ async def async_migrate_entity_ids(
 
         # Heuristic: safe to migrate if:
         # - force True
-        # - current_obj starts with stripped_obj (indicates integration-generated)
-        # - current_obj previously had model prefix (we stripped it) -> fix double prefix
+        # - what is left once the model prefix is stripped is an object id the
+        #   integration generates (from the descriptor title or the entity
+        #   name), so the user did not pick it
         safe_to_migrate = False
         if force:
             safe_to_migrate = True
         else:
-            if current_obj.startswith(stripped_obj) or current_obj.startswith(f"{model_slug}_"):
+            generated = {_descriptor_fallback_slug(descriptor)}
+            if ent.original_name:
+                # The entity name starts with the vehicle name
+                name_slug = slugify(ent.original_name, separator="_")
+                generated.add(_strip_leading_model_from_obj(name_slug, model_slug))
+            # Home Assistant adds _2, _3 and so on when a second car takes the same id
+            if re.sub(r"_\d+$", "", stripped_obj) in generated:
                 safe_to_migrate = True
             elif "_" not in current_obj:
                 # simple one-word object ids likely safe

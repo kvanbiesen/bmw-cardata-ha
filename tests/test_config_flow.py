@@ -23,6 +23,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
@@ -67,6 +68,8 @@ async def test_user_flow_success(hass):
             "custom_components.cardata.device_flow.poll_for_tokens",
             AsyncMock(return_value=TOKEN_DATA),
         ) as mock_poll,
+        # The created entry is set up right away; that would reach BMW for real
+        patch("custom_components.cardata.async_setup_entry", AsyncMock(return_value=True)),
     ):
         init_result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
         assert init_result["type"] == FlowResultType.FORM
@@ -258,3 +261,102 @@ async def test_reauth_flow_updates_entry(hass):
 
         mock_device_code.assert_awaited_once()
         mock_poll.assert_awaited_once()
+
+
+async def _start_reauth(hass, existing):
+    with patch(
+        "custom_components.cardata.device_flow.request_device_code",
+        AsyncMock(return_value=DEVICE_DATA),
+    ):
+        return await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": existing.entry_id},
+            data={"client_id": CLIENT_ID, "entry_id": existing.entry_id},
+        )
+
+
+@pytest.mark.asyncio
+async def test_closing_the_reauth_dialog_resumes_polling(hass):
+    """Telematic polling waits for the reauth; a dismissed dialog must end the wait."""
+    existing = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    existing.add_to_hass(hass)
+    runtime = SimpleNamespace(reauth_in_progress=True, reauth_flow_id=None)
+    hass.data.setdefault(DOMAIN, {})[existing.entry_id] = runtime
+
+    result = await _start_reauth(hass, existing)
+    runtime.reauth_flow_id = result["flow_id"]
+    hass.config_entries.flow.async_abort(result["flow_id"])
+
+    assert runtime.reauth_in_progress is False
+    assert runtime.reauth_flow_id is None
+
+
+@pytest.mark.asyncio
+async def test_the_hold_stays_while_another_reauth_is_open(hass):
+    """A stream failure and the options can each open a reauth for the same entry."""
+    existing = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    existing.add_to_hass(hass)
+    runtime = SimpleNamespace(reauth_in_progress=True, reauth_pending=True, reauth_flow_id=None)
+    hass.data.setdefault(DOMAIN, {})[existing.entry_id] = runtime
+
+    stream_flow = await _start_reauth(hass, existing)
+    runtime.reauth_flow_id = stream_flow["flow_id"]
+    user_flow = await _start_reauth(hass, existing)
+
+    hass.config_entries.flow.async_abort(stream_flow["flow_id"])
+    assert runtime.reauth_in_progress is True
+    assert runtime.reauth_flow_id is None
+
+    hass.config_entries.flow.async_abort(user_flow["flow_id"])
+    assert runtime.reauth_in_progress is False
+    assert runtime.reauth_pending is False
+
+
+@pytest.mark.asyncio
+async def test_closing_a_reauth_started_from_the_options_resumes_polling(hass):
+    """The options flow does not record the flow it starts."""
+    existing = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    existing.add_to_hass(hass)
+    runtime = SimpleNamespace(reauth_in_progress=True, reauth_pending=True, reauth_flow_id=None)
+    hass.data.setdefault(DOMAIN, {})[existing.entry_id] = runtime
+
+    result = await _start_reauth(hass, existing)
+    hass.config_entries.flow.async_abort(result["flow_id"])
+
+    assert runtime.reauth_in_progress is False
+    assert runtime.reauth_pending is False
+
+
+@pytest.mark.asyncio
+async def test_a_stream_recovery_leaves_the_users_authorization_open(hass):
+    """Recovery aborts the flow a stream failure started, not one the user started."""
+    from custom_components.cardata.auth import handle_stream_error
+
+    existing = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    existing.add_to_hass(hass)
+    runtime = SimpleNamespace(
+        reauth_in_progress=False,
+        reauth_pending=False,
+        reauth_flow_id=None,
+        connection_conflict=False,
+        last_reauth_attempt=0.0,
+    )
+    hass.data.setdefault(DOMAIN, {})[existing.entry_id] = runtime
+
+    with patch(
+        "custom_components.cardata.device_flow.request_device_code",
+        AsyncMock(return_value=DEVICE_DATA),
+    ):
+        result = await hass.config_entries.options.async_init(existing.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "action_reauth"})
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"client_id": CLIENT_ID, "confirm": True}
+        )
+    assert result["reason"] == "reauth_started"
+    (user_flow,) = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+
+    await handle_stream_error(hass, existing, "recovered")
+
+    assert [flow["flow_id"] for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN)] == [
+        user_flow["flow_id"]
+    ]

@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -151,6 +151,9 @@ class RateLimitTracker:
 
         try:
             retry_date = parsedate_to_datetime(retry_after)
+            if retry_date.tzinfo is None:
+                # The asctime form names no zone; HTTP dates are always GMT
+                retry_date = retry_date.replace(tzinfo=UTC)
             delta = retry_date.timestamp() - time.time()
             if delta <= 0:
                 return None

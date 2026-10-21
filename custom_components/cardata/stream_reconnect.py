@@ -47,7 +47,7 @@ def _reconnect_abandoned(manager: CardataStreamManager) -> bool:
     An async_stop() or an entry unload can happen while we wait, and the
     config entry may be gone by the time we wake up.
     """
-    if manager._intentional_disconnect:
+    if manager._intentional_disconnect or manager._shut_down:
         return True
     if manager._entry_id:
         from .const import DOMAIN
@@ -55,6 +55,53 @@ def _reconnect_abandoned(manager: CardataStreamManager) -> bool:
         if manager._entry_id not in manager.hass.data.get(DOMAIN, {}):
             return True
     return False
+
+
+def request_reconnect(manager: CardataStreamManager) -> None:
+    """Start a reconnect, keeping a single chain running.
+
+    A connection lost before its CONNACK reports a disconnect while the
+    attempt that opened it is still failing, and that attempt schedules its
+    own next try as well. Each such failure used to add another chain, and a
+    chain left over after the stream recovered tore the healthy connection
+    down again. The running chain may still hand over to its next attempt.
+
+    A request while a chain runs is not dropped. A chain asleep in a backoff
+    is started over, since something else connected meanwhile and that
+    connection has now dropped. Otherwise the request is kept for when the
+    chain ends, in case its attempt succeeded just before the drop.
+    """
+    task = manager._reconnect_task
+    if task is not None and not task.done() and task is not asyncio.current_task():
+        if manager._reconnect_waiting is not task:
+            manager._reconnect_requested = True
+            return
+        task.cancel()
+    manager._reconnect_requested = False
+    manager._reconnect_task = manager.hass.loop.create_task(async_reconnect(manager))
+    manager._reconnect_task.add_done_callback(lambda done: _reconnect_finished(manager, done))
+
+
+def _reconnect_finished(manager: CardataStreamManager, task: asyncio.Task) -> None:
+    from .stream import ConnectionState
+
+    if not task.cancelled() and (err := task.exception()) is not None:
+        _LOGGER.error("BMW MQTT reconnect crashed: %s", err, exc_info=err)
+    if manager._reconnect_task is not task or not manager._reconnect_requested:
+        return
+    manager._reconnect_requested = False
+    if manager._connection_state not in (ConnectionState.CONNECTED, ConnectionState.CONNECTING):
+        request_reconnect(manager)
+
+
+async def _backoff(manager: CardataStreamManager, seconds: float) -> None:
+    """Sleep in a reconnect chain, letting a new request start it over."""
+    manager._reconnect_waiting = asyncio.current_task()
+    try:
+        await asyncio.sleep(seconds)
+    finally:
+        if manager._reconnect_waiting is asyncio.current_task():
+            manager._reconnect_waiting = None
 
 
 async def async_reconnect(manager: CardataStreamManager) -> None:
@@ -99,7 +146,7 @@ async def async_reconnect(manager: CardataStreamManager) -> None:
         cooldown = (manager._circuit_breaker.remaining_seconds or 0) + 1
         if debug_enabled():
             _LOGGER.debug("Waiting %s seconds for the MQTT circuit breaker to reset", cooldown)
-        await asyncio.sleep(cooldown)
+        await _backoff(manager, cooldown)
         if _reconnect_abandoned(manager):
             return
 
@@ -137,7 +184,7 @@ async def async_reconnect(manager: CardataStreamManager) -> None:
     else:
         wait_time = manager._reconnect_backoff
 
-    await asyncio.sleep(wait_time)
+    await _backoff(manager, wait_time)
 
     if _reconnect_abandoned(manager):
         return
@@ -190,7 +237,7 @@ async def async_reconnect(manager: CardataStreamManager) -> None:
             )
         manager._reconnect_backoff = min(manager._reconnect_backoff * 2, manager._max_backoff)
         # Schedule another reconnect attempt (will use extended backoff if threshold reached)
-        manager._run_coro_safe(async_reconnect(manager))
+        request_reconnect(manager)
     finally:
         manager._connect_lock.release()
 
@@ -330,12 +377,20 @@ def schedule_retry(manager: CardataStreamManager, delay: float) -> None:
                     finally:
                         manager._disconnect_future = None
                 async with manager._connect_lock:
+                    # Holding the lock, this is an attempt rather than a
+                    # pending retry: a refusal it meets must be able to
+                    # schedule the next one, and the success callback must
+                    # not cancel it while it connects. A stop that came first
+                    # has already cancelled it while it waited.
+                    if manager._retry_task is asyncio.current_task():
+                        manager._retry_task = None
                     await manager._async_start_locked()
         except asyncio.CancelledError:
             return
         except Exception as err:  # pragma: no cover - defensive logging
             _LOGGER.warning("BMW MQTT retry failed: %s", err)
         finally:
-            manager._retry_task = None
+            if manager._retry_task is asyncio.current_task():
+                manager._retry_task = None
 
     manager._retry_task = manager.hass.loop.create_task(_retry())

@@ -326,3 +326,209 @@ def test_the_loop_handovers_survive_a_closed_event_loop() -> None:
     manager._cancel_retry_threadsafe()
     manager._schedule_retry_threadsafe(3)
     manager._run_coro_safe(work())
+
+
+def _shutdown_manager() -> CardataStreamManager:
+    hass = MagicMock()
+    hass.loop = asyncio.get_running_loop()
+    return CardataStreamManager(
+        hass=hass,
+        client_id="client",
+        gcid="gcid",
+        id_token="token",
+        host="localhost",
+        port=8883,
+        keepalive=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_shut_down_manager_does_not_connect() -> None:
+    """Unload retires the manager; a reconnect still queued must not revive it."""
+    manager = _shutdown_manager()
+    manager.hass.async_add_executor_job = AsyncMock()
+
+    manager.shut_down()
+    await manager._async_start_locked()
+
+    manager.hass.async_add_executor_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_connect_finishing_after_shutdown_is_torn_down() -> None:
+    """The unload stop can time out while a connect still holds the lock."""
+    manager = _shutdown_manager()
+
+    async def _connect_while_unloading(_func) -> None:
+        manager.shut_down()
+
+    manager.hass.async_add_executor_job = _connect_while_unloading
+    with patch.object(manager, "_async_stop_locked", AsyncMock()) as stop:
+        await manager._async_start_locked()
+
+    stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_only_one_reconnect_chain_runs_at_a_time() -> None:
+    """A disconnect seen while a reconnect is failing must not start a second chain."""
+    manager = _shutdown_manager()
+    release = asyncio.Event()
+    started = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal started
+        started += 1
+        await release.wait()
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        stream_reconnect.request_reconnect(manager)
+        await asyncio.sleep(0)
+
+        assert manager._reconnect_task is first
+        assert started == 1
+
+        release.set()
+        await first
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_chain_can_schedule_its_own_next_attempt() -> None:
+    manager = _shutdown_manager()
+    attempts = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            stream_reconnect.request_reconnect(manager)
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        await first
+        await manager._reconnect_task
+
+    assert manager._reconnect_task is not first
+    assert attempts == 2
+
+
+def _retry_manager(start) -> SimpleNamespace:
+    breaker = MagicMock()
+    breaker.check = MagicMock(return_value=False)
+    return SimpleNamespace(
+        _retry_task=None,
+        _circuit_breaker=breaker,
+        _retry_backoff=0,
+        _min_reconnect_interval=0,
+        _last_disconnect=None,
+        _client=None,
+        _disconnect_future=None,
+        _connect_lock=asyncio.Lock(),
+        _async_start_locked=start,
+        hass=SimpleNamespace(loop=asyncio.get_running_loop()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_met_by_a_retry_schedules_the_next_one() -> None:
+    """A custom broker refusing credentials answers the retry's own attempt."""
+    manager = None
+
+    async def _refused() -> None:
+        stream_reconnect.schedule_retry(manager, 0)
+
+    manager = _retry_manager(_refused)
+    stream_reconnect.schedule_retry(manager, 0)
+    first = manager._retry_task
+    await first
+
+    assert manager._retry_task is not None
+    assert manager._retry_task is not first
+    manager._retry_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_successful_retry_is_not_cancelled_by_its_own_connect() -> None:
+    finished = []
+    manager = None
+
+    async def _connected() -> None:
+        stream_reconnect.cancel_retry(manager)
+        await asyncio.sleep(0)
+        finished.append(True)
+
+    manager = _retry_manager(_connected)
+    stream_reconnect.schedule_retry(manager, 0)
+    task = manager._retry_task
+    await task
+
+    assert not task.cancelled()
+    assert finished == [True]
+
+
+@pytest.mark.asyncio
+async def test_a_drop_while_the_chain_finishes_is_not_lost() -> None:
+    """A drop right after the chain's CONNACK reaches it before it has ended."""
+    manager = _shutdown_manager()
+    release = asyncio.Event()
+    attempts = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await release.wait()
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        await asyncio.sleep(0)
+        stream_reconnect.request_reconnect(manager)
+        release.set()
+        await first
+        await manager._reconnect_task
+
+    assert manager._reconnect_task is not first
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_a_drop_during_a_backoff_starts_the_chain_over() -> None:
+    """Something else connected while the chain slept; its drop must not wait the backoff out."""
+    manager = _shutdown_manager()
+    attempts = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await stream_reconnect._backoff(manager, 600)
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        await asyncio.sleep(0)
+        stream_reconnect.request_reconnect(manager)
+        await manager._reconnect_task
+
+    assert first.cancelled()
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_a_stop_still_cancels_a_retry_waiting_for_the_lock() -> None:
+    """A retry that woke while a stop held the lock must not reconnect after it."""
+    start = AsyncMock()
+    manager = _retry_manager(start)
+
+    async with manager._connect_lock:
+        stream_reconnect.schedule_retry(manager, 0)
+        task = manager._retry_task
+        await asyncio.sleep(0.01)
+        await stream_reconnect.async_cancel_retry(manager)
+
+    assert task.done()
+    start.assert_not_awaited()

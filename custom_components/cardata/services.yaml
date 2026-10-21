@@ -6,7 +6,7 @@ fetch_telematic_data:
       description: Optional config entry id to target. Required if multiple entries are configured.
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     vin:
-      description: Optional VIN to query. Defaults to the first VIN seen on the stream.
+      description: Optional VIN to query. Defaults to every vehicle of the entry, skipping those with data from the last five minutes.
       example: WBY31AW090FP15359
 fetch_vehicle_mappings:
   name: Fetch Vehicle Mappings
@@ -23,7 +23,7 @@ fetch_basic_data:
       description: Optional config entry id to target. Required if multiple entries are configured.
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     vin:
-      description: Optional VIN to query. Defaults to the VIN stored in the config entry.
+      description: Optional VIN to query. Can be left out when the entry has a single vehicle.
       example: WBY31AW090FP15359
 migrate_entity_ids:
   name: Migrate Entity IDs
@@ -33,7 +33,7 @@ migrate_entity_ids:
       description: Optional config entry id to target. If omitted, runs for all entries.
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     force:
-      description: Force migration even if entities appear already migrated.
+      description: Also rename entity IDs that the integration did not generate, such as ones you picked yourself.
       selector:
         boolean:
     dry_run:

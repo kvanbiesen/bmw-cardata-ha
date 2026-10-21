@@ -121,7 +121,10 @@ async def poll_for_tokens(
                 error = data_dict.get("error")
                 if error in {"authorization_pending", "slow_down"}:
                     consecutive_500s = 0  # Reset counter on normal pending response
-                    await asyncio.sleep(interval if error == "authorization_pending" else interval + 5)
+                    if error == "slow_down":
+                        # RFC 8628: the longer interval holds for every later request too
+                        interval += 5
+                    await asyncio.sleep(interval)
                     continue
 
                 # Handle 500 errors with retry logic (BMW's API can be flaky)
@@ -205,7 +208,10 @@ async def refresh_tokens(
 ) -> dict[str, Any]:
     """Refresh access/ID tokens using the stored refresh token.
 
-    Includes retry logic for transient network failures.
+    Includes retry logic for transient network failures. CardataAuthError
+    means BMW refused the refresh; once the retries are spent, a timeout or a
+    network or server error is raised as it is, so an outage is not taken for
+    lost credentials.
     """
     payload = {
         "client_id": client_id,
@@ -257,6 +263,15 @@ async def refresh_tokens(
                     backoff = min(backoff * 2, 30.0)
                     continue
 
+                # The last server error says nothing about the refresh token
+                if 500 <= resp.status < 600:
+                    raise aiohttp.ClientResponseError(
+                        resp.request_info,
+                        resp.history,
+                        status=resp.status,
+                        message="Token refresh failed",
+                    )
+
                 # Other errors - fail
                 safe_data = {
                     k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
@@ -291,6 +306,6 @@ async def refresh_tokens(
                 continue
 
     # All retries exhausted
-    raise CardataAuthError(
-        f"Token refresh failed after {max_retries + 1} attempts: {redact_sensitive_data(str(last_error))}"
-    )
+    if last_error is not None:
+        raise last_error
+    raise CardataAuthError(f"Token refresh failed after {max_retries + 1} attempts")

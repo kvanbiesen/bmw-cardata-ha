@@ -129,5 +129,8 @@ def is_within_catalogue_limits(descriptor: str, value: Any) -> bool:
         numeric = float(value)
     except (TypeError, ValueError):
         return True
+    except OverflowError:
+        # Too large for a float, so outside any declared range
+        return False
     minimum, maximum = limits
     return minimum <= numeric <= maximum

@@ -8,28 +8,20 @@
       "authorize": {
         "title": "Autorizează BMW CarData",
         "description": "Deschide {verification_url} și introdu codul de utilizator {user_code}, dacă ți se cere. După ce ai aprobat dispozitivul, apasă pe Trimite. Dacă aprobarea este deja finalizată, apasă din nou pe Trimite pentru a continua."
-      },
-      "blocked": {
-        "title": "Bootstrap dezactivat din cauza limitei de apeluri API",
-        "description": "Integrarea a atins anterior limita zilnică de apeluri API BMW, iar bootstrapul automat (crearea și maparea containerelor) a fost dezactivat temporar pentru {entry_title} până la {until}. Poți fie să aștepți până atunci și să încerci din nou, fie să ștergi indicatorul de mai jos pentru a încerca imediat (este posibil să atingi din nou limita)."
-      },
-      "cleared": {
-        "title": "Reîncercare de bootstrap programată",
-        "description": "Ai șters indicatorul de dezactivare temporară pentru {entry_title}. Integrarea va încerca din nou bootstrapul. Dacă atinge în continuare limita de apeluri API BMW, bootstrapul va fi dezactivat din nou până la momentul resetării. Alternativ, folosește serviciul pentru dezvoltatori `cardata.clean_hv_containers` pentru a lista sau șterge containerele vechi (ține cont de limitele de apeluri API)."
-      },
-      "blocked_fallback": {
-        "description": "Bootstrapul automat este dezactivat până la {until}. Șterge indicatorul pentru a încerca acum sau anulează și încearcă din nou după resetare."
       }
     },
     "error": {
       "authorization_failed": "Autorizarea BMW nu a fost finalizată. Acest lucru se poate întâmpla dacă ai apăsat pe „Refuză”, ai închis pagina înainte de aprobare, cererea a expirat sau serverele BMW au avut o problemă temporară (nu este întotdeauna vina ta). Detalii despre eroare: {error}. Mai jos a fost generat un link de autorizare nou. Deschide-l și aprobă, apoi apasă din nou pe Trimite.",
-      "device_code_failed": "BMW a respins cererea de autorizare a dispozitivului ({error}). Verifică dacă ID-ul de client este valid și încearcă din nou."
+      "device_code_failed": "BMW a respins cererea de autorizare a dispozitivului ({error}). Verifică dacă ID-ul de client este valid și încearcă din nou.",
+      "invalid_client_id": "Introdu ID-ul de client BMW CarData."
     },
     "abort": {
       "auth_failed": "Răspunsul de autorizare BMW a fost incomplet (lipsesc token-urile). Încearcă din nou.",
       "reauth_device_code_failed": "BMW a respins cererea de autorizare a dispozitivului ({error}). Actualizează ID-ul de client din Configurare > Pornește din nou autorizarea dispozitivului sau elimină și adaugă din nou integrarea.",
       "reauth_missing_client_id": "Lipsește ID-ul de client pentru această intrare de integrare. Elimină și adaugă din nou integrarea pentru a o autoriza.",
-      "reauth_failed": "Reautorizarea nu a putut fi pornită. Încearcă din nou din opțiunile integrării."
+      "reauth_failed": "Reautorizarea nu a putut fi pornită. Încearcă din nou din opțiunile integrării.",
+      "reauth_successful": "Re-autentificarea s-a realizat cu succes",
+      "already_in_progress": "Configurarea este deja în curs. Finalizează configurarea existentă înainte de a începe din nou."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Reîmprospătarea token-urilor a eșuat: {error}",
       "runtime_missing": "Mediul de rulare al integrării nu este pregătit. Încearcă din nou după finalizarea configurării.",
       "no_vins": "Încă nu se cunoaște niciun VIN. Așteaptă ca fluxul să descopere un vehicul sau declanșează-l o dată manual.",
-      "invalid_int": "Introdu un număr întreg pozitiv",
       "invalid_client_id": "Introdu ID-ul de client BMW CarData.",
-      "mqtt_host_required": "Adresa brokerului este obligatorie când brokerul MQTT propriu este activat."
+      "mqtt_host_required": "Adresa brokerului este obligatorie când brokerul MQTT propriu este activat.",
+      "confirm": "Bifează caseta pentru a confirma.",
+      "reset_failed": "Resetarea containerului a eșuat: {error}",
+      "missing_token": "Nu există niciun token de acces. Autorizează din nou integrarea.",
+      "cleanup_failed": "Curățarea entităților a eșuat: {error}"
     },
     "abort": {
       "auth_failed": "Răspunsul de autorizare BMW a fost incomplet (lipsesc token-urile). Încearcă din nou.",
       "reauth_started": "Autorizarea a fost repornită. Finalizează noul flux de autentificare din notificare.",
       "reauth_device_code_failed": "BMW a respins cererea de autorizare a dispozitivului ({error}). Actualizează ID-ul de client în opțiunile integrării și încearcă din nou.",
       "reauth_missing_client_id": "Lipsește ID-ul de client pentru această intrare de integrare. Elimină și adaugă din nou integrarea pentru a o autoriza.",
-      "reauth_failed": "Reautorizarea nu a putut fi pornită. Încearcă din nou din opțiunile integrării."
+      "reauth_failed": "Reautorizarea nu a putut fi pornită. Încearcă din nou din opțiunile integrării.",
+      "unknown": "Eroare neașteptată"
     }
   }
 }

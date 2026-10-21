@@ -29,6 +29,7 @@ from custom_components.cardata.message_utils import (
     BOOLEAN_DESCRIPTORS,
     BOOLEAN_VALUE_MAP,
     MAX_TIMESTAMP_STRING_LENGTH,
+    is_within_catalogue_limits,
     normalize_boolean_value,
     sanitize_timestamp_string,
 )
@@ -153,3 +154,15 @@ class TestConstants:
         """Test that MAX_TIMESTAMP_STRING_LENGTH is reasonable."""
         assert MAX_TIMESTAMP_STRING_LENGTH >= 32  # ISO-8601 needs ~25 chars
         assert MAX_TIMESTAMP_STRING_LENGTH <= 128  # But not too large
+
+
+class TestCatalogueLimits:
+    """BMW's catalogue declares a range for some descriptors."""
+
+    DESCRIPTOR = "vehicle.drivetrain.avgElectricRangeConsumption"
+
+    def test_a_number_too_large_for_a_float_is_out_of_range(self):
+        assert is_within_catalogue_limits(self.DESCRIPTOR, 10**400) is False
+
+    def test_a_value_that_is_not_a_number_is_accepted(self):
+        assert is_within_catalogue_limits(self.DESCRIPTOR, "n/a") is True

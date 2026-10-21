@@ -141,6 +141,7 @@ async def _async_cleanup_on_failure(
         await runtime.coordinator.async_stop_watchdog()
 
         # Stop MQTT stream to prevent orphaned background thread
+        runtime.stream.shut_down()
         try:
             await asyncio.wait_for(runtime.stream.async_stop(), timeout=10.0)
         except TimeoutError:
@@ -201,8 +202,13 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             option_name="diagnostic_interval",
         )
 
-        debug_option = options.get(OPTION_DEBUG_LOG)
-        debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
+        # The switch is process wide, so it is on while any entry asks for it.
+        # Taking this entry's option alone let whichever entry set up last
+        # override the others.
+        debug_flag = any(
+            DEBUG_LOG if (debug_option := other.options.get(OPTION_DEBUG_LOG)) is None else bool(debug_option)
+            for other in hass.config_entries.async_entries(DOMAIN, include_disabled=False)
+        )
 
         set_debug_enabled(debug_flag)
 
@@ -318,12 +324,21 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 coordinator._allowed_vins,
                 externally_owned,
             )
+            # Look the devices up through this entry rather than by identifier:
+            # async_get_device_by_identifier only exists from HA 2026.8, and
+            # before that a device can belong to several entries at once.
+            own_devices = {
+                identifier[1]: device
+                for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id)
+                for identifier in device.identifiers
+                if identifier[0] == DOMAIN
+            }
             for vin in vins_to_remove:
                 coordinator.device_metadata.pop(vin, None)
                 coordinator.names.pop(vin, None)
                 # Also remove device from registry IF it belongs to this entry
                 # (was created by async_restore_vehicle_metadata for this entry)
-                device = device_registry.async_get_device_by_identifier((DOMAIN, vin), entry.entry_id)
+                device = own_devices.get(vin)
                 if device:
                     device_registry.async_remove_device(device.id)
                     _LOGGER.info(
@@ -415,7 +430,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             await refresh_tokens_for_entry(entry, session, manager, container_manager)
             refreshed_token = True
-        except CardataAuthError as err:
+        except (CardataAuthError, TimeoutError, aiohttp.ClientError) as err:
             _LOGGER.warning(
                 "Initial token refresh failed for entry %s: %s; continuing with stored token",
                 entry.entry_id,
@@ -541,9 +556,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Restore vehicle images from disk before platform setup (only after bootstrap)
         # This ensures images fetched during bootstrap are properly loaded into metadata
         # (bootstrap saves images but the dispatcher signal may not reach the image platform yet)
-        # Note: On restart, async_restore_vehicle_metadata already calls this, and the
-        # allowed_vins cleanup runs after - we must NOT call it again or it would
-        # re-add VINs that were just cleaned up (breaking multi-account setups)
+        # Note: On restart, async_restore_vehicle_metadata already calls this
         if bootstrap_completed:
             await async_restore_vehicle_images(hass, entry, coordinator)
 
@@ -680,6 +693,7 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await _cancel_task_with_timeout(task, name)
 
     # Stop MQTT stream with timeout protection
+    data.stream.shut_down()
     try:
         await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
     except TimeoutError:

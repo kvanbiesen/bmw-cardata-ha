@@ -121,6 +121,9 @@ async def async_ensure_valid_token(
 
     Returns:
         True if token is valid (or was successfully refreshed), False on failure
+
+    Raises:
+        TimeoutError, aiohttp.ClientError: the refresh could not reach BMW
     """
     expired, seconds_left = is_token_expired(entry, buffer_seconds)
 
@@ -138,6 +141,8 @@ async def async_ensure_valid_token(
     except CardataAuthError as err:
         _LOGGER.warning("Proactive token refresh failed: %s", err)
         return False
+    except (TimeoutError, aiohttp.ClientError):
+        raise
     except Exception as err:
         _LOGGER.exception("Unexpected error during proactive token refresh: %s", err)
         return False
@@ -425,15 +430,17 @@ async def handle_stream_error(
                 )
                 return
 
-            runtime.reauth_in_progress = True
-            runtime.last_reauth_attempt = now
-            runtime.reauth_pending = False
-            _LOGGER.warning("BMW stream unauthorized; starting reauth flow")
-
+            # Abort the old flow before taking the hold for the new one: its
+            # removal releases the hold it had.
             if runtime.reauth_flow_id:
                 with suppress(Exception):
                     hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
                 runtime.reauth_flow_id = None
+
+            runtime.reauth_in_progress = True
+            runtime.last_reauth_attempt = now
+            runtime.reauth_pending = False
+            _LOGGER.warning("BMW stream unauthorized; starting reauth flow")
 
             persistent_notification.async_create(
                 hass,

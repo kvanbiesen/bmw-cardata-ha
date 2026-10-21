@@ -63,7 +63,12 @@ def _install_aiohttp_stub() -> None:
         pass
 
     class ClientResponseError(ClientError):
-        pass
+        def __init__(self, request_info=None, history=(), *, status=0, message="", **_kwargs) -> None:
+            super().__init__(message)
+            self.request_info = request_info
+            self.history = history
+            self.status = status
+            self.message = message
 
     class ContentTypeError(ClientResponseError):
         pass
@@ -119,6 +124,8 @@ class FakeResponse:
     def __init__(self, status: int, data) -> None:
         self.status = status
         self._data = data
+        self.request_info = None
+        self.history = ()
 
     async def json(self, content_type=None):
         return self._data
@@ -269,7 +276,8 @@ def TestOneInput(data: bytes) -> None:
                 max_retries=fdp.ConsumeIntInRange(0, 3),
             )
         )
-    except device_flow.CardataAuthError:
+    except (device_flow.CardataAuthError, TimeoutError, aiohttp.ClientError):
+        # Once the retries are spent an outage is raised as it is
         pass
 
     if fdp.ConsumeBool():

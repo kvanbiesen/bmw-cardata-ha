@@ -8,28 +8,20 @@
       "authorize": {
         "title": "Godkend BMW CarData",
         "description": "Åbn {verification_url}, og indtast brugerkoden {user_code}, hvis du bliver bedt om det. Når du har godkendt enheden, skal du klikke på Indsend. Hvis godkendelsen allerede er gennemført, skal du klikke på Indsend igen for at fortsætte."
-      },
-      "blocked": {
-        "title": "Bootstrap deaktiveret på grund af API-hastighedsgrænse",
-        "description": "Integrationen har tidligere ramt BMW API'ets daglige hastighedsgrænse, og automatisk bootstrap (oprettelse og mapping af containere) er midlertidigt deaktiveret for {entry_title} indtil {until}. Du kan enten vente til dette tidspunkt og prøve igen eller rydde flaget nedenfor for at prøve igen med det samme (du kan risikere at ramme hastighedsgrænsen igen)."
-      },
-      "cleared": {
-        "title": "Nyt bootstrap-forsøg planlagt",
-        "description": "Du har ryddet det midlertidige deaktiveringsflag for {entry_title}. Integrationen vil forsøge bootstrap igen. Hvis den stadig rammer BMW API'ets hastighedsgrænse, deaktiveres bootstrap igen indtil nulstillingstidspunktet. Alternativt kan du bruge udviklertjenesten `cardata.clean_hv_containers` til at vise/slette gamle containere (vær opmærksom på API-hastighedsgrænser)."
-      },
-      "blocked_fallback": {
-        "description": "Automatisk bootstrap er deaktiveret indtil {until}. Ryd flaget for at prøve igen nu, eller annuller og prøv igen efter nulstillingstidspunktet."
       }
     },
     "error": {
       "authorization_failed": "BMW-godkendelsen blev ikke gennemført. Det kan ske, hvis du klikkede på 'Afvis', lukkede siden før godkendelsen, anmodningen udløb, eller BMW's servere midlertidigt havde problemer (det er ikke nødvendigvis din fejl). Fejloplysninger: {error}. Et nyt godkendelseslink er genereret nedenfor. Åbn det, godkend, og klik derefter på Indsend igen.",
-      "device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Kontrollér, at klient-ID'et er gyldigt, og prøv igen."
+      "device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Kontrollér, at klient-ID'et er gyldigt, og prøv igen.",
+      "invalid_client_id": "Indtast BMW CarData-klient-ID'et."
     },
     "abort": {
       "auth_failed": "BMW-godkendelsessvaret var ufuldstændigt (manglende tokens). Prøv igen.",
       "reauth_device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Opdatér klient-ID'et under Konfigurer > Start enhedsgodkendelse igen, eller fjern og tilføj integrationen igen.",
       "reauth_missing_client_id": "Klient-ID mangler for denne integration. Fjern og tilføj integrationen igen for at godkende den.",
-      "reauth_failed": "Godkendelse igen kunne ikke startes. Prøv igen fra integrationsindstillingerne."
+      "reauth_failed": "Godkendelse igen kunne ikke startes. Prøv igen fra integrationsindstillingerne.",
+      "reauth_successful": "Genautentificering lykkedes",
+      "already_in_progress": "Dette er allerede ved at blive konfigureret. Afslut den eksisterende konfiguration, før du starter forfra."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Opdatering af token mislykkedes: {error}",
       "runtime_missing": "Integrationens runtime er ikke klar. Prøv igen, når opsætningen er fuldført.",
       "no_vins": "Der er endnu ingen kendte VIN-numre. Vent på, at streamen finder et køretøj, eller udløs den manuelt én gang.",
-      "invalid_int": "Indtast et positivt heltal",
       "invalid_client_id": "Indtast BMW CarData-klient-ID'et.",
-      "mqtt_host_required": "Broker-vært skal angives, når brugerdefineret MQTT er aktiveret."
+      "mqtt_host_required": "Broker-vært skal angives, når brugerdefineret MQTT er aktiveret.",
+      "confirm": "Sæt flueben i feltet for at bekræfte.",
+      "reset_failed": "Nulstilling af container mislykkedes: {error}",
+      "missing_token": "Der er ingen adgangstoken. Godkend integrationen igen.",
+      "cleanup_failed": "Oprydning af entiteter mislykkedes: {error}"
     },
     "abort": {
       "auth_failed": "BMW-godkendelsessvaret var ufuldstændigt (manglende tokens). Prøv igen.",
       "reauth_started": "Godkendelsen er genstartet. Gennemfør det nye loginforløb fra notifikationen.",
       "reauth_device_code_failed": "BMW afviste anmodningen om enhedsgodkendelse ({error}). Opdatér klient-ID'et i integrationsindstillingerne, og prøv igen.",
       "reauth_missing_client_id": "Klient-ID mangler for denne integration. Fjern og tilføj integrationen igen for at godkende den.",
-      "reauth_failed": "Godkendelse igen kunne ikke startes. Prøv igen fra integrationsindstillingerne."
+      "reauth_failed": "Godkendelse igen kunne ikke startes. Prøv igen fra integrationsindstillingerne.",
+      "unknown": "Uventet fejl"
     }
   }
 }
