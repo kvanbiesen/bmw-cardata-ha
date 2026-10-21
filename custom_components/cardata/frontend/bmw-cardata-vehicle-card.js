@@ -68,7 +68,8 @@ const pickBarColor = (percent, normalColor, lowColor, threshold) => {
 const isOpenState = (stateObj) => {
   const state = normalizeState(stateObj);
   if (!state) return false;
-  return state.includes("open") || state === "on" || state === "true";
+  // A half open window reports INTERMEDIATE
+  return state.includes("open") || state === "intermediate" || state === "on" || state === "true";
 };
 
 const isOnState = (stateObj) => {
