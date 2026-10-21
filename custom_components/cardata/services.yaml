@@ -33,7 +33,7 @@ migrate_entity_ids:
       description: Optional config entry id to target. If omitted, runs for all entries.
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     force:
-      description: Force migration even if entities appear already migrated.
+      description: Also rename entity IDs that the integration did not generate, such as ones you picked yourself.
       selector:
         boolean:
     dry_run:
