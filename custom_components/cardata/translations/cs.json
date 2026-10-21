@@ -8,28 +8,20 @@
       "authorize": {
         "title": "Autorizovat BMW CarData",
         "description": "Otevřete {verification_url} a zadejte uživatelský kód {user_code}, pokud budete vyzváni. Jakmile zařízení schválíte, klikněte na Odeslat. Pokud už je schválení hotové, klikněte na Odeslat znovu a pokračujte."
-      },
-      "blocked": {
-        "title": "Bootstrap zakázán kvůli limitu API požadavků",
-        "description": "Integrace dříve dosáhla denního limitu API požadavků BMW a automatický bootstrap (vytvoření a mapování kontejnerů) byl dočasně zakázán pro {entry_title} do {until}. Můžete buď počkat do té doby a zkusit to znovu, nebo zrušit příznak níže a zkusit to hned (limit můžete vyčerpat znovu)."
-      },
-      "cleared": {
-        "title": "Naplánován další pokus o bootstrap",
-        "description": "Zrušili jste příznak dočasného zákazu pro {entry_title}. Integrace se o bootstrap pokusí znovu. Pokud limit API požadavků BMW opět vyčerpá, bootstrap bude znovu zakázán až do času obnovení limitu. Případně použijte vývojářskou službu `cardata.clean_hv_containers` k vypsání nebo smazání starých kontejnerů (mějte na paměti limity API požadavků)."
-      },
-      "blocked_fallback": {
-        "description": "Automatický bootstrap je zakázán do {until}. Zrušte příznak a zkuste to hned, nebo akci zrušte a zkuste to po obnovení limitu."
       }
     },
     "error": {
       "authorization_failed": "Autorizace BMW nebyla dokončena. To se může stát, pokud jste klikli na „Odmítnout“, zavřeli stránku před schválením, vypršel časový limit požadavku, nebo měly servery BMW dočasný výpadek (nemusí to být vaše chyba). Podrobnosti chyby: {error}. Níže byl vygenerován nový autorizační odkaz. Otevřete jej, schvalte a poté znovu klikněte na Odeslat.",
-      "device_code_failed": "BMW odmítlo požadavek na autorizaci zařízení ({error}). Zkontrolujte, že je ID klienta platné, a zkuste to znovu."
+      "device_code_failed": "BMW odmítlo požadavek na autorizaci zařízení ({error}). Zkontrolujte, že je ID klienta platné, a zkuste to znovu.",
+      "invalid_client_id": "Zadejte ID klienta pro BMW CarData."
     },
     "abort": {
       "auth_failed": "Autorizační odpověď BMW byla neúplná (chybí tokeny). Zkuste to prosím znovu.",
       "reauth_device_code_failed": "BMW odmítlo požadavek na autorizaci zařízení ({error}). Aktualizujte ID klienta v Nastavit > Znovu spustit autorizaci zařízení, nebo integraci odeberte a znovu přidejte.",
       "reauth_missing_client_id": "Pro tuto položku integrace chybí ID klienta. Odeberte integraci a znovu ji přidejte, abyste ji autorizovali.",
-      "reauth_failed": "Opětovnou autorizaci se nepodařilo spustit. Zkuste to znovu z možností integrace."
+      "reauth_failed": "Opětovnou autorizaci se nepodařilo spustit. Zkuste to znovu z možností integrace.",
+      "reauth_successful": "Opětovné ověření bylo úspěšné",
+      "already_in_progress": "Nastavení již probíhá. Před opětovným spuštěním dokončete stávající nastavení."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Obnovení tokenů selhalo: {error}",
       "runtime_missing": "Běhové prostředí integrace není připraveno. Zkuste to znovu po dokončení nastavení.",
       "no_vins": "Zatím nejsou známa žádná VIN. Počkejte, až stream objeví vozidlo, nebo jej jednou spusťte ručně.",
-      "invalid_int": "Zadejte kladné celé číslo",
       "invalid_client_id": "Zadejte ID klienta pro BMW CarData.",
-      "mqtt_host_required": "Adresa brokeru je povinná, když je zapnutý vlastní MQTT broker."
+      "mqtt_host_required": "Adresa brokeru je povinná, když je zapnutý vlastní MQTT broker.",
+      "confirm": "Pro potvrzení zaškrtněte políčko.",
+      "reset_failed": "Resetování kontejneru selhalo: {error}",
+      "missing_token": "Není k dispozici žádný přístupový token. Autorizujte integraci znovu.",
+      "cleanup_failed": "Vyčištění entit selhalo: {error}"
     },
     "abort": {
       "auth_failed": "Autorizační odpověď BMW byla neúplná (chybí tokeny). Zkuste to prosím znovu.",
       "reauth_started": "Autorizace byla restartována. Dokončete nové přihlášení z oznámení.",
       "reauth_device_code_failed": "BMW odmítlo požadavek na autorizaci zařízení ({error}). Aktualizujte ID klienta v možnostech integrace a zkuste to znovu.",
       "reauth_missing_client_id": "Pro tuto položku integrace chybí ID klienta. Odeberte integraci a znovu ji přidejte, abyste ji autorizovali.",
-      "reauth_failed": "Opětovnou autorizaci se nepodařilo spustit. Zkuste to znovu z možností integrace."
+      "reauth_failed": "Opětovnou autorizaci se nepodařilo spustit. Zkuste to znovu z možností integrace.",
+      "unknown": "Neočekávaná chyba"
     }
   }
 }

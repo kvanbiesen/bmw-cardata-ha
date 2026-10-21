@@ -8,28 +8,20 @@
       "authorize": {
         "title": "BMW CarData engedélyezése",
         "description": "Nyissa meg a következőt: {verification_url}, és adja meg a(z) {user_code} felhasználói kódot, ha a rendszer kéri. Miután jóváhagyta az eszközt, kattintson a Mehet gombra. Ha a jóváhagyás már megtörtént, kattintson újra a Mehet gombra a folytatáshoz."
-      },
-      "blocked": {
-        "title": "A bootstrap letiltva az API-hívási korlát miatt",
-        "description": "Az integráció korábban elérte a BMW napi API-hívási korlátját, ezért az automatikus bootstrap (a konténerek létrehozása és hozzárendelése) átmenetileg le van tiltva a következőhöz: {entry_title}, eddig: {until}. Megvárhatja ezt az időpontot és újrapróbálkozhat, vagy törölheti az alábbi jelzőt az azonnali újrapróbálkozáshoz (a korlátot ismét elérheti)."
-      },
-      "cleared": {
-        "title": "Újabb bootstrap-kísérlet ütemezve",
-        "description": "Törölte a(z) {entry_title} átmeneti letiltási jelzőjét. Az integráció újra megkísérli a bootstrapot. Ha továbbra is eléri a BMW API-hívási korlátját, a bootstrap ismét letiltásra kerül a korlát visszaállításáig. Másik lehetőségként használja a `cardata.clean_hv_containers` fejlesztői szolgáltatást a régi konténerek listázásához vagy törléséhez (ügyeljen az API-hívási korlátokra)."
-      },
-      "blocked_fallback": {
-        "description": "Az automatikus bootstrap le van tiltva eddig: {until}. Törölje a jelzőt az azonnali újrapróbálkozáshoz, vagy szakítsa meg, és próbálja újra a visszaállítás után."
       }
     },
     "error": {
       "authorization_failed": "A BMW engedélyezése nem fejeződött be. Ez akkor fordulhat elő, ha az „Elutasítás” lehetőségre kattintott, bezárta az oldalt a jóváhagyás előtt, a kérés túllépte az időkorlátot, vagy a BMW kiszolgálóinál átmeneti hiba lépett fel (nem mindig az Ön hibája). Hibarészletek: {error}. Alább új engedélyezési hivatkozás jött létre. Nyissa meg, hagyja jóvá, majd kattintson újra a Mehet gombra.",
-      "device_code_failed": "A BMW elutasította az eszközengedélyezési kérést ({error}). Ellenőrizze, hogy az ügyfélazonosító érvényes-e, majd próbálja újra."
+      "device_code_failed": "A BMW elutasította az eszközengedélyezési kérést ({error}). Ellenőrizze, hogy az ügyfélazonosító érvényes-e, majd próbálja újra.",
+      "invalid_client_id": "Adja meg a BMW CarData ügyfélazonosítót."
     },
     "abort": {
       "auth_failed": "A BMW engedélyezési válasza hiányos volt (hiányoznak a tokenek). Próbálja újra.",
       "reauth_device_code_failed": "A BMW elutasította az eszközengedélyezési kérést ({error}). Frissítse az ügyfélazonosítót a Konfigurálás > Eszközengedélyezés újraindítása menüpontban, vagy távolítsa el és adja hozzá újra az integrációt.",
       "reauth_missing_client_id": "Ehhez az integrációs bejegyzéshez hiányzik az ügyfélazonosító. Távolítsa el és adja hozzá újra az integrációt az ismételt engedélyezéshez.",
-      "reauth_failed": "Az ismételt engedélyezést nem sikerült elindítani. Próbálja újra az integráció beállításaiból."
+      "reauth_failed": "Az ismételt engedélyezést nem sikerült elindítani. Próbálja újra az integráció beállításaiból.",
+      "reauth_successful": "Az újrahitelesítés sikeres volt",
+      "already_in_progress": "Ez már konfigurálás alatt áll. Fejezze be a meglévő konfigurációt, mielőtt újrakezdené."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "A tokenek frissítése sikertelen: {error}",
       "runtime_missing": "Az integráció futtatókörnyezete nem áll készen. Próbálja újra a beállítás befejezése után.",
       "no_vins": "Még nem ismert egyetlen alvázszám (VIN) sem. Várja meg, amíg az adatfolyam felfedez egy járművet, vagy indítsa el egyszer kézzel.",
-      "invalid_int": "Adjon meg egy pozitív egész számot",
       "invalid_client_id": "Adja meg a BMW CarData ügyfélazonosítót.",
-      "mqtt_host_required": "A bróker gazdagépét meg kell adni, ha a saját MQTT-bróker be van kapcsolva."
+      "mqtt_host_required": "A bróker gazdagépét meg kell adni, ha a saját MQTT-bróker be van kapcsolva.",
+      "confirm": "A megerősítéshez jelölje be a négyzetet.",
+      "reset_failed": "A konténer visszaállítása sikertelen: {error}",
+      "missing_token": "Nincs elérhető hozzáférési token. Engedélyezze újra az integrációt.",
+      "cleanup_failed": "Az entitások törlése sikertelen: {error}"
     },
     "abort": {
       "auth_failed": "A BMW engedélyezési válasza hiányos volt (hiányoznak a tokenek). Próbálja újra.",
       "reauth_started": "Az engedélyezés újraindult. Fejezze be az új bejelentkezési folyamatot az értesítésből.",
       "reauth_device_code_failed": "A BMW elutasította az eszközengedélyezési kérést ({error}). Frissítse az ügyfélazonosítót az integráció beállításaiban, majd próbálja újra.",
       "reauth_missing_client_id": "Ehhez az integrációs bejegyzéshez hiányzik az ügyfélazonosító. Távolítsa el és adja hozzá újra az integrációt az ismételt engedélyezéshez.",
-      "reauth_failed": "Az ismételt engedélyezést nem sikerült elindítani. Próbálja újra az integráció beállításaiból."
+      "reauth_failed": "Az ismételt engedélyezést nem sikerült elindítani. Próbálja újra az integráció beállításaiból.",
+      "unknown": "Váratlan hiba"
     }
   }
 }

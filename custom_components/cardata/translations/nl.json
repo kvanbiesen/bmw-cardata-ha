@@ -8,28 +8,20 @@
       "authorize": {
         "title": "BMW CarData goedkeuring",
         "description": "Open {verification_url} en voer de gebruikerscode {user_code} in als daarom wordt gevraagd. Zodra u het apparaat heeft goedgekeurd, klikt u op Verzenden. Als de goedkeuring al is voltooid, klikt u nogmaals op Verzenden om door te gaan."
-      },
-      "blocked": {
-        "title": "Bootstrap uitgeschakeld vanwege API-beperkingen",
-        "description": "De integratie heeft eerder de dagelijkse BMW API-beperkingen bereikt en de automatische bootstrap (container aanmaken en mapping) is tijdelijk uitgeschakeld voor {entry_title} tot {until}. U kan wachten tot dan en het opnieuw proberen, of het vinkje hieronder wissen om het direct opnieuw te proberen (u kunt de beperkingen opnieuw bereiken)."
-      },
-      "cleared": {
-        "title": "Bootstrap-poging gepland",
-        "description": "U heeft bootstrap voor {entry_title} uitgeschakeld. De integratie zal opnieuw proberen te bootstrappen. Als de BMW API-beperking opnieuw worden bereikt, zal de integratie de bootstrap weer uitschakelen tot de resettijd. U kunt ook de ontwikkelaarservice `cardata.clean_hv_containers` gebruiken om oude containers te bekijken/verwijderen (let op API-beperking)."
-      },
-      "blocked_fallback": {
-        "description": "Automatische bootstrap is uitgeschakeld tot {until}. Wis het vinkje om het nu opnieuw te proberen, of annuleer en probeer het opnieuw na de reset."
       }
     },
     "error": {
       "authorization_failed": "BMW-goedkeuring is niet voltooid. Dit kan gebeuren als u op 'Weigeren' heeft geklikt, de pagina heeft gesloten voordat u goedkeurde, de aanvraag is verlopen, of doordat de servers van BMW tijdelijk haperden (dit is niet altijd uw fout). Foutdetails: {error}. Hieronder is een nieuwe goedkeuringslink gegenereerd. Open deze en keur goed, klik daarna opnieuw op Verzenden.",
-      "device_code_failed": "BMW heeft de goedkeuringaanvraag afgewezen ({error}). Controleer of de client-ID geldig is en probeer het opnieuw."
+      "device_code_failed": "BMW heeft de goedkeuringaanvraag afgewezen ({error}). Controleer of de client-ID geldig is en probeer het opnieuw.",
+      "invalid_client_id": "Voer de BMW CarData client-ID in."
     },
     "abort": {
       "auth_failed": "De BMW-goedkeuring was onvolledig (ontbrekende tokens). Probeer het opnieuw.",
       "reauth_device_code_failed": "BMW heeft de goedkeuringaanvraag afgewezen ({error}). Werk de client-ID bij onder Configureren > Apparaatgoedkeuring opnieuw starten, of verwijder de integratie en voeg deze opnieuw toe.",
       "reauth_missing_client_id": "Client-ID ontbreekt voor deze integratie. Verwijder de integratie en voeg deze opnieuw toe om opnieuw te autoriseren.",
-      "reauth_failed": "Herautorisatie kon niet worden gestart. Probeer het opnieuw vanuit de integratieopties."
+      "reauth_failed": "Herautorisatie kon niet worden gestart. Probeer het opnieuw vanuit de integratieopties.",
+      "reauth_successful": "Herauthenticatie geslaagd",
+      "already_in_progress": "Dit wordt al geconfigureerd. Rond de bestaande configuratie af voordat u opnieuw begint."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Token vernieuwen mislukt: {error}",
       "runtime_missing": "De integratie-runtime is niet gereed. Probeer het opnieuw nadat de installatie is voltooid.",
       "no_vins": "Er zijn nog geen VIN's bekend. Wacht tot de stream een voertuig ontdekt of activeer het eenmalig handmatig.",
-      "invalid_int": "Voer een positief geheel getal in",
       "invalid_client_id": "Voer de BMW CarData client-ID in.",
-      "mqtt_host_required": "Broker-host is vereist wanneer de aangepaste MQTT-broker is ingeschakeld."
+      "mqtt_host_required": "Broker-host is vereist wanneer de aangepaste MQTT-broker is ingeschakeld.",
+      "confirm": "Vink het vakje aan om te bevestigen.",
+      "reset_failed": "Container resetten mislukt: {error}",
+      "missing_token": "Er is geen toegangstoken beschikbaar. Autoriseer de integratie opnieuw.",
+      "cleanup_failed": "Entiteiten opruimen mislukt: {error}"
     },
     "abort": {
       "auth_failed": "De BMW-goedkeuring was onvolledig (ontbrekende tokens). Probeer het opnieuw.",
       "reauth_started": "Goedkeuring opnieuw gestart. Voltooi de nieuwe aanmeldprocedure vanuit de melding.",
       "reauth_device_code_failed": "BMW heeft de goedkeuringaanvraag afgewezen ({error}). Werk de client-ID bij onder Configureren > Apparaatgoedkeuring opnieuw starten, of verwijder de integratie en voeg deze opnieuw toe.",
       "reauth_missing_client_id": "Client-ID ontbreekt voor deze integratie. Verwijder de integratie en voeg deze opnieuw toe om opnieuw te autoriseren.",
-      "reauth_failed": "Goedkeuring kon niet worden gestart. Probeer het opnieuw vanuit de integratieopties."
+      "reauth_failed": "Goedkeuring kon niet worden gestart. Probeer het opnieuw vanuit de integratieopties.",
+      "unknown": "Onverwachte fout"
     }
   }
 }

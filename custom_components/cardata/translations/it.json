@@ -8,28 +8,20 @@
       "authorize": {
         "title": "Autorizza BMW CarData",
         "description": "Apri {verification_url} e inserisci il codice utente {user_code} se richiesto. Una volta approvato il dispositivo, fai clic su Invia. Se l'approvazione è già stata completata, fai nuovamente clic su Invia per continuare."
-      },
-      "blocked": {
-        "title": "Bootstrap disabilitato a causa del limite di velocità API",
-        "description": "L'integrazione ha precedentemente raggiunto il limite giornaliero dell'API BMW e il bootstrap automatico (creazione container e mappatura) è stato temporaneamente disabilitato per {entry_title} fino a {until}. Puoi attendere fino a quel momento e riprovare, oppure cancellare il flag qui sotto per riprovare immediatamente (potresti raggiungere nuovamente il limite di velocità)."
-      },
-      "cleared": {
-        "title": "Nuovo tentativo di bootstrap pianificato",
-        "description": "Hai cancellato il flag di disabilitazione temporanea per {entry_title}. L'integrazione tenterà nuovamente il bootstrap. Se il limite dell'API BMW viene raggiunto di nuovo, l'integrazione disabiliterà il bootstrap fino all'orario di ripristino. In alternativa, usa il servizio sviluppatore `cardata.clean_hv_containers` per elencare/eliminare vecchi container (fai attenzione ai limiti dell'API)."
-      },
-      "blocked_fallback": {
-        "description": "Il bootstrap automatico è disabilitato fino a {until}. Cancella il flag per riprovare ora, oppure annulla e riprova dopo il ripristino."
       }
     },
     "error": {
       "authorization_failed": "L'autorizzazione BMW non è stata completata. Questo può accadere se hai cliccato su \"Rifiuta\", hai chiuso la pagina prima di approvare, la richiesta è scaduta, oppure i server BMW hanno avuto un problema temporaneo (non è sempre colpa tua). Dettagli dell'errore: {error}. Qui sotto è stato generato un nuovo link di autorizzazione: aprilo e approva, poi clicca di nuovo su Invia.",
-      "device_code_failed": "BMW ha rifiutato la richiesta di autorizzazione del dispositivo ({error}). Verifica che l'ID client sia valido e riprova."
+      "device_code_failed": "BMW ha rifiutato la richiesta di autorizzazione del dispositivo ({error}). Verifica che l'ID client sia valido e riprova.",
+      "invalid_client_id": "Inserisci l'ID client BMW CarData."
     },
     "abort": {
       "auth_failed": "La risposta di autorizzazione BMW era incompleta (token mancanti). Riprova.",
       "reauth_device_code_failed": "BMW ha rifiutato la richiesta di autorizzazione del dispositivo ({error}). Aggiorna l'ID client in Configura > Riavvia autorizzazione dispositivo, oppure rimuovi e aggiungi nuovamente l'integrazione.",
       "reauth_missing_client_id": "L'ID client manca per questa voce di integrazione. Rimuovi e aggiungi nuovamente l'integrazione per autorizzarti di nuovo.",
-      "reauth_failed": "La riautorizzazione non è stata avviata. Riprova dalle opzioni dell'integrazione."
+      "reauth_failed": "La riautorizzazione non è stata avviata. Riprova dalle opzioni dell'integrazione.",
+      "reauth_successful": "La riautenticazione è avvenuta con successo",
+      "already_in_progress": "La configurazione è già in corso. Completa quella attuale prima di iniziarne un’altra."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Aggiornamento token fallito: {error}",
       "runtime_missing": "L'ambiente di esecuzione dell'integrazione non è pronto. Riprova dopo il completamento della configurazione.",
       "no_vins": "Nessun VIN è ancora noto. Attendi che lo stream rilevi un veicolo o attivalo manualmente una volta.",
-      "invalid_int": "Inserisci un numero intero positivo",
       "invalid_client_id": "Inserisci l'ID client BMW CarData.",
-      "mqtt_host_required": "L'host del broker è obbligatorio quando il broker MQTT personalizzato è abilitato."
+      "mqtt_host_required": "L'host del broker è obbligatorio quando il broker MQTT personalizzato è abilitato.",
+      "confirm": "Seleziona la casella per confermare.",
+      "reset_failed": "Ripristino del container fallito: {error}",
+      "missing_token": "Nessun token di accesso disponibile. Autorizza di nuovo l'integrazione.",
+      "cleanup_failed": "Pulizia delle entità fallita: {error}"
     },
     "abort": {
       "auth_failed": "La risposta di autorizzazione BMW era incompleta (token mancanti). Riprova.",
       "reauth_started": "Autorizzazione riavviata. Completa il nuovo flusso di accesso dalla notifica.",
       "reauth_device_code_failed": "BMW ha rifiutato la richiesta di autorizzazione del dispositivo ({error}). Aggiorna l'ID client nelle opzioni dell'integrazione e riprova.",
       "reauth_missing_client_id": "L'ID client manca per questa voce di integrazione. Rimuovi e aggiungi nuovamente l'integrazione per autorizzarti di nuovo.",
-      "reauth_failed": "La riautorizzazione non è stata avviata. Riprova dalle opzioni dell'integrazione."
+      "reauth_failed": "La riautorizzazione non è stata avviata. Riprova dalle opzioni dell'integrazione.",
+      "unknown": "Errore imprevisto"
     }
   }
 }

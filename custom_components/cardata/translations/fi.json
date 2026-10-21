@@ -8,28 +8,20 @@
       "authorize": {
         "title": "Valtuuta BMW CarData",
         "description": "Avaa {verification_url} ja anna käyttäjäkoodi {user_code}, jos sitä kysytään. Kun olet hyväksynyt laitteen, napsauta Lähetä. Jos hyväksyntä on jo tehty, napsauta Lähetä uudelleen jatkaaksesi."
-      },
-      "blocked": {
-        "title": "Bootstrap poistettu käytöstä API-kutsurajan vuoksi",
-        "description": "Integraatio on aiemmin saavuttanut BMW:n päivittäisen API-kutsurajan, ja automaattinen bootstrap (containerien luonti ja määritys) on väliaikaisesti poistettu käytöstä kohteelle {entry_title} {until} asti. Voit joko odottaa siihen asti ja yrittää uudelleen tai poistaa alla olevan merkinnän yrittääksesi heti (kutsuraja voi tulla vastaan uudestaan)."
-      },
-      "cleared": {
-        "title": "Uusi bootstrap-yritys ajastettu",
-        "description": "Olet poistanut kohteen {entry_title} väliaikaisen eston merkinnän. Integraatio yrittää bootstrapia uudelleen. Jos BMW:n API-kutsuraja tulee edelleen vastaan, bootstrap poistetaan taas käytöstä nollausaikaan asti. Vaihtoehtoisesti voit käyttää kehittäjäpalvelua `cardata.clean_hv_containers` vanhojen containerien listaamiseen tai poistamiseen (huomioi API-kutsurajat)."
-      },
-      "blocked_fallback": {
-        "description": "Automaattinen bootstrap on poistettu käytöstä {until} asti. Poista merkintä yrittääksesi nyt tai peruuta ja yritä uudelleen nollauksen jälkeen."
       }
     },
     "error": {
       "authorization_failed": "BMW-valtuutusta ei saatu päätökseen. Näin voi käydä, jos napsautit ”Hylkää”, suljit sivun ennen hyväksyntää, pyyntö aikakatkaistiin tai BMW:n palvelimissa oli tilapäinen häiriö (vika ei ole aina sinun). Virheen tiedot: {error}. Alle on luotu uusi valtuutuslinkki. Avaa se ja hyväksy, napsauta sitten Lähetä uudelleen.",
-      "device_code_failed": "BMW hylkäsi laitevaltuutuspyynnön ({error}). Tarkista, että asiakastunnus on kelvollinen, ja yritä uudelleen."
+      "device_code_failed": "BMW hylkäsi laitevaltuutuspyynnön ({error}). Tarkista, että asiakastunnus on kelvollinen, ja yritä uudelleen.",
+      "invalid_client_id": "Anna BMW CarData -asiakastunnus."
     },
     "abort": {
       "auth_failed": "BMW:n valtuutusvastaus oli puutteellinen (tokenit puuttuvat). Yritä uudelleen.",
       "reauth_device_code_failed": "BMW hylkäsi laitevaltuutuspyynnön ({error}). Päivitä asiakastunnus kohdasta Määrittele > Käynnistä laitevaltuutus uudelleen tai poista integraatio ja lisää se uudelleen.",
       "reauth_missing_client_id": "Tältä integraation tietueelta puuttuu asiakastunnus. Poista integraatio ja lisää se uudelleen valtuuttaaksesi sen.",
-      "reauth_failed": "Uudelleenvaltuutusta ei voitu käynnistää. Yritä uudelleen integraation asetuksista."
+      "reauth_failed": "Uudelleenvaltuutusta ei voitu käynnistää. Yritä uudelleen integraation asetuksista.",
+      "reauth_successful": "Uudelleentodennus onnistui",
+      "already_in_progress": "Tätä määritetään jo. Viimeistele nykyinen määritys ennen kuin aloitat uudelleen."
     }
   },
   "options": {
@@ -83,16 +75,20 @@
       "refresh_failed": "Tokenien päivitys epäonnistui: {error}",
       "runtime_missing": "Integraation ajonaikainen ympäristö ei ole valmis. Yritä uudelleen, kun asennus on valmis.",
       "no_vins": "Yhtään VIN-numeroa ei ole vielä tiedossa. Odota, että tietovirta löytää ajoneuvon, tai käynnistä se kerran manuaalisesti.",
-      "invalid_int": "Anna positiivinen kokonaisluku",
       "invalid_client_id": "Anna BMW CarData -asiakastunnus.",
-      "mqtt_host_required": "Brokerin osoite vaaditaan, kun oma MQTT-broker on käytössä."
+      "mqtt_host_required": "Brokerin osoite vaaditaan, kun oma MQTT-broker on käytössä.",
+      "confirm": "Vahvista valitsemalla valintaruutu.",
+      "reset_failed": "Säilön nollaus epäonnistui: {error}",
+      "missing_token": "Käyttötunnusta ei ole saatavilla. Valtuuta integraatio uudelleen.",
+      "cleanup_failed": "Entiteettien siivous epäonnistui: {error}"
     },
     "abort": {
       "auth_failed": "BMW:n valtuutusvastaus oli puutteellinen (tokenit puuttuvat). Yritä uudelleen.",
       "reauth_started": "Valtuutus käynnistettiin uudelleen. Viimeistele uusi kirjautuminen ilmoituksesta.",
       "reauth_device_code_failed": "BMW hylkäsi laitevaltuutuspyynnön ({error}). Päivitä asiakastunnus integraation asetuksissa ja yritä uudelleen.",
       "reauth_missing_client_id": "Tältä integraation tietueelta puuttuu asiakastunnus. Poista integraatio ja lisää se uudelleen valtuuttaaksesi sen.",
-      "reauth_failed": "Uudelleenvaltuutusta ei voitu käynnistää. Yritä uudelleen integraation asetuksista."
+      "reauth_failed": "Uudelleenvaltuutusta ei voitu käynnistää. Yritä uudelleen integraation asetuksista.",
+      "unknown": "Odottamaton virhe"
     }
   }
 }
