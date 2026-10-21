@@ -68,6 +68,8 @@ async def test_user_flow_success(hass):
             "custom_components.cardata.device_flow.poll_for_tokens",
             AsyncMock(return_value=TOKEN_DATA),
         ) as mock_poll,
+        # The created entry is set up right away; that would reach BMW for real
+        patch("custom_components.cardata.async_setup_entry", AsyncMock(return_value=True)),
     ):
         init_result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
         assert init_result["type"] == FlowResultType.FORM
