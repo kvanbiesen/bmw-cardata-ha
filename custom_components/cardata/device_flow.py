@@ -121,7 +121,10 @@ async def poll_for_tokens(
                 error = data_dict.get("error")
                 if error in {"authorization_pending", "slow_down"}:
                     consecutive_500s = 0  # Reset counter on normal pending response
-                    await asyncio.sleep(interval if error == "authorization_pending" else interval + 5)
+                    if error == "slow_down":
+                        # RFC 8628: the longer interval holds for every later request too
+                        interval += 5
+                    await asyncio.sleep(interval)
                     continue
 
                 # Handle 500 errors with retry logic (BMW's API can be flaky)

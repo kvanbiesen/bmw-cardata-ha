@@ -23,7 +23,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Tests for telling a refused token refresh apart from an outage."""
+"""Tests for the token endpoint calls: refresh errors and device flow polling."""
 
 from unittest.mock import MagicMock, patch
 
@@ -103,3 +103,31 @@ async def test_a_refused_refresh_token_is_an_auth_failure() -> None:
     with pytest.raises(CardataAuthError):
         await _refresh(session)
     assert session.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_slow_down_lengthens_every_later_poll() -> None:
+    """RFC 8628: after slow_down the interval stays 5 s longer."""
+    replies = iter(
+        [
+            (400, {"error": "slow_down"}),
+            (400, {"error": "authorization_pending"}),
+            (200, {"access_token": "token"}),
+        ]
+    )
+
+    class _PollSession:
+        def post(self, *args, **kwargs):
+            return _Response(*next(replies))
+
+    sleeps = []
+
+    async def _record(delay):
+        sleeps.append(delay)
+
+    with patch.object(device_flow.asyncio, "sleep", _record):
+        await device_flow.poll_for_tokens(
+            _PollSession(), client_id="client", device_code="device", code_verifier="verifier", interval=5
+        )
+
+    assert sleeps == [10, 10]
