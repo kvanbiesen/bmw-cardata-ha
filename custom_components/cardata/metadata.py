@@ -230,7 +230,11 @@ async def async_fetch_and_store_vehicle_images(
         try:
             # CRITICAL: Check if file already exists
             file_size = await hass.async_add_executor_job(lambda p: p.stat().st_size if p.exists() else -1, image_path)
-            if file_size >= 0:
+            if file_size == 0:
+                # Empty marker left by an earlier 404: BMW has no image for this car
+                _LOGGER.debug("No vehicle image available for %s (marker file), skipping", redacted_vin)
+                continue
+            if file_size > 0:
                 _LOGGER.debug(
                     "Vehicle image file already exists for %s (%d bytes) - skipping API call", redacted_vin, file_size
                 )
