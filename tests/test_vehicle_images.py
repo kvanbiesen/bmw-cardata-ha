@@ -99,3 +99,17 @@ async def test_the_404_marker_is_not_taken_for_an_image(hass):
 
     assert "vehicle_image_path" not in coordinator.device_metadata[OWN_VIN]
     session.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_restore_leaves_the_stored_basic_data_alone(hass):
+    """The image path is found on disk at every start; it does not belong in BMW's payload."""
+    entry = MockConfigEntry(domain=DOMAIN, data={VEHICLE_METADATA: {OWN_VIN: {"name": "car"}}})
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(device_metadata={OWN_VIN: {}}, signal_new_image="test_new_image")
+
+    await _write_image(hass, OWN_VIN, b"png")
+    await async_restore_vehicle_images(hass, entry, coordinator)
+
+    assert entry.data[VEHICLE_METADATA] == {OWN_VIN: {"name": "car"}}
+    assert coordinator.device_metadata[OWN_VIN]["vehicle_image_path"].endswith(f"{OWN_VIN}.png")
