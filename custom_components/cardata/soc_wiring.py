@@ -53,6 +53,7 @@ from .const import (
     DESC_REMAINING_FUEL,
     DESC_SOC_DISPLAYED,
     DESC_SOC_HEADER,
+    DESC_SOC_TARGET,
     DESC_TRAVELLED_DISTANCE,
     DESC_TRIP_HVSOC,
     DOMAIN,
@@ -334,6 +335,17 @@ def _parse_power_kw(value: Any, unit: str) -> float | None:
         return None
 
 
+def _target_soc(vehicle_state: dict[str, DescriptorState]) -> float | None:
+    """Return the charge target in percent, if BMW reports one."""
+    state = vehicle_state.get(DESC_SOC_TARGET)
+    if state is None or state.value is None:
+        return None
+    try:
+        return float(state.value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _reported_power_kw(vehicle_state: dict[str, DescriptorState]) -> float | None:
     """Return BMW's own charging power reading in kW, if it reports one."""
     state = vehicle_state.get(DESC_CHARGING_POWER)
@@ -601,13 +613,7 @@ def anchor_soc_session(
         _LOGGER.debug("Cannot anchor session for %s: no capacity data available", redact_vin(vin))
         return
 
-    target_soc: float | None = None
-    target_state = vehicle_state.get("vehicle.powertrain.electric.battery.stateOfCharge.target")
-    if target_state and target_state.value is not None:
-        try:
-            target_soc = float(target_state.value)
-        except (TypeError, ValueError):
-            pass
+    target_soc = _target_soc(vehicle_state)
 
     magic_soc.update_battery_capacity(vin, capacity_kwh)
     charging_method = soc_predictor.get_charging_method(vin) or "AC"
@@ -653,13 +659,7 @@ def end_soc_session(
         except (TypeError, ValueError):
             pass
 
-    target_state = vehicle_state.get("vehicle.powertrain.electric.battery.stateOfCharge.target")
-    target_soc = None
-    if target_state and target_state.value is not None:
-        try:
-            target_soc = float(target_state.value)
-        except (TypeError, ValueError):
-            pass
+    target_soc = _target_soc(vehicle_state)
 
     if current_soc is None:
         current_soc = soc_predictor._last_predicted_soc.get(vin)
@@ -838,6 +838,13 @@ def process_soc_descriptors(
                         )
                 if magic_soc_pred.has_signaled_magic_soc_entity(vin):
                     if pending.add_update(vin, MAGIC_SOC_DESCRIPTOR):
+                        schedule_debounce = True
+
+        elif descriptor == DESC_SOC_TARGET:
+            target_soc = _target_soc(vehicle_state)
+            if target_soc is not None and soc_predictor.set_target_soc(vin, target_soc):
+                if soc_predictor.is_charging(vin) and soc_predictor.has_signaled_entity(vin):
+                    if pending.add_update(vin, PREDICTED_SOC_DESCRIPTOR):
                         schedule_debounce = True
 
         elif descriptor == "vehicle.drivetrain.electricEngine.charging.method":

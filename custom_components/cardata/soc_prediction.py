@@ -369,6 +369,27 @@ class SOCPredictor:
                     session.charging_method,
                 )
 
+    def set_target_soc(self, vin: str, target_soc: float) -> bool:
+        """Follow a charge target changed while the session runs.
+
+        The target is captured when the session is anchored, and a raised one
+        would otherwise keep the prediction pinned at the old ceiling.
+
+        Returns:
+            True if the active session's target changed
+        """
+        session = self._sessions.get(vin)
+        if session is None or session.target_soc == target_soc:
+            return False
+        _LOGGER.debug(
+            "SOC: Charge target changed for %s: %s -> %.0f%%",
+            redact_vin(vin),
+            session.target_soc,
+            target_soc,
+        )
+        session.target_soc = target_soc
+        return True
+
     def update_power_reading(
         self,
         vin: str,

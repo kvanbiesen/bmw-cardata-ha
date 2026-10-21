@@ -40,6 +40,7 @@ from custom_components.cardata.const import (
     DESC_CHARGING_POWER,
     DESC_CHARGING_STATUS,
     DESC_CHARGING_TIME_REMAINING,
+    DESC_SOC_TARGET,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.soc_prediction import SOCPredictor
@@ -538,3 +539,34 @@ class TestDcPowerUnit:
 
         power_kw = coordinator._soc_predictor.update_power_reading.call_args.args[1]
         assert power_kw == 50.0
+
+
+class TestChargeTargetChange:
+    """The target is captured at the anchor; a change mid-charge must reach the session."""
+
+    def _charging(self, target):
+        predictor = SOCPredictor()
+        predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+        predictor.anchor_session("VIN", 70.0, 50.0, "AC", target_soc=target)
+        # Enough energy to carry the prediction well past 80%
+        predictor._sessions["VIN"].total_energy_kwh = 10.0
+        return predictor
+
+    def test_a_raised_target_releases_the_prediction(self):
+        predictor = self._charging(80.0)
+        assert predictor.get_predicted_soc("VIN") == 80.0
+
+        assert predictor.set_target_soc("VIN", 100.0) is True
+        assert predictor.get_predicted_soc("VIN") > 80.0
+
+    def test_an_unchanged_target_is_not_reported(self):
+        predictor = self._charging(80.0)
+        assert predictor.set_target_soc("VIN", 80.0) is False
+
+    def test_the_wiring_forwards_a_new_target(self):
+        coordinator = _wiring_coordinator()
+        vehicle_state = {DESC_SOC_TARGET: _state(100, unit="%")}
+
+        process_soc_descriptors(coordinator, "VIN", {DESC_SOC_TARGET: {"value": 100}}, vehicle_state)
+
+        coordinator._soc_predictor.set_target_soc.assert_called_once_with("VIN", 100.0)
