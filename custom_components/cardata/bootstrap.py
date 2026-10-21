@@ -67,12 +67,16 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         # Proactively check and refresh token only if expired or about to expire
         from .auth import async_ensure_valid_token
 
-        token_valid = await async_ensure_valid_token(
-            entry,
-            runtime.session,
-            runtime.stream,
-            runtime.container_manager,
-        )
+        try:
+            token_valid = await async_ensure_valid_token(
+                entry,
+                runtime.session,
+                runtime.stream,
+                runtime.container_manager,
+            )
+        except (TimeoutError, aiohttp.ClientError) as err:
+            _LOGGER.debug("Token refresh before bootstrap could not reach BMW: %s", err)
+            token_valid = False
         if not token_valid:
             _LOGGER.warning(
                 "Bootstrap aborted for entry %s: token refresh failed",

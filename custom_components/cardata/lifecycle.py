@@ -425,7 +425,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             await refresh_tokens_for_entry(entry, session, manager, container_manager)
             refreshed_token = True
-        except CardataAuthError as err:
+        except (CardataAuthError, TimeoutError, aiohttp.ClientError) as err:
             _LOGGER.warning(
                 "Initial token refresh failed for entry %s: %s; continuing with stored token",
                 entry.entry_id,

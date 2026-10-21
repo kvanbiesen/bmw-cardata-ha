@@ -205,7 +205,10 @@ async def refresh_tokens(
 ) -> dict[str, Any]:
     """Refresh access/ID tokens using the stored refresh token.
 
-    Includes retry logic for transient network failures.
+    Includes retry logic for transient network failures. CardataAuthError
+    means BMW refused the refresh; once the retries are spent, a timeout or a
+    network or server error is raised as it is, so an outage is not taken for
+    lost credentials.
     """
     payload = {
         "client_id": client_id,
@@ -257,6 +260,15 @@ async def refresh_tokens(
                     backoff = min(backoff * 2, 30.0)
                     continue
 
+                # The last server error says nothing about the refresh token
+                if 500 <= resp.status < 600:
+                    raise aiohttp.ClientResponseError(
+                        resp.request_info,
+                        resp.history,
+                        status=resp.status,
+                        message="Token refresh failed",
+                    )
+
                 # Other errors - fail
                 safe_data = {
                     k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
@@ -291,6 +303,6 @@ async def refresh_tokens(
                 continue
 
     # All retries exhausted
-    raise CardataAuthError(
-        f"Token refresh failed after {max_retries + 1} attempts: {redact_sensitive_data(str(last_error))}"
-    )
+    if last_error is not None:
+        raise last_error
+    raise CardataAuthError(f"Token refresh failed after {max_retries + 1} attempts")

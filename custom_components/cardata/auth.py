@@ -121,6 +121,9 @@ async def async_ensure_valid_token(
 
     Returns:
         True if token is valid (or was successfully refreshed), False on failure
+
+    Raises:
+        TimeoutError, aiohttp.ClientError: the refresh could not reach BMW
     """
     expired, seconds_left = is_token_expired(entry, buffer_seconds)
 
@@ -138,6 +141,8 @@ async def async_ensure_valid_token(
     except CardataAuthError as err:
         _LOGGER.warning("Proactive token refresh failed: %s", err)
         return False
+    except (TimeoutError, aiohttp.ClientError):
+        raise
     except Exception as err:
         _LOGGER.exception("Unexpected error during proactive token refresh: %s", err)
         return False
