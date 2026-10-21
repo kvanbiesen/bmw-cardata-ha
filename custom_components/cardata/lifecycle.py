@@ -141,6 +141,7 @@ async def _async_cleanup_on_failure(
         await runtime.coordinator.async_stop_watchdog()
 
         # Stop MQTT stream to prevent orphaned background thread
+        runtime.stream.shut_down()
         try:
             await asyncio.wait_for(runtime.stream.async_stop(), timeout=10.0)
         except TimeoutError:
@@ -687,6 +688,7 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await _cancel_task_with_timeout(task, name)
 
     # Stop MQTT stream with timeout protection
+    data.stream.shut_down()
     try:
         await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
     except TimeoutError:

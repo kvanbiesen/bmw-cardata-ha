@@ -326,3 +326,44 @@ def test_the_loop_handovers_survive_a_closed_event_loop() -> None:
     manager._cancel_retry_threadsafe()
     manager._schedule_retry_threadsafe(3)
     manager._run_coro_safe(work())
+
+
+def _shutdown_manager() -> CardataStreamManager:
+    hass = MagicMock()
+    hass.loop = asyncio.get_running_loop()
+    return CardataStreamManager(
+        hass=hass,
+        client_id="client",
+        gcid="gcid",
+        id_token="token",
+        host="localhost",
+        port=8883,
+        keepalive=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_shut_down_manager_does_not_connect() -> None:
+    """Unload retires the manager; a reconnect still queued must not revive it."""
+    manager = _shutdown_manager()
+    manager.hass.async_add_executor_job = AsyncMock()
+
+    manager.shut_down()
+    await manager._async_start_locked()
+
+    manager.hass.async_add_executor_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_connect_finishing_after_shutdown_is_torn_down() -> None:
+    """The unload stop can time out while a connect still holds the lock."""
+    manager = _shutdown_manager()
+
+    async def _connect_while_unloading(_func) -> None:
+        manager.shut_down()
+
+    manager.hass.async_add_executor_job = _connect_while_unloading
+    with patch.object(manager, "_async_stop_locked", AsyncMock()) as stop:
+        await manager._async_start_locked()
+
+    stop.assert_awaited_once()

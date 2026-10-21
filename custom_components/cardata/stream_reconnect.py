@@ -47,7 +47,7 @@ def _reconnect_abandoned(manager: CardataStreamManager) -> bool:
     An async_stop() or an entry unload can happen while we wait, and the
     config entry may be gone by the time we wake up.
     """
-    if manager._intentional_disconnect:
+    if manager._intentional_disconnect or manager._shut_down:
         return True
     if manager._entry_id:
         from .const import DOMAIN
