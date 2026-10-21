@@ -15,16 +15,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          # Home Assistant needs 3.14 since 2026.3; on 3.13 pip falls back to
+          # 2026.2 and the tests run against a release users left long ago.
+          python-version: "3.14"
 
       - name: Install Home Assistant test deps
         run: |
           python -m pip install --upgrade pip
-          # Install latest HA and test stack first
           python -m pip install homeassistant pytest pytest-asyncio pytest-homeassistant-custom-component paho-mqtt
-          # Force compatible pycares/aiodns combo AFTER HA install to override any incompatible versions
-          python -m pip uninstall -y pycares aiodns || true
-          python -m pip install --no-binary=pycares "pycares==4.4.0" "aiodns==3.2.0"
 
       # Named individually rather than running the whole directory: the stream
       # and coordinator tests still call a pre-refactor API and fail, so a bare
