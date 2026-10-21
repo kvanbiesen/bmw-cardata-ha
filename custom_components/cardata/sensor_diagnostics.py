@@ -370,6 +370,7 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
         self._base_name = "Charging History"
         self._update_name(write_state=False)
         self._unsubscribe: Callable[[], None] | None = None
+        self._restored_sessions: list[dict[str, Any]] = []
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -378,6 +379,9 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in ("unknown", "unavailable"):
             self._attr_native_value = last_state.state
+            sessions = last_state.attributes.get("sessions")
+            if isinstance(sessions, list):
+                self._restored_sessions = [dict(session) for session in sessions if isinstance(session, dict)]
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
@@ -398,8 +402,16 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
     def _load_current_value(self) -> None:
         """Load current charging history summary from coordinator."""
         sessions = self._coordinator.get_charging_history(self._vin)
+        has_response = self._coordinator.has_charging_history(self._vin)
+        if has_response:
+            self._restored_sessions = []
         if not sessions:
-            self._attr_native_value = "no data"
+            # A fresh coordinator has no history yet. Keep the previous HA
+            # snapshot until a response arrives; an authoritative empty list
+            # must still clear it. Do not recompute the restored summary from
+            # its recorder-limited session attributes.
+            if has_response or self._attr_native_value is None:
+                self._attr_native_value = "no data"
             return
 
         last_time = None
@@ -431,6 +443,8 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
         until it fits, keeping the most recent ones.
         """
         sessions = self._coordinator.get_charging_history(self._vin)
+        if not self._coordinator.has_charging_history(self._vin):
+            sessions = self._restored_sessions
         if not sessions:
             return {}
 
