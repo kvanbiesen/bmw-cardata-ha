@@ -352,6 +352,33 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             )
         return await self.async_step_authorize()
 
+    @callback
+    def async_remove(self) -> None:
+        """Release the reauth hold when the dialog is closed without finishing.
+
+        Telematic polling pauses while a reauth is in progress, and nothing
+        else clears that state for a flow the user simply dismissed. A stream
+        failure and the options can each open one, so the hold is only
+        released once no reauth flow for the entry is left.
+        """
+        if self._reauth_entry is None:
+            return
+        entry_id = self._reauth_entry.entry_id
+        runtime = self.hass.data.get(DOMAIN, {}).get(entry_id)
+        if runtime is None:
+            return
+        if runtime.reauth_flow_id == self.flow_id:
+            runtime.reauth_flow_id = None
+        # Home Assistant drops this flow from its progress before calling here
+        if self.hass.config_entries.flow.async_progress_by_handler(
+            DOMAIN,
+            include_uninitialized=True,
+            match_context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry_id},
+        ):
+            return
+        runtime.reauth_in_progress = False
+        runtime.reauth_pending = False
+
     @staticmethod
     @callback
     def async_get_options_flow(

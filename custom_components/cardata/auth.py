@@ -430,15 +430,17 @@ async def handle_stream_error(
                 )
                 return
 
-            runtime.reauth_in_progress = True
-            runtime.last_reauth_attempt = now
-            runtime.reauth_pending = False
-            _LOGGER.warning("BMW stream unauthorized; starting reauth flow")
-
+            # Abort the old flow before taking the hold for the new one: its
+            # removal releases the hold it had.
             if runtime.reauth_flow_id:
                 with suppress(Exception):
                     hass.config_entries.flow.async_abort(runtime.reauth_flow_id)
                 runtime.reauth_flow_id = None
+
+            runtime.reauth_in_progress = True
+            runtime.last_reauth_attempt = now
+            runtime.reauth_pending = False
+            _LOGGER.warning("BMW stream unauthorized; starting reauth flow")
 
             persistent_notification.async_create(
                 hass,
