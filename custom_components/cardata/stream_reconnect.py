@@ -377,12 +377,20 @@ def schedule_retry(manager: CardataStreamManager, delay: float) -> None:
                     finally:
                         manager._disconnect_future = None
                 async with manager._connect_lock:
+                    # Holding the lock, this is an attempt rather than a
+                    # pending retry: a refusal it meets must be able to
+                    # schedule the next one, and the success callback must
+                    # not cancel it while it connects. A stop that came first
+                    # has already cancelled it while it waited.
+                    if manager._retry_task is asyncio.current_task():
+                        manager._retry_task = None
                     await manager._async_start_locked()
         except asyncio.CancelledError:
             return
         except Exception as err:  # pragma: no cover - defensive logging
             _LOGGER.warning("BMW MQTT retry failed: %s", err)
         finally:
-            manager._retry_task = None
+            if manager._retry_task is asyncio.current_task():
+                manager._retry_task = None
 
     manager._retry_task = manager.hass.loop.create_task(_retry())
