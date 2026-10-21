@@ -38,6 +38,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .api_parsing import try_parse_json
 from .const import (
+    ALLOWED_VINS_KEY,
     API_BASE_URL,
     BASIC_DATA_ENDPOINT,
     DOMAIN,
@@ -350,7 +351,9 @@ async def async_restore_vehicle_images(
     """Restore vehicle images from disk on startup.
 
     This loads cached image files into coordinator memory without making API calls.
-    Called during integration setup to restore images after HA restart.
+    Called during integration setup to restore images after HA restart. The image
+    directory is shared by every entry, so only the vehicles this entry has
+    metadata for or has saved as its own are considered.
 
     Also migrates old stored metadata that doesn't have vehicle_image_path.
     """
@@ -363,12 +366,14 @@ async def async_restore_vehicle_images(
 
     restored_count = 0
     migrated_vins = []
+    stored_vins = entry.data.get(ALLOWED_VINS_KEY)
+    own_vins = set(coordinator.device_metadata) | set(stored_vins if isinstance(stored_vins, list) else [])
 
     # Load all PNG files from images directory
     for image_file, file_size in image_files:
         vin = image_file.stem  # Filename without .png extension
 
-        if not is_valid_vin(vin):
+        if not is_valid_vin(vin) or vin not in own_vins:
             continue
 
         redacted_vin = redact_vin(vin)
@@ -437,13 +442,13 @@ async def async_restore_vehicle_metadata(
     stored_metadata = entry.data.get(VEHICLE_METADATA, {})
     if not isinstance(stored_metadata, dict):
         _LOGGER.debug("No vehicle metadata to restore for entry %s (not a dict)", entry.entry_id)
-        # Still try to restore images from disk (they might exist from a previous install)
+        # Still restore the images of the entry's own vehicles
         await async_restore_vehicle_images(hass, entry, coordinator)
         return
 
     if not stored_metadata:
         _LOGGER.debug("No vehicle metadata to restore for entry %s (empty)", entry.entry_id)
-        # Still try to restore images from disk (they might exist from a previous install)
+        # Still restore the images of the entry's own vehicles
         await async_restore_vehicle_images(hass, entry, coordinator)
         return
 

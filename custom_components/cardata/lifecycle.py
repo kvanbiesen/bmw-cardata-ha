@@ -550,9 +550,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Restore vehicle images from disk before platform setup (only after bootstrap)
         # This ensures images fetched during bootstrap are properly loaded into metadata
         # (bootstrap saves images but the dispatcher signal may not reach the image platform yet)
-        # Note: On restart, async_restore_vehicle_metadata already calls this, and the
-        # allowed_vins cleanup runs after - we must NOT call it again or it would
-        # re-add VINs that were just cleaned up (breaking multi-account setups)
+        # Note: On restart, async_restore_vehicle_metadata already calls this
         if bootstrap_completed:
             await async_restore_vehicle_images(hass, entry, coordinator)
 
