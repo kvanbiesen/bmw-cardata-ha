@@ -48,6 +48,7 @@ from .const import (
     MANUAL_TANK_CAPACITY_DESCRIPTOR,
     PREDICTED_SOC_DESCRIPTOR,
 )
+from .utils import is_valid_vin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -217,8 +218,9 @@ async def async_unload_frontend_cards_if_last_entry(hass: HomeAssistant) -> None
 
 
 def _normalize_vin_from_identifiers(identifiers: set[tuple[str, str]]) -> str | None:
+    # The debug device is identified by the entry id, which is not a VIN
     for identifier in identifiers:
-        if identifier[0] == DOMAIN and isinstance(identifier[1], str) and identifier[1]:
+        if identifier[0] == DOMAIN and is_valid_vin(identifier[1]):
             return identifier[1]
     return None
 
