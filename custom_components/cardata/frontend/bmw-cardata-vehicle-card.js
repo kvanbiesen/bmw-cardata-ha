@@ -1356,7 +1356,8 @@ class BmwCardataVehicleCard extends HTMLElement {
     const primaryRangeIcon = hasRange ? "mdi:arrow-left-right" : "mdi:gas-station";
     const primaryRangeText = primaryRangeState ? formatState(primaryRangeState, hass) : "—";
 
-    const isLocked = lockState.includes("lock") && !lockState.includes("unlock");
+    // SECURED (double locked) is the most locked state and contains no "lock"
+    const isLocked = (lockState.includes("lock") || lockState === "secured") && !lockState.includes("unlock");
     const doorsOverallKnown = doorsOverallRaw !== "";
     const doorsOverallOpen = doorsOverallRaw.includes("open");
     const doorsOverallSecured =
