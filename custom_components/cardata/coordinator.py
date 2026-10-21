@@ -282,6 +282,10 @@ class CardataCoordinator:
         self._last_charging_history_fetch[vin] = time.time()
         self._safe_dispatcher_send(self.signal_charging_history, vin)
 
+    def has_charging_history(self, vin: str) -> bool:
+        """Whether this coordinator has a response, including an empty history."""
+        return vin in self._charging_history
+
     def get_charging_history(self, vin: str) -> list[dict[str, Any]]:
         """Return stored charging history for a VIN."""
         return self._charging_history.get(vin, [])
