@@ -85,8 +85,8 @@ const escapeHtml = (input) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
-const iconBadge = (icon, statusClass = "", entityId = "", title = "", borderColor = null) => `
-  <button class="indicator ${statusClass}" data-entity-id="${escapeHtml(entityId)}" title="${escapeHtml(title)}"${borderColor ? ` style="box-shadow: inset 0 0 0 2px ${escapeHtml(borderColor)};"` : ""}>
+const iconBadge = (icon, statusClass = "", entityId = "", title = "", customColor = null) => `
+  <button class="indicator ${statusClass}" data-entity-id="${escapeHtml(entityId)}" title="${escapeHtml(title)}"${customColor ? ` style="--tile-color:${escapeHtml(customColor)};"` : ""}>
     <ha-ripple></ha-ripple>
     <ha-icon icon="${icon}"></ha-icon>
   </button>
@@ -212,7 +212,8 @@ const TRANSLATIONS = {
     "editor.soc_predicted": "Predicted SOC (charging)",
     "editor.soc_magic": "Magic SOC (driving)",
     "editor.show_indicators": "Show indicator row",
-    "editor.color_alert_border": "Indicator alert border color (hex, e.g. #f44336 - blank for default)",
+    "editor.color_badge_alert": "Badge open/unlocked color (hex, e.g. #f44336 - blank for default)",
+    "editor.color_badge_good": "Badge locked/closed color (hex, e.g. #4caf50 - blank for default)",
     "editor.show_range": "Show SOC and range bar",
     "editor.color_ev": "Battery bar color (hex, e.g. #4caf50 - blank for default)",
     "editor.color_ev_low": "Battery bar color when low (hex - blank for default)",
@@ -310,7 +311,8 @@ const TRANSLATIONS = {
     "editor.soc_predicted": "Beräknad SOC (laddar)",
     "editor.soc_magic": "Magisk SOC (kör)",
     "editor.show_indicators": "Visa indikeringsrad",
-    "editor.color_alert_border": "Varningsram färg (hex, t.ex. #f44336 - tom = standard)",
+    "editor.color_badge_alert": "Badge öppen/olåst färg (hex, t.ex. #f44336 - tom = standard)",
+    "editor.color_badge_good": "Badge låst/stängd färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.show_range": "Visa SOC och räckviddsbar",
     "editor.color_ev": "Batteristapel färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.color_ev_low": "Batteristapel färg vid låg nivå (hex - tom = standard)",
@@ -408,7 +410,8 @@ const TRANSLATIONS = {
     "editor.soc_predicted": "Prognostizierter Ladestand (beim Laden)",
     "editor.soc_magic": "Magic SOC (während der Fahrt)",
     "editor.show_indicators": "Statuszeile anzeigen",
-    "editor.color_alert_border": "Rahmenfarbe für Warnanzeige (Hex, z.B. #f44336 - leer = Standard)",
+    "editor.color_badge_alert": "Badge-Farbe offen/entriegelt (Hex, z.B. #f44336 - leer = Standard)",
+    "editor.color_badge_good": "Badge-Farbe gesperrt/geschlossen (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
     "editor.color_ev": "Batteriebalken-Farbe (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.color_ev_low": "Batteriebalken-Farbe bei niedrigem Stand (Hex - leer = Standard)",
@@ -578,7 +581,8 @@ class BmwCardataVehicleCard extends HTMLElement {
           },
         },
         { name: "show_indicators", selector: { boolean: {} } },
-        { name: "color_alert_border", selector: { text: {} } },
+        { name: "color_badge_alert", selector: { text: {} } },
+        { name: "color_badge_good", selector: { text: {} } },
         { name: "show_range", selector: { boolean: {} } },
         { name: "color_ev", selector: { text: {} } },
         { name: "color_ev_low", selector: { text: {} } },
@@ -767,7 +771,7 @@ class BmwCardataVehicleCard extends HTMLElement {
           .indicator:focus-visible { box-shadow: 0 0 0 2px var(--tile-color); }
           .indicator.ok { --tile-color: var(--state-icon-color); }
           .indicator.alert { --tile-color: var(--error-color); }
-          .indicator.good { --tile-color: var(--success-color); }
+          .indicator.good { --tile-color: var(--state-icon-color); }
           .indicator.charging {
             animation: chargingBadgePulse 1.4s ease-in-out infinite;
           }
@@ -1373,9 +1377,9 @@ class BmwCardataVehicleCard extends HTMLElement {
       {
         icon: doorsOverallKnown ? "mdi:car-door" : "mdi:car-door-lock",
         stateClass: doorsOverallKnown
-          ? (doorsOverallOpen ? "alert" : doorsOverallSecured ? "ok" : "")
+          ? (doorsOverallOpen ? "alert" : doorsOverallSecured ? "good" : "")
           : isLocked
-            ? "ok"
+            ? "good"
             : "alert",
         entity: doorsOverallEntity || lockEntity,
         title: doorsOverallKnown
@@ -1394,7 +1398,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         : null,
       {
         icon: openWindows > 0 ? "mdi:car-windshield-outline" : "mdi:car-windshield",
-        stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 ? "" : "ok",
+        stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 ? "" : "good",
         entity: windowEntity,
         title: `${t("windows")}: ${openWindows > 0 ? `${openWindows} ${t("windows_open_count")}` : t("windows_closed")}`,
       },
@@ -1419,26 +1423,25 @@ class BmwCardataVehicleCard extends HTMLElement {
           : null,	
       {
         icon: hoodOpen && tailgateOpen ? "mdi:car" : hoodOpen ? "mdi:engine-outline" : tailgateOpen ? "mdi:car-back" : "mdi:car",
-        stateClass: (hoodOpen || tailgateOpen) && !isMoving && isLocked ? "alert" : (hoodOpen || tailgateOpen) ? "" : "ok",
+        stateClass: (hoodOpen || tailgateOpen) && !isMoving && isLocked ? "alert" : (hoodOpen || tailgateOpen) ? "" : "good",
         entity: hoodOpen ? (hoodEntity || tailgateEntity) : tailgateOpen ? (tailgateEntity || hoodEntity) : (hoodEntity || tailgateEntity),
         title: hoodOpen && tailgateOpen ? t("hood_tailgate_open") : hoodOpen ? t("hood_open") : tailgateOpen ? t("tailgate_open") : t("hood_tailgate_closed"),
       },
     ].filter(Boolean);
 
     if (showIndicators) {
-      const alertBorderColor = cssColor(cfg.color_alert_border);
+      const alertColor = cssColor(cfg.color_badge_alert);
+      const goodColor = cssColor(cfg.color_badge_good);
       this._setHtml(indicatorsEl, `
         <div class="indicators">
           ${indicatorItems
-            .map((item) =>
-              iconBadge(
-                item.icon,
-                item.stateClass,
-                item.entity,
-                item.title,
-                item.stateClass?.split(" ").includes("alert") ? alertBorderColor : null
-              )
-            )
+            .map((item) => {
+              const parts = (item.stateClass || "").split(" ");
+              const customColor = parts.includes("alert") ? alertColor
+                : parts.includes("good") ? goodColor
+                : null;
+              return iconBadge(item.icon, item.stateClass, item.entity, item.title, customColor);
+            })
             .join("")}
         </div>
       `);
