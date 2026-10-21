@@ -698,17 +698,19 @@ class MagicSOCPredictor:
         learned.kwh_per_km = old * (1 - rate) + measured * rate
         learned.trip_count += 1
 
-        # Monthly bucket EMA
+        # Monthly bucket EMA. A new month starts from the global figure this
+        # trip has just updated; learning it again at the first-trip rate of
+        # 1.0 would throw that away and let one trip stand for the month.
         month = time.localtime().tm_mon
         bucket = learned.monthly.get(month)
         if bucket is None:
-            bucket = {"kwh_per_km": learned.kwh_per_km, "trip_count": 0}
-            learned.monthly[month] = bucket
-        monthly_rate = max(LEARNING_RATE, 1.0 / (bucket["trip_count"] + 1))
-        if distance_km > 0:
-            monthly_rate *= min(distance_km / REFERENCE_LEARNING_TRIP_KM, 1.0)
-        bucket["kwh_per_km"] = bucket["kwh_per_km"] * (1 - monthly_rate) + measured * monthly_rate
-        bucket["trip_count"] += 1
+            learned.monthly[month] = {"kwh_per_km": learned.kwh_per_km, "trip_count": 1}
+        else:
+            monthly_rate = max(LEARNING_RATE, 1.0 / (bucket["trip_count"] + 1))
+            if distance_km > 0:
+                monthly_rate *= min(distance_km / REFERENCE_LEARNING_TRIP_KM, 1.0)
+            bucket["kwh_per_km"] = bucket["kwh_per_km"] * (1 - monthly_rate) + measured * monthly_rate
+            bucket["trip_count"] += 1
 
         _LOGGER.info(
             "Magic SOC: Learned consumption for %s: %.3f -> %.3f kWh/km (trip %d, measured %.3f, rate %.2f)",
