@@ -202,8 +202,13 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             option_name="diagnostic_interval",
         )
 
-        debug_option = options.get(OPTION_DEBUG_LOG)
-        debug_flag = DEBUG_LOG if debug_option is None else bool(debug_option)
+        # The switch is process wide, so it is on while any entry asks for it.
+        # Taking this entry's option alone let whichever entry set up last
+        # override the others.
+        debug_flag = any(
+            DEBUG_LOG if (debug_option := other.options.get(OPTION_DEBUG_LOG)) is None else bool(debug_option)
+            for other in hass.config_entries.async_entries(DOMAIN, include_disabled=False)
+        )
 
         set_debug_enabled(debug_flag)
 
