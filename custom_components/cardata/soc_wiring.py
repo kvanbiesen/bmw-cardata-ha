@@ -848,7 +848,10 @@ def process_soc_descriptors(
             method = soc_predictor.get_charging_method(vin)
             applied = False
             if method == "DC":
-                power_kw = _parse_power_kw(value, descriptor_payload.get("unit") or "") if value is not None else None
+                # The stored state keeps the last known unit when a message has
+                # none. A null reading is not stored, so it must not replay the
+                # previous power.
+                power_kw = _reported_power_kw(vehicle_state) if value is not None else None
                 soc_predictor.update_power_reading(vin, power_kw, aux_power_kw=_get_aux_kw())
                 applied = True
             elif method is not None:

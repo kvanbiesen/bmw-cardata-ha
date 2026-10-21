@@ -26,6 +26,7 @@
 """Tests for soc_wiring helpers, focusing on charging phase handling."""
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -50,6 +51,7 @@ from custom_components.cardata.soc_wiring import (
     _descriptor_phases,
     charge_should_have_ended,
     needs_phase_count_poll,
+    process_soc_descriptors,
 )
 
 
@@ -497,3 +499,42 @@ class TestChargeShouldHaveEnded:
         predictor = self._predictor(predicted=100.0)
         predictor.update_charging_status(self.VIN, "NOCHARGING")
         assert not charge_should_have_ended(predictor, self.VIN, self._charging_state())
+
+
+def _wiring_coordinator(method="DC"):
+    """A coordinator whose predictor records what the wiring hands it."""
+    coordinator = MagicMock()
+    coordinator._soc_predictor.get_charging_method.return_value = method
+    coordinator._soc_predictor.is_charging.return_value = False
+    return coordinator
+
+
+class TestDcPowerUnit:
+    """MQTT can leave the unit out; the stored state keeps the last one."""
+
+    def test_a_reading_without_a_unit_keeps_the_stored_unit(self):
+        coordinator = _wiring_coordinator()
+        vehicle_state = {DESC_CHARGING_POWER: _state(50000, unit="W")}
+
+        process_soc_descriptors(coordinator, "VIN", {DESC_CHARGING_POWER: {"value": 50000}}, vehicle_state)
+
+        power_kw = coordinator._soc_predictor.update_power_reading.call_args.args[1]
+        assert power_kw == 50.0
+
+    def test_a_null_reading_does_not_replay_the_stored_power(self):
+        coordinator = _wiring_coordinator()
+        vehicle_state = {DESC_CHARGING_POWER: _state(150000, unit="W")}
+
+        process_soc_descriptors(coordinator, "VIN", {DESC_CHARGING_POWER: {"value": None}}, vehicle_state)
+
+        power_kw = coordinator._soc_predictor.update_power_reading.call_args.args[1]
+        assert power_kw is None
+
+    def test_a_reading_in_kw_is_taken_as_it_is(self):
+        coordinator = _wiring_coordinator()
+        vehicle_state = {DESC_CHARGING_POWER: _state(50, unit="kW")}
+
+        process_soc_descriptors(coordinator, "VIN", {DESC_CHARGING_POWER: {"value": 50, "unit": "kW"}}, vehicle_state)
+
+        power_kw = coordinator._soc_predictor.update_power_reading.call_args.args[1]
+        assert power_kw == 50.0
