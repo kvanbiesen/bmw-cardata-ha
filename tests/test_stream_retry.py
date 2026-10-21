@@ -367,3 +367,98 @@ async def test_a_connect_finishing_after_shutdown_is_torn_down() -> None:
         await manager._async_start_locked()
 
     stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_only_one_reconnect_chain_runs_at_a_time() -> None:
+    """A disconnect seen while a reconnect is failing must not start a second chain."""
+    manager = _shutdown_manager()
+    release = asyncio.Event()
+    started = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal started
+        started += 1
+        await release.wait()
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        stream_reconnect.request_reconnect(manager)
+        await asyncio.sleep(0)
+
+        assert manager._reconnect_task is first
+        assert started == 1
+
+        release.set()
+        await first
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_chain_can_schedule_its_own_next_attempt() -> None:
+    manager = _shutdown_manager()
+    attempts = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            stream_reconnect.request_reconnect(manager)
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        await first
+        await manager._reconnect_task
+
+    assert manager._reconnect_task is not first
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_a_drop_while_the_chain_finishes_is_not_lost() -> None:
+    """A drop right after the chain's CONNACK reaches it before it has ended."""
+    manager = _shutdown_manager()
+    release = asyncio.Event()
+    attempts = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await release.wait()
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        await asyncio.sleep(0)
+        stream_reconnect.request_reconnect(manager)
+        release.set()
+        await first
+        await manager._reconnect_task
+
+    assert manager._reconnect_task is not first
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_a_drop_during_a_backoff_starts_the_chain_over() -> None:
+    """Something else connected while the chain slept; its drop must not wait the backoff out."""
+    manager = _shutdown_manager()
+    attempts = 0
+
+    async def _reconnect(_manager) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            await stream_reconnect._backoff(manager, 600)
+
+    with patch.object(stream_reconnect, "async_reconnect", _reconnect):
+        stream_reconnect.request_reconnect(manager)
+        first = manager._reconnect_task
+        await asyncio.sleep(0)
+        stream_reconnect.request_reconnect(manager)
+        await manager._reconnect_task
+
+    assert first.cancelled()
+    assert attempts == 2

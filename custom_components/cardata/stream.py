@@ -120,6 +120,9 @@ class CardataStreamManager:
         self._disconnect_future: asyncio.Future[None] | None = None
         self._retry_backoff = 3
         self._retry_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        self._reconnect_requested = False
+        self._reconnect_waiting: asyncio.Task | None = None
         self._min_reconnect_interval = 10.0
         self._connect_lock = asyncio.Lock()
         # Serialize credential updates and reconnects
@@ -903,7 +906,7 @@ class CardataStreamManager:
             return
 
         if should_reconnect and not self._circuit_breaker.check():
-            self._run_coro_safe(stream_reconnect.async_reconnect(self))
+            self._call_on_loop(stream_reconnect.request_reconnect, self)
         if self._status_callback:
             self._run_coro_safe(cast(Coroutine[Any, Any, None], self._status_callback("disconnected", reason)))
 
