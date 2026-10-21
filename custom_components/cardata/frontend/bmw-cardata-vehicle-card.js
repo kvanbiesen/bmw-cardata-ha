@@ -705,7 +705,10 @@ class BmwCardataVehicleCard extends HTMLElement {
 
     if (!this._initialized) {
       this._initialized = true;
-      this.attachShadow({ mode: "open" });
+      // setConfig on a live card comes back here, and a shadow root can only
+      // be attached once. The rebuild below also drops the mounted map card.
+      if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+      this._dropMapCard();
       this.shadowRoot.innerHTML = `
         <style>
           :host { display: block; }
@@ -1144,6 +1147,13 @@ class BmwCardataVehicleCard extends HTMLElement {
     }
   }
 
+  // Forget the mounted map card, and any still loading, once its DOM is gone
+  _dropMapCard() {
+    this._cachedMapCard = null;
+    this._cachedMapTracker = null;
+    this._mapRenderToken = (this._mapRenderToken || 0) + 1;
+  }
+
   _renderMap(target, hass, trackerEntityId, t) {
     if (!target) return;
     // This method writes the DOM directly, so the _setHtml cache is stale.
@@ -1549,6 +1559,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     if (showMap) {
       this._renderMap(mapEl, hass, mapEntityId, t);
     } else {
+      this._dropMapCard();
       this._setHtml(mapEl, "");
     }
 
@@ -1773,6 +1784,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     this._setHtml(indicatorsEl, "");
     this._setHtml(rangeEl, "");
     this._setHtml(imageEl, "");
+    this._dropMapCard();
     this._setHtml(mapEl, "");
     this._setHtml(buttonsEl, "");
     this._setHtml(leasingEl, "");
