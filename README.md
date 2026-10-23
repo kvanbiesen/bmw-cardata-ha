@@ -630,12 +630,13 @@ The integration can fetch tyre health and wear data from BMW's Smart Maintenance
 
 BMW keeps one entry per service item (engine oil, brake fluid, vehicle check, statutory inspection...), each with its own status and due date, in `vehicle.status.conditionBasedServices`.
 
-- **Status**: Not requested for now. BMW accepts this descriptor in a container but rejects every telematicData request on that container (`CU-400 Bad request`), which stopped the whole API poll in 5.3.0. The per-item sensors below stay in the code and will appear once a working way to fetch the list is found.
+- **How it is read**: From a container of its own (`BMW CarData Service Schedule`), once a day per vehicle, never from the polled container. In 5.3.0 the list sat in the polled container, and on 20 October 2026 BMW answered every request on it with `CU-400 Bad request`, which stopped every API value. It answers again since; should it fail again, only the service items wait for the next day's read.
+- **API cost**: 1 call per vehicle per day, taken out of the polling budget like the optional daily fetches, so the total stays the same. Creating the container costs 2 calls (list, create), once per install or after BMW drops it. A failed read is not retried before the next day, and the time of the last read is stored, so restarting Home Assistant does not spend it again.
 - **Sensors**: One per item, e.g. `Service Engine oil` and `Service Brake fluid`. The state is BMW's status (`OK`, `PENDING`, `OVERDUE`).
 - **Attributes**: `due_date` (year-month), `remaining_distance` (when the item also has a distance limit), `description`, `title`, `cbs_id`
 - **Binary sensor**: `Service due` (problem device class) is on as soon as one item is not `OK`; its `due_items` attribute lists them
 - **Note**: `Service Distance to next service` is a single figure the car computes and can read tens of thousands of kilometres while oil or brake fluid are already overdue by date.
-- **Existing installs**: The API container is rebuilt once after updating, since its descriptor list changed; polling resumes on the next poll.
+- **First read**: Within about 30 minutes of starting, then once a day.
 
 ## Fault Memory
 

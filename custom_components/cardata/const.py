@@ -143,8 +143,8 @@ DIAGNOSTIC_LOG_INTERVAL = 30  # How often we print stream logs in seconds
 BOOTSTRAP_COMPLETE = "bootstrap_complete"
 # Telematic polling budget — target ~24 scheduled API polls/day, leaving headroom
 # for bootstrap, trip-end events, etc. within BMW's 50-call daily quota.
-# When daily optional features (charging history, tyre diagnosis) are enabled,
-# the polling budget is reduced to keep total calls constant.
+# The daily fetches (the service schedule, plus charging history and tyre
+# diagnosis when enabled) reduce the polling budget to keep total calls constant.
 TARGET_DAILY_POLLS = 24
 HTTP_TIMEOUT = 30  # Timeout for HTTP API requests in seconds
 DEFAULT_TRIP_POLL_COOLDOWN_MINUTES = 10  # Default cooldown between trip-end polls
@@ -250,13 +250,38 @@ HV_BATTERY_DESCRIPTORS = [
     DESC_BATTERY_12V_VOLTAGE,
     DESC_BATTERY_12V_SOC,
     DESC_BATTERY_12V_SOC_PLAUSIBILITY,
-    # DESC_CONDITION_BASED_SERVICES is deliberately left out: BMW accepts it in
-    # a container but answers every telematicData request on that container
-    # with CU-400, which takes the whole poll down with it.
+    # DESC_CONDITION_BASED_SERVICES is deliberately left out and read from
+    # CBS_CONTAINER_DESCRIPTORS instead, see there.
     # Workshop fault memory (XML list of stored codes per control unit),
     # reported as a count by fault_memory.py.
     DESC_FAULT_MEMORY,
 ]
+
+# Condition Based Services (the service schedule, one entry per item) come from
+# a container of their own, read once a day. In 5.3.0 they sat in the polled
+# container, and on 20 October 2026 every telematicData request on it failed
+# with CU-400, which stopped every API value. The same request answers again
+# since, but a failure here now only leaves the service items as they were.
+# These descriptors are the set that answered when it was checked against the
+# API on 10 and 23 October 2026.
+CBS_CONTAINER_NAME = "BMW CarData Service Schedule"
+CBS_CONTAINER_PURPOSE = "Condition based services"
+CBS_CONTAINER_DESCRIPTORS = [
+    DESC_CONDITION_BASED_SERVICES,
+    "vehicle.status.conditionBasedServicesCount",
+    "vehicle.status.conditionBasedServicesAverageDistancePerDay",
+    "vehicle.status.serviceDistance.next",
+    "vehicle.status.serviceDistance.yellow",
+    "vehicle.status.serviceTime.yellow",
+    "vehicle.status.serviceTime.inspectionDateLegal",
+    "vehicle.status.serviceTime.hUandAuServiceYellow",
+    DESC_TRAVELLED_DISTANCE,
+]
+# Entry data keys for that container and for the last read of each VIN. The
+# read time is stored so that a restart does not spend a call on it again.
+CBS_CONTAINER_ID_KEY = "cbs_container_id"
+CBS_CONTAINER_SIGNATURE_KEY = "cbs_descriptor_signature"
+CBS_LAST_FETCH_KEY = "cbs_last_fetch"
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"
 # Vehicles with fewer descriptors are likely "ghost" cars from family sharing with limited access
@@ -370,7 +395,7 @@ DEFAULT_CAPACITY_BY_MODEL: dict[str, float] = {
     "i7": 101.7,
 }
 
-# Daily fetch interval for optional endpoints (charging history, tyre diagnosis)
+# Daily fetch interval (service schedule, charging history, tyre diagnosis)
 DAILY_FETCH_INTERVAL = 86400  # 24 hours
 
 # Key for storing deduplicated allowed VINs in entry data

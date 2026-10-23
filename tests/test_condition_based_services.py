@@ -229,8 +229,8 @@ class TestCoordinator:
 class TestContainer:
     """Descriptor list changes reach existing installs, not just new ones."""
 
-    def test_cbs_is_not_requested_from_the_api(self):
-        # BMW rejects every telematicData request on a container holding it (CU-400).
+    def test_cbs_is_not_in_the_polled_container(self):
+        # A CU-400 on it fails the whole request; it has a container of its own.
         assert DESC_CONDITION_BASED_SERVICES not in HV_BATTERY_DESCRIPTORS
 
     def test_old_signature_triggers_a_rebuild(self):

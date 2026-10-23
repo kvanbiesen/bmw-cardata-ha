@@ -30,9 +30,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -44,15 +45,22 @@ from .const import (
     API_BASE_URL,
     API_VERSION,
     BOOTSTRAP_COMPLETE,
+    CBS_CONTAINER_DESCRIPTORS,
+    CBS_CONTAINER_ID_KEY,
+    CBS_CONTAINER_NAME,
+    CBS_CONTAINER_PURPOSE,
+    CBS_CONTAINER_SIGNATURE_KEY,
+    CBS_LAST_FETCH_KEY,
     DAILY_FETCH_INTERVAL,
     DOMAIN,
     MIN_TELEMETRY_DESCRIPTORS,
     TARGET_DAILY_POLLS,
     VEHICLE_METADATA,
 )
+from .container import CardataContainerError, CardataContainerManager
 from .http_retry import async_request_with_retry
 from .runtime import CardataRuntimeData, async_update_entry_data
-from .utils import is_valid_vin, redact_vin, redact_vin_in_text, redact_vin_payload
+from .utils import is_valid_vin, redact_sensitive_data, redact_vin, redact_vin_in_text, redact_vin_payload
 
 if TYPE_CHECKING:
     from .coordinator import CardataCoordinator
@@ -78,6 +86,15 @@ class TelematicFetchResult:
 
     status: bool | None
     reason: str | None = None
+
+
+def daily_calls_per_vin(coordinator: CardataCoordinator) -> int:
+    """API calls each vehicle spends once a day outside the regular poll.
+
+    The service schedule is always read; charging history and tyre diagnosis
+    only when enabled.
+    """
+    return 1 + int(coordinator.enable_charging_history) + int(coordinator.enable_tyre_diagnosis)
 
 
 def _seconds_since_fresh_data(coordinator: CardataCoordinator, vin: str) -> float | None:
@@ -443,7 +460,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             now = time.time()
 
             # Calculate stale threshold — targets ~24 total API calls/day including
-            # daily optional features (charging history, tyre diagnosis).
+            # the daily fetches (service schedule, charging history, tyre diagnosis).
             # Only count "real" VINs with sufficient telemetry data (not ghost/shared VINs)
             real_vins = [
                 vin for vin, data in runtime.coordinator.data.items() if len(data) >= MIN_TELEMETRY_DESCRIPTORS
@@ -460,11 +477,8 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
 
             num_vins = max(1, len(real_vins))
 
-            # Account for daily optional API calls in the polling budget
-            daily_calls_per_vin = (1 if runtime.coordinator.enable_charging_history else 0) + (
-                1 if runtime.coordinator.enable_tyre_diagnosis else 0
-            )
-            daily_extra = daily_calls_per_vin * num_vins
+            # Account for the daily API calls in the polling budget
+            daily_extra = daily_calls_per_vin(runtime.coordinator) * num_vins
             num_containers = 1  # Ongoing polls use only hv_container_id
             target_polls = max((TARGET_DAILY_POLLS - daily_extra) // num_containers, num_vins)
             stale_threshold = int(86400.0 * num_vins / target_polls)
@@ -790,13 +804,156 @@ async def async_fetch_tyre_diagnosis(
     return True
 
 
+def cbs_fetch_due(entry_data: Mapping[str, Any], vin: str, now: float) -> bool:
+    """Return True when the service schedule of a VIN is due for a read."""
+    last_fetch = entry_data.get(CBS_LAST_FETCH_KEY)
+    last = last_fetch.get(vin) if isinstance(last_fetch, dict) else None
+    if not isinstance(last, (int, float)) or last > now:
+        # Never read, or stamped by a clock that has since gone back.
+        return True
+    return now - last >= DAILY_FETCH_INTERVAL
+
+
+async def _async_record_cbs_attempt(hass: HomeAssistant, entry: ConfigEntry, vin: str, now: float) -> None:
+    """Store when the service schedule of a VIN was last asked for."""
+    last_fetch = entry.data.get(CBS_LAST_FETCH_KEY)
+    updated = dict(last_fetch) if isinstance(last_fetch, dict) else {}
+    updated[vin] = now
+    await async_update_entry_data(hass, entry, {CBS_LAST_FETCH_KEY: updated})
+
+
+async def _async_cbs_container_id(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    runtime: CardataRuntimeData,
+    access_token: str,
+) -> str | None:
+    """Return the service schedule container, creating it when there is none.
+
+    Creating it lists the account's containers, deletes any left under the same
+    name and creates a new one: two calls on a clean account, once per install
+    or after BMW drops the container.
+    """
+    manager = CardataContainerManager(
+        session=runtime.session,
+        entry_id=entry.entry_id,
+        name=CBS_CONTAINER_NAME,
+        purpose=CBS_CONTAINER_PURPOSE,
+        descriptors=CBS_CONTAINER_DESCRIPTORS,
+    )
+    stored_id = entry.data.get(CBS_CONTAINER_ID_KEY)
+    if (
+        isinstance(stored_id, str)
+        and stored_id
+        and entry.data.get(CBS_CONTAINER_SIGNATURE_KEY) == manager.descriptor_signature
+    ):
+        return stored_id
+
+    try:
+        new_id = await manager.async_reset_hv_container(access_token, runtime.container_rate_limiter)
+    except CardataContainerError as err:
+        _LOGGER.warning(
+            "Could not create the service schedule container for entry %s: %s",
+            entry.entry_id,
+            redact_sensitive_data(str(err)),
+        )
+        return None
+    if not new_id:
+        return None
+
+    await async_update_entry_data(
+        hass,
+        entry,
+        {CBS_CONTAINER_ID_KEY: new_id, CBS_CONTAINER_SIGNATURE_KEY: manager.descriptor_signature},
+    )
+    return new_id
+
+
+async def async_fetch_condition_based_services(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    runtime: CardataRuntimeData,
+    vin: str,
+) -> bool:
+    """Fetch the service schedule for a single VIN. Returns True on success.
+
+    It is read from its own container, so a failure here never reaches the
+    regular poll: the service items keep their values until the next attempt.
+    """
+    if not is_valid_vin(vin):
+        return False
+
+    access_token = entry.data.get("access_token")
+    if not access_token:
+        return False
+
+    container_id = await _async_cbs_container_id(hass, entry, runtime, access_token)
+    if not container_id:
+        return False
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "x-version": API_VERSION,
+        "Accept": "application/json",
+    }
+    url = f"{API_BASE_URL}/customers/vehicles/{vin}/telematicData"
+    redacted = redact_vin(vin)
+
+    response, error = await async_request_with_retry(
+        runtime.session,
+        "GET",
+        url,
+        headers=headers,
+        params={"containerId": container_id},
+        context=f"Service schedule fetch for {redacted}",
+        rate_limiter=runtime.rate_limit_tracker,
+        max_retries=0,
+    )
+
+    if error or response is None:
+        _LOGGER.warning("Failed to fetch the service schedule for %s: %s", redacted, error)
+        return False
+
+    if response.is_container_invalid or response.status == 404:
+        # Dropped on BMW's side or by the cleanup service: forget it so that
+        # the next attempt creates a new one.
+        _LOGGER.warning(
+            "Service schedule container %s is no longer valid for %s; a new one will be created on the next attempt",
+            container_id,
+            redacted,
+        )
+        await async_update_entry_data(hass, entry, {CBS_CONTAINER_ID_KEY: None})
+        return False
+
+    if not response.is_success:
+        _LOGGER.warning(
+            "Failed to fetch the service schedule for %s (status=%s): %s. "
+            "The rest of the vehicle data is not affected; next attempt in 24 hours",
+            redacted,
+            response.status,
+            redact_vin_in_text(response.text[:200]),
+        )
+        return False
+
+    ok, payload = try_parse_json(response.text)
+    telematic_payload = extract_telematic_payload(payload) if ok else None
+    if not isinstance(telematic_payload, dict) or not telematic_payload:
+        _LOGGER.warning("Invalid service schedule response for %s", redacted)
+        return False
+
+    # Not recorded as a telematic poll: the regular poll keeps its own schedule.
+    await runtime.coordinator.async_handle_message({"vin": vin, "data": telematic_payload}, is_telematic=True)
+    _LOGGER.info("Fetched the service schedule for %s", redacted)
+    return True
+
+
 async def _async_daily_fetches(
     hass: HomeAssistant,
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
     vins: list[str],
 ) -> None:
-    """Run daily optional API fetches (charging history, tyre diagnosis) if due."""
+    """Run the daily API fetches (service schedule, charging history, tyre diagnosis) if due."""
     from .auth import async_ensure_valid_token
 
     token_valid = await async_ensure_valid_token(entry, runtime.session, runtime.stream, runtime.container_manager)
@@ -825,6 +982,14 @@ async def _async_daily_fetches(
                 fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
                 if fresh_entry:
                     await async_fetch_tyre_diagnosis(fresh_entry, runtime, vin)
+
+        if cbs_fetch_due(entry.data, vin, now):
+            # Stored before the call, so that neither a failure nor a restart
+            # spends another call on it before the day is up.
+            await _async_record_cbs_attempt(hass, entry, vin, now)
+            fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
+            if fresh_entry:
+                await async_fetch_condition_based_services(hass, fresh_entry, runtime, vin)
 
 
 async def async_update_last_telematic_poll(hass: HomeAssistant, entry: ConfigEntry, timestamp: float) -> None:
