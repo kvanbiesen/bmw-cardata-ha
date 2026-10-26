@@ -71,13 +71,20 @@ class CardataContainerManager:
         session: aiohttp.ClientSession,
         entry_id: str,
         initial_container_id: str | None = None,
+        name: str = HV_BATTERY_CONTAINER_NAME,
+        purpose: str = HV_BATTERY_CONTAINER_PURPOSE,
+        descriptors: Iterable[str] = HV_BATTERY_DESCRIPTORS,
     ) -> None:
         self._session = session
         self._entry_id = entry_id
         self._container_id: str | None = initial_container_id
         self._container_signature: str | None = None
         self._lock = asyncio.Lock()
-        descriptors = list(dict.fromkeys(HV_BATTERY_DESCRIPTORS))
+        # The HV container by default; the service schedule container passes
+        # its own. A reset only ever deletes containers of its own name.
+        self._name = name
+        self._purpose = purpose
+        descriptors = list(dict.fromkeys(descriptors))
         self._desired_descriptors = tuple(descriptors)
         self._descriptor_signature = self.compute_signature(descriptors)
 
@@ -114,7 +121,7 @@ class CardataContainerManager:
         self._container_signature = signature
 
     async def async_reset_hv_container(self, access_token: str | None, rate_limiter: Any | None = None) -> str | None:
-        """Delete existing HV telemetry containers and create a fresh one."""
+        """Delete existing containers of this name and purpose and create a fresh one."""
 
         if not access_token:
             if debug_enabled():
@@ -142,7 +149,7 @@ class CardataContainerManager:
                 # Use name+purpose match (not strict signature) so reset also
                 # cleans up containers with older/different descriptor sets,
                 # including loosely-reused ones.
-                if not self._matches_hv_container_name_purpose(container):
+                if not self._matches_name_purpose(container):
                     continue
                 try:
                     await self._delete_container(access_token, container_id)
@@ -158,9 +165,10 @@ class CardataContainerManager:
 
             if deleted_ids and debug_enabled():
                 _LOGGER.debug(
-                    "[%s] Deleted %s HV container(s): %s",
+                    "[%s] Deleted %s %s container(s): %s",
                     self._entry_id,
                     len(deleted_ids),
+                    self._name,
                     ", ".join(deleted_ids),
                 )
 
@@ -172,16 +180,17 @@ class CardataContainerManager:
             self._container_id = new_id
             self._container_signature = self._descriptor_signature
             _LOGGER.info(
-                "[%s] Reset HV telemetry container; new container id %s",
+                "[%s] Reset %s container; new container id %s",
                 self._entry_id,
+                self._name,
                 new_id,
             )
             return new_id
 
     async def _create_container(self, access_token: str) -> str:
         payload = {
-            "name": HV_BATTERY_CONTAINER_NAME,
-            "purpose": HV_BATTERY_CONTAINER_PURPOSE,
+            "name": self._name,
+            "purpose": self._purpose,
             "technicalDescriptors": list(self._desired_descriptors),
         }
         response = await self._request("POST", "/customers/containers", access_token, json_body=payload)
@@ -194,19 +203,14 @@ class CardataContainerManager:
         response = await self._request("GET", "/customers/containers", access_token)
         return extract_container_items(response)
 
-    def _matches_hv_container_name_purpose(self, container: dict[str, Any]) -> bool:
+    def _matches_name_purpose(self, container: dict[str, Any]) -> bool:
         """Loose match: name and purpose match, descriptor signature may differ."""
 
         if not isinstance(container, dict):
             return False
         purpose = container.get("purpose")
         name = container.get("name")
-        return (
-            isinstance(purpose, str)
-            and purpose == HV_BATTERY_CONTAINER_PURPOSE
-            and isinstance(name, str)
-            and name == HV_BATTERY_CONTAINER_NAME
-        )
+        return isinstance(purpose, str) and purpose == self._purpose and isinstance(name, str) and name == self._name
 
     async def _delete_container(self, access_token: str, container_id: str) -> None:
         try:

@@ -204,7 +204,7 @@ def TestOneInput(data: bytes) -> None:
     manager = container_module.CardataContainerManager(session=None, entry_id="fuzz")
 
     for container in containers:
-        manager._matches_hv_container_name_purpose(container)
+        manager._matches_name_purpose(container)
 
 
 def main() -> None:
