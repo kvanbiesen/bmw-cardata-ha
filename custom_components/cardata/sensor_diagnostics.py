@@ -41,7 +41,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataSensorEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
     """Diagnostic sensor for connection and polling info."""
 
     _attr_should_poll = False
+    _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_native_value: datetime | str | None = None
 
@@ -105,6 +106,10 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         else:
             self._attr_name = sensor_type
             suffix = sensor_type
+
+        if sensor_type in ("last_message", "last_telematic_api", "connection_status"):
+            self._attr_translation_key = sensor_type
+            del self._attr_name
 
         self._attr_unique_id = f"{entry_id}_diagnostics_{suffix}"
 
@@ -204,7 +209,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
         return self._attr_native_value
 
 
-class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
+class CardataVehicleMetadataSensor(CardataSensorEntity, RestoreEntity, SensorEntity):
     """Diagnostic sensor for vehicle metadata (stored once per vehicle)."""
 
     _attr_should_poll = False
@@ -213,8 +218,6 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "diagnostics_vehicle_metadata")
-        self._base_name = "Vehicle Metadata"
-        self._update_name(write_state=False)
         self._unsubscribe: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -280,7 +283,7 @@ class CardataVehicleMetadataSensor(CardataEntity, RestoreEntity, SensorEntity):
         return attrs
 
 
-class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity):
+class CardataEfficiencyLearningSensor(CardataSensorEntity, RestoreEntity, SensorEntity):
     """Diagnostic sensor for efficiency learning matrix data."""
 
     _attr_should_poll = False
@@ -290,8 +293,6 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "diagnostics_charging_matrix")
-        self._base_name = "Charging Efficiency Matrix"
-        self._update_name(write_state=False)
         self._unsubscribe: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -360,7 +361,7 @@ class CardataEfficiencyLearningSensor(CardataEntity, RestoreEntity, SensorEntity
         return self._coordinator.get_efficiency_learning_attributes(self._vin)
 
 
-class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
+class CardataChargingHistorySensor(CardataSensorEntity, RestoreEntity, SensorEntity):
     """Diagnostic sensor for charging history data (daily API poll)."""
 
     _attr_should_poll = False
@@ -369,8 +370,6 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "diagnostics_charging_history")
-        self._base_name = "Charging History"
-        self._update_name(write_state=False)
         self._unsubscribe: Callable[[], None] | None = None
         self._restored_sessions: list[dict[str, Any]] = []
 
@@ -470,7 +469,7 @@ class CardataChargingHistorySensor(CardataEntity, RestoreEntity, SensorEntity):
         return attrs
 
 
-class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
+class CardataTyreDiagnosisSensor(CardataSensorEntity, RestoreEntity, SensorEntity):
     """Diagnostic sensor for tyre diagnosis data (daily API poll)."""
 
     _attr_should_poll = False
@@ -479,8 +478,6 @@ class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, "diagnostics_tyre_diagnosis")
-        self._base_name = "Tyre Diagnosis"
-        self._update_name(write_state=False)
         self._unsubscribe: Callable[[], None] | None = None
         self._restored_attributes: dict[str, Any] = {}
 

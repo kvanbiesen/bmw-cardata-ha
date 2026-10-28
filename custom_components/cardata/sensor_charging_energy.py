@@ -43,7 +43,7 @@ from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
 from .const import CHARGING_ENERGY_DESCRIPTOR
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataSensorEntity
 from .utils import redact_vin
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ class ChargingEnergyData(ExtraStoredData):
         return {"total": self.total, "counted": self.counted}
 
 
-class CardataChargingEnergySensor(CardataEntity, RestoreEntity, SensorEntity):
+class CardataChargingEnergySensor(CardataSensorEntity, RestoreEntity, SensorEntity):
     """Grid energy charged, added up from the charging session history.
 
     BMW reports one energy figure per charging session over a rolling 30 day
@@ -99,8 +99,6 @@ class CardataChargingEnergySensor(CardataEntity, RestoreEntity, SensorEntity):
 
     def __init__(self, coordinator: CardataCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin, CHARGING_ENERGY_DESCRIPTOR)
-        self._base_name = "Charging History Energy"
-        self._update_name(write_state=False)
         self._total = 0.0
         # An empty mapping means nothing has been counted yet, so every session
         # on the first fetch is new. None means the sessions behind a restored

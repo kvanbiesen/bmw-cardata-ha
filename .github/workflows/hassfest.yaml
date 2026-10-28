@@ -11,4 +11,16 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - uses: "actions/checkout@v5"
-      - uses: home-assistant/actions/hassfest@master
+      - name: Validate integration with hassfest
+        # BMW state keys are case-sensitive raw API values. Only translation
+        # validation is replaced; the other default Hassfest plugins still run.
+        run: >-
+          docker run --rm -v "${{ github.workspace }}:/github/workspace"
+          ghcr.io/home-assistant/hassfest --skip-plugins translations
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Validate translations and validator regression tests
+        run: |
+          python scripts/validate_translations.py
+          python -m unittest discover -s scripts -p 'test_validate_translations.py'

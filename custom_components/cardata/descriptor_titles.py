@@ -48,6 +48,7 @@ DESCRIPTOR_TITLES = {
     "vehicle.powertrain.electric.battery.charging.dcChargingModeActive": "Battery EV DC charging mode",
     "vehicle.powertrain.electric.battery.charging.history.sessionsList": "Battery EV Charging history",
     "vehicle.powertrain.electric.battery.charging.power": "Battery EV Charging power",
+    "vehicle.powertrain.electric.battery.charging.authenticationStatus": "Battery EV Charging authentication state",
     "vehicle.powertrain.electric.battery.charging.preferenceSmartCharging": "Battery EV Smart charging option",
     "vehicle.powertrain.electric.battery.charging.settingsList": "Battery EV Location-based charging settings",
     "vehicle.powertrain.electric.battery.preconditioning.automaticMode.statusFeedback": "Battery EV Automatic preconditioning state",

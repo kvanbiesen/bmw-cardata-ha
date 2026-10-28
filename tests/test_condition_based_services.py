@@ -272,7 +272,7 @@ class TestEntities:
         assert attrs["remaining_distance"] == 7000
         assert attrs["timestamp"] == TIMESTAMP
         assert sensor.icon == "mdi:oil"
-        assert sensor.name.endswith("Service Engine oil")
+        assert sensor.translation_key == "vehicle_status_conditionbasedservices_engineoil"
 
     def test_service_due_is_a_problem_sensor(self):
         state = DescriptorState(value=True, unit=None, timestamp=TIMESTAMP, attributes={"due_items": ["Engine oil"]})

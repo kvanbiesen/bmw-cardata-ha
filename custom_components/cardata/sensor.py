@@ -78,7 +78,7 @@ from .const import (
     has_hv_battery,
 )
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataSensorEntity
 from .fault_memory import FAULT_MEMORY_ATTRIBUTE_KEYS, FAULT_MEMORY_ICON
 from .runtime import CardataRuntimeData
 from .sensor_charging_energy import CardataChargingEnergySensor
@@ -113,7 +113,7 @@ CHARGING_HISTORY_RESTORE_DESCRIPTORS = frozenset(
 )
 
 
-class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
+class CardataSensor(CardataSensorEntity, RestoreEntity, SensorEntity):
     """Sensor for generic telematic data."""
 
     _attr_should_poll = False

@@ -165,6 +165,6 @@ class TestCoordinatorAndSensor:
             value=29, unit=None, timestamp=TIMESTAMP, attributes={"ecu_count": 15, "codes_by_ecu": {"0x30": ["4823FC"]}}
         )
         sensor = CardataSensor(FakeCoordinator(state), VIN, DESC_FAULT_MEMORY)
-        assert sensor.name.endswith("Fault memory")
+        assert sensor.translation_key == "vehicle_electroniccontrolunit_diagnostictroublecodes_raw"
         assert sensor.icon == "mdi:car-cog"
         assert sensor.extra_state_attributes["codes_by_ecu"] == {"0x30": ["4823FC"]}

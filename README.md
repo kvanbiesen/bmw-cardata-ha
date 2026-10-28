@@ -245,6 +245,14 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 - Additional attributes include the source timestamp.
 - Numeric sensors whose unit maps to a known device class (distance, energy, power, current, voltage, temperature, pressure, volume, duration and battery) declare `suggested_display_precision`, so unit conversions (e.g. km to miles) display clean rounded values in standard HA cards and the built-in vehicle card. Readings that map to no device class, such as speed, are shown as BMW sends them. You can override the display unit per entity via the gear icon in the entity settings, or switch your HA unit system to imperial for a global change.
 
+### Entity names and state displays
+
+Sensor and binary sensor names use Home Assistant's translation system. English and German names are included; other languages fall back to English. The names follow the Home Assistant system language. Reload the integration or restart Home Assistant after changing it.
+
+Existing entity IDs, unique IDs, and custom names are preserved. Sensor states retain BMW's original values, so automations and templates continue to use values such as `PRICE_OPTIMIZED`. Known states are displayed using translated labels. Unknown codes pass through unchanged. Numeric values and binary sensor on/off states are unaffected.
+
+For contributors: translation keys for entity names are the descriptor in lowercase with dots replaced by underscores. State translation keys are the exact BMW state values. The HA-reserved lowercase `unknown` and `unavailable` states are handled globally by Home Assistant.
+
 ## Vehicle Dashboard Card (Lovelace)
 
 The integration automatically registers a built-in Lovelace vehicle card — no manual YAML or HACS frontend install needed.
