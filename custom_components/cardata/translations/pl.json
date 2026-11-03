@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Włącz diagnostykę opon (dzienne zapytanie API)",
           "enable_trip_end_polling": "Włącz odpytywanie po zakończeniu jazdy",
           "trip_poll_cooldown_minutes": "Odstęp między odpytaniami po zakończeniu jazdy (minuty)",
-          "enable_external_power_injection": "Używaj zewnętrznego miernika mocy do ładowania"
+          "enable_external_power_injection": "Używaj zewnętrznego miernika mocy do ładowania",
+          "extra_descriptors": "Dodatkowe deskryptory telematyczne"
         },
         "data_description": {
           "enable_charging_history": "Pobiera z BMW historię sesji ładowania raz dziennie. Zużywa 1 dodatkowe zapytanie API na pojazd dziennie z Twojego dziennego limitu 50 zapytań.",
           "enable_tyre_diagnosis": "Pobiera z BMW dane o stanie i zużyciu opon raz dziennie. Zużywa 1 dodatkowe zapytanie API na pojazd dziennie z Twojego dziennego limitu 50 zapytań.",
           "enable_trip_end_polling": "Po włączeniu wyzwala natychmiastowe zapytanie API za każdym razem, gdy pojazd się zatrzyma. Wyłącz tę opcję, jeśli odbywasz wiele krótkich podróży i osiągasz dzienny limit API. Zaplanowane odpytywanie działa niezależnie.",
           "trip_poll_cooldown_minutes": "Minimalny odstęp między odpytaniami po zakończeniu jazdy dla tego samego pojazdu (domyślnie: 10). Zwiększ tę wartość, aby ograniczyć użycie API przy częstych krótkich podróżach.",
-          "enable_external_power_injection": "Pozwala automatyzacji przesyłać lokalnie zmierzoną moc ładowania do prognozy SOC za pomocą usługi cardata.update_charging_power. Dopóki napływają świeże lokalne odczyty, wartość V×A z BMW jest pomijana. Pozostaw wyłączone, chyba że masz inteligentny licznik i został on podłączony."
+          "enable_external_power_injection": "Pozwala automatyzacji przesyłać lokalnie zmierzoną moc ładowania do prognozy SOC za pomocą usługi cardata.update_charging_power. Dopóki napływają świeże lokalne odczyty, wartość V×A z BMW jest pomijana. Pozostaw wyłączone, chyba że masz inteligentny licznik i został on podłączony.",
+          "extra_descriptors": "Dodatkowe deskryptory BMW do odpytywania, oddzielone przecinkami (np. vehicle.electricalSystem.battery.serviceDemand.recharge). Są zapisywane w ustawieniach, więc przetrwają aktualizacje integracji. Zmiana listy tworzy kontener HV od nowa. Jeśli BMW odrzuci deskryptor, integracja nadal odpytuje swoją standardową listę i wyświetla powiadomienie."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Zaznacz pole, aby potwierdzić.",
       "reset_failed": "Resetowanie kontenera nie powiodło się: {error}",
       "missing_token": "Brak tokenu dostępu. Autoryzuj integrację ponownie.",
-      "cleanup_failed": "Czyszczenie encji nie powiodło się: {error}"
+      "cleanup_failed": "Czyszczenie encji nie powiodło się: {error}",
+      "invalid_descriptor": "Każdy deskryptor musi zaczynać się od \"vehicle.\""
     },
     "abort": {
       "auth_failed": "Odpowiedź autoryzacyjna BMW była niekompletna (brak tokenów). Spróbuj ponownie.",

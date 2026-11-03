@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Aktivera däckdiagnostik (dagligt API-anrop)",
           "enable_trip_end_polling": "Aktivera avfrågning efter avslutad körning",
           "trip_poll_cooldown_minutes": "Väntetid mellan avfrågningar efter avslutad körning (minuter)",
-          "enable_external_power_injection": "Använd extern effektmätare för laddning"
+          "enable_external_power_injection": "Använd extern effektmätare för laddning",
+          "extra_descriptors": "Extra telematikdeskriptorer"
         },
         "data_description": {
           "enable_charging_history": "Hämtar historik över laddningstillfällen från BMW en gång per dag. Använder 1 extra API-anrop per fordon och dag från din dagliga kvot på 50 anrop.",
           "enable_tyre_diagnosis": "Hämtar information om däckens hälsa och slitage från BMW en gång per dag. Använder 1 extra API-anrop per fordon och dag från din dagliga kvot på 50 anrop.",
           "enable_trip_end_polling": "När detta är aktiverat utlöses en omedelbar API-avfrågning varje gång fordonet stannar. Inaktivera detta om du kör många korta sträckor och når den dagliga API-gränsen. Schemalagda avfrågningar körs oavsett.",
           "trip_poll_cooldown_minutes": "Minsta väntetid mellan avfrågningar efter avslutad körning för samma fordon (standard: 10). Öka värdet för att minska API-användningen vid många korta körningar.",
-          "enable_external_power_injection": "Tillåt en automatisering att skicka lokalt uppmätt laddeffekt till SOC-prognosen via tjänsten cardata.update_charging_power. Så länge färska lokala mätvärden kommer in undertrycks BMW:s V×A-värde. Låt detta vara inaktiverat om du inte använder en smart mätare och har anslutit den."
+          "enable_external_power_injection": "Tillåt en automatisering att skicka lokalt uppmätt laddeffekt till SOC-prognosen via tjänsten cardata.update_charging_power. Så länge färska lokala mätvärden kommer in undertrycks BMW:s V×A-värde. Låt detta vara inaktiverat om du inte använder en smart mätare och har anslutit den.",
+          "extra_descriptors": "Ytterligare BMW-deskriptorer att hämta, separerade med kommatecken (t.ex. vehicle.electricalSystem.battery.serviceDemand.recharge). De sparas i dina inställningar och finns därför kvar efter uppdateringar av integrationen. Om du ändrar listan återskapas HV-containern. Om BMW avvisar en deskriptor fortsätter integrationen med sin standardlista och visar en avisering."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Markera rutan för att bekräfta.",
       "reset_failed": "Det gick inte att återställa containern: {error}",
       "missing_token": "Det finns ingen åtkomsttoken. Auktorisera integreringen igen.",
-      "cleanup_failed": "Det gick inte att rensa entiteterna: {error}"
+      "cleanup_failed": "Det gick inte att rensa entiteterna: {error}",
+      "invalid_descriptor": "Varje deskriptor måste börja med \"vehicle.\""
     },
     "abort": {
       "auth_failed": "BMW-auktoriseringssvaret var ofullständigt (token saknas). Försök igen.",

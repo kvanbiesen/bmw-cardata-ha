@@ -25,7 +25,9 @@
 
 """Constants for the BMW CarData integration."""
 
-from collections.abc import Container
+import re
+from collections.abc import Container, Mapping
+from typing import Any
 
 DOMAIN = "cardata"
 
@@ -191,6 +193,7 @@ OPTION_ENABLE_TYRE_DIAGNOSIS = "enable_tyre_diagnosis"
 OPTION_ENABLE_TRIP_POLL = "enable_trip_end_polling"
 OPTION_TRIP_POLL_COOLDOWN = "trip_poll_cooldown_minutes"
 OPTION_ENABLE_EXTERNAL_POWER = "enable_external_power_injection"
+OPTION_EXTRA_DESCRIPTORS = "extra_descriptors"
 
 # Freshness window for externally injected charging power. While a local
 # injection has arrived within this many seconds, BMW-sourced V×A and
@@ -271,6 +274,18 @@ HV_BATTERY_DESCRIPTORS = [
     # reported as a count by fault_memory.py.
     DESC_FAULT_MEMORY,
 ]
+
+
+def hv_descriptors(options: Mapping[str, Any] | None) -> list[str]:
+    """Return the HV container descriptors plus any the user added in options."""
+    extra = parse_extra_descriptors((options or {}).get(OPTION_EXTRA_DESCRIPTORS, ""))
+    return list(dict.fromkeys([*HV_BATTERY_DESCRIPTORS, *extra]))
+
+
+def parse_extra_descriptors(raw: str) -> list[str]:
+    """Split a comma/newline separated descriptor list, dropping blanks."""
+    return [part.strip() for part in re.split(r"[,\s]+", raw or "") if part.strip()]
+
 
 # Condition Based Services (the service schedule, one entry per item) come from
 # a container of their own, read once a day. In 5.3.0 they sat in the polled

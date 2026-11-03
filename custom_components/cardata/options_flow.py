@@ -55,8 +55,10 @@ from .const import (
     OPTION_ENABLE_MAGIC_SOC,
     OPTION_ENABLE_TRIP_POLL,
     OPTION_ENABLE_TYRE_DIAGNOSIS,
+    OPTION_EXTRA_DESCRIPTORS,
     OPTION_TRIP_POLL_COOLDOWN,
     VEHICLE_METADATA,
+    parse_extra_descriptors,
 )
 from .utils import redact_vin
 
@@ -178,26 +180,35 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             options[OPTION_ENABLE_TRIP_POLL] = user_input[OPTION_ENABLE_TRIP_POLL]
             options[OPTION_TRIP_POLL_COOLDOWN] = cooldown
             options[OPTION_ENABLE_EXTERNAL_POWER] = user_input[OPTION_ENABLE_EXTERNAL_POWER]
+            # Kept in options so integration updates don't wipe it; a change
+            # alters the container signature, so the reload rebuilds the container.
+            extra = parse_extra_descriptors(user_input.get(OPTION_EXTRA_DESCRIPTORS, ""))
+            if any(not d.startswith("vehicle.") for d in extra):
+                return self.async_show_form(
+                    step_id="action_settings",
+                    data_schema=self._settings_schema(user_input),
+                    errors={OPTION_EXTRA_DESCRIPTORS: "invalid_descriptor"},
+                )
+            options[OPTION_EXTRA_DESCRIPTORS] = ", ".join(extra)
             return self.async_create_entry(title="", data=options)
 
-        current_magic = self._config_entry.options.get(OPTION_ENABLE_MAGIC_SOC, False)
-        current_ch = self._config_entry.options.get(OPTION_ENABLE_CHARGING_HISTORY, False)
-        current_td = self._config_entry.options.get(OPTION_ENABLE_TYRE_DIAGNOSIS, False)
-        current_trip = self._config_entry.options.get(OPTION_ENABLE_TRIP_POLL, True)
-        current_cooldown = self._config_entry.options.get(OPTION_TRIP_POLL_COOLDOWN, DEFAULT_TRIP_POLL_COOLDOWN_MINUTES)
-        current_ext_power = self._config_entry.options.get(OPTION_ENABLE_EXTERNAL_POWER, False)
-        return self.async_show_form(
-            step_id="action_settings",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(OPTION_ENABLE_MAGIC_SOC, default=current_magic): bool,
-                    vol.Optional(OPTION_ENABLE_CHARGING_HISTORY, default=current_ch): bool,
-                    vol.Optional(OPTION_ENABLE_TYRE_DIAGNOSIS, default=current_td): bool,
-                    vol.Optional(OPTION_ENABLE_TRIP_POLL, default=current_trip): bool,
-                    vol.Optional(OPTION_TRIP_POLL_COOLDOWN, default=current_cooldown): int,
-                    vol.Optional(OPTION_ENABLE_EXTERNAL_POWER, default=current_ext_power): bool,
-                }
-            ),
+        return self.async_show_form(step_id="action_settings", data_schema=self._settings_schema())
+
+    def _settings_schema(self, defaults: dict[str, Any] | None = None) -> vol.Schema:
+        current = {**self._config_entry.options, **(defaults or {})}
+        return vol.Schema(
+            {
+                vol.Optional(OPTION_ENABLE_MAGIC_SOC, default=current.get(OPTION_ENABLE_MAGIC_SOC, False)): bool,
+                vol.Optional(OPTION_ENABLE_CHARGING_HISTORY, default=current.get(OPTION_ENABLE_CHARGING_HISTORY, False)): bool,
+                vol.Optional(OPTION_ENABLE_TYRE_DIAGNOSIS, default=current.get(OPTION_ENABLE_TYRE_DIAGNOSIS, False)): bool,
+                vol.Optional(OPTION_ENABLE_TRIP_POLL, default=current.get(OPTION_ENABLE_TRIP_POLL, True)): bool,
+                vol.Optional(
+                    OPTION_TRIP_POLL_COOLDOWN,
+                    default=current.get(OPTION_TRIP_POLL_COOLDOWN, DEFAULT_TRIP_POLL_COOLDOWN_MINUTES),
+                ): int,
+                vol.Optional(OPTION_ENABLE_EXTERNAL_POWER, default=current.get(OPTION_ENABLE_EXTERNAL_POWER, False)): bool,
+                vol.Optional(OPTION_EXTRA_DESCRIPTORS, default=current.get(OPTION_EXTRA_DESCRIPTORS, "")): str,
+            }
         )
 
     # -- MQTT Broker -----------------------------------------------------------
