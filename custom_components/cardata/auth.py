@@ -512,8 +512,9 @@ async def async_ensure_container_for_entry(
     If a container with matching descriptors is already stored, reuses it.
     Otherwise, deletes any stale containers and creates a fresh one.
 
-    This function should ONLY be called during bootstrap.
-    NOT during token refresh, MQTT reconnects, or unauthorized errors!
+    This function should ONLY be called during bootstrap, or by the poll when
+    no container is stored at all. NOT during token refresh, MQTT reconnects,
+    or unauthorized errors!
 
     Returns True if container is ready, False otherwise.
     """
