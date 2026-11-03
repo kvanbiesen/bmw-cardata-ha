@@ -45,6 +45,8 @@ from .const import (
     ERR_TOKEN_REFRESH_IN_PROGRESS,
     HV_BATTERY_DESCRIPTORS,
     LOCK_ACQUIRE_TIMEOUT,
+    OPTION_EXTRA_DESCRIPTORS,
+    hv_descriptors,
 )
 from .container import CardataContainerManager
 from .device_flow import CardataAuthError, refresh_tokens
@@ -490,7 +492,7 @@ async def async_manual_refresh_tokens(hass: HomeAssistant, entry: ConfigEntry) -
     )
 
 
-def container_signature_outdated(data: Mapping[str, Any]) -> bool:
+def container_signature_outdated(data: Mapping[str, Any], options: Mapping[str, Any] | None = None) -> bool:
     """Return True when the stored container predates the current descriptor list.
 
     The container is only rebuilt at bootstrap, so an install that has already
@@ -499,7 +501,7 @@ def container_signature_outdated(data: Mapping[str, Any]) -> bool:
     """
     if not data.get("hv_container_id"):
         return False
-    return data.get("hv_descriptor_signature") != CardataContainerManager.compute_signature(HV_BATTERY_DESCRIPTORS)
+    return data.get("hv_descriptor_signature") != CardataContainerManager.compute_signature(hv_descriptors(options))
 
 
 async def async_ensure_container_for_entry(
@@ -534,7 +536,7 @@ async def async_ensure_container_for_entry(
         return False
 
     # Calculate desired signature
-    desired_signature = CardataContainerManager.compute_signature(HV_BATTERY_DESCRIPTORS)
+    desired_signature = CardataContainerManager.compute_signature(hv_descriptors(entry.options))
 
     # If container exists and signature matches, we're done!
     if hv_container_id and stored_signature == desired_signature:
@@ -552,27 +554,62 @@ async def async_ensure_container_for_entry(
     else:
         _LOGGER.info("Creating HV container for entry %s (exists=%s)", entry.entry_id, hv_container_id is not None)
 
-    container_manager.sync_from_entry(None)
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     rate_limiter = runtime.container_rate_limiter if runtime else None
 
+    rejected_extras = False
     try:
         # Reset deletes old matching containers before creating fresh one,
         # ensuring updated descriptors are used (not loose-match reuse).
         container_id = await container_manager.async_reset_hv_container(access_token, rate_limiter)
     except CardataContainerError as err:
+        # BMW refuses the whole container (CU-402) if any descriptor is unknown.
+        # Fall back to the standard list and tell the user, rather than retrying
+        # a list BMW will keep rejecting.
+        if err.status != 400 or not entry.options.get(OPTION_EXTRA_DESCRIPTORS):
+            _LOGGER.error(
+                "Failed to create HV container for entry %s: %s",
+                entry.entry_id,
+                err,
+            )
+            return False
         _LOGGER.error(
-            "Failed to create HV container for entry %s: %s",
+            "BMW rejected the HV container with the extra descriptors for entry %s (%s); "
+            "creating it without them",
             entry.entry_id,
             err,
         )
-        return False
+        container_manager.set_descriptors(HV_BATTERY_DESCRIPTORS)
+        try:
+            container_id = await container_manager.async_reset_hv_container(access_token, rate_limiter)
+        except CardataContainerError as retry_err:
+            _LOGGER.error(
+                "Failed to create HV container for entry %s: %s",
+                entry.entry_id,
+                retry_err,
+            )
+            return False
+        rejected_extras = True
+        persistent_notification.async_create(
+            hass,
+            f"BMW rejected one of the extra telematic descriptors ({err}).\n\n"
+            "The integration is polling its standard descriptors without them. Correct the "
+            "list under Configure > Settings to try again.",
+            title="BMW CarData: extra descriptors rejected",
+            notification_id=f"{DOMAIN}_{entry.entry_id}_extra_descriptors",
+        )
 
     if not container_id:
         _LOGGER.error("Container creation returned no ID")
         return False
 
-    actual_signature = container_manager.container_signature or desired_signature
+    # After a rejection, store the signature of the requested list anyway, so
+    # every restart doesn't recreate the container only to be rejected again.
+    # Editing the list changes the signature, which retries it.
+    if rejected_extras:
+        actual_signature = desired_signature
+    else:
+        actual_signature = container_manager.container_signature or desired_signature
 
     # Success! Update entry
     container_manager.sync_from_entry(container_id)

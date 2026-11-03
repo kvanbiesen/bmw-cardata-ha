@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Gumiabroncs-diagnosztika bekapcsolása (napi API-hívás)",
           "enable_trip_end_polling": "Út végi lekérdezés bekapcsolása",
           "trip_poll_cooldown_minutes": "Várakozás az út végi lekérdezések között (perc)",
-          "enable_external_power_injection": "Külső teljesítménymérő használata a töltéshez"
+          "enable_external_power_injection": "Külső teljesítménymérő használata a töltéshez",
+          "extra_descriptors": "További telematikai leírók"
         },
         "data_description": {
           "enable_charging_history": "Naponta egyszer lekéri a BMW-től a töltési alkalmak előzményeit. Naponta és járművenként 1 további API-hívást használ fel a napi 50 hívásos keretéből.",
           "enable_tyre_diagnosis": "Naponta egyszer lekéri a BMW-től az abroncsok állapotára és kopására vonatkozó adatokat. Naponta és járművenként 1 további API-hívást használ fel a napi 50 hívásos keretéből.",
           "enable_trip_end_polling": "Bekapcsolva minden alkalommal azonnali API-lekérdezést indít, amikor a jármű megáll. Kapcsolja ki, ha sok rövid utat tesz meg, és eléri a napi API-korlátot. Az ütemezett lekérdezés ettől függetlenül fut.",
           "trip_poll_cooldown_minutes": "Minimális várakozási idő ugyanazon jármű út végi lekérdezései között (alapértelmezett: 10). Növelje az API-használat csökkentéséhez gyakori rövid utak esetén.",
-          "enable_external_power_injection": "Lehetővé teszi, hogy egy automatizmus a helyben mért töltési teljesítményt a cardata.update_charging_power szolgáltatáson keresztül átadja a SOC-előrejelzésnek. Amíg friss helyi mérések érkeznek, a BMW-től származó V×A érték háttérbe szorul. Hagyja kikapcsolva, hacsak nem használ okosmérőt, és nem kötötte be azt."
+          "enable_external_power_injection": "Lehetővé teszi, hogy egy automatizmus a helyben mért töltési teljesítményt a cardata.update_charging_power szolgáltatáson keresztül átadja a SOC-előrejelzésnek. Amíg friss helyi mérések érkeznek, a BMW-től származó V×A érték háttérbe szorul. Hagyja kikapcsolva, hacsak nem használ okosmérőt, és nem kötötte be azt.",
+          "extra_descriptors": "További lekérdezendő BMW-leírók vesszővel elválasztva (pl. vehicle.electricalSystem.battery.serviceDemand.recharge). A beállításaidban tárolódnak, így az integráció frissítései után is megmaradnak. A lista módosítása újra létrehozza a HV-tárolót. Ha a BMW elutasít egy leírót, az integráció a szabványos listájával folytatja, és értesítést jelenít meg."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "A megerősítéshez jelölje be a négyzetet.",
       "reset_failed": "A konténer visszaállítása sikertelen: {error}",
       "missing_token": "Nincs elérhető hozzáférési token. Engedélyezze újra az integrációt.",
-      "cleanup_failed": "Az entitások törlése sikertelen: {error}"
+      "cleanup_failed": "Az entitások törlése sikertelen: {error}",
+      "invalid_descriptor": "Minden leírónak \"vehicle.\" előtaggal kell kezdődnie"
     },
     "abort": {
       "auth_failed": "A BMW engedélyezési válasza hiányos volt (hiányoznak a tokenek). Próbálja újra.",

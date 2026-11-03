@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Ota käyttöön rengasdiagnostiikka (päivittäinen API-kutsu)",
           "enable_trip_end_polling": "Ota käyttöön kysely matkan päättyessä",
           "trip_poll_cooldown_minutes": "Kyselyjen väliaika matkan päättyessä (minuuttia)",
-          "enable_external_power_injection": "Käytä ulkoista tehomittaria latauksessa"
+          "enable_external_power_injection": "Käytä ulkoista tehomittaria latauksessa",
+          "extra_descriptors": "Lisätelematiikkakuvaajat"
         },
         "data_description": {
           "enable_charging_history": "Hakee lataustapahtumien historian BMW:ltä kerran päivässä. Käyttää 1 ylimääräisen API-kutsun ajoneuvoa ja päivää kohden päivittäisestä 50 kutsun kiintiöstäsi.",
           "enable_tyre_diagnosis": "Hakee renkaiden kunto- ja kulumistiedot BMW:ltä kerran päivässä. Käyttää 1 ylimääräisen API-kutsun ajoneuvoa ja päivää kohden päivittäisestä 50 kutsun kiintiöstäsi.",
           "enable_trip_end_polling": "Kun tämä on käytössä, API-kysely tehdään heti aina kun ajoneuvo pysähtyy. Poista tämä käytöstä, jos ajat paljon lyhyitä matkoja ja päivittäinen API-raja tulee vastaan. Ajastettu kysely toimii joka tapauksessa.",
           "trip_poll_cooldown_minutes": "Vähimmäisväli saman ajoneuvon matkan päättymiskyselyjen välillä (oletus: 10). Kasvata arvoa vähentääksesi API-käyttöä toistuvilla lyhyillä matkoilla.",
-          "enable_external_power_injection": "Sallii automaation lähettää paikallisesti mitatun lataustehon SOC-ennusteelle palvelun cardata.update_charging_power kautta. Niin kauan kuin tuoreita paikallisia lukemia saapuu, BMW:n V×A-arvo ohitetaan. Jätä pois käytöstä, ellet käytä älymittaria ja ole kytkenyt sitä."
+          "enable_external_power_injection": "Sallii automaation lähettää paikallisesti mitatun lataustehon SOC-ennusteelle palvelun cardata.update_charging_power kautta. Niin kauan kuin tuoreita paikallisia lukemia saapuu, BMW:n V×A-arvo ohitetaan. Jätä pois käytöstä, ellet käytä älymittaria ja ole kytkenyt sitä.",
+          "extra_descriptors": "Muut haettavat BMW-kuvaajat pilkuilla erotettuina (esim. vehicle.electricalSystem.battery.serviceDemand.recharge). Ne tallennetaan asetuksiisi, joten ne säilyvät integraation päivityksissä. Listan muuttaminen luo HV-säiliön uudelleen. Jos BMW hylkää kuvaajan, integraatio jatkaa vakiolistallaan ja näyttää ilmoituksen."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Vahvista valitsemalla valintaruutu.",
       "reset_failed": "Säilön nollaus epäonnistui: {error}",
       "missing_token": "Käyttötunnusta ei ole saatavilla. Valtuuta integraatio uudelleen.",
-      "cleanup_failed": "Entiteettien siivous epäonnistui: {error}"
+      "cleanup_failed": "Entiteettien siivous epäonnistui: {error}",
+      "invalid_descriptor": "Jokaisen kuvaajan on alettava \"vehicle.\""
     },
     "abort": {
       "auth_failed": "BMW:n valtuutusvastaus oli puutteellinen (tokenit puuttuvat). Yritä uudelleen.",

@@ -114,6 +114,13 @@ class CardataContainerManager:
         joined = "|".join(normalized)
         return hashlib.sha1(joined.encode("utf-8")).hexdigest()
 
+    def set_descriptors(self, descriptors: Iterable[str]) -> None:
+        """Replace the descriptor set the next reset creates the container with."""
+
+        descriptors = list(dict.fromkeys(descriptors))
+        self._desired_descriptors = tuple(descriptors)
+        self._descriptor_signature = self.compute_signature(descriptors)
+
     def sync_from_entry(self, container_id: str | None, signature: str | None = None) -> None:
         """Synchronize the known container id (and optional signature) with stored config data."""
 
@@ -121,7 +128,7 @@ class CardataContainerManager:
         self._container_signature = signature
 
     async def async_reset_hv_container(self, access_token: str | None, rate_limiter: Any | None = None) -> str | None:
-        """Delete existing containers of this name and purpose and create a fresh one."""
+        """Create a fresh container, then delete the older ones of this name and purpose."""
 
         if not access_token:
             if debug_enabled():
@@ -141,6 +148,14 @@ class CardataContainerManager:
                     raise CardataContainerError(f"Container creation rate limited: {block_reason}")
 
             containers = await self._list_containers(access_token)
+
+            # Create before deleting: if BMW refuses the new container (rate
+            # limit, outage, rejected descriptor), the old one is still there
+            # and polling carries on with it.
+            new_id = await self._create_container(access_token)
+            if new_id and rate_limiter:
+                rate_limiter.record_creation()
+
             deleted_ids: list[str] = []
             for container in containers:
                 container_id = container.get("containerId")
@@ -171,11 +186,6 @@ class CardataContainerManager:
                     self._name,
                     ", ".join(deleted_ids),
                 )
-
-            self._container_id = None
-            new_id = await self._create_container(access_token)
-            if new_id and rate_limiter:
-                rate_limiter.record_creation()
 
             self._container_id = new_id
             self._container_signature = self._descriptor_signature

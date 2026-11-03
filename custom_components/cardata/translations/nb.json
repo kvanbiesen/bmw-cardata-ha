@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Aktiver dekkdiagnose (daglig API-kall)",
           "enable_trip_end_polling": "Aktiver spørring ved endt tur",
           "trip_poll_cooldown_minutes": "Ventetid mellom spørringer ved endt tur (minutter)",
-          "enable_external_power_injection": "Bruk ekstern effektmåler for lading"
+          "enable_external_power_injection": "Bruk ekstern effektmåler for lading",
+          "extra_descriptors": "Ekstra telematiske deskriptorer"
         },
         "data_description": {
           "enable_charging_history": "Henter historikk over ladeøkter fra BMW én gang per dag. Bruker 1 ekstra API-kall per kjøretøy per dag av den daglige kvoten på 50 kall.",
           "enable_tyre_diagnosis": "Henter data om dekktilstand og slitasje fra BMW én gang per dag. Bruker 1 ekstra API-kall per kjøretøy per dag av den daglige kvoten på 50 kall.",
           "enable_trip_end_polling": "Når dette er aktivert, utløses en umiddelbar API-spørring hver gang kjøretøyet stopper. Slå av dette hvis du kjører mange korte turer og når den daglige API-grensen. Planlagt spørring kjøres uansett.",
           "trip_poll_cooldown_minutes": "Minste ventetid mellom spørringer ved endt tur for samme kjøretøy (standard: 10). Øk verdien for å redusere API-bruken ved mange korte turer.",
-          "enable_external_power_injection": "Lar en automasjon sende lokalt målt ladeeffekt til SOC-prediksjonen via tjenesten cardata.update_charging_power. Så lenge ferske lokale målinger kommer inn, undertrykkes V×A fra BMW. La dette stå av med mindre du har en smartmåler og har koblet den opp."
+          "enable_external_power_injection": "Lar en automasjon sende lokalt målt ladeeffekt til SOC-prediksjonen via tjenesten cardata.update_charging_power. Så lenge ferske lokale målinger kommer inn, undertrykkes V×A fra BMW. La dette stå av med mindre du har en smartmåler og har koblet den opp.",
+          "extra_descriptors": "Flere BMW-deskriptorer som skal hentes, atskilt med komma (f.eks. vehicle.electricalSystem.battery.serviceDemand.recharge). Lagres i innstillingene dine, så de overlever oppdateringer av integrasjonen. Endring av listen gjenoppretter HV-containeren. Hvis BMW avviser en deskriptor, fortsetter integrasjonen med standardlisten og viser et varsel."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Kryss av i boksen for å bekrefte.",
       "reset_failed": "Tilbakestilling av container mislyktes: {error}",
       "missing_token": "Ingen tilgangstoken er tilgjengelig. Autoriser integrasjonen på nytt.",
-      "cleanup_failed": "Opprydding av entiteter mislyktes: {error}"
+      "cleanup_failed": "Opprydding av entiteter mislyktes: {error}",
+      "invalid_descriptor": "Hver deskriptor må starte med \"vehicle.\""
     },
     "abort": {
       "auth_failed": "Autoriseringssvaret fra BMW var ufullstendig (tokener mangler). Prøv igjen.",

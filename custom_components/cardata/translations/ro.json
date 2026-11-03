@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Activează diagnoza anvelopelor (apel API zilnic)",
           "enable_trip_end_polling": "Activează interogarea la sfârșitul cursei",
           "trip_poll_cooldown_minutes": "Pauză între interogările de la sfârșitul cursei (minute)",
-          "enable_external_power_injection": "Folosește un contor de putere extern pentru încărcare"
+          "enable_external_power_injection": "Folosește un contor de putere extern pentru încărcare",
+          "extra_descriptors": "Descriptori telematici suplimentari"
         },
         "data_description": {
           "enable_charging_history": "Preia de la BMW istoricul sesiunilor de încărcare o dată pe zi. Consumă 1 apel API suplimentar pe vehicul pe zi din cota ta zilnică de 50 de apeluri.",
           "enable_tyre_diagnosis": "Preia de la BMW datele despre starea și uzura anvelopelor o dată pe zi. Consumă 1 apel API suplimentar pe vehicul pe zi din cota ta zilnică de 50 de apeluri.",
           "enable_trip_end_polling": "Când este activată, declanșează o interogare API imediată de fiecare dată când vehiculul se oprește. Dezactiveaz-o dacă faci multe curse scurte și atingi limita zilnică de apeluri API. Interogarea programată rulează oricum.",
           "trip_poll_cooldown_minutes": "Timpul minim de așteptare între interogările de la sfârșitul cursei pentru același vehicul (implicit: 10). Mărește-l pentru a reduce consumul de API în cazul curselor scurte frecvente.",
-          "enable_external_power_injection": "Permite unei automatizări să trimită puterea de încărcare măsurată local către predicția SOC prin serviciul cardata.update_charging_power. Cât timp sosesc citiri locale recente, valoarea V×A de la BMW este ignorată. Lasă opțiunea dezactivată dacă nu folosești un contor inteligent conectat."
+          "enable_external_power_injection": "Permite unei automatizări să trimită puterea de încărcare măsurată local către predicția SOC prin serviciul cardata.update_charging_power. Cât timp sosesc citiri locale recente, valoarea V×A de la BMW este ignorată. Lasă opțiunea dezactivată dacă nu folosești un contor inteligent conectat.",
+          "extra_descriptors": "Descriptori BMW suplimentari de interogat, separați prin virgule (de ex. vehicle.electricalSystem.battery.serviceDemand.recharge). Sunt salvați în setările dvs., deci rămân după actualizările integrării. Modificarea listei recreează containerul HV. Dacă BMW respinge un descriptor, integrarea continuă cu lista standard și afișează o notificare."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Bifează caseta pentru a confirma.",
       "reset_failed": "Resetarea containerului a eșuat: {error}",
       "missing_token": "Nu există niciun token de acces. Autorizează din nou integrarea.",
-      "cleanup_failed": "Curățarea entităților a eșuat: {error}"
+      "cleanup_failed": "Curățarea entităților a eșuat: {error}",
+      "invalid_descriptor": "Fiecare descriptor trebuie să înceapă cu \"vehicle.\""
     },
     "abort": {
       "auth_failed": "Răspunsul de autorizare BMW a fost incomplet (lipsesc token-urile). Încearcă din nou.",
