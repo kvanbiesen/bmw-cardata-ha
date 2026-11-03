@@ -250,6 +250,21 @@ HV_BATTERY_DESCRIPTORS = [
     DESC_BATTERY_12V_VOLTAGE,
     DESC_BATTERY_12V_SOC,
     DESC_BATTERY_12V_SOC_PLAUSIBILITY,
+    # Tyre pressures and targets. The API returns them but BMW never streams
+    # them over MQTT, so without these the vehicle card's Tires tile stays empty.
+    "vehicle.chassis.axle.row1.wheel.left.tire.pressure",
+    "vehicle.chassis.axle.row1.wheel.left.tire.pressureTarget",
+    "vehicle.chassis.axle.row1.wheel.right.tire.pressure",
+    "vehicle.chassis.axle.row1.wheel.right.tire.pressureTarget",
+    "vehicle.chassis.axle.row2.wheel.left.tire.pressure",
+    "vehicle.chassis.axle.row2.wheel.left.tire.pressureTarget",
+    "vehicle.chassis.axle.row2.wheel.right.tire.pressure",
+    "vehicle.chassis.axle.row2.wheel.right.tire.pressureTarget",
+    # Door lock state (the vehicle card's lock indicator) and the last trip's end
+    # time and odometer. Like the tyres, these come from the API, not MQTT.
+    "vehicle.cabin.door.lock.status",
+    "vehicle.trip.segment.end.time",
+    "vehicle.trip.segment.end.travelledDistance",
     # DESC_CONDITION_BASED_SERVICES is deliberately left out and read from
     # CBS_CONTAINER_DESCRIPTORS instead, see there.
     # Workshop fault memory (XML list of stored codes per control unit),
