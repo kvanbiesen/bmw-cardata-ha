@@ -552,7 +552,6 @@ async def async_ensure_container_for_entry(
     else:
         _LOGGER.info("Creating HV container for entry %s (exists=%s)", entry.entry_id, hv_container_id is not None)
 
-    container_manager.sync_from_entry(None)
     runtime = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     rate_limiter = runtime.container_rate_limiter if runtime else None
 
