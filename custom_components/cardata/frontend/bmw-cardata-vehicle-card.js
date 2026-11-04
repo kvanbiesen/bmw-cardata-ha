@@ -216,6 +216,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge open/unlocked color (hex, e.g. #f44336 - blank for default)",
     "editor.color_badge_good": "Badge locked/closed color (hex, e.g. #4caf50 - blank for default)",
     "editor.show_range": "Show SOC and range bar",
+    "editor.fuel_level_display": "Fuel level button value",
+    "editor.fuel_level_percentage": "Percentage (%)",
+    "editor.fuel_level_litres": "Litres (L)",
     "editor.color_ev": "Battery bar color (hex, e.g. #4caf50 - blank for default)",
     "editor.color_ev_low": "Battery bar color when low (hex - blank for default)",
     "editor.color_fuel": "Fuel bar color (hex, e.g. #ff9800 - blank for default)",
@@ -315,6 +318,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge öppen/olåst färg (hex, t.ex. #f44336 - tom = standard)",
     "editor.color_badge_good": "Badge låst/stängd färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.show_range": "Visa SOC och räckviddsbar",
+    "editor.fuel_level_display": "Värde på bränslenivåknappen",
+    "editor.fuel_level_percentage": "Procent (%)",
+    "editor.fuel_level_litres": "Liter (L)",
     "editor.color_ev": "Batteristapel färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.color_ev_low": "Batteristapel färg vid låg nivå (hex - tom = standard)",
     "editor.color_fuel": "Bränslestapel färg (hex, t.ex. #ff9800 - tom = standard)",
@@ -414,6 +420,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge-Farbe offen/entriegelt (Hex, z.B. #f44336 - leer = Standard)",
     "editor.color_badge_good": "Badge-Farbe gesperrt/geschlossen (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
+    "editor.fuel_level_display": "Wert der Kraftstoffstand-Kachel",
+    "editor.fuel_level_percentage": "Prozent (%)",
+    "editor.fuel_level_litres": "Liter (L)",
     "editor.color_ev": "Batteriebalken-Farbe (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.color_ev_low": "Batteriebalken-Farbe bei niedrigem Stand (Hex - leer = Standard)",
     "editor.color_fuel": "Kraftstoffbalken-Farbe (Hex, z.B. #ff9800 - leer = Standard)",
@@ -650,6 +659,18 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
         { name: "show_buttons", selector: { boolean: {} } },
         {
+          name: "fuel_level_display",
+          selector: {
+            select: {
+              options: [
+                { value: "percentage", label: t("editor.fuel_level_percentage") },
+                { value: "litres", label: t("editor.fuel_level_litres") },
+              ],
+              mode: "dropdown",
+            },
+          },
+        },
+        {
           name: "leasing_entity",
           selector: { entity: { domain: "sensor" } },
         },
@@ -696,6 +717,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       show_map: true,
       map_height: MAP_HEIGHT_DEFAULT,
       show_buttons: true,
+      fuel_level_display: "percentage",
     };
   }
 
@@ -1360,6 +1382,12 @@ class BmwCardataVehicleCard extends HTMLElement {
     const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : hasFuelRemaining ? remainingFuelEntity : "";
     const primaryLevelValue = hasSoc ? clamp(Math.round(toNumberOrZero(socState)), 0, 100) : hasFuelLevel ? clamp(Math.round(toNumberOrZero(read("fuel_level"))), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
     const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : hasFuelWithCap ? `${primaryLevelValue}%` : hasFuelRemaining ? formatState(read("remaining_fuel"), hass) : "—";
+    const quickLevelLabel = !hasSoc && cfg.fuel_level_display === "litres" && hasFuelRemaining
+      ? formatState(read("remaining_fuel"), hass)
+      : primaryLevelLabel;
+    const quickLevelEntity = !hasSoc && cfg.fuel_level_display === "litres" && hasFuelRemaining
+      ? remainingFuelEntity
+      : primaryLevelEntity;
     const primaryLevelHasBar = hasSoc || hasFuelLevel || hasFuelWithCap;
     const primaryRangeState = hasRange ? read("range_total") : hasFuelRemaining ? read("remaining_fuel") : null;
     const primaryRangeEntity = hasRange ? rangeEntity : hasFuelRemaining ? remainingFuelEntity : "";
@@ -1634,8 +1662,8 @@ class BmwCardataVehicleCard extends HTMLElement {
           : {
               icon: "mdi:fuel",
               label: t("level"),
-              value: primaryLevelLabel,
-              entity: primaryLevelEntity,
+              value: quickLevelLabel,
+              entity: quickLevelEntity,
             },
         tireEntries.length
           ? {
