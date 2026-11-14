@@ -46,7 +46,7 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfVolume,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
@@ -231,6 +231,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             self._unsubscribe()
             self._unsubscribe = None
 
+    @callback
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle incoming data updates from coordinator.
 
@@ -296,7 +297,7 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
             if state_class:
                 self._attr_state_class = state_class
 
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
     def _determine_state_class(self) -> SensorStateClass | None:
         """Automatically determine state class based on unit."""
@@ -526,7 +527,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     # also subscribe to updates
 
-    async def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
+    @callback
+    def async_handle_update_for_creation(vin: str, descriptor: str) -> None:
         ensure_entity(vin, descriptor, from_signal=True)  # <- Trust the signal!
 
     entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_update, async_handle_update_for_creation))

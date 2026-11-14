@@ -36,7 +36,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
@@ -216,6 +216,7 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
             self._unsubscribe()
             self._unsubscribe = None
 
+    @callback
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle incoming data updates from coordinator.
 
@@ -261,7 +262,7 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
         # State changed or sensor is unknown - update it!
         self._attr_is_on = new_value
         self._published_attributes = state.attributes
-        self.schedule_update_ha_state()
+        self.async_write_ha_state()
 
     @property
     def icon(self) -> str | None:
