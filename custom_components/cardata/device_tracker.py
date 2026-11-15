@@ -36,13 +36,14 @@ from typing import Any
 
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
@@ -175,6 +176,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # Update name to include vehicle name prefix
         self._update_name(write_state=False)
         self._custom_marker_picture: str | None = None
+        self._unsub_image: Callable[[], None] | None = None
 
         # Current known good coordinates (renamed from _restored for clarity)
         self._current_lat: float | None = None
@@ -199,6 +201,11 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         self._custom_marker_picture = await self.hass.async_add_executor_job(
             _find_custom_marker_picture, self.hass, self._vin
         )
+
+        if image_entity_id := self._image_entity_id():
+            self._unsub_image = async_track_state_change_event(
+                self.hass, [image_entity_id], self._handle_image_state_change
+            )
 
         # CRITICAL: Ensure VIN names are available before restoring state
         # Entity restore can happen before names exist, causing missing prefix
@@ -288,6 +295,24 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if self._unsubscribe:
             self._unsubscribe()
             self._unsubscribe = None
+
+        if self._unsub_image:
+            self._unsub_image()
+            self._unsub_image = None
+
+    def _image_entity_id(self) -> str | None:
+        return async_get(self.hass).async_get_entity_id("image", DOMAIN, f"{self._vin}_image")
+
+    def _vehicle_image_picture(self) -> str | None:
+        """Return entity_picture of the vehicle image entity (its token URL rotates)."""
+        entity_id = self._image_entity_id()
+        if not entity_id or not (state := self.hass.states.get(entity_id)):
+            return None
+        return state.attributes.get("entity_picture")
+
+    @callback
+    def _handle_image_state_change(self, event: Event) -> None:
+        self.async_write_ha_state()
 
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle location updates from coordinator.
@@ -550,8 +575,8 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
 
     @property
     def entity_picture(self) -> str | None:
-        """Return <vin>_marker.(jpg|jpeg|png|webp), if the user placed one. Default otherwise."""
-        return self._custom_marker_picture or super().entity_picture
+        """Return <vin>_marker.(jpg|jpeg|png|webp) if present, else the vehicle image entity's picture."""
+        return self._custom_marker_picture or self._vehicle_image_picture() or super().entity_picture
 
     @property
     def icon(self) -> str | None:
