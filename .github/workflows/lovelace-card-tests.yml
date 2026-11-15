@@ -1,0 +1,26 @@
+name: Lovelace card checks
+
+on:
+  push:
+    paths:
+      - custom_components/cardata/frontend/bmw-cardata-vehicle-card.js
+      - tests/test_vehicle_card_frontend.mjs
+      - .github/workflows/lovelace-card-tests.yml
+  pull_request:
+    paths:
+      - custom_components/cardata/frontend/bmw-cardata-vehicle-card.js
+      - tests/test_vehicle_card_frontend.mjs
+      - .github/workflows/lovelace-card-tests.yml
+
+jobs:
+  additional-tiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check card JavaScript syntax
+        run: node --check custom_components/cardata/frontend/bmw-cardata-vehicle-card.js
+      - name: Test additional tiles
+        run: node --test tests/test_vehicle_card_frontend.mjs
