@@ -151,6 +151,9 @@ def _install_homeassistant_stubs() -> None:
                 return value / DistanceConverter._KM_PER_MILE
             raise ValueError(f"unsupported conversion: {from_unit} to {to_unit}")
 
+    class Event:
+        pass
+
     class HomeAssistant:
         def __init__(self) -> None:
             self.data = {}
@@ -240,6 +243,7 @@ def _install_homeassistant_stubs() -> None:
         func._hass_callback = True
         return func
 
+    core.Event = Event
     core.HomeAssistant = HomeAssistant
     core.callback = callback
     dispatcher.async_dispatcher_connect = async_dispatcher_connect
