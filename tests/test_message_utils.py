@@ -25,6 +25,7 @@
 
 """Tests for message_utils module."""
 
+from custom_components.cardata import utils
 from custom_components.cardata.message_utils import (
     BOOLEAN_DESCRIPTORS,
     BOOLEAN_VALUE_MAP,
@@ -166,3 +167,18 @@ class TestCatalogueLimits:
 
     def test_a_value_that_is_not_a_number_is_accepted(self):
         assert is_within_catalogue_limits(self.DESCRIPTOR, "n/a") is True
+
+
+class TestRedactVinPayload:
+    """Test redaction handles adversarial nested payloads without crashing."""
+
+    def test_set_members_that_become_unhashable_are_safe(self):
+        payload = {"vin": [{"a", "b"}]}
+        result = utils.redact_vin_payload(payload)
+        assert result["vin"][0] == ["a", "b"] or set(result["vin"][0]) == {"a", "b"}
+
+    def test_frozenset_members_are_redacted_without_crashing(self):
+        payload = {"vin": {frozenset({"A1B2C3D4E5F6G7H8"}), "A1B2C3D4E5F6G7H9"}}
+        result = utils.redact_vin_payload(payload)
+        assert isinstance(result, dict)
+        assert "vin" in result

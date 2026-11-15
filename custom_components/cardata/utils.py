@@ -102,7 +102,17 @@ def redact_vin_payload(payload: Any) -> Any:
     if isinstance(payload, tuple):
         return tuple(redact_vin_payload(item) for item in payload)
     if isinstance(payload, set):
-        return {redact_vin_payload(item) for item in payload}
+        redacted_items = [redact_vin_payload(item) for item in payload]
+        try:
+            return set(redacted_items)
+        except TypeError:
+            return redacted_items
+    if isinstance(payload, frozenset):
+        redacted_items = [redact_vin_payload(item) for item in payload]
+        try:
+            return frozenset(redacted_items)
+        except TypeError:
+            return tuple(redacted_items)
     if isinstance(payload, str):
         return redact_vin_in_text(payload)
     return payload
