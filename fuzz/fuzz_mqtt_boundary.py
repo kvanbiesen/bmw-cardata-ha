@@ -47,11 +47,15 @@ def _install_homeassistant_stub() -> None:
     homeassistant = types.ModuleType("homeassistant")
     core = types.ModuleType("homeassistant.core")
 
+    class Event:
+        pass
+
     class HomeAssistant:
         def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
             self.loop = loop
             self.data = {}
 
+    core.Event = Event
     core.HomeAssistant = HomeAssistant
     homeassistant.core = core
     sys.modules["homeassistant"] = homeassistant
