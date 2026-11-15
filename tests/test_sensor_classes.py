@@ -84,7 +84,7 @@ class FakeCoordinator:
 class OfflineSensor(CardataSensor):
     """A sensor that skips the Home Assistant state write."""
 
-    def schedule_update_ha_state(self, force_refresh: bool = False) -> None:
+    def async_write_ha_state(self) -> None:
         return None
 
 

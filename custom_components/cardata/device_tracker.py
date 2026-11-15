@@ -131,7 +131,8 @@ async def async_setup_entry(
         ensure_tracker(vin)
 
     # Subscribe to location updates
-    async def handle_location_update(vin: str, descriptor: str) -> None:
+    @callback
+    def handle_location_update(vin: str, descriptor: str) -> None:
         if descriptor in (
             LOCATION_LATITUDE_DESCRIPTOR,
             LOCATION_LONGITUDE_DESCRIPTOR,
@@ -317,9 +318,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle location updates from coordinator.
 
-        Note: This must be a sync function because the dispatcher may call it
-        from worker threads. Async work is scheduled via hass.add_job which
-        is thread-safe.
+        Runs in the event loop as a @callback; it must not block.
         """
         if vin != self.vin or descriptor not in (
             LOCATION_LATITUDE_DESCRIPTOR,
@@ -355,7 +354,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             if state and state.value is not None:
                 try:
                     self._heading = float(state.value)
-                    self.schedule_update_ha_state()
+                    self.async_write_ha_state()
                 except (ValueError, TypeError):
                     pass
                 return
@@ -366,7 +365,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 try:
                     self._altitude = float(state.value)
                     self._altitude_unit = state.unit
-                    self.schedule_update_ha_state()
+                    self.async_write_ha_state()
                 except (ValueError, TypeError):
                     pass
                 return

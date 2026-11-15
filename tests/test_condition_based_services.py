@@ -285,7 +285,7 @@ class CountingSensor(CardataSensor):
 
     writes = 0
 
-    def schedule_update_ha_state(self, force_refresh: bool = False) -> None:
+    def async_write_ha_state(self) -> None:
         self.writes += 1
 
 
@@ -294,7 +294,7 @@ class CountingBinarySensor(CardataBinarySensor):
 
     writes = 0
 
-    def schedule_update_ha_state(self, force_refresh: bool = False) -> None:
+    def async_write_ha_state(self) -> None:
         self.writes += 1
 
 
