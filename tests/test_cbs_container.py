@@ -174,30 +174,30 @@ class TestContainerManager:
             purpose=CBS_CONTAINER_PURPOSE,
             descriptors=CBS_CONTAINER_DESCRIPTORS,
         )
-        manager._request = AsyncMock(side_effect=[ACCOUNT, {}, {"containerId": "cbs-new"}])
+        manager._request = AsyncMock(side_effect=[ACCOUNT, {"containerId": "cbs-new"}, {}])
 
         assert await manager.async_reset_hv_container("token") == "cbs-new"
 
         calls = manager._request.await_args_list
         assert [(c.args[0], c.args[1]) for c in calls] == [
             ("GET", "/customers/containers"),
-            ("DELETE", "/customers/containers/cbs-old"),
             ("POST", "/customers/containers"),
+            ("DELETE", "/customers/containers/cbs-old"),
         ]
-        body = calls[2].kwargs["json_body"]
+        body = calls[1].kwargs["json_body"]
         assert body["name"] == CBS_CONTAINER_NAME
         assert body["purpose"] == CBS_CONTAINER_PURPOSE
         assert body["technicalDescriptors"] == CBS_CONTAINER_DESCRIPTORS
 
     async def test_hv_reset_leaves_the_cbs_container_alone(self):
         manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
-        manager._request = AsyncMock(side_effect=[ACCOUNT, {}, {"containerId": "hv-new"}])
+        manager._request = AsyncMock(side_effect=[ACCOUNT, {"containerId": "hv-new"}, {}])
 
         await manager.async_reset_hv_container("token")
 
         deleted = [c.args[1] for c in manager._request.await_args_list if c.args[0] == "DELETE"]
         assert deleted == ["/customers/containers/hv-old"]
-        assert manager._request.await_args_list[2].kwargs["json_body"]["technicalDescriptors"] == list(
+        assert manager._request.await_args_list[1].kwargs["json_body"]["technicalDescriptors"] == list(
             dict.fromkeys(HV_BATTERY_DESCRIPTORS)
         )
 
