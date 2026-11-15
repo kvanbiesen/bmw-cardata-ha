@@ -109,6 +109,31 @@ const tileItem = ({ icon, label, value, entity, cls = "" }) => {
 
 const tileGrid = (items) => `<div class="tile-grid">${items.map(tileItem).join("")}</div>`;
 
+// Additional tiles can reference any Home Assistant entity, not only BMW entities.
+const configuredAdditionalCards = (cfg) =>
+  Array.isArray(cfg?.additional_cards)
+    ? cfg.additional_cards.filter(
+        (item) => item && typeof item.entity === "string" && item.entity.trim()
+      )
+    : [];
+
+const additionalCardItems = (cfg, hass) =>
+  configuredAdditionalCards(cfg).map((item) => {
+    const entity = item.entity.trim();
+    const stateObj = hass?.states?.[entity];
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    const icon = typeof item.icon === "string" ? item.icon.trim() : "";
+    return {
+      entity,
+      label: name || stateObj?.attributes?.friendly_name || entity,
+      icon: icon || stateObj?.attributes?.icon || "mdi:information-outline",
+      value: formatState(stateObj, hass),
+    };
+  });
+
+// Append extra tiles to the native tile grid, filling its last row first.
+const tileGridWithAdditional = (nativeItems, additionalItems) =>
+  tileGrid([...nativeItems, ...additionalItems]);
 
 const hasUsableState = (stateObj) => {
   const state = normalizeState(stateObj);
@@ -233,6 +258,7 @@ const TRANSLATIONS = {
     "editor.show_buttons": "Show quick info buttons",
     "editor.leasing_entity": "Leasing sensor (optional)",
     "editor.leasing_tiles": "Leasing tiles (order = display order)",
+    "editor.additional_cards": "Additional entity tiles",
     "editor.language": "Card language",
     "editor.lang_auto": "Auto (Home Assistant language)",
   },
@@ -335,6 +361,7 @@ const TRANSLATIONS = {
     "editor.show_buttons": "Visa snabbinfoknappar",
     "editor.leasing_entity": "Leasing sensor (frivillig)",
     "editor.leasing_tiles": "Leasing info (ordning = visningsordning)",
+    "editor.additional_cards": "Extra entitetsrutor",
     "editor.language": "Kort språk",
     "editor.lang_auto": "Auto (Home Assistant språk)",
   },
@@ -437,6 +464,7 @@ const TRANSLATIONS = {
     "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
     "editor.leasing_entity": "Leasing-Sensor (optional)",
     "editor.leasing_tiles": "Leasing-Kacheln (Reihenfolge = Anzeige)",
+    "editor.additional_cards": "Zusätzliche Entitätskacheln",
     "editor.language": "Kartensprache",
     "editor.lang_auto": "Automatisch (HA-Sprache)",
   },
@@ -557,6 +585,15 @@ class BmwCardataVehicleCard extends HTMLElement {
         ? cfg.leasing_tiles.length
         : DEFAULT_LEASE_TILES.length;
       size += Math.ceil(tileCount / 2) / 2;
+    }
+    const additionalCount = configuredAdditionalCards(cfg).length;
+    if (additionalCount) {
+      // Built-in quick tiles usually occupy five slots; additional tiles fill
+      // the last free slot before introducing another grid row.
+      const showButtons = boolConfig(cfg, "show_buttons", true);
+      const baseRows = showButtons ? Math.ceil(5 / 2) : 0;
+      const totalRows = Math.ceil(((showButtons ? 5 : 0) + additionalCount) / 2);
+      size += Math.max(0, totalRows - baseRows) * 1.3;
     }
     return size;
   }
@@ -681,6 +718,20 @@ class BmwCardataVehicleCard extends HTMLElement {
               multiple: true,
               mode: "dropdown",
               options: LEASE_TILE_OPTIONS.map((opt) => ({ value: opt.value, label: t(opt.labelKey) })),
+            },
+          },
+        },
+        {
+          name: "additional_cards",
+          selector: {
+            object: {
+              multiple: true,
+              label_field: "entity",
+              fields: {
+                entity: { label: "Entity", required: true, selector: { entity: {} } },
+                name: { label: "Name", selector: { text: {} } },
+                icon: { label: "Icon", selector: { icon: {} } },
+              },
             },
           },
         },
@@ -1058,6 +1109,7 @@ class BmwCardataVehicleCard extends HTMLElement {
               <div id="mini_map"></div>
               <div id="buttons"></div>
               <div id="leasing"></div>
+              <div id="additional_cards"></div>
             </main>
           </div>
         </ha-card>
@@ -1294,6 +1346,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const showImage = boolConfig(cfg, "show_image", true);
     const showMap = boolConfig(cfg, "show_map", true);
     const showButtons = boolConfig(cfg, "show_buttons", true);
+    const additionalItems = additionalCardItems(cfg, hass);
     const mapEntityId = entities.device_tracker;
 
     const imageCropTop = Number.isFinite(Number(cfg.image_crop_top))
@@ -1684,7 +1737,10 @@ class BmwCardataVehicleCard extends HTMLElement {
 
       this._setHtml(
         buttonsEl,
-        tileGrid(quickItems.map((item) => ({ ...item, cls: item.alert ? "alert" : "" })))
+        tileGridWithAdditional(
+          quickItems.map((item) => ({ ...item, cls: item.alert ? "alert" : "" })),
+          additionalItems
+        )
       );
     } else {
       this._setHtml(buttonsEl, "");
@@ -1792,6 +1848,11 @@ class BmwCardataVehicleCard extends HTMLElement {
     } else {
       this._setHtml(leasingEl, "");
     }
+
+    const additionalEl = this.shadowRoot.getElementById("additional_cards");
+    // Keep extras visible even when the built-in quick tiles are disabled.
+    // With quick tiles enabled, both kinds already share the #buttons grid.
+    this._setHtml(additionalEl, !showButtons && additionalItems.length ? tileGrid(additionalItems) : "");
   }
 
   _renderMessage(message) {
@@ -1805,6 +1866,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const mapEl = this.shadowRoot.getElementById("mini_map");
     const buttonsEl = this.shadowRoot.getElementById("buttons");
     const leasingEl = this.shadowRoot.getElementById("leasing");
+    const additionalEl = this.shadowRoot.getElementById("additional_cards");
 
     this._setTitleVisible(true);
     nameEl.textContent = "BMW CarData";
@@ -1816,6 +1878,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     this._setHtml(mapEl, "");
     this._setHtml(buttonsEl, "");
     this._setHtml(leasingEl, "");
+    this._setHtml(additionalEl, "");
   }
 }
 
