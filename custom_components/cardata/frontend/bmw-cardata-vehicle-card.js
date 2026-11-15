@@ -109,6 +109,31 @@ const tileItem = ({ icon, label, value, entity, cls = "" }) => {
 
 const tileGrid = (items) => `<div class="tile-grid">${items.map(tileItem).join("")}</div>`;
 
+// Additional tiles can reference any Home Assistant entity, not only BMW entities.
+const configuredAdditionalCards = (cfg) =>
+  Array.isArray(cfg?.additional_cards)
+    ? cfg.additional_cards.filter(
+        (item) => item && typeof item.entity === "string" && item.entity.trim()
+      )
+    : [];
+
+const additionalCardItems = (cfg, hass) =>
+  configuredAdditionalCards(cfg).map((item) => {
+    const entity = item.entity.trim();
+    const stateObj = hass?.states?.[entity];
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    const icon = typeof item.icon === "string" ? item.icon.trim() : "";
+    return {
+      entity,
+      label: name || stateObj?.attributes?.friendly_name || entity,
+      icon: icon || stateObj?.attributes?.icon || "mdi:information-outline",
+      value: formatState(stateObj, hass),
+    };
+  });
+
+// Append extra tiles to the native tile grid, filling its last row first.
+const tileGridWithAdditional = (nativeItems, additionalItems) =>
+  tileGrid([...nativeItems, ...additionalItems]);
 
 const hasUsableState = (stateObj) => {
   const state = normalizeState(stateObj);
@@ -216,6 +241,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge open/unlocked color (hex, e.g. #f44336 - blank for default)",
     "editor.color_badge_good": "Badge locked/closed color (hex, e.g. #4caf50 - blank for default)",
     "editor.show_range": "Show SOC and range bar",
+    "editor.fuel_level_display": "Fuel level button value",
+    "editor.fuel_level_percentage": "Percentage (%)",
+    "editor.fuel_level_litres": "Litres (L)",
     "editor.color_ev": "Battery bar color (hex, e.g. #4caf50 - blank for default)",
     "editor.color_ev_low": "Battery bar color when low (hex - blank for default)",
     "editor.color_fuel": "Fuel bar color (hex, e.g. #ff9800 - blank for default)",
@@ -230,6 +258,7 @@ const TRANSLATIONS = {
     "editor.show_buttons": "Show quick info buttons",
     "editor.leasing_entity": "Leasing sensor (optional)",
     "editor.leasing_tiles": "Leasing tiles (order = display order)",
+    "editor.additional_cards": "Additional entity tiles",
     "editor.language": "Card language",
     "editor.lang_auto": "Auto (Home Assistant language)",
   },
@@ -315,6 +344,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge öppen/olåst färg (hex, t.ex. #f44336 - tom = standard)",
     "editor.color_badge_good": "Badge låst/stängd färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.show_range": "Visa SOC och räckviddsbar",
+    "editor.fuel_level_display": "Värde på bränslenivåknappen",
+    "editor.fuel_level_percentage": "Procent (%)",
+    "editor.fuel_level_litres": "Liter (L)",
     "editor.color_ev": "Batteristapel färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.color_ev_low": "Batteristapel färg vid låg nivå (hex - tom = standard)",
     "editor.color_fuel": "Bränslestapel färg (hex, t.ex. #ff9800 - tom = standard)",
@@ -329,6 +361,7 @@ const TRANSLATIONS = {
     "editor.show_buttons": "Visa snabbinfoknappar",
     "editor.leasing_entity": "Leasing sensor (frivillig)",
     "editor.leasing_tiles": "Leasing info (ordning = visningsordning)",
+    "editor.additional_cards": "Extra entitetsrutor",
     "editor.language": "Kort språk",
     "editor.lang_auto": "Auto (Home Assistant språk)",
   },
@@ -414,6 +447,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge-Farbe offen/entriegelt (Hex, z.B. #f44336 - leer = Standard)",
     "editor.color_badge_good": "Badge-Farbe gesperrt/geschlossen (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
+    "editor.fuel_level_display": "Wert der Kraftstoffstand-Kachel",
+    "editor.fuel_level_percentage": "Prozent (%)",
+    "editor.fuel_level_litres": "Liter (L)",
     "editor.color_ev": "Batteriebalken-Farbe (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.color_ev_low": "Batteriebalken-Farbe bei niedrigem Stand (Hex - leer = Standard)",
     "editor.color_fuel": "Kraftstoffbalken-Farbe (Hex, z.B. #ff9800 - leer = Standard)",
@@ -428,6 +464,7 @@ const TRANSLATIONS = {
     "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
     "editor.leasing_entity": "Leasing-Sensor (optional)",
     "editor.leasing_tiles": "Leasing-Kacheln (Reihenfolge = Anzeige)",
+    "editor.additional_cards": "Zusätzliche Entitätskacheln",
     "editor.language": "Kartensprache",
     "editor.lang_auto": "Automatisch (HA-Sprache)",
   },
@@ -549,6 +586,15 @@ class BmwCardataVehicleCard extends HTMLElement {
         : DEFAULT_LEASE_TILES.length;
       size += Math.ceil(tileCount / 2) / 2;
     }
+    const additionalCount = configuredAdditionalCards(cfg).length;
+    if (additionalCount) {
+      // Built-in quick tiles usually occupy five slots; additional tiles fill
+      // the last free slot before introducing another grid row.
+      const showButtons = boolConfig(cfg, "show_buttons", true);
+      const baseRows = showButtons ? Math.ceil(5 / 2) : 0;
+      const totalRows = Math.ceil(((showButtons ? 5 : 0) + additionalCount) / 2);
+      size += Math.max(0, totalRows - baseRows) * 1.3;
+    }
     return size;
   }
 
@@ -650,6 +696,18 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
         { name: "show_buttons", selector: { boolean: {} } },
         {
+          name: "fuel_level_display",
+          selector: {
+            select: {
+              options: [
+                { value: "percentage", label: t("editor.fuel_level_percentage") },
+                { value: "litres", label: t("editor.fuel_level_litres") },
+              ],
+              mode: "dropdown",
+            },
+          },
+        },
+        {
           name: "leasing_entity",
           selector: { entity: { domain: "sensor" } },
         },
@@ -660,6 +718,20 @@ class BmwCardataVehicleCard extends HTMLElement {
               multiple: true,
               mode: "dropdown",
               options: LEASE_TILE_OPTIONS.map((opt) => ({ value: opt.value, label: t(opt.labelKey) })),
+            },
+          },
+        },
+        {
+          name: "additional_cards",
+          selector: {
+            object: {
+              multiple: true,
+              label_field: "entity",
+              fields: {
+                entity: { label: "Entity", required: true, selector: { entity: {} } },
+                name: { label: "Name", selector: { text: {} } },
+                icon: { label: "Icon", selector: { icon: {} } },
+              },
             },
           },
         },
@@ -696,6 +768,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       show_map: true,
       map_height: MAP_HEIGHT_DEFAULT,
       show_buttons: true,
+      fuel_level_display: "percentage",
     };
   }
 
@@ -1036,6 +1109,7 @@ class BmwCardataVehicleCard extends HTMLElement {
               <div id="mini_map"></div>
               <div id="buttons"></div>
               <div id="leasing"></div>
+              <div id="additional_cards"></div>
             </main>
           </div>
         </ha-card>
@@ -1272,6 +1346,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const showImage = boolConfig(cfg, "show_image", true);
     const showMap = boolConfig(cfg, "show_map", true);
     const showButtons = boolConfig(cfg, "show_buttons", true);
+    const additionalItems = additionalCardItems(cfg, hass);
     const mapEntityId = entities.device_tracker;
 
     const imageCropTop = Number.isFinite(Number(cfg.image_crop_top))
@@ -1360,6 +1435,12 @@ class BmwCardataVehicleCard extends HTMLElement {
     const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : hasFuelRemaining ? remainingFuelEntity : "";
     const primaryLevelValue = hasSoc ? clamp(Math.round(toNumberOrZero(socState)), 0, 100) : hasFuelLevel ? clamp(Math.round(toNumberOrZero(read("fuel_level"))), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
     const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : hasFuelWithCap ? `${primaryLevelValue}%` : hasFuelRemaining ? formatState(read("remaining_fuel"), hass) : "—";
+    const quickLevelLabel = !hasSoc && cfg.fuel_level_display === "litres" && hasFuelRemaining
+      ? formatState(read("remaining_fuel"), hass)
+      : primaryLevelLabel;
+    const quickLevelEntity = !hasSoc && cfg.fuel_level_display === "litres" && hasFuelRemaining
+      ? remainingFuelEntity
+      : primaryLevelEntity;
     const primaryLevelHasBar = hasSoc || hasFuelLevel || hasFuelWithCap;
     const primaryRangeState = hasRange ? read("range_total") : hasFuelRemaining ? read("remaining_fuel") : null;
     const primaryRangeEntity = hasRange ? rangeEntity : hasFuelRemaining ? remainingFuelEntity : "";
@@ -1634,8 +1715,8 @@ class BmwCardataVehicleCard extends HTMLElement {
           : {
               icon: "mdi:fuel",
               label: t("level"),
-              value: primaryLevelLabel,
-              entity: primaryLevelEntity,
+              value: quickLevelLabel,
+              entity: quickLevelEntity,
             },
         tireEntries.length
           ? {
@@ -1656,7 +1737,10 @@ class BmwCardataVehicleCard extends HTMLElement {
 
       this._setHtml(
         buttonsEl,
-        tileGrid(quickItems.map((item) => ({ ...item, cls: item.alert ? "alert" : "" })))
+        tileGridWithAdditional(
+          quickItems.map((item) => ({ ...item, cls: item.alert ? "alert" : "" })),
+          additionalItems
+        )
       );
     } else {
       this._setHtml(buttonsEl, "");
@@ -1764,6 +1848,11 @@ class BmwCardataVehicleCard extends HTMLElement {
     } else {
       this._setHtml(leasingEl, "");
     }
+
+    const additionalEl = this.shadowRoot.getElementById("additional_cards");
+    // Keep extras visible even when the built-in quick tiles are disabled.
+    // With quick tiles enabled, both kinds already share the #buttons grid.
+    this._setHtml(additionalEl, !showButtons && additionalItems.length ? tileGrid(additionalItems) : "");
   }
 
   _renderMessage(message) {
@@ -1777,6 +1866,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const mapEl = this.shadowRoot.getElementById("mini_map");
     const buttonsEl = this.shadowRoot.getElementById("buttons");
     const leasingEl = this.shadowRoot.getElementById("leasing");
+    const additionalEl = this.shadowRoot.getElementById("additional_cards");
 
     this._setTitleVisible(true);
     nameEl.textContent = "BMW CarData";
@@ -1788,6 +1878,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     this._setHtml(mapEl, "");
     this._setHtml(buttonsEl, "");
     this._setHtml(leasingEl, "");
+    this._setHtml(additionalEl, "");
   }
 }
 

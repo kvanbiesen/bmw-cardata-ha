@@ -281,8 +281,10 @@ Available configuration options:
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles: location, range or fuel, motion, charging state or level, tyres (only when tyre sensors exist), and mileage |
+| `fuel_level_display` | `percentage` | Show fuel-level on the quick-info tile in `percentage` or `litres`. Litres uses the remaining-fuel sensor when available; otherwise the tile falls back to the default level value. |
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
 | `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
+| `additional_cards` | *(empty)* | List of custom entity tiles, each with `entity` (required), `name` and `icon` (optional); continues in the built-in quick-info grid without visual separation. |
 | `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, `de`, or `sv`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome. Each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
 
 Bar and indicator colors are plain hex codes, settable either in the card's GUI editor or directly in YAML. Leave any of them blank to keep the default look:
@@ -295,6 +297,44 @@ color_fuel_low: "#f44336"
 low_threshold: 20
 color_alert_border: "#f44336"
 ```
+
+### Additional Entity Tiles (optional)
+
+Add `additional_cards` to show any Home Assistant entities in the same grid
+as the built-in quick-info tiles. The additional tiles start immediately after
+the standard tiles, filling an unfinished row first, with **no separator or
+extra section spacing**. No `stack-in-card`, `button-card`, or `card_mod` is
+necessary. The existing two-column layout and responsive styling are reused.
+If `show_buttons: false`, the additional tiles are still displayed on their own.
+
+```yaml
+type: custom:bmw-cardata-vehicle-card
+device_id: abcdef1234567890abcdef1234567890
+show_buttons: true
+additional_cards:
+  - entity: sensor.vehicle_energy_to_full_charge
+    name: Battery to Charge
+    icon: mdi:battery-arrow-up-outline
+  - entity: sensor.vehicle_charge_remaining_time
+    name: Charge remaining time
+    icon: mdi:timer-outline
+  - entity: sensor.vehicle_predicted_soc
+    name: Predicted State of Charge
+    icon: mdi:battery-clock-outline
+  - entity: sensor.vehicle_total_range
+    name: Total autonomy
+    icon: mdi:counter
+```
+
+Each entry requires an `entity` (any HA entity ID); `name` defaults to
+the entity's friendly name and `icon` to its icon (or a generic icon).
+Values use Home Assistant's native entity-state formatting, including units
+and localization. Unknown, unavailable, or missing entities show `—`.
+Tapping a tile opens that entity's More Info dialog.
+
+In the visual card editor, use **Additional entity tiles** to add and reorder
+entries. When `additional_cards` is omitted or empty, the original card
+layout is unchanged.
 
 ### Custom Map Marker (optional)
 
@@ -430,6 +470,10 @@ image_zoom: 100
 show_map: true
 map_height: 120
 show_buttons: true
+additional_cards:
+  - entity: sensor.vehicle_predicted_soc
+    name: Predicted State of Charge
+    icon: mdi:battery-clock-outline
 leasing_entity: sensor.leasing_mini
 leasing_tiles:
   - lease_remaining
