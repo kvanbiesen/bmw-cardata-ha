@@ -281,6 +281,7 @@ Available configuration options:
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles: location, range or fuel, motion, charging state or level, tyres (only when tyre sensors exist), and mileage |
+| `fuel_level_display` | `percentage` | Show fuel-level on the quick-info tile in `percentage` or `litres`. Litres uses the remaining-fuel sensor when available; otherwise the tile falls back to the default level value. |
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
 | `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
 | `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, `de`, or `sv`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome. Each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
