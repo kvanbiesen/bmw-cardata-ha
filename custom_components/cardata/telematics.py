@@ -738,9 +738,9 @@ async def async_fetch_charging_history(
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
     vin: str,
-    from_dt: "datetime | None" = None,
-    to_dt: "datetime | None" = None,
-) -> "list[dict[str, Any]] | None":
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
+) -> list[dict[str, Any]] | None:
     """Fetch charging history for a single VIN, following next_token pagination.
 
     Returns all sessions on success, None on failure.
@@ -814,7 +814,9 @@ async def async_fetch_charging_history(
             if next_token and page >= MAX_PAGES:
                 _LOGGER.warning(
                     "Charging history for %s truncated at %d pages (%d sessions total)",
-                    redacted, MAX_PAGES, len(all_sessions),
+                    redacted,
+                    MAX_PAGES,
+                    len(all_sessions),
                 )
             break
 

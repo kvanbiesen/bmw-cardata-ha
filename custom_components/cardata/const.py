@@ -68,9 +68,15 @@ DESC_FUEL_CONSUMED_CHARGE_INCREASING = "vehicle.drivetrain.fuelSystem.consumptio
 # with engine assistance (engine-on) in charge-depleting mode, plus the
 # total charge-increasing and overall reference distances. PHEV-only fields;
 # BEVs/CONV receive empty values, not an API error.
-DESC_OBFCM_DIST_DEPLETING_ENGINE_OFF = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.referenceDistanceEngineOff"
-DESC_OBFCM_DIST_DEPLETING_ENGINE_ON = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.referenceDistanceEngineOn"
-DESC_OBFCM_DIST_INCREASING = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeIncreasing.referenceDistance"
+DESC_OBFCM_DIST_DEPLETING_ENGINE_OFF = (
+    "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.referenceDistanceEngineOff"
+)
+DESC_OBFCM_DIST_DEPLETING_ENGINE_ON = (
+    "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.referenceDistanceEngineOn"
+)
+DESC_OBFCM_DIST_INCREASING = (
+    "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeIncreasing.referenceDistance"
+)
 DESC_OBFCM_DIST_OVERALL = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.overall.referenceDistance"
 
 # Ranges BMW's own data catalogue declares for a descriptor. A value outside
