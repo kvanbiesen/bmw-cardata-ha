@@ -64,6 +64,14 @@ DESC_GRID_ENERGY_ENGINE_OFF = "vehicle.drivetrain.electricEngine.charging.consum
 DESC_FUEL_CONSUMED_TOTAL = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.overall.fuel"
 DESC_FUEL_CONSUMED_CHARGE_DEPLETING = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.fuel"
 DESC_FUEL_CONSUMED_CHARGE_INCREASING = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeIncreasing.fuel"
+# EU OBFCM reference distances: km driven electrically (engine-off) and
+# with engine assistance (engine-on) in charge-depleting mode, plus the
+# total charge-increasing and overall reference distances. PHEV-only fields;
+# BEVs/CONV receive empty values, not an API error.
+DESC_OBFCM_DIST_DEPLETING_ENGINE_OFF = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.referenceDistanceEngineOff"
+DESC_OBFCM_DIST_DEPLETING_ENGINE_ON = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeDepleting.referenceDistanceEngineOn"
+DESC_OBFCM_DIST_INCREASING = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.inChargeIncreasing.referenceDistance"
+DESC_OBFCM_DIST_OVERALL = "vehicle.drivetrain.fuelSystem.consumptionOverLifeTime.overall.referenceDistance"
 
 # Ranges BMW's own data catalogue declares for a descriptor. A value outside
 # one of these is not a reading, it is a placeholder: every Neue Klasse car
@@ -270,6 +278,18 @@ HV_BATTERY_DESCRIPTORS = [
     # Workshop fault memory (XML list of stored codes per control unit),
     # reported as a count by fault_memory.py.
     DESC_FAULT_MEMORY,
+    # EU OBFCM lifetime counters (PHEV only). Fuel consumed and reference
+    # distances in charge-depleting / charge-increasing / overall modes.
+    # BEV and CONV vehicles receive empty values for these; they do not
+    # cause the request to fail. The sensor_helpers.py already maps the
+    # three fuel descriptors; the reference distances are new here.
+    DESC_FUEL_CONSUMED_TOTAL,
+    DESC_FUEL_CONSUMED_CHARGE_DEPLETING,
+    DESC_FUEL_CONSUMED_CHARGE_INCREASING,
+    DESC_OBFCM_DIST_DEPLETING_ENGINE_OFF,
+    DESC_OBFCM_DIST_DEPLETING_ENGINE_ON,
+    DESC_OBFCM_DIST_INCREASING,
+    DESC_OBFCM_DIST_OVERALL,
 ]
 
 # Condition Based Services (the service schedule, one entry per item) come from
