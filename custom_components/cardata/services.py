@@ -43,7 +43,7 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 
 from .api_parsing import get_first_key
 from .const import (
@@ -692,7 +692,8 @@ def async_register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         "fetch_charging_history",
         async_handle_fetch_charging_history,
-        schema=DAILY_FETCH_SERVICE_SCHEMA,
+        schema=CHARGING_HISTORY_SERVICE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,
@@ -752,15 +753,26 @@ DAILY_FETCH_SERVICE_SCHEMA = vol.Schema(
     }
 )
 
+CHARGING_HISTORY_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("entry_id"): str,
+        vol.Optional("vin"): str,
+        vol.Optional("from"): str,
+        vol.Optional("to"): str,
+    }
+)
 
-async def async_handle_fetch_charging_history(call: ServiceCall) -> None:
+
+async def async_handle_fetch_charging_history(call: ServiceCall) -> dict[str, Any] | None:
     """Handle fetch_charging_history service call."""
+    from datetime import datetime as dt
+
     from .telematics import async_fetch_charging_history
 
     hass = call.hass
     resolved = _resolve_target(hass, call.data)
     if not resolved:
-        return
+        return None
 
     _, target_entry, runtime = resolved
     vin = call.data.get("vin")
@@ -768,17 +780,37 @@ async def async_handle_fetch_charging_history(call: ServiceCall) -> None:
     if vin:
         if not is_valid_vin(vin):
             _LOGGER.error("Cardata fetch_charging_history: invalid VIN format")
-            return
+            return None
         vins = [vin]
     else:
         vins = list(runtime.coordinator.data.keys())
 
     if not vins:
         _LOGGER.error("Cardata fetch_charging_history: no VINs available")
-        return
+        return None
 
+    from_dt: dt | None = None
+    to_dt: dt | None = None
+    if raw_from := call.data.get("from"):
+        try:
+            from_dt = dt.fromisoformat(raw_from.replace("Z", "+00:00"))
+        except ValueError:
+            _LOGGER.error("Cardata fetch_charging_history: invalid 'from' date: %s", raw_from)
+            return None
+    if raw_to := call.data.get("to"):
+        try:
+            to_dt = dt.fromisoformat(raw_to.replace("Z", "+00:00"))
+        except ValueError:
+            _LOGGER.error("Cardata fetch_charging_history: invalid 'to' date: %s", raw_to)
+            return None
+
+    result: dict[str, list] = {}
     for v in vins:
-        await async_fetch_charging_history(target_entry, runtime, v)
+        sessions = await async_fetch_charging_history(target_entry, runtime, v, from_dt, to_dt)
+        if sessions is not None:
+            result[v] = sessions
+
+    return result if result else None
 
 
 async def async_handle_fetch_tyre_diagnosis(call: ServiceCall) -> None:

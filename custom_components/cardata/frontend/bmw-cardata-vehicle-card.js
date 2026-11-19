@@ -109,6 +109,31 @@ const tileItem = ({ icon, label, value, entity, cls = "" }) => {
 
 const tileGrid = (items) => `<div class="tile-grid">${items.map(tileItem).join("")}</div>`;
 
+// Additional tiles can reference any Home Assistant entity, not only BMW entities.
+const configuredAdditionalCards = (cfg) =>
+  Array.isArray(cfg?.additional_cards)
+    ? cfg.additional_cards.filter(
+        (item) => item && typeof item.entity === "string" && item.entity.trim()
+      )
+    : [];
+
+const additionalCardItems = (cfg, hass) =>
+  configuredAdditionalCards(cfg).map((item) => {
+    const entity = item.entity.trim();
+    const stateObj = hass?.states?.[entity];
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    const icon = typeof item.icon === "string" ? item.icon.trim() : "";
+    return {
+      entity,
+      label: name || stateObj?.attributes?.friendly_name || entity,
+      icon: icon || stateObj?.attributes?.icon || "mdi:information-outline",
+      value: formatState(stateObj, hass),
+    };
+  });
+
+// Append extra tiles to the native tile grid, filling its last row first.
+const tileGridWithAdditional = (nativeItems, additionalItems) =>
+  tileGrid([...nativeItems, ...additionalItems]);
 
 const hasUsableState = (stateObj) => {
   const state = normalizeState(stateObj);
@@ -216,6 +241,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge open/unlocked color (hex, e.g. #f44336 - blank for default)",
     "editor.color_badge_good": "Badge locked/closed color (hex, e.g. #4caf50 - blank for default)",
     "editor.show_range": "Show SOC and range bar",
+    "editor.fuel_level_display": "Fuel level button value",
+    "editor.fuel_level_percentage": "Percentage (%)",
+    "editor.fuel_level_litres": "Litres (L)",
     "editor.color_ev": "Battery bar color (hex, e.g. #4caf50 - blank for default)",
     "editor.color_ev_low": "Battery bar color when low (hex - blank for default)",
     "editor.color_fuel": "Fuel bar color (hex, e.g. #ff9800 - blank for default)",
@@ -228,8 +256,10 @@ const TRANSLATIONS = {
     "editor.show_map": "Show mini map",
     "editor.map_height": "Mini map height",
     "editor.show_buttons": "Show quick info buttons",
+    "editor.quick_tiles": "Quick info tiles (order = display order)",
     "editor.leasing_entity": "Leasing sensor (optional)",
     "editor.leasing_tiles": "Leasing tiles (order = display order)",
+    "editor.additional_cards": "Additional entity tiles",
     "editor.language": "Card language",
     "editor.lang_auto": "Auto (Home Assistant language)",
   },
@@ -315,6 +345,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge öppen/olåst färg (hex, t.ex. #f44336 - tom = standard)",
     "editor.color_badge_good": "Badge låst/stängd färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.show_range": "Visa SOC och räckviddsbar",
+    "editor.fuel_level_display": "Värde på bränslenivåknappen",
+    "editor.fuel_level_percentage": "Procent (%)",
+    "editor.fuel_level_litres": "Liter (L)",
     "editor.color_ev": "Batteristapel färg (hex, t.ex. #4caf50 - tom = standard)",
     "editor.color_ev_low": "Batteristapel färg vid låg nivå (hex - tom = standard)",
     "editor.color_fuel": "Bränslestapel färg (hex, t.ex. #ff9800 - tom = standard)",
@@ -327,8 +360,10 @@ const TRANSLATIONS = {
     "editor.show_map": "Visa minikarta",
     "editor.map_height": "Minikarta höjd",
     "editor.show_buttons": "Visa snabbinfoknappar",
+    "editor.quick_tiles": "Snabbinfo-rutor (ordning = visningsordning)",
     "editor.leasing_entity": "Leasing sensor (frivillig)",
     "editor.leasing_tiles": "Leasing info (ordning = visningsordning)",
+    "editor.additional_cards": "Extra entitetsrutor",
     "editor.language": "Kort språk",
     "editor.lang_auto": "Auto (Home Assistant språk)",
   },
@@ -414,6 +449,9 @@ const TRANSLATIONS = {
     "editor.color_badge_alert": "Badge-Farbe offen/entriegelt (Hex, z.B. #f44336 - leer = Standard)",
     "editor.color_badge_good": "Badge-Farbe gesperrt/geschlossen (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.show_range": "Ladestand- und Reichweitenbalken anzeigen",
+    "editor.fuel_level_display": "Wert der Kraftstoffstand-Kachel",
+    "editor.fuel_level_percentage": "Prozent (%)",
+    "editor.fuel_level_litres": "Liter (L)",
     "editor.color_ev": "Batteriebalken-Farbe (Hex, z.B. #4caf50 - leer = Standard)",
     "editor.color_ev_low": "Batteriebalken-Farbe bei niedrigem Stand (Hex - leer = Standard)",
     "editor.color_fuel": "Kraftstoffbalken-Farbe (Hex, z.B. #ff9800 - leer = Standard)",
@@ -426,12 +464,128 @@ const TRANSLATIONS = {
     "editor.show_map": "Mini-Karte anzeigen",
     "editor.map_height": "Höhe der Mini-Karte",
     "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
+    "editor.quick_tiles": "Schnellinfo-Kacheln (Reihenfolge = Anzeigereihenfolge)",
     "editor.leasing_entity": "Leasing-Sensor (optional)",
     "editor.leasing_tiles": "Leasing-Kacheln (Reihenfolge = Anzeige)",
+    "editor.additional_cards": "Zusätzliche Entitätskacheln",
     "editor.language": "Kartensprache",
     "editor.lang_auto": "Automatisch (HA-Sprache)",
   },
+  nb: {
+    location: "Posisjon",
+    location_unavailable: "Posisjon utilgjengelig",
+    away: "Borte",
+    home: "Hjemme",
+    range: "Rekkevidde",
+    fuel: "Drivstoff",
+    motion: "Bevegelse",
+    moving: "I bevegelse",
+    parked: "Parkert",
+    charging: "Lading",
+    level: "Nivå",
+    tires: "Dekk",
+    tire: "Dekk",
+    mileage: "Kilometerstand",
+    lease_remaining: "Leasing gjenstår",
+    monthly_budget: "Gjenstår/måned",
+    monthly_average: "Snitt/måned",
+    km_balance: "km-balanse",
+    driven: "Kjørt",
+    target_today: "Mål i dag",
+    total_distance: "Total kjørelengde",
+    lease_start: "Leasingstart",
+    lease_end: "Leasingslutt",
+    projected_at_end: "Anslag ved slutt",
+    cost_refund: "Kostnad / refusjon",
+    excess_km: "Overkjørte km",
+    shortfall_km: "Underkjørte km",
+    payment_due: "Tilleggsbetaling",
+    refund: "Refusjon",
+    unit_days_short: "d",
+    unit_months_short: "mnd",
+    doors_overall: "Dører samlet",
+    lock: "Lås",
+    locked: "Låst",
+    unlocked: "Ulåst",
+    alarm: "Alarm",
+    alarm_triggered: "Alarm: UTLØST",
+    alarm_unavailable: "Alarmstatus utilgjengelig",
+    windows: "Vinduer",
+    windows_closed: "lukket",
+    windows_open_count: "åpne",
+    charging_active: "aktiv",
+    lights: "Lys",
+    lights_on: "på",
+    lights_off: "av",
+    hood_tailgate_open: "Panser og bakluke åpne",
+    hood_open: "Panser åpent",
+    tailgate_open: "Bakluke åpen",
+    hood_tailgate_closed: "Panser og bakluke: lukket",
+    total_range: "Total rekkevidde",
+    ev: "EV",
+    unknown: "ukjent",
+    select_vehicle: "Velg et kjøretøy i kortredigeringen.",
+    vehicle_not_found: "Kjøretøyet er ikke funnet ennå. Prøv igjen om noen sekunder.",
+    no_tracker: "Ingen sporingsentitet for kjøretøyet tilgjengelig",
+    tracker_unavailable: "Sporingsentiteten er utilgjengelig",
+    map_loading: "Laster kart…",
+    map_failed: "Kunne ikke laste Home Assistant-kartet",
+    "state.chargingactive": "Lader",
+    "state.chargingended": "Lading fullført",
+    "state.nocharging": "Lader ikke",
+    "state.chargingpaused": "Lading pauset",
+    "state.chargingerror": "Ladefeil",
+    "state.doorstiltcabin": "Dører på gløtt",
+    "state.doorsonly": "Kun dører",
+    "state.secured": "Sikret",
+    "state.open": "Åpen",
+    "state.closed": "Lukket",
+    "state.locked": "Låst",
+    "state.unlocked": "Ulåst",
+    "editor.device_id": "Kjøretøy",
+    "editor.license_plate": "Registreringsnummer (vises i stedet for VIN)",
+    "editor.show_title": "Vis kjøretøynavn / kortoverskrift",
+    "editor.soc_source": "Kilde for batterinivå",
+    "editor.soc_soc": "BMW ladenivå (sist kjent)",
+    "editor.soc_predicted": "Predikert ladenivå (under lading)",
+    "editor.soc_magic": "Magisk SOC (under kjøring)",
+    "editor.show_indicators": "Vis indikatorrad",
+    "editor.color_badge_alert": "Merkefarge åpen/ulåst (hex, f.eks. #f44336 - tom for standard)",
+    "editor.color_badge_good": "Merkefarge låst/lukket (hex, f.eks. #4caf50 - tom for standard)",
+    "editor.show_range": "Vis ladenivå- og rekkeviddesøyle",
+    "editor.fuel_level_display": "Verdi på drivstoffnivå-knapp",
+    "editor.fuel_level_percentage": "Prosent (%)",
+    "editor.fuel_level_litres": "Liter (L)",
+    "editor.color_ev": "Farge på batterisøyle (hex, f.eks. #4caf50 - tom for standard)",
+    "editor.color_ev_low": "Farge på batterisøyle ved lavt nivå (hex - tom for standard)",
+    "editor.color_fuel": "Farge på drivstoffsøyle (hex, f.eks. #ff9800 - tom for standard)",
+    "editor.color_fuel_low": "Farge på drivstoffsøyle ved lavt nivå (hex - tom for standard)",
+    "editor.low_threshold": "Terskel for lavt nivå (%)",
+    "editor.show_image": "Vis bilde av kjøretøyet",
+    "editor.image_crop_top": "Beskjær bilde øverst",
+    "editor.image_crop_bottom": "Beskjær bilde nederst",
+    "editor.image_zoom": "Bildezoom",
+    "editor.show_map": "Vis minikart",
+    "editor.map_height": "Høyde på minikart",
+    "editor.show_buttons": "Vis hurtiginfo-knapper",
+    "editor.quick_tiles": "Hurtiginfo-felt (rekkefølge = visningsrekkefølge)",
+    "editor.leasing_entity": "Leasingsensor (valgfri)",
+    "editor.leasing_tiles": "Leasingfelt (rekkefølge = visningsrekkefølge)",
+    "editor.additional_cards": "Ekstra entitetsruter",
+    "editor.language": "Kortspråk",
+    "editor.lang_auto": "Auto (Home Assistant-språk)",
+  },
 };
+
+const QUICK_TILE_OPTIONS = [
+  { value: "location", labelKey: "location" },
+  { value: "range", labelKey: "range" },
+  { value: "motion", labelKey: "motion" },
+  { value: "charging", labelKey: "charging" },
+  { value: "tires", labelKey: "tires" },
+  { value: "mileage", labelKey: "mileage" },
+];
+const DEFAULT_QUICK_TILES = ["location", "range", "motion", "charging", "tires", "mileage"];
 
 // value = tile key in the render registry, label = translation key for the editor
 const LEASE_TILE_OPTIONS = [
@@ -452,7 +606,7 @@ const DEFAULT_LEASE_TILES = ["lease_remaining", "monthly_budget", "projected", "
 const resolveLang = (cfg, hass) => {
   const configured = typeof cfg?.language === "string" && cfg.language !== "auto" ? cfg.language : "";
   const raw = (configured || hass?.locale?.language || hass?.language || DEFAULT_LANG).toLowerCase();
-  const short = raw.split("-")[0];
+  const short = raw.split("-")[0] === "no" ? "nb" : raw.split("-")[0];
   return TRANSLATIONS[raw] ? raw : TRANSLATIONS[short] ? short : DEFAULT_LANG;
 };
 
@@ -548,6 +702,15 @@ class BmwCardataVehicleCard extends HTMLElement {
         ? cfg.leasing_tiles.length
         : DEFAULT_LEASE_TILES.length;
       size += Math.ceil(tileCount / 2) / 2;
+    }
+    const additionalCount = configuredAdditionalCards(cfg).length;
+    if (additionalCount) {
+      // Built-in quick tiles usually occupy five slots; additional tiles fill
+      // the last free slot before introducing another grid row.
+      const showButtons = boolConfig(cfg, "show_buttons", true);
+      const baseRows = showButtons ? Math.ceil(5 / 2) : 0;
+      const totalRows = Math.ceil(((showButtons ? 5 : 0) + additionalCount) / 2);
+      size += Math.max(0, totalRows - baseRows) * 1.3;
     }
     return size;
   }
@@ -650,6 +813,28 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
         { name: "show_buttons", selector: { boolean: {} } },
         {
+          name: "quick_tiles",
+          selector: {
+            select: {
+              multiple: true,
+              mode: "dropdown",
+              options: QUICK_TILE_OPTIONS.map((opt) => ({ value: opt.value, label: t(opt.labelKey) })),
+            },
+          },
+        },
+        {
+          name: "fuel_level_display",
+          selector: {
+            select: {
+              options: [
+                { value: "percentage", label: t("editor.fuel_level_percentage") },
+                { value: "litres", label: t("editor.fuel_level_litres") },
+              ],
+              mode: "dropdown",
+            },
+          },
+        },
+        {
           name: "leasing_entity",
           selector: { entity: { domain: "sensor" } },
         },
@@ -664,6 +849,20 @@ class BmwCardataVehicleCard extends HTMLElement {
           },
         },
         {
+          name: "additional_cards",
+          selector: {
+            object: {
+              multiple: true,
+              label_field: "entity",
+              fields: {
+                entity: { label: "Entity", required: true, selector: { entity: {} } },
+                name: { label: "Name", selector: { text: {} } },
+                icon: { label: "Icon", selector: { icon: {} } },
+              },
+            },
+          },
+        },
+        {
           name: "language",
           selector: {
             select: {
@@ -671,6 +870,7 @@ class BmwCardataVehicleCard extends HTMLElement {
                 { value: "auto", label: t("editor.lang_auto") },
                 { value: "en", label: "English" },
                 { value: "de", label: "Deutsch" },
+                { value: "nb", label: "Norsk" },
                 { value: "sv", label: "Svenska" },
               ],
               mode: "dropdown",
@@ -696,6 +896,7 @@ class BmwCardataVehicleCard extends HTMLElement {
       show_map: true,
       map_height: MAP_HEIGHT_DEFAULT,
       show_buttons: true,
+      fuel_level_display: "percentage",
     };
   }
 
@@ -1036,6 +1237,7 @@ class BmwCardataVehicleCard extends HTMLElement {
               <div id="mini_map"></div>
               <div id="buttons"></div>
               <div id="leasing"></div>
+              <div id="additional_cards"></div>
             </main>
           </div>
         </ha-card>
@@ -1272,6 +1474,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const showImage = boolConfig(cfg, "show_image", true);
     const showMap = boolConfig(cfg, "show_map", true);
     const showButtons = boolConfig(cfg, "show_buttons", true);
+    const additionalItems = additionalCardItems(cfg, hass);
     const mapEntityId = entities.device_tracker;
 
     const imageCropTop = Number.isFinite(Number(cfg.image_crop_top))
@@ -1360,6 +1563,12 @@ class BmwCardataVehicleCard extends HTMLElement {
     const primaryLevelEntity = hasSoc ? socEntity : hasFuelLevel ? fuelLevelEntity : hasFuelRemaining ? remainingFuelEntity : "";
     const primaryLevelValue = hasSoc ? clamp(Math.round(toNumberOrZero(socState)), 0, 100) : hasFuelLevel ? clamp(Math.round(toNumberOrZero(read("fuel_level"))), 0, 100) : hasFuelWithCap ? clamp(Math.round(fuelLitres / tankCapValue * 100), 0, 100) : 0;
     const primaryLevelLabel = hasSoc ? `${primaryLevelValue}%` : hasFuelLevel ? `${primaryLevelValue}%` : hasFuelWithCap ? `${primaryLevelValue}%` : hasFuelRemaining ? formatState(read("remaining_fuel"), hass) : "—";
+    const quickLevelLabel = !hasSoc && cfg.fuel_level_display === "litres" && hasFuelRemaining
+      ? formatState(read("remaining_fuel"), hass)
+      : primaryLevelLabel;
+    const quickLevelEntity = !hasSoc && cfg.fuel_level_display === "litres" && hasFuelRemaining
+      ? remainingFuelEntity
+      : primaryLevelEntity;
     const primaryLevelHasBar = hasSoc || hasFuelLevel || hasFuelWithCap;
     const primaryRangeState = hasRange ? read("range_total") : hasFuelRemaining ? read("remaining_fuel") : null;
     const primaryRangeEntity = hasRange ? rangeEntity : hasFuelRemaining ? remainingFuelEntity : "";
@@ -1605,20 +1814,23 @@ class BmwCardataVehicleCard extends HTMLElement {
         ? (entities[lowTire.key] || "")
         : (entities.tire_fl || entities.tire_fr || entities.tire_rl || entities.tire_rr || "");
 
-      const quickItems = [
+      const allQuickItems = [
         {
+          key: "location",
           icon: "mdi:map-marker",
           label: t("location"),
           value: humanizeLocationState(read("device_tracker")?.state, t),
           entity: entities.device_tracker || "",
         },
         {
+          key: "range",
           icon: hasRange ? "mdi:arrow-left-right" : "mdi:gas-station",
           label: hasRange ? t("range") : t("fuel"),
           value: primaryRangeText,
           entity: primaryRangeEntity,
         },
         {
+          key: "motion",
           icon: "mdi:motion-sensor",
           label: t("motion"),
           value: motionKnown ? (isMoving ? t("moving") : t("parked")) : "—",
@@ -1626,19 +1838,22 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
         hasCharging
           ? {
+              key: "charging",
               icon: "mdi:ev-station",
               label: t("charging"),
               value: humanizeStateValue(chargingState, t),
               entity: entities.charging_state || "",
             }
           : {
+              key: "charging",
               icon: "mdi:fuel",
               label: t("level"),
-              value: primaryLevelLabel,
-              entity: primaryLevelEntity,
+              value: quickLevelLabel,
+              entity: quickLevelEntity,
             },
         tireEntries.length
           ? {
+              key: "tires",
               icon: "mdi:car-tire-alert",
               label: tireAlert ? `${t("tire")} ${tireLabels[lowTire.key]}` : t("tires"),
               value: tireValue,
@@ -1647,6 +1862,7 @@ class BmwCardataVehicleCard extends HTMLElement {
             }
           : null,
         {
+          key: "mileage",
           icon: "mdi:counter",
           label: t("mileage"),
           value: formatState(read("mileage"), hass),
@@ -1654,9 +1870,19 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
       ].filter((item) => item && firstDefined(item.entity, item.value) !== "");
 
+      const selectedQuickKeys = Array.isArray(cfg.quick_tiles) && cfg.quick_tiles.length
+        ? cfg.quick_tiles
+        : DEFAULT_QUICK_TILES;
+      const quickItems = selectedQuickKeys
+        .map((k) => allQuickItems.find((item) => item.key === k))
+        .filter(Boolean);
+
       this._setHtml(
         buttonsEl,
-        tileGrid(quickItems.map((item) => ({ ...item, cls: item.alert ? "alert" : "" })))
+        tileGridWithAdditional(
+          quickItems.map((item) => ({ ...item, cls: item.alert ? "alert" : "" })),
+          additionalItems
+        )
       );
     } else {
       this._setHtml(buttonsEl, "");
@@ -1764,6 +1990,11 @@ class BmwCardataVehicleCard extends HTMLElement {
     } else {
       this._setHtml(leasingEl, "");
     }
+
+    const additionalEl = this.shadowRoot.getElementById("additional_cards");
+    // Keep extras visible even when the built-in quick tiles are disabled.
+    // With quick tiles enabled, both kinds already share the #buttons grid.
+    this._setHtml(additionalEl, !showButtons && additionalItems.length ? tileGrid(additionalItems) : "");
   }
 
   _renderMessage(message) {
@@ -1777,6 +2008,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     const mapEl = this.shadowRoot.getElementById("mini_map");
     const buttonsEl = this.shadowRoot.getElementById("buttons");
     const leasingEl = this.shadowRoot.getElementById("leasing");
+    const additionalEl = this.shadowRoot.getElementById("additional_cards");
 
     this._setTitleVisible(true);
     nameEl.textContent = "BMW CarData";
@@ -1788,6 +2020,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     this._setHtml(mapEl, "");
     this._setHtml(buttonsEl, "");
     this._setHtml(leasingEl, "");
+    this._setHtml(additionalEl, "");
   }
 }
 

@@ -115,6 +115,34 @@ def _seconds_since_fresh_data(coordinator: CardataCoordinator, vin: str) -> floa
     return min(ages) if ages else None
 
 
+async def _async_recreate_missing_container(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    runtime: CardataRuntimeData,
+) -> str | None:
+    """Create the HV container when none is stored, and return its id.
+
+    The stored id is cleared when BMW invalidates the container (CU-105), and
+    is missing when setup could not create one. Polling would otherwise stay
+    down until the next restart, while the stream keeps the integration looking
+    healthy.
+    """
+    from .auth import async_ensure_container_for_entry
+
+    tracker = runtime.rate_limit_tracker
+    if tracker is not None:
+        can_request, reason = tracker.can_make_request()
+        if not can_request:
+            _LOGGER.debug("Not recreating HV container for entry %s yet: %s", entry.entry_id, reason)
+            return None
+
+    _LOGGER.info("No HV container stored for entry %s; creating one so polling can resume", entry.entry_id)
+    if not await async_ensure_container_for_entry(entry, hass, runtime.container_manager):
+        return None
+    container_id = entry.data.get("hv_container_id")
+    return container_id if isinstance(container_id, str) and container_id else None
+
+
 async def async_perform_telematic_fetch(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -178,21 +206,6 @@ async def async_perform_telematic_fetch(
     if hv_cid:
         container_ids = [hv_cid]
 
-    if not container_ids:
-        if entry.data.get(BOOTSTRAP_COMPLETE):
-            _LOGGER.warning(
-                "Cardata fetch_telematic_data: no containers for entry %s. "
-                "Clearing bootstrap flag so next restart re-discovers.",
-                target_entry_id,
-            )
-            await async_update_entry_data(hass, entry, {BOOTSTRAP_COMPLETE: False})
-        else:
-            _LOGGER.error(
-                "Cardata fetch_telematic_data: no containers for entry %s and bootstrap not yet complete",
-                target_entry_id,
-            )
-        return TelematicFetchResult(None, "missing_container")
-
     # Proactively check and refresh token only if expired or about to expire
     from .auth import async_ensure_valid_token
 
@@ -216,6 +229,25 @@ async def async_perform_telematic_fetch(
             target_entry_id,
         )
         return TelematicFetchResult(None, "token_refresh_failed")
+
+    if not container_ids:
+        hv_cid = await _async_recreate_missing_container(hass, entry, runtime)
+        if hv_cid:
+            container_ids = [hv_cid]
+        elif entry.data.get(BOOTSTRAP_COMPLETE):
+            _LOGGER.warning(
+                "Cardata fetch_telematic_data: no containers for entry %s. "
+                "Clearing bootstrap flag so next restart re-discovers.",
+                target_entry_id,
+            )
+            await async_update_entry_data(hass, entry, {BOOTSTRAP_COMPLETE: False})
+            return TelematicFetchResult(None, "missing_container")
+        else:
+            _LOGGER.error(
+                "Cardata fetch_telematic_data: no containers for entry %s and bootstrap not yet complete",
+                target_entry_id,
+            )
+            return TelematicFetchResult(None, "missing_container")
 
     access_token = entry.data.get("access_token")
     if not access_token:
@@ -300,7 +332,7 @@ async def async_perform_telematic_fetch(
             if response.is_container_invalid:
                 _LOGGER.warning(
                     "Cardata fetch_telematic_data: container %s no longer valid for %s "
-                    "(CU-105); clearing stored container so next restart re-bootstraps",
+                    "(CU-105); clearing stored container so the next poll creates a new one",
                     cid,
                     redacted_vin,
                 )
@@ -706,16 +738,22 @@ async def async_fetch_charging_history(
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
     vin: str,
-) -> bool:
-    """Fetch charging history for a single VIN. Returns True on success."""
+    from_dt: datetime | None = None,
+    to_dt: datetime | None = None,
+) -> list[dict[str, Any]] | None:
+    """Fetch charging history for a single VIN, following next_token pagination.
+
+    Returns all sessions on success, None on failure.
+    from_dt/to_dt default to the last 30 days when omitted.
+    """
     from datetime import datetime as dt, timedelta
 
     if not is_valid_vin(vin):
-        return False
+        return None
 
     access_token = entry.data.get("access_token")
     if not access_token:
-        return False
+        return None
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -723,40 +761,68 @@ async def async_fetch_charging_history(
         "Accept": "application/json",
     }
     now = dt.now(UTC)
-    params = {
-        "from": (now - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-        "to": now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+    base_params = {
+        "from": (from_dt or (now - timedelta(days=30))).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "to": (to_dt or now).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
     }
     url = f"{API_BASE_URL}/customers/vehicles/{vin}/chargingHistory"
     redacted = redact_vin(vin)
 
-    response, error = await async_request_with_retry(
-        runtime.session,
-        "GET",
-        url,
-        headers=headers,
-        params=params,
-        context=f"Charging history for {redacted}",
-        rate_limiter=runtime.rate_limit_tracker,
-        max_retries=0,
-    )
+    all_sessions: list[dict[str, Any]] = []
+    next_token: str | None = None
+    page = 0
+    # ponytail: cap at 20 pages; upgrade if BMW ever returns more than ~600 sessions
+    MAX_PAGES = 20
 
-    if error or response is None or not response.is_success:
-        _LOGGER.warning("Failed to fetch charging history for %s", redacted)
-        return False
+    while True:
+        params = dict(base_params)
+        if next_token:
+            params["next_token"] = next_token
 
-    ok, payload = try_parse_json(response.text)
-    if not ok or not isinstance(payload, dict):
-        _LOGGER.warning("Invalid charging history response for %s", redacted)
-        return False
+        response, error = await async_request_with_retry(
+            runtime.session,
+            "GET",
+            url,
+            headers=headers,
+            params=params,
+            context=f"Charging history for {redacted}",
+            rate_limiter=runtime.rate_limit_tracker,
+            max_retries=0,
+        )
 
-    sessions = payload.get("data", [])
-    if not isinstance(sessions, list):
-        sessions = []
+        if error or response is None or not response.is_success:
+            if page == 0:
+                _LOGGER.warning("Failed to fetch charging history for %s", redacted)
+                return None
+            break
 
-    runtime.coordinator.update_charging_history(vin, sessions)
-    _LOGGER.info("Fetched %d charging history sessions for %s", len(sessions), redacted)
-    return True
+        ok, payload = try_parse_json(response.text)
+        if not ok or not isinstance(payload, dict):
+            if page == 0:
+                _LOGGER.warning("Invalid charging history response for %s", redacted)
+                return None
+            break
+
+        page_sessions = payload.get("data", [])
+        if isinstance(page_sessions, list):
+            all_sessions.extend(page_sessions)
+
+        next_token = payload.get("next_token") or payload.get("nextToken") or ""
+        page += 1
+
+        if not next_token or page >= MAX_PAGES:
+            if next_token and page >= MAX_PAGES:
+                _LOGGER.warning(
+                    "Charging history for %s truncated at %d pages (%d sessions total)",
+                    redacted,
+                    MAX_PAGES,
+                    len(all_sessions),
+                )
+            break
+
+    runtime.coordinator.update_charging_history(vin, all_sessions)
+    _LOGGER.info("Fetched %d charging history sessions for %s", len(all_sessions), redacted)
+    return all_sessions
 
 
 async def async_fetch_tyre_diagnosis(

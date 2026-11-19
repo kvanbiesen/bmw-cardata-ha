@@ -151,8 +151,12 @@ def _install_homeassistant_stubs() -> None:
                 return value / DistanceConverter._KM_PER_MILE
             raise ValueError(f"unsupported conversion: {from_unit} to {to_unit}")
 
+    class Event:
+        pass
+
     class HomeAssistant:
-        def __init__(self) -> None:
+        def __init__(self, loop=None, *args, **kwargs) -> None:
+            self.loop = loop
             self.data = {}
 
     class ConfigEntry:
@@ -235,16 +239,25 @@ def _install_homeassistant_stubs() -> None:
     device_tracker.SourceType = SourceType
     device_tracker.TrackerEntity = TrackerEntity
     config_entries.ConfigEntry = ConfigEntry
+
     def callback(func):
         """Mark a function as safe to run inside the event loop, as HA's does."""
         func._hass_callback = True
         return func
 
+    def async_track_state_change_event(*_args, **_kwargs):
+        def _unsubscribe() -> None:
+            return None
+
+        return _unsubscribe
+
+    core.Event = Event
     core.HomeAssistant = HomeAssistant
     core.callback = callback
     dispatcher.async_dispatcher_connect = async_dispatcher_connect
     dispatcher.async_dispatcher_send = async_dispatcher_send
     event.async_call_later = async_call_later
+    event.async_track_state_change_event = async_track_state_change_event
     entity_platform.AddEntitiesCallback = object
     restore_state.RestoreEntity = RestoreEntity
     entity_registry.async_get = async_get_entity_registry

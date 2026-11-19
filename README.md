@@ -281,9 +281,12 @@ Available configuration options:
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
 | `show_buttons` | `true` | Quick-info tiles: location, range or fuel, motion, charging state or level, tyres (only when tyre sensors exist), and mileage |
+| `quick_tiles` | *(all six)* | Which quick-info tiles to show, in order. Available: `location`, `range`, `motion`, `charging`, `tires`, `mileage`. Omit to show all six. Use the same multi-select dropdown as `leasing_tiles`. |
+| `fuel_level_display` | `percentage` | Show fuel-level on the quick-info tile in `percentage` or `litres`. Litres uses the remaining-fuel sensor when available; otherwise the tile falls back to the default level value. |
 | `leasing_entity` | *(empty)* | Sensor entity for the optional leasing section (see below) |
 | `leasing_tiles` | `[lease_remaining, monthly_budget, projected, cost]` | Which leasing tiles to show, in order. Available: `lease_remaining`, `monthly_budget`, `monthly_average`, `km_balance`, `driven`, `target`, `total`, `lease_start`, `lease_end`, `projected`, `cost` |
-| `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, `de`, or `sv`. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome. Each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
+| `additional_cards` | *(empty)* | List of custom entity tiles, each with `entity` (required), `name` and `icon` (optional); continues in the built-in quick-info grid without visual separation. |
+| `language` | `auto` | Card language: `auto` (follow the Home Assistant UI language), `en`, `de`, `nb`, or `sv`. Norwegian Bokmål (`nb`) is included; both `nb` and the generic `no` browser code resolve to Norwegian. Values formatted by Home Assistant (numbers, units, entity states) follow your HA locale regardless. PRs adding languages are welcome. Each language is one dictionary block in `bmw-cardata-vehicle-card.js`. |
 
 Bar and indicator colors are plain hex codes, settable either in the card's GUI editor or directly in YAML. Leave any of them blank to keep the default look:
 
@@ -295,6 +298,44 @@ color_fuel_low: "#f44336"
 low_threshold: 20
 color_alert_border: "#f44336"
 ```
+
+### Additional Entity Tiles (optional)
+
+Add `additional_cards` to show any Home Assistant entities in the same grid
+as the built-in quick-info tiles. The additional tiles start immediately after
+the standard tiles, filling an unfinished row first, with **no separator or
+extra section spacing**. No `stack-in-card`, `button-card`, or `card_mod` is
+necessary. The existing two-column layout and responsive styling are reused.
+If `show_buttons: false`, the additional tiles are still displayed on their own.
+
+```yaml
+type: custom:bmw-cardata-vehicle-card
+device_id: abcdef1234567890abcdef1234567890
+show_buttons: true
+additional_cards:
+  - entity: sensor.vehicle_energy_to_full_charge
+    name: Battery to Charge
+    icon: mdi:battery-arrow-up-outline
+  - entity: sensor.vehicle_charge_remaining_time
+    name: Charge remaining time
+    icon: mdi:timer-outline
+  - entity: sensor.vehicle_predicted_soc
+    name: Predicted State of Charge
+    icon: mdi:battery-clock-outline
+  - entity: sensor.vehicle_total_range
+    name: Total autonomy
+    icon: mdi:counter
+```
+
+Each entry requires an `entity` (any HA entity ID); `name` defaults to
+the entity's friendly name and `icon` to its icon (or a generic icon).
+Values use Home Assistant's native entity-state formatting, including units
+and localization. Unknown, unavailable, or missing entities show `—`.
+Tapping a tile opens that entity's More Info dialog.
+
+In the visual card editor, use **Additional entity tiles** to add and reorder
+entries. When `additional_cards` is omitted or empty, the original card
+layout is unchanged.
 
 ### Custom Map Marker (optional)
 
@@ -430,6 +471,10 @@ image_zoom: 100
 show_map: true
 map_height: 120
 show_buttons: true
+additional_cards:
+  - entity: sensor.vehicle_predicted_soc
+    name: Predicted State of Charge
+    icon: mdi:battery-clock-outline
 leasing_entity: sensor.leasing_mini
 leasing_tiles:
   - lease_remaining
@@ -613,8 +658,8 @@ The integration can fetch your BMW charging session history from the past 30 day
 - **Sensors**: Creates two entities per vehicle. A diagnostic sensor showing session count and last charge date, and `Charging History Energy`, a counter that adds up the grid energy of every session BMW reports. The counter carries the `energy` device class with a `total_increasing` state class, so it can be picked as a source in the Home Assistant energy dashboard. Both read the same daily fetch, so the counter costs no extra API calls
 - **Reloads and restarts**: The history summary and its recorded session attributes remain available until a new BMW response arrives. An empty new coordinator does not erase them or trigger an extra API request. A successful response with no sessions clears the old history. The energy counter retains its total and counted sessions independently, so restoring the display cannot count energy twice.
 - **First reading**: the counter starts at the total of the sessions BMW currently reports, and Home Assistant takes that first value as the starting point, so charging from before you enabled it is not back-filled into the dashboard. Everything charged after that is counted normally
-- **Attributes**: Summarised session data (start/end time, start/end SOC, energy consumed, charging duration, mileage, time zone, preconditioning flag). Full raw data available via the `cardata.fetch_charging_history` service
-- **Manual trigger**: Use `cardata.fetch_charging_history` service in Developer Tools
+- **Attributes**: Summarised session data (start/end time, start/end SOC, energy consumed, charging duration, mileage, time zone, preconditioning flag). Full raw data — including `chargingLocation`, `publicChargingPoint`, `chargingCostInformation`, and `chargingBlocks` — is returned by the `cardata.fetch_charging_history` service (see below)
+- **Manual trigger / response service**: `cardata.fetch_charging_history` supports `response_variable:` and returns a dict keyed by VIN containing the full session list as BMW sends it. Optional `from` and `to` fields (ISO-8601 strings) let you query any date range; without them the last 30 days are fetched. Multi-page results are followed automatically via `next_token`
 
 ## Tyre Diagnosis (Optional)
 
@@ -653,7 +698,7 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload. Called without a VIN it fetches every known vehicle, and skips any whose data already arrived in the last five minutes, whether over the stream or from an earlier poll, so repeated calls cannot empty the daily quota.
 - `cardata.fetch_vehicle_mappings` calls `GET /customers/vehicles/mappings` and logs the mapping details (including PRIMARY or SECONDARY status). Only primary mappings return data; some vehicles do not support secondary users, in which case the mapped user is considered the primary one.
 - `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN. The VIN can be left out when the entry has a single vehicle.
-- `cardata.fetch_charging_history` fetches the last 30 days of charging sessions for a VIN. Uses 1 API call per vehicle.
+- `cardata.fetch_charging_history` fetches charging sessions and returns the full BMW payload (including location, cost, charging point). Defaults to the last 30 days; optional `from`/`to` ISO-8601 fields select any range. Follows pagination automatically. Returns a `response_variable` dict keyed by VIN — use it in scripts/automations to log sessions to your own long-term store. Uses 1 API call per page per vehicle.
 - `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_vehicle_images` manually fetches vehicle images for all configured vehicles.
 - `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`).

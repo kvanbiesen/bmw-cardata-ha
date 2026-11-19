@@ -174,30 +174,30 @@ class TestContainerManager:
             purpose=CBS_CONTAINER_PURPOSE,
             descriptors=CBS_CONTAINER_DESCRIPTORS,
         )
-        manager._request = AsyncMock(side_effect=[ACCOUNT, {}, {"containerId": "cbs-new"}])
+        manager._request = AsyncMock(side_effect=[ACCOUNT, {"containerId": "cbs-new"}, {}])
 
         assert await manager.async_reset_hv_container("token") == "cbs-new"
 
         calls = manager._request.await_args_list
         assert [(c.args[0], c.args[1]) for c in calls] == [
             ("GET", "/customers/containers"),
-            ("DELETE", "/customers/containers/cbs-old"),
             ("POST", "/customers/containers"),
+            ("DELETE", "/customers/containers/cbs-old"),
         ]
-        body = calls[2].kwargs["json_body"]
+        body = calls[1].kwargs["json_body"]
         assert body["name"] == CBS_CONTAINER_NAME
         assert body["purpose"] == CBS_CONTAINER_PURPOSE
         assert body["technicalDescriptors"] == CBS_CONTAINER_DESCRIPTORS
 
     async def test_hv_reset_leaves_the_cbs_container_alone(self):
         manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
-        manager._request = AsyncMock(side_effect=[ACCOUNT, {}, {"containerId": "hv-new"}])
+        manager._request = AsyncMock(side_effect=[ACCOUNT, {"containerId": "hv-new"}, {}])
 
         await manager.async_reset_hv_container("token")
 
         deleted = [c.args[1] for c in manager._request.await_args_list if c.args[0] == "DELETE"]
         assert deleted == ["/customers/containers/hv-old"]
-        assert manager._request.await_args_list[2].kwargs["json_body"]["technicalDescriptors"] == list(
+        assert manager._request.await_args_list[1].kwargs["json_body"]["technicalDescriptors"] == list(
             dict.fromkeys(HV_BATTERY_DESCRIPTORS)
         )
 
@@ -286,7 +286,67 @@ class TestRegularPoll:
         assert [c.kwargs["params"] for c in request.await_args_list] == [{"containerId": "hv-1"}]
 
 
+class TestMissingHvContainer:
+    """A poll with no HV container stored creates one instead of waiting for a restart."""
+
+    @pytest.fixture
+    def setup(self, hass, entry, runtime):
+        entry.data = {"access_token": "token"}
+        runtime.coordinator.data = {VIN: {}}
+        runtime.container_manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        return hass, entry, runtime
+
+    @staticmethod
+    def valid_token():
+        return patch("custom_components.cardata.auth.async_ensure_valid_token", AsyncMock(return_value=True))
+
+    async def test_the_container_is_created_and_the_poll_goes_ahead(self, setup):
+        hass, entry, runtime = setup
+        reset = AsyncMock(return_value="hv-new")
+        with (
+            self.valid_token(),
+            patch.object(CardataContainerManager, "async_reset_hv_container", reset),
+            patch_request(response(200, json.dumps({"telematicData": {}}))) as request,
+        ):
+            await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+
+        assert reset.await_count == 1
+        assert entry.data["hv_container_id"] == "hv-new"
+        assert [c.kwargs["params"] for c in request.await_args_list] == [{"containerId": "hv-new"}]
+
+    async def test_no_poll_when_the_container_cannot_be_created(self, setup):
+        hass, entry, runtime = setup
+        reset = AsyncMock(side_effect=CardataContainerError("HTTP 403: CU-429", status=403))
+        with (
+            self.valid_token(),
+            patch.object(CardataContainerManager, "async_reset_hv_container", reset),
+            patch_request() as request,
+        ):
+            result = await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+
+        assert result.status is None
+        assert result.reason == "missing_container"
+        request.assert_not_awaited()
+
+    async def test_no_attempt_while_rate_limited(self, setup):
+        hass, entry, runtime = setup
+        runtime.rate_limit_tracker = MagicMock()
+        runtime.rate_limit_tracker.can_make_request.return_value = (False, "cooldown")
+        reset = AsyncMock(return_value="hv-new")
+        with (
+            self.valid_token(),
+            patch.object(CardataContainerManager, "async_reset_hv_container", reset),
+            patch_request() as request,
+        ):
+            result = await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+
+        assert result.reason == "missing_container"
+        reset.assert_not_awaited()
+        request.assert_not_awaited()
+
+
 class TestSchedule:
+
     """Once a day per vehicle, failed or not, restart or not."""
 
     def test_due_when_never_read(self):

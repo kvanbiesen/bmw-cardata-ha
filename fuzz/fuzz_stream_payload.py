@@ -82,8 +82,11 @@ def _install_homeassistant_stubs() -> None:
                 return value / DistanceConverter._KM_PER_MILE
             raise ValueError(f"unsupported conversion: {from_unit} to {to_unit}")
 
+    class Event:
+        pass
+
     class HomeAssistant:
-        def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        def __init__(self, loop=None, *args, **kwargs) -> None:
             self.loop = loop
             self.data = {}
 
@@ -123,10 +126,18 @@ def _install_homeassistant_stubs() -> None:
         func._hass_callback = True
         return func
 
+    def async_track_state_change_event(*_args, **_kwargs):
+        def _unsubscribe() -> None:
+            return None
+
+        return _unsubscribe
+
+    core.Event = Event
     core.HomeAssistant = HomeAssistant
     core.callback = callback
     dispatcher.async_dispatcher_send = async_dispatcher_send
     event.async_call_later = async_call_later
+    event.async_track_state_change_event = async_track_state_change_event
     util_dt.parse_datetime = parse_datetime
     util.dt = util_dt
     util.unit_conversion = unit_conversion

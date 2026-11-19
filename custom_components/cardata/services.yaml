@@ -71,7 +71,11 @@ fetch_vehicle_images:
   description: Manually fetch vehicle images for all configured vehicles.
 fetch_charging_history:
   name: Fetch Charging History
-  description: Fetch charging session history for a VIN (last 30 days). Uses 1 API call per vehicle.
+  description: >
+    Fetch charging session history for a VIN and return the full BMW payload,
+    including chargingLocation, publicChargingPoint, chargingCostInformation and chargingBlocks.
+    Defaults to the last 30 days. Follows next_token pagination. Uses 1 API call per page per vehicle.
+    Supports response — use response_variable: to capture the result in a script or automation.
   fields:
     entry_id:
       description: Optional config entry id to target. Required if multiple entries are configured.
@@ -79,6 +83,12 @@ fetch_charging_history:
     vin:
       description: Optional VIN to query. If omitted, fetches for all known VINs.
       example: WBY31AW090FP15359
+    from:
+      description: "Start of the date range (ISO-8601). Defaults to 30 days ago."
+      example: "2026-01-01T00:00:00Z"
+    to:
+      description: "End of the date range (ISO-8601). Defaults to now."
+      example: "2026-11-16T23:59:59Z"
 fetch_tyre_diagnosis:
   name: Fetch Tyre Diagnosis
   description: Fetch tyre health and wear data for a VIN. Uses 1 API call per vehicle.
