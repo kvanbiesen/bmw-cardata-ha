@@ -84,8 +84,10 @@ async def async_fetch_charging_history(
 
     while True:
         params = dict(base_params)
-        if next_token:
-            params["next_token"] = next_token
+        # The query parameter is nextToken, while the response field is next_token.
+        sent_token = next_token
+        if sent_token:
+            params["nextToken"] = sent_token
 
         response, error = await async_request_with_retry(
             runtime.session,
@@ -115,8 +117,14 @@ async def async_fetch_charging_history(
         if isinstance(page_sessions, list):
             all_sessions.extend(page_sessions)
 
-        next_token = payload.get("next_token") or payload.get("nextToken") or ""
+        token = payload.get("next_token") or payload.get("nextToken")
+        next_token = token if isinstance(token, str) else ""
         page += 1
+
+        if next_token and next_token == sent_token:
+            # The same token again would fetch the same page again.
+            _LOGGER.warning("Charging history for %s returned the same page token twice; stopping", redacted)
+            break
 
         if not next_token or page >= MAX_PAGES:
             if next_token and page >= MAX_PAGES:
