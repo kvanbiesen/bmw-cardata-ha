@@ -340,9 +340,8 @@ layout is unchanged.
 ### Custom Map Marker (optional)
 
 By default, the mini-map (and any other `type: map` card showing the vehicle's
-device tracker) renders a plain marker. To use your own picture instead, drop
-an image in the same folder the integration already stores the vehicle's
-auto-fetched photo:
+device tracker) shows the vehicle's auto-fetched photo. To use your own picture
+instead, drop an image in the same folder the integration stores that photo in:
 
 ```
 /config/www/community/cardata/<VIN>_marker.png   (or .jpg / .jpeg / .webp)
@@ -354,8 +353,10 @@ but the VIN must otherwise match exactly (find it on the vehicle's device
 page). Restart Home Assistant (or reload the integration) after adding the
 file for it to take effect.
 
-If no marker picture is present, the map falls back to the device tracker's
-own icon (`mdi:car` by default, or whatever you've customized it to via
+Both are served from `/local/community/cardata/`, a fixed address, so the
+device tracker's state does not change when Home Assistant rotates the image
+entity's access token. If neither picture is present, the map falls back to the
+device tracker's own icon (`mdi:car` by default, or whatever you've customized it to via
 Settings → Entities → the device tracker → icon override), and only falls
 back further to Home Assistant's default abbreviated-text marker if neither
 is set.
