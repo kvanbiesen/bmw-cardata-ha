@@ -290,6 +290,10 @@ class CardataCoordinator:
         self._tyre_diagnosis[vin] = data
         self._safe_dispatcher_send(self.signal_tyre_diagnosis, vin)
 
+    def has_tyre_diagnosis(self, vin: str) -> bool:
+        """Whether this coordinator has a tyre diagnosis response for a VIN."""
+        return vin in self._tyre_diagnosis
+
     def get_tyre_diagnosis(self, vin: str) -> dict[str, Any]:
         """Return stored tyre diagnosis for a VIN."""
         return self._tyre_diagnosis.get(vin, {})

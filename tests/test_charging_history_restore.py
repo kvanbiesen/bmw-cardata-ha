@@ -13,7 +13,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.cardata.const import DOMAIN
 from custom_components.cardata.coordinator import CardataCoordinator
 from custom_components.cardata.sensor_charging_energy import CardataChargingEnergySensor
-from custom_components.cardata.sensor_diagnostics import CardataChargingHistorySensor
+from custom_components.cardata.sensor_diagnostics import CardataChargingHistorySensor, CardataTyreDiagnosisSensor
 
 VIN = "WBA00000000000001"
 OTHER_VIN = "WBA00000000000002"
@@ -167,3 +167,35 @@ async def test_no_usable_restore_still_reports_no_data(hass, setup_platform, pre
     current = hass.states.get(history.entity_id)
     assert current.state == "no data"
     assert "sessions" not in current.attributes
+
+
+async def test_tyre_diagnosis_survives_a_reload_until_the_next_read(hass, setup_platform):
+    """The daily read does not repeat after a restart, so the restored state must stay."""
+    make_coordinator, add = setup_platform
+    tyres = {
+        "passengerCar": {
+            "mountedTyres": {"aggregatedQualityStatus": {"value": "OK"}, "frontLeft": {"tread": {"value": 6}}}
+        }
+    }
+    coordinator = make_coordinator()
+    coordinator.update_tyre_diagnosis(VIN, tyres)
+    sensor = CardataTyreDiagnosisSensor(coordinator, VIN)
+    platform = await add([sensor])
+    sensor_id = sensor.entity_id
+    original = hass.states.get(sensor_id)
+    assert original.state == "OK"
+    assert original.attributes["mountedTyres"]["frontLeft"] == {"tread": {"value": 6}}
+
+    await platform.async_reset()
+    await hass.async_block_till_done()
+    coordinator = make_coordinator()
+    await add([CardataTyreDiagnosisSensor(coordinator, VIN)])
+    current = hass.states.get(sensor_id)
+    assert current.state == "OK"
+    assert current.attributes["mountedTyres"] == original.attributes["mountedTyres"]
+
+    # A real answer still replaces it, an empty one included.
+    coordinator.update_tyre_diagnosis(VIN, {})
+    await hass.async_block_till_done()
+    assert hass.states.get(sensor_id).state == "no data"
+    assert "mountedTyres" not in hass.states.get(sensor_id).attributes

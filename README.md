@@ -670,6 +670,7 @@ The integration can fetch tyre health and wear data from BMW's Smart Maintenance
 - **API cost**: 1 call per vehicle per day (from your 50-call daily quota)
 - **Sensor**: Creates a diagnostic sensor per vehicle showing aggregate tyre status
 - **Attributes**: Per-wheel data including dimension, wear, season, manufacturer, defect status, and production date
+- **Reloads and restarts**: The status and its attributes stay as they were until the next daily read
 - **Manual trigger**: Use `cardata.fetch_tyre_diagnosis` service in Developer Tools
 
 ## Service Schedule (Condition Based Services)
