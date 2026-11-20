@@ -152,7 +152,11 @@ class CardataContainerManager:
 
             # Create before deleting: if BMW refuses the new container (rate
             # limit, outage, rejected descriptor), the old one is still there
-            # and polling carries on with it.
+            # and polling carries on with it. The attempt counts against the
+            # limiter even when it fails, so a create BMW keeps refusing is not
+            # retried on every poll.
+            if rate_limiter:
+                rate_limiter.record_creation()
             deleted_ids: list[str] = []
             try:
                 new_id = await self._create_container(access_token)
@@ -169,8 +173,6 @@ class CardataContainerManager:
                 deleted_ids = await self._delete_containers(access_token, stale_ids)
                 stale_ids = []
                 new_id = await self._create_container(access_token)
-            if rate_limiter:
-                rate_limiter.record_creation()
 
             deleted_ids += await self._delete_containers(access_token, stale_ids)
 

@@ -238,6 +238,17 @@ class TestContainerLimit:
 
         assert manager._request.await_count == 2
 
+    async def test_a_failed_create_counts_against_the_limiter(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, CardataContainerError("HTTP 500: busy", status=500)])
+        limiter = MagicMock()
+        limiter.can_create_container.return_value = (True, None)
+
+        with pytest.raises(CardataContainerError):
+            await manager.async_reset_hv_container("token", limiter)
+
+        limiter.record_creation.assert_called_once()
+
 
 class TestFetch:
     """One read of the service schedule, and what each answer does."""
