@@ -251,6 +251,16 @@ class TestContainerLimit:
 
         limiter.record_creation.assert_called_once()
 
+    async def test_the_retry_after_cu_124_counts_too(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, self.CU_124, {}, {"containerId": "hv-new"}])
+        limiter = MagicMock()
+        limiter.can_create_container.return_value = (True, None)
+
+        assert await manager.async_reset_hv_container("token", limiter) == "hv-new"
+
+        assert limiter.record_creation.call_count == 2
+
 
 class TestFetch:
     """One read of the service schedule, and what each answer does."""

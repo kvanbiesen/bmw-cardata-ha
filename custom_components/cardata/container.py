@@ -172,6 +172,8 @@ class CardataContainerManager:
                 )
                 deleted_ids = await self._delete_containers(access_token, stale_ids)
                 stale_ids = []
+                if rate_limiter:
+                    rate_limiter.record_creation()
                 new_id = await self._create_container(access_token)
 
             deleted_ids += await self._delete_containers(access_token, stale_ids)
