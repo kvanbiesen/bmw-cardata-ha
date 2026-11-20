@@ -26,6 +26,7 @@
 """Tests for the charging history fetch and its pagination."""
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -85,3 +86,22 @@ class TestPagination:
 
         assert request.await_count == 2
         assert sessions == [session(1), session(1)]
+
+
+class TestStore:
+    """Only the default window feeds the entities."""
+
+    async def test_the_default_window_is_stored(self, entry, runtime):
+        with patch_request(page([session(1)])):
+            await charging_history.async_fetch_charging_history(entry, runtime, VIN)
+
+        runtime.coordinator.update_charging_history.assert_called_once_with(VIN, [session(1)])
+
+    @pytest.mark.parametrize("bound", ["from_dt", "to_dt"])
+    async def test_a_chosen_range_is_returned_but_not_stored(self, entry, runtime, bound):
+        when = datetime(2026, 1, 1, tzinfo=UTC)
+        with patch_request(page([session(1)])):
+            sessions = await charging_history.async_fetch_charging_history(entry, runtime, VIN, **{bound: when})
+
+        assert sessions == [session(1)]
+        runtime.coordinator.update_charging_history.assert_not_called()

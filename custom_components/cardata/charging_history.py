@@ -52,7 +52,9 @@ async def async_fetch_charging_history(
     """Fetch charging history for a single VIN, following next_token pagination.
 
     Returns all sessions on success, None on failure.
-    from_dt/to_dt default to the last 30 days when omitted.
+    from_dt/to_dt default to the last 30 days when omitted. Only that default
+    window is stored for the entities: the energy counter forgets sessions
+    after 90 days, so a wider range would add older sessions to it again.
     """
     from datetime import datetime as dt, timedelta
 
@@ -136,6 +138,7 @@ async def async_fetch_charging_history(
                 )
             break
 
-    runtime.coordinator.update_charging_history(vin, all_sessions)
+    if from_dt is None and to_dt is None:
+        runtime.coordinator.update_charging_history(vin, all_sessions)
     _LOGGER.info("Fetched %d charging history sessions for %s", len(all_sessions), redacted)
     return all_sessions
