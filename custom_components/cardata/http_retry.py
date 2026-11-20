@@ -300,7 +300,10 @@ async def async_request_with_retry(
 
                 # Retryable status code
                 if response.status in RETRYABLE_STATUS_CODES:
+                    # Keep only the latest outcome, so the caller gets what
+                    # the last attempt met rather than an older one.
                     last_response = http_response
+                    last_error = None
                     if attempt < max_retries:
                         jittered = _jittered_backoff(backoff)
                         _LOGGER.debug(
@@ -320,6 +323,7 @@ async def async_request_with_retry(
 
         except TimeoutError as err:
             last_error = err
+            last_response = None
             if attempt < max_retries:
                 jittered = _jittered_backoff(backoff)
                 _LOGGER.debug(
@@ -335,6 +339,7 @@ async def async_request_with_retry(
 
         except aiohttp.ClientError as err:
             last_error = err
+            last_response = None
             if attempt < max_retries:
                 jittered = _jittered_backoff(backoff)
                 _LOGGER.debug(
