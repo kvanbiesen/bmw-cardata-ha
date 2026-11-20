@@ -41,6 +41,7 @@ from custom_components.cardata.const import (
     DESC_CHARGING_STATUS,
     DESC_CHARGING_TIME_REMAINING,
     DESC_SOC_TARGET,
+    DESC_TRAVELLED_DISTANCE,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.soc_prediction import SOCPredictor
@@ -50,6 +51,7 @@ from custom_components.cardata.soc_wiring import (
     _carried_over_phases,
     _charge_phases,
     _descriptor_phases,
+    _mileage_km,
     charge_should_have_ended,
     needs_phase_count_poll,
     process_soc_descriptors,
@@ -570,3 +572,31 @@ class TestChargeTargetChange:
         process_soc_descriptors(coordinator, "VIN", {DESC_SOC_TARGET: {"value": 100}}, vehicle_state)
 
         coordinator._soc_predictor.set_target_soc.assert_called_once_with("VIN", 100.0)
+
+
+class TestMileageUnit:
+    """The driving predictions work in km whatever unit the odometer is stored in."""
+
+    @pytest.mark.parametrize(
+        ("value", "unit", "km"),
+        [(10000, "km", 10000.0), (10000, None, 10000.0), (6213.712, "mi", 10000.0), ("6213.712", "miles", 10000.0)],
+    )
+    def test_a_reading_is_turned_into_km(self, value, unit, km):
+        assert _mileage_km(value, unit) == pytest.approx(km, abs=0.01)
+
+    @pytest.mark.parametrize("value", [None, "unknown", [1]])
+    def test_a_reading_that_is_not_a_number_is_none(self, value):
+        assert _mileage_km(value, "km") is None
+
+    def test_the_stored_unit_reaches_the_driving_prediction(self):
+        """A REST poll sends the odometer without a unit; the stored state has it."""
+        coordinator = _wiring_coordinator()
+        coordinator._magic_soc.update_driving_mileage.return_value = False
+        coordinator._magic_soc._driving_sessions = {"VIN": object()}
+        coordinator._magic_soc.has_signaled_magic_soc_entity.return_value = False
+        vehicle_state = {DESC_TRAVELLED_DISTANCE: _state(6213.712, unit="mi")}
+
+        process_soc_descriptors(coordinator, "VIN", {DESC_TRAVELLED_DISTANCE: {"value": 6213.712}}, vehicle_state)
+
+        mileage = coordinator._magic_soc.update_driving_mileage.call_args.args[1]
+        assert mileage == pytest.approx(10000.0, abs=0.01)
