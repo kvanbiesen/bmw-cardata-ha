@@ -211,6 +211,28 @@ Or:
 2. Install "BMW CarData" from the Custom section.
 3. Restart Home Assistant.
 
+### Upgrading from the original `JjyKsi` repository
+
+This integration continues the original `JjyKsi/bmw-cardata-ha` project, and both
+repositories use the same `cardata` installation directory. Home Assistant's
+Marketplace refuses an update if its records still mark both repositories as
+installed:
+
+> The cardata directory belongs to JjyKsi/bmw-cardata-ha
+
+To move the installation to this repository:
+
+1. Back up Home Assistant.
+2. In HACS/Marketplace, open `JjyKsi/bmw-cardata-ha` and uninstall/remove that
+   repository. Do **not** remove the BMW Cardata entry from **Settings → Devices
+   & Services**; its configuration and entities can be reused.
+3. Add `kvanbiesen/bmw-cardata-ha` as the only installed copy of BMW Cardata,
+   then install it or retry its update.
+4. Restart Home Assistant.
+
+Do not edit `.storage` manually. If the two repositories have the same display
+name, verify the repository URL before uninstalling.
+
 ## Configuration Flow
 
 1. Go to **Settings → Devices & Services → Add Integration** and pick **BMW Cardata**.
