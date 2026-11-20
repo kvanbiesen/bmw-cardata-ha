@@ -118,8 +118,8 @@ class CardataCoordinator:
     # Per-VIN timestamp of last successful telematic API poll (unix time)
     _last_poll_at: dict[str, float] = field(default_factory=dict, init=False)
     # Per-VIN pending implausible odometer reading awaiting corroboration:
-    # (value, unit, first_seen_unix_time)
-    _mileage_pending_reading: dict[str, tuple[float, str | None, float]] = field(default_factory=dict, init=False)
+    # (value, unit)
+    _mileage_pending_reading: dict[str, tuple[float, str | None]] = field(default_factory=dict, init=False)
     # VINs whose travelledDistance baseline came from HA's restored entity
     # state rather than a validated live reading - restore is unauthenticated
     # (see issue #405), so the next live reading replaces it unconditionally
@@ -982,7 +982,7 @@ class CardataCoordinator:
             )
             return True, store_unit, compare_value
 
-        self._mileage_pending_reading[vin] = (compare_value, store_unit, time.time())
+        self._mileage_pending_reading[vin] = (compare_value, store_unit)
         _LOGGER.warning(
             "Ignoring implausible odometer reading for VIN %s: %s %s -> %s %s; keeping previous value "
             "pending a corroborating reading",
