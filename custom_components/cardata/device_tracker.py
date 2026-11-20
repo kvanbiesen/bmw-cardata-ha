@@ -312,6 +312,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         if vin == self._vin:
             self.async_write_ha_state()
 
+    @callback
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle location updates from coordinator.
 
