@@ -129,11 +129,18 @@ git -C "$repo_root" commit -m "$commit_message"
 tag_name="v$new_version"
 git -C "$repo_root" tag -a "$tag_name" -m "$commit_message"
 
+archive_tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$archive_tmp_dir"' EXIT
+archive_file="$archive_tmp_dir/bmw-cardata-ha.zip"
+
+git -C "$repo_root" archive --format=zip \
+  --output="$archive_file" "$tag_name:custom_components/cardata"
+
 git -C "$repo_root" push
 git -C "$repo_root" push origin "$tag_name"
 
 if command -v gh >/dev/null 2>&1; then
-  gh_args=("release" "create" "$tag_name" "--title" "v$new_version" "--generate-notes")
+  gh_args=("release" "create" "$tag_name" "$archive_file" "--title" "v$new_version" "--generate-notes")
   if [[ "$release_type" == "beta" ]]; then
     gh_args+=("--prerelease")
   fi
