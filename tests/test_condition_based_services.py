@@ -30,6 +30,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+from homeassistant.core import State
 
 from custom_components.cardata.auth import container_signature_outdated
 from custom_components.cardata.binary_sensor import CardataBinarySensor
@@ -331,3 +332,26 @@ class TestStateWrites:
         )
         binary._handle_update(VIN, DESC_CBS_SERVICE_DUE)
         assert binary.writes == 2
+
+
+class TestRestart:
+    """The service due flag comes back with the list of what is due."""
+
+    async def test_the_due_items_come_back(self, coordinator):
+        binary = CountingBinarySensor(coordinator, VIN, DESC_CBS_SERVICE_DUE)
+        binary._attr_is_on = True
+        last_state = State("binary_sensor.x", "on", {"due_items": ["Engine oil"], "timestamp": TIMESTAMP})
+
+        await binary._async_restore_due_items(last_state)
+
+        assert binary.extra_state_attributes == {"timestamp": TIMESTAMP, "due_items": ["Engine oil"]}
+
+    async def test_a_fresh_read_is_not_overwritten(self, coordinator):
+        await coordinator.async_handle_message({"vin": VIN, "data": cbs_payload()}, is_telematic=True)
+        fresh = coordinator.get_state(VIN, DESC_CBS_SERVICE_DUE).attributes
+        binary = CountingBinarySensor(coordinator, VIN, DESC_CBS_SERVICE_DUE)
+        binary._attr_is_on = True
+
+        await binary._async_restore_due_items(State("binary_sensor.x", "on", {"due_items": ["Stale"]}))
+
+        assert coordinator.get_state(VIN, DESC_CBS_SERVICE_DUE).attributes == fresh

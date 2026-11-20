@@ -25,6 +25,7 @@
 
 """Tests for the service schedule container, read once a day on its own."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -39,11 +40,13 @@ from custom_components.cardata.const import (
     CBS_CONTAINER_PURPOSE,
     CBS_CONTAINER_SIGNATURE_KEY,
     CBS_LAST_FETCH_KEY,
+    CHARGING_HISTORY_LAST_FETCH_KEY,
     DAILY_FETCH_INTERVAL,
     DESC_CONDITION_BASED_SERVICES,
     HV_BATTERY_CONTAINER_NAME,
     HV_BATTERY_CONTAINER_PURPOSE,
     HV_BATTERY_DESCRIPTORS,
+    TYRE_DIAGNOSIS_LAST_FETCH_KEY,
 )
 from custom_components.cardata.container import CardataContainerError, CardataContainerManager
 from custom_components.cardata.http_retry import HttpResponse
@@ -127,6 +130,7 @@ def runtime():
         coordinator=coordinator,
         stream=None,
         container_manager=None,
+        container_recreate_lock=asyncio.Lock(),
     )
 
 
@@ -200,6 +204,64 @@ class TestContainerManager:
         assert manager._request.await_args_list[1].kwargs["json_body"]["technicalDescriptors"] == list(
             dict.fromkeys(HV_BATTERY_DESCRIPTORS)
         )
+
+
+class TestContainerLimit:
+    """At BMW's container limit the old containers make room for the new one."""
+
+    CU_124 = CardataContainerError(
+        'HTTP 403: {"exveErrorId":"CU-124","exveErrorMsg":"Maximum number of containers reached"}', status=403
+    )
+
+    async def test_the_old_container_goes_first_then_the_create_is_retried(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, self.CU_124, {}, {"containerId": "hv-new"}])
+
+        assert await manager.async_reset_hv_container("token") == "hv-new"
+
+        assert [(c.args[0], c.args[1]) for c in manager._request.await_args_list] == [
+            ("GET", "/customers/containers"),
+            ("POST", "/customers/containers"),
+            ("DELETE", "/customers/containers/hv-old"),
+            ("POST", "/customers/containers"),
+        ]
+
+    async def test_nothing_of_ours_to_delete_leaves_the_error(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[listing(), self.CU_124])
+
+        with pytest.raises(CardataContainerError):
+            await manager.async_reset_hv_container("token")
+
+    async def test_another_refusal_deletes_nothing(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, CardataContainerError("HTTP 500: busy", status=500)])
+
+        with pytest.raises(CardataContainerError):
+            await manager.async_reset_hv_container("token")
+
+        assert manager._request.await_count == 2
+
+    async def test_a_failed_create_counts_against_the_limiter(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, CardataContainerError("HTTP 500: busy", status=500)])
+        limiter = MagicMock()
+        limiter.can_create_container.return_value = (True, None)
+
+        with pytest.raises(CardataContainerError):
+            await manager.async_reset_hv_container("token", limiter)
+
+        limiter.record_creation.assert_called_once()
+
+    async def test_the_retry_after_cu_124_counts_too(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, self.CU_124, {}, {"containerId": "hv-new"}])
+        limiter = MagicMock()
+        limiter.can_create_container.return_value = (True, None)
+
+        assert await manager.async_reset_hv_container("token", limiter) == "hv-new"
+
+        assert limiter.record_creation.call_count == 2
 
 
 class TestFetch:
@@ -328,6 +390,24 @@ class TestMissingHvContainer:
         assert result.reason == "missing_container"
         request.assert_not_awaited()
 
+    async def test_two_fetches_at_once_create_one_container(self, setup):
+        hass, entry, runtime = setup
+
+        async def ensure(target, *_):
+            await asyncio.sleep(0)
+            target.data = {**target.data, "hv_container_id": f"hv-{ensure_mock.await_count}"}
+            return True
+
+        ensure_mock = AsyncMock(side_effect=ensure)
+        with patch("custom_components.cardata.auth.async_ensure_container_for_entry", ensure_mock):
+            first, second = await asyncio.gather(
+                telematics._async_recreate_missing_container(hass, entry, runtime),
+                telematics._async_recreate_missing_container(hass, entry, runtime),
+            )
+
+        assert ensure_mock.await_count == 1
+        assert first == second == "hv-1"
+
     async def test_no_attempt_while_rate_limited(self, setup):
         hass, entry, runtime = setup
         runtime.rate_limit_tracker = MagicMock()
@@ -350,17 +430,17 @@ class TestSchedule:
     """Once a day per vehicle, failed or not, restart or not."""
 
     def test_due_when_never_read(self):
-        assert telematics.cbs_fetch_due({}, VIN, NOW)
-        assert telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {"OTHER": NOW}}, VIN, NOW)
+        assert telematics.daily_fetch_due({}, CBS_LAST_FETCH_KEY, VIN, NOW)
+        assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {"OTHER": NOW}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     def test_not_due_within_a_day(self):
-        assert not telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - 3600}}, VIN, NOW)
+        assert not telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - 3600}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     def test_due_after_a_day(self):
-        assert telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - DAILY_FETCH_INTERVAL}}, VIN, NOW)
+        assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - DAILY_FETCH_INTERVAL}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     def test_due_when_stamped_in_the_future(self):
-        assert telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW + 3600}}, VIN, NOW)
+        assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW + 3600}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     async def test_a_failed_read_is_not_retried_before_the_next_day(self, hass, entry, runtime):
         fetch = AsyncMock(return_value=False)
@@ -388,6 +468,35 @@ class TestSchedule:
 
         assert fetch.await_count == 1
         assert entry.data[CBS_LAST_FETCH_KEY] == {VIN: NOW}
+
+
+class TestOptionalDailyFetches:
+    """Charging history and tyre diagnosis keep their day across a restart."""
+
+    @pytest.mark.parametrize(
+        ("option", "fetcher", "key"),
+        [
+            ("enable_charging_history", "async_fetch_charging_history", CHARGING_HISTORY_LAST_FETCH_KEY),
+            ("enable_tyre_diagnosis", "async_fetch_tyre_diagnosis", TYRE_DIAGNOSIS_LAST_FETCH_KEY),
+        ],
+    )
+    async def test_a_restart_does_not_fetch_again(self, hass, entry, runtime, option, fetcher, key):
+        entry.data[CBS_LAST_FETCH_KEY] = {VIN: NOW}
+        setattr(runtime.coordinator, option, True)
+        fetch = AsyncMock(return_value=None)
+        with (
+            patch("custom_components.cardata.auth.async_ensure_valid_token", AsyncMock(return_value=True)),
+            patch.object(telematics, fetcher, fetch),
+            patch.object(telematics.time, "time", return_value=NOW),
+        ):
+            await telematics._async_daily_fetches(hass, entry, runtime, [VIN])
+            # A new coordinator after a restart, with the entry as it was stored.
+            runtime.coordinator = MagicMock(enable_charging_history=False, enable_tyre_diagnosis=False)
+            setattr(runtime.coordinator, option, True)
+            await telematics._async_daily_fetches(hass, entry, runtime, [VIN])
+
+        assert fetch.await_count == 1
+        assert entry.data[key] == {VIN: NOW}
 
 
 class TestBudget:

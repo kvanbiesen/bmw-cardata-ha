@@ -41,6 +41,7 @@ from custom_components.cardata.const import (
     DESC_CHARGING_STATUS,
     DESC_CHARGING_TIME_REMAINING,
     DESC_SOC_TARGET,
+    DESC_TRAVELLED_DISTANCE,
 )
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.soc_prediction import SOCPredictor
@@ -50,6 +51,7 @@ from custom_components.cardata.soc_wiring import (
     _carried_over_phases,
     _charge_phases,
     _descriptor_phases,
+    _mileage_km,
     charge_should_have_ended,
     needs_phase_count_poll,
     process_soc_descriptors,
@@ -570,3 +572,57 @@ class TestChargeTargetChange:
         process_soc_descriptors(coordinator, "VIN", {DESC_SOC_TARGET: {"value": 100}}, vehicle_state)
 
         coordinator._soc_predictor.set_target_soc.assert_called_once_with("VIN", 100.0)
+
+
+class TestMileageUnit:
+    """The driving predictions work in km whatever unit the odometer is stored in."""
+
+    @pytest.mark.parametrize(
+        ("value", "unit", "km"),
+        [(10000, "km", 10000.0), (10000, None, 10000.0), (6213.712, "mi", 10000.0), ("6213.712", "miles", 10000.0)],
+    )
+    def test_a_reading_is_turned_into_km(self, value, unit, km):
+        assert _mileage_km(value, unit) == pytest.approx(km, abs=0.01)
+
+    @pytest.mark.parametrize("value", [None, "unknown", [1]])
+    def test_a_reading_that_is_not_a_number_is_none(self, value):
+        assert _mileage_km(value, "km") is None
+
+    def test_the_stored_unit_reaches_the_driving_prediction(self):
+        """A REST poll sends the odometer without a unit; the stored state has it."""
+        coordinator = _wiring_coordinator()
+        coordinator._magic_soc.update_driving_mileage.return_value = False
+        coordinator._magic_soc._driving_sessions = {"VIN": object()}
+        coordinator._magic_soc.has_signaled_magic_soc_entity.return_value = False
+        vehicle_state = {DESC_TRAVELLED_DISTANCE: _state(6213.712, unit="mi")}
+
+        process_soc_descriptors(coordinator, "VIN", {DESC_TRAVELLED_DISTANCE: {"value": 6213.712}}, vehicle_state)
+
+        mileage = coordinator._magic_soc.update_driving_mileage.call_args.args[1]
+        assert mileage == pytest.approx(10000.0, abs=0.01)
+
+
+class TestPendingSessionAtANewCharge:
+    """A charge still waiting for its final SOC is not finished by the next one."""
+
+    def test_a_new_charge_drops_it(self):
+        from custom_components.cardata.soc_types import PendingSession
+
+        predictor = SOCPredictor()
+        saved = MagicMock()
+        predictor._on_learning_updated = saved
+        predictor._pending_sessions["VIN"] = PendingSession(
+            end_timestamp=datetime.now(UTC).timestamp(),
+            anchor_soc=40.0,
+            total_energy_kwh=5.0,
+            charging_method="AC",
+            battery_capacity_kwh=80.0,
+        )
+
+        predictor.anchor_session("VIN", 46.0, 80.0)
+        # Read during the new charge, it would put the efficiency at a believable 0.88.
+        predictor.update_bmw_soc("VIN", 45.5)
+
+        assert "VIN" not in predictor._pending_sessions
+        assert predictor._learned_efficiency.get("VIN") is None
+        saved.assert_called_with("VIN")

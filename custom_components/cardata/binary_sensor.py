@@ -36,7 +36,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
@@ -45,7 +45,7 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .condition_based_services import DESC_CBS_SERVICE_DUE
-from .const import DOMAIN, OPENING_STATUS_DESCRIPTORS
+from .const import DOMAIN, OPENING_STATUS_DESCRIPTORS, OPENING_UNIQUE_ID_SUFFIX
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
@@ -83,10 +83,6 @@ OPENING_STATUS_TITLES = {
     "vehicle.cabin.sunroof.status": "Sunroof open",
 }
 
-# The string sensor already owns "{vin}_{descriptor}", and frontend_cards maps a
-# unique_id to an entity_id without looking at the domain, so a shared id would
-# hand the vehicle card's window lookups to the binary sensor.
-OPENING_UNIQUE_ID_SUFFIX = "_open"
 
 OPENING_CLOSED_VALUES = frozenset({"CLOSED"})
 OPENING_OPEN_VALUES = frozenset({"OPEN", "INTERMEDIATE"})
@@ -186,6 +182,8 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
                 else:
                     self._attr_is_on = last_state.state.lower() == "on"
                     restored_state = True
+                    if self.descriptor == DESC_CBS_SERVICE_DUE:
+                        await self._async_restore_due_items(last_state)
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
@@ -208,6 +206,24 @@ class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
         # For isMoving: this gets the derived motion state from GPS tracking
         # For other sensors: this ensures we have the latest MQTT data
         self._handle_update(self.vin, self.descriptor)
+
+    async def _async_restore_due_items(self, last_state: State) -> None:
+        """Bring back the list of due items with the service due flag.
+
+        It lives in an attribute read from the coordinator, and only the
+        daily service schedule read refills it, up to a day after a restart.
+        """
+        if self._coordinator.get_state(self.vin, self.descriptor) is not None:
+            return
+        due_items = last_state.attributes.get("due_items")
+        await self._coordinator.async_restore_descriptor_state(
+            self.vin,
+            self.descriptor,
+            self._attr_is_on,
+            None,
+            last_state.attributes.get("timestamp"),
+            {"due_items": list(due_items)} if isinstance(due_items, list) else None,
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""

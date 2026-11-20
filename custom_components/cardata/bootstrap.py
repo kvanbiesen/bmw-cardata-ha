@@ -257,9 +257,10 @@ async def async_run_bootstrap(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if created_entities:
             import time
 
-            from .telematics import async_update_last_telematic_poll
+            from .telematics import async_store_poll_times, async_update_last_telematic_poll
 
             await async_update_last_telematic_poll(hass, entry, time.time())
+            await async_store_poll_times(hass, entry, coordinator)
         else:
             _LOGGER.debug(
                 "Bootstrap did not seed new descriptors for entry %s",

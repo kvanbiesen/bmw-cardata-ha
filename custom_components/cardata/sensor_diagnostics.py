@@ -66,6 +66,8 @@ _CHARGING_SESSION_KEYS = (
     "timeZone",
     "isPreconditioningActivated",
 )
+# The attributes the tyre diagnosis sensor builds, restored with its state.
+_TYRE_ATTRIBUTE_KEYS = ("mountedTyres", "unmountedTyres", "errors")
 
 
 class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
@@ -480,6 +482,7 @@ class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
         self._base_name = "Tyre Diagnosis"
         self._update_name(write_state=False)
         self._unsubscribe: Callable[[], None] | None = None
+        self._restored_attributes: dict[str, Any] = {}
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
@@ -488,6 +491,9 @@ class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in ("unknown", "unavailable"):
             self._attr_native_value = last_state.state
+            self._restored_attributes = {
+                key: last_state.attributes[key] for key in _TYRE_ATTRIBUTE_KEYS if key in last_state.attributes
+            }
 
         self._unsubscribe = async_dispatcher_connect(
             self.hass,
@@ -509,8 +515,12 @@ class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
         """Load current tyre diagnosis summary from coordinator."""
         data = self._coordinator.get_tyre_diagnosis(self._vin)
         if not data:
-            self._attr_native_value = "no data"
+            # A fresh coordinator has no response until the next daily read,
+            # up to a day after a restart. Keep the restored state until then.
+            if self._coordinator.has_tyre_diagnosis(self._vin) or self._attr_native_value is None:
+                self._attr_native_value = "no data"
             return
+        self._restored_attributes = {}
 
         # Check for errors from the API
         errors = data.get("errors", [])
@@ -558,7 +568,7 @@ class CardataTyreDiagnosisSensor(CardataEntity, RestoreEntity, SensorEntity):
         """Return tyre diagnosis data as attributes."""
         data = self._coordinator.get_tyre_diagnosis(self._vin)
         if not data:
-            return {}
+            return {} if self._coordinator.has_tyre_diagnosis(self._vin) else dict(self._restored_attributes)
 
         attrs: dict[str, Any] = {}
         passenger_car = data.get("passengerCar")

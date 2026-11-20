@@ -33,9 +33,10 @@ import time
 from contextlib import suppress
 
 import aiohttp
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
 
@@ -60,6 +61,7 @@ from .const import (
     DESC_REMAINING_FUEL,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
+    LAST_POLL_BY_VIN_KEY,
     MAGIC_SOC_DESCRIPTOR,
     MQTT_KEEPALIVE,
     OPTION_CUSTOM_MQTT_ENABLED,
@@ -92,7 +94,6 @@ from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .utils import (
-    async_cancel_task,
     get_externally_owned_vins,
     partition_restored_vins,
     redact_vin,
@@ -276,6 +277,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # successful fetch, while the stored last_telematic_poll also records
         # failed and rate limited attempts. The sensor restores its own state.
         await async_restore_vehicle_metadata(hass, entry, coordinator)
+        coordinator.restore_poll_times(entry.data.get(LAST_POLL_BY_VIN_KEY))
 
         # CRITICAL FIX: Pre-populate coordinator.names from restored device_metadata
         # Entities check coordinator.names for the vehicle name prefix, so we must
@@ -471,6 +473,15 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime_data.trip_poll_cooldown_seconds = max(1, int(cooldown_min)) * 60
         hass.data[DOMAIN][entry.entry_id] = runtime_data
 
+        # Home Assistant does not unload config entries when it stops, so the
+        # save in async_unload_cardata never runs then. Without this, whatever
+        # changed since the last periodic save, up to about 5 minutes of a
+        # charging session, is lost on every restart.
+        async def _async_save_soc_on_stop(_event: Event) -> None:
+            await _async_save_soc_sessions(runtime_data)
+
+        entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_save_soc_on_stop))
+
         # Now create refresh loop (runtime is stored, task can read it after first sleep)
         refresh_task = hass.loop.create_task(async_token_refresh_loop(hass, entry.entry_id))
         runtime_data.refresh_task = refresh_task
@@ -497,24 +508,29 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Wait for bootstrap task to FULLY complete (including async_seed_telematic_data)
             # This ensures coordinator.names is populated AND telematic data is seeded
             # before we set up platforms (which create entities)
-            try:
-                await asyncio.wait_for(runtime_data.bootstrap_task, timeout=30.0)
-                bootstrap_completed = True
-                _LOGGER.debug("Bootstrap completed successfully")
-            except TimeoutError:
+            # asyncio.wait, unlike wait_for, leaves the task running on timeout.
+            done, _ = await asyncio.wait({runtime_data.bootstrap_task}, timeout=30.0)
+            if not done:
+                # Cancelling it would leave the cars named by VIN for the whole
+                # session and the bootstrap to run again on every restart.
+                # Finished in the background, it stores the metadata, marks
+                # itself complete and names the devices through the usual
+                # signals. Unload cancels it if it is still running then.
                 _LOGGER.warning(
-                    "Bootstrap did not complete within 30 seconds. Devices will update names when metadata arrives."
+                    "Bootstrap did not complete within 30 seconds; it carries on in the background "
+                    "and devices will update their names when the metadata arrives."
                 )
-                # Cancel the timed-out task to prevent it running in background
+                # It logs its own failure; collect the result so asyncio does not.
+                runtime_data.bootstrap_task.add_done_callback(lambda task: task.cancelled() or task.exception())
+            else:
                 try:
-                    await async_cancel_task(runtime_data.bootstrap_task)
-                except Exception as cancel_err:
-                    _LOGGER.debug("Error cancelling bootstrap task: %s", cancel_err)
-                runtime_data.bootstrap_task = None
-            except Exception as err:
-                _LOGGER.warning("Bootstrap failed: %s", err)
-                bootstrap_error = str(err)
-                runtime_data.bootstrap_task = None
+                    runtime_data.bootstrap_task.result()
+                    bootstrap_completed = True
+                    _LOGGER.debug("Bootstrap completed successfully")
+                except Exception as err:
+                    _LOGGER.warning("Bootstrap failed: %s", err)
+                    bootstrap_error = str(err)
+                    runtime_data.bootstrap_task = None
 
         # Check if we have vehicle names after bootstrap attempt
         # If bootstrap was required and explicitly failed, abort setup
@@ -527,7 +543,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 {
                     "title": "BMW CarData Setup Failed",
                     "message": f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                    "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+                    "notification_id": _bootstrap_failed_notification_id(entry),
                 },
             )
             raise ConfigEntryNotReady(f"Bootstrap failed to retrieve vehicle metadata: {error_message}. ")
@@ -618,6 +634,9 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Reload integration when options change (Magic SOC toggle, debug, keepalive, etc.)
         entry.async_on_unload(entry.add_update_listener(_make_options_listener(options)))
 
+        # A retry that got through leaves the notice of the failed one behind.
+        persistent_notification.async_dismiss(hass, _bootstrap_failed_notification_id(entry))
+
         setup_succeeded = True
         return True
 
@@ -643,6 +662,41 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await session.close()
 
 
+def _bootstrap_failed_notification_id(entry: ConfigEntry) -> str:
+    return f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
+
+
+async def async_cleanup_if_last_entry(hass: HomeAssistant) -> None:
+    """Remove the services and the card resource once no entry is loaded.
+
+    Runs on unload, and when an entry is removed: Home Assistant removes an
+    entry that is waiting to retry its setup without unloading it, and
+    setup registers both before it can fail.
+    """
+    domain_data = hass.data.get(DOMAIN)
+    if domain_data is None:
+        return
+    if any(not key.startswith("_") for key in domain_data):
+        return
+    async_unregister_services(hass)
+    await async_unload_frontend_cards_if_last_entry(hass)
+    hass.data.pop(DOMAIN, None)
+
+
+async def _async_save_soc_sessions(data: CardataRuntimeData) -> None:
+    """Save the charging and driving SOC sessions."""
+    if data.soc_store is None:
+        return
+    try:
+        session_data = {
+            **data.coordinator._soc_predictor.get_session_data(),
+            **data.coordinator._magic_soc.get_session_data(),
+        }
+        await data.soc_store.async_save(session_data)
+    except Exception as err:
+        _LOGGER.warning("Failed to save SOC session data on shutdown: %s", err)
+
+
 async def _cancel_task_with_timeout(task: asyncio.Task, name: str, timeout: float = 5.0) -> None:
     """Cancel an asyncio task and wait for it to finish, with timeout protection."""
     task.cancel()
@@ -666,16 +720,7 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
 
-    # Save SOC session data before shutdown
-    if data.soc_store is not None:
-        try:
-            session_data = {
-                **data.coordinator._soc_predictor.get_session_data(),
-                **data.coordinator._magic_soc.get_session_data(),
-            }
-            await data.soc_store.async_save(session_data)
-        except Exception as err:
-            _LOGGER.warning("Failed to save SOC session data on shutdown: %s", err)
+    await _async_save_soc_sessions(data)
 
     # Stop coordinator
     await data.coordinator.async_stop_watchdog()
@@ -706,16 +751,7 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         _LOGGER.error("Error closing aiohttp session: %s", err)
 
-    # Clean up services if this is the last entry
-    remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
-    if not remaining_entries:
-        async_unregister_services(hass)
-        await async_unload_frontend_cards_if_last_entry(hass)
-        domain_data.pop("_service_registered", None)
-        domain_data.pop("_registered_services", None)
-
-    if not domain_data or not remaining_entries:
-        hass.data.pop(DOMAIN, None)
+    await async_cleanup_if_last_entry(hass)
 
     cleanup_entry_lock(entry.entry_id)
 

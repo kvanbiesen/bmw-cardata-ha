@@ -41,6 +41,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .api_parsing import extract_telematic_payload, try_parse_json
+from .charging_history import async_fetch_charging_history
 from .const import (
     API_BASE_URL,
     API_VERSION,
@@ -51,10 +52,13 @@ from .const import (
     CBS_CONTAINER_PURPOSE,
     CBS_CONTAINER_SIGNATURE_KEY,
     CBS_LAST_FETCH_KEY,
+    CHARGING_HISTORY_LAST_FETCH_KEY,
     DAILY_FETCH_INTERVAL,
     DOMAIN,
+    LAST_POLL_BY_VIN_KEY,
     MIN_TELEMETRY_DESCRIPTORS,
     TARGET_DAILY_POLLS,
+    TYRE_DIAGNOSIS_LAST_FETCH_KEY,
     VEHICLE_METADATA,
 )
 from .container import CardataContainerError, CardataContainerManager
@@ -136,10 +140,14 @@ async def _async_recreate_missing_container(
             _LOGGER.debug("Not recreating HV container for entry %s yet: %s", entry.entry_id, reason)
             return None
 
-    _LOGGER.info("No HV container stored for entry %s; creating one so polling can resume", entry.entry_id)
-    if not await async_ensure_container_for_entry(entry, hass, runtime.container_manager):
-        return None
-    container_id = entry.data.get("hv_container_id")
+    async with runtime.container_recreate_lock:
+        # Another fetch may have created one while this one waited.
+        container_id = entry.data.get("hv_container_id")
+        if not (isinstance(container_id, str) and container_id):
+            _LOGGER.info("No HV container stored for entry %s; creating one so polling can resume", entry.entry_id)
+            if not await async_ensure_container_for_entry(entry, hass, runtime.container_manager):
+                return None
+            container_id = entry.data.get("hv_container_id")
     return container_id if isinstance(container_id, str) and container_id else None
 
 
@@ -328,7 +336,9 @@ async def async_perform_telematic_fetch(
 
             # Container invalidated by BMW (CU-105): token is fine, but the
             # stored container_id is no longer accepted. Clear it so the next
-            # bootstrap re-discovers / recreates a container.
+            # poll creates a new one. The bootstrap flag stays: that poll
+            # recovers without a full bootstrap on the next restart, and if
+            # it cannot create the container it clears the flag itself.
             if response.is_container_invalid:
                 _LOGGER.warning(
                     "Cardata fetch_telematic_data: container %s no longer valid for %s "
@@ -336,11 +346,7 @@ async def async_perform_telematic_fetch(
                     cid,
                     redacted_vin,
                 )
-                await async_update_entry_data(
-                    hass,
-                    entry,
-                    {"hv_container_id": None, BOOTSTRAP_COMPLETE: False},
-                )
+                await async_update_entry_data(hass, entry, {"hv_container_id": None})
                 container_invalid = True
                 break  # Stop trying other containers
 
@@ -410,6 +416,7 @@ async def async_perform_telematic_fetch(
 
     # Update timestamp and signal if we got any data
     if any_success:
+        await async_store_poll_times(hass, entry, runtime.coordinator)
         runtime.coordinator.last_telematic_api_at = datetime.now(UTC)
         async_dispatcher_send(runtime.coordinator.hass, runtime.coordinator.signal_diagnostics)
         _LOGGER.debug("Cardata telematic fetch succeeded for at least one VIN")
@@ -734,97 +741,6 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
         return
 
 
-async def async_fetch_charging_history(
-    entry: ConfigEntry,
-    runtime: CardataRuntimeData,
-    vin: str,
-    from_dt: datetime | None = None,
-    to_dt: datetime | None = None,
-) -> list[dict[str, Any]] | None:
-    """Fetch charging history for a single VIN, following next_token pagination.
-
-    Returns all sessions on success, None on failure.
-    from_dt/to_dt default to the last 30 days when omitted.
-    """
-    from datetime import datetime as dt, timedelta
-
-    if not is_valid_vin(vin):
-        return None
-
-    access_token = entry.data.get("access_token")
-    if not access_token:
-        return None
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "x-version": API_VERSION,
-        "Accept": "application/json",
-    }
-    now = dt.now(UTC)
-    base_params = {
-        "from": (from_dt or (now - timedelta(days=30))).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-        "to": (to_dt or now).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-    }
-    url = f"{API_BASE_URL}/customers/vehicles/{vin}/chargingHistory"
-    redacted = redact_vin(vin)
-
-    all_sessions: list[dict[str, Any]] = []
-    next_token: str | None = None
-    page = 0
-    # ponytail: cap at 20 pages; upgrade if BMW ever returns more than ~600 sessions
-    MAX_PAGES = 20
-
-    while True:
-        params = dict(base_params)
-        if next_token:
-            params["next_token"] = next_token
-
-        response, error = await async_request_with_retry(
-            runtime.session,
-            "GET",
-            url,
-            headers=headers,
-            params=params,
-            context=f"Charging history for {redacted}",
-            rate_limiter=runtime.rate_limit_tracker,
-            max_retries=0,
-        )
-
-        if error or response is None or not response.is_success:
-            if page == 0:
-                _LOGGER.warning("Failed to fetch charging history for %s", redacted)
-                return None
-            break
-
-        ok, payload = try_parse_json(response.text)
-        if not ok or not isinstance(payload, dict):
-            if page == 0:
-                _LOGGER.warning("Invalid charging history response for %s", redacted)
-                return None
-            break
-
-        page_sessions = payload.get("data", [])
-        if isinstance(page_sessions, list):
-            all_sessions.extend(page_sessions)
-
-        next_token = payload.get("next_token") or payload.get("nextToken") or ""
-        page += 1
-
-        if not next_token or page >= MAX_PAGES:
-            if next_token and page >= MAX_PAGES:
-                _LOGGER.warning(
-                    "Charging history for %s truncated at %d pages (%d sessions total)",
-                    redacted,
-                    MAX_PAGES,
-                    len(all_sessions),
-                )
-            break
-
-    runtime.coordinator.update_charging_history(vin, all_sessions)
-    _LOGGER.info("Fetched %d charging history sessions for %s", len(all_sessions), redacted)
-    return all_sessions
-
-
 async def async_fetch_tyre_diagnosis(
     entry: ConfigEntry,
     runtime: CardataRuntimeData,
@@ -870,9 +786,9 @@ async def async_fetch_tyre_diagnosis(
     return True
 
 
-def cbs_fetch_due(entry_data: Mapping[str, Any], vin: str, now: float) -> bool:
-    """Return True when the service schedule of a VIN is due for a read."""
-    last_fetch = entry_data.get(CBS_LAST_FETCH_KEY)
+def daily_fetch_due(entry_data: Mapping[str, Any], key: str, vin: str, now: float) -> bool:
+    """Return True when the daily fetch stamped under key is due for a VIN."""
+    last_fetch = entry_data.get(key)
     last = last_fetch.get(vin) if isinstance(last_fetch, dict) else None
     if not isinstance(last, (int, float)) or last > now:
         # Never read, or stamped by a clock that has since gone back.
@@ -880,12 +796,16 @@ def cbs_fetch_due(entry_data: Mapping[str, Any], vin: str, now: float) -> bool:
     return now - last >= DAILY_FETCH_INTERVAL
 
 
-async def _async_record_cbs_attempt(hass: HomeAssistant, entry: ConfigEntry, vin: str, now: float) -> None:
-    """Store when the service schedule of a VIN was last asked for."""
-    last_fetch = entry.data.get(CBS_LAST_FETCH_KEY)
+async def _async_record_daily_attempt(hass: HomeAssistant, entry: ConfigEntry, key: str, vin: str, now: float) -> None:
+    """Store when the daily fetch stamped under key was last asked for a VIN.
+
+    Stored before the call, so that neither a failure nor a restart spends
+    another call on it before the day is up.
+    """
+    last_fetch = entry.data.get(key)
     updated = dict(last_fetch) if isinstance(last_fetch, dict) else {}
     updated[vin] = now
-    await async_update_entry_data(hass, entry, {CBS_LAST_FETCH_KEY: updated})
+    await async_update_entry_data(hass, entry, {key: updated})
 
 
 async def _async_cbs_container_id(
@@ -896,9 +816,9 @@ async def _async_cbs_container_id(
 ) -> str | None:
     """Return the service schedule container, creating it when there is none.
 
-    Creating it lists the account's containers, deletes any left under the same
-    name and creates a new one: two calls on a clean account, once per install
-    or after BMW drops the container.
+    Creating it lists the account's containers, creates a new one and then
+    deletes any left under the same name: two calls on a clean account, once
+    per install or after BMW drops the container.
     """
     manager = CardataContainerManager(
         session=runtime.session,
@@ -1031,31 +951,30 @@ async def _async_daily_fetches(
     now = time.time()
 
     for vin in vins:
-        if coordinator.enable_charging_history:
-            last = coordinator._last_charging_history_fetch.get(vin, 0.0)
-            if now - last >= DAILY_FETCH_INTERVAL:
-                # Record attempt upfront so failures don't retry every cycle
-                coordinator._last_charging_history_fetch[vin] = now
-                fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
-                if fresh_entry:
-                    await async_fetch_charging_history(fresh_entry, runtime, vin)
+        if coordinator.enable_charging_history and daily_fetch_due(
+            entry.data, CHARGING_HISTORY_LAST_FETCH_KEY, vin, now
+        ):
+            await _async_record_daily_attempt(hass, entry, CHARGING_HISTORY_LAST_FETCH_KEY, vin, now)
+            fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
+            if fresh_entry:
+                await async_fetch_charging_history(fresh_entry, runtime, vin, max_pages=1)
 
-        if coordinator.enable_tyre_diagnosis:
-            last = coordinator._last_tyre_diagnosis_fetch.get(vin, 0.0)
-            if now - last >= DAILY_FETCH_INTERVAL:
-                # Record attempt upfront so failures don't retry every cycle
-                coordinator._last_tyre_diagnosis_fetch[vin] = now
-                fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
-                if fresh_entry:
-                    await async_fetch_tyre_diagnosis(fresh_entry, runtime, vin)
+        if coordinator.enable_tyre_diagnosis and daily_fetch_due(entry.data, TYRE_DIAGNOSIS_LAST_FETCH_KEY, vin, now):
+            await _async_record_daily_attempt(hass, entry, TYRE_DIAGNOSIS_LAST_FETCH_KEY, vin, now)
+            fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
+            if fresh_entry:
+                await async_fetch_tyre_diagnosis(fresh_entry, runtime, vin)
 
-        if cbs_fetch_due(entry.data, vin, now):
-            # Stored before the call, so that neither a failure nor a restart
-            # spends another call on it before the day is up.
-            await _async_record_cbs_attempt(hass, entry, vin, now)
+        if daily_fetch_due(entry.data, CBS_LAST_FETCH_KEY, vin, now):
+            await _async_record_daily_attempt(hass, entry, CBS_LAST_FETCH_KEY, vin, now)
             fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
             if fresh_entry:
                 await async_fetch_condition_based_services(hass, fresh_entry, runtime, vin)
+
+
+async def async_store_poll_times(hass: HomeAssistant, entry: ConfigEntry, coordinator: CardataCoordinator) -> None:
+    """Store the last successful poll time of each VIN in the entry."""
+    await async_update_entry_data(hass, entry, {LAST_POLL_BY_VIN_KEY: coordinator.poll_times()})
 
 
 async def async_update_last_telematic_poll(hass: HomeAssistant, entry: ConfigEntry, timestamp: float) -> None:

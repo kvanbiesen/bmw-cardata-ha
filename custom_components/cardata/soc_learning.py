@@ -235,7 +235,7 @@ def end_session(
             current_soc,
             target_soc,
         )
-        _finalize_learning(predictor._learned_efficiency, None, vin, session, end_soc=current_soc)
+        _finalize_learning(predictor._learned_efficiency, vin, session, end_soc=current_soc)
     else:
         # Charge interrupted - wait for BMW SOC confirmation
         _LOGGER.debug(
@@ -303,7 +303,7 @@ def try_finalize_pending_session(predictor: SOCPredictor, vin: str, bmw_soc: flo
         return False
 
     # Finalize learning with this SOC
-    _finalize_learning_from_pending(predictor._learned_efficiency, None, vin, pending, bmw_soc)
+    _finalize_learning_from_pending(predictor._learned_efficiency, vin, pending, bmw_soc)
     del predictor._pending_sessions[vin]
     # Persist removal of pending session (even if learning was rejected)
     if predictor._on_learning_updated:
@@ -313,7 +313,6 @@ def try_finalize_pending_session(predictor: SOCPredictor, vin: str, bmw_soc: flo
 
 def _validate_and_learn(
     learned_efficiency: dict[str, LearnedEfficiency],
-    on_learning_updated: Any,
     vin: str,
     anchor_soc: float,
     total_energy_kwh: float,
@@ -357,7 +356,6 @@ def _validate_and_learn(
 
     _apply_learning(
         learned_efficiency,
-        on_learning_updated,
         vin,
         charging_method,
         true_efficiency,
@@ -369,26 +367,20 @@ def _validate_and_learn(
 
 def _finalize_learning(
     learned_efficiency: dict[str, LearnedEfficiency],
-    on_learning_updated: Any,
     vin: str,
     session: ChargingSession,
     end_soc: float,
 ) -> None:
-    """Finalize learning from a completed session."""
-    if session.restored:
-        _LOGGER.info(
-            "SOC: Skipping learning for restored session %s (energy data incomplete)",
-            redact_vin(vin),
-        )
-        return
+    """Finalize learning from a completed session.
 
+    end_session, the only caller, has already turned away a restored session.
+    """
     # Prefer session-level fields (survive re-anchors) over segment-level
     start_soc = session.session_start_soc if session.session_start_soc is not None else session.anchor_soc
     energy = session.session_total_energy_kwh if session.session_total_energy_kwh > 0 else session.total_energy_kwh
 
     _validate_and_learn(
         learned_efficiency,
-        on_learning_updated,
         vin,
         anchor_soc=start_soc,
         total_energy_kwh=energy,
@@ -404,7 +396,6 @@ def _finalize_learning(
 
 def _finalize_learning_from_pending(
     learned_efficiency: dict[str, LearnedEfficiency],
-    on_learning_updated: Any,
     vin: str,
     pending: PendingSession,
     end_soc: float,
@@ -412,7 +403,6 @@ def _finalize_learning_from_pending(
     """Finalize learning from a pending session."""
     _validate_and_learn(
         learned_efficiency,
-        on_learning_updated,
         vin,
         anchor_soc=pending.anchor_soc,
         total_energy_kwh=pending.total_energy_kwh,
@@ -428,7 +418,6 @@ def _finalize_learning_from_pending(
 
 def _apply_learning(
     learned_efficiency: dict[str, LearnedEfficiency],
-    on_learning_updated: Any,
     vin: str,
     charging_method: str,
     true_efficiency: float,
@@ -465,9 +454,6 @@ def _apply_learning(
                 entry.sample_count if entry else 0,
             )
 
-        # Trigger persistence callback
-        if on_learning_updated:
-            on_learning_updated(vin)
     else:
         if is_dc:
             _LOGGER.warning(

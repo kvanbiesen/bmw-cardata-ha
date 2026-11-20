@@ -9,8 +9,8 @@ const sandbox = {
   HTMLElement: class {},
   customElements: { get: () => undefined, define: () => {} },
 };
-runInNewContext(`${source}\nglobalThis.__cardTest = { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard };`, sandbox);
-const { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard } = sandbox.__cardTest;
+runInNewContext(`${source}\nglobalThis.__cardTest = { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary };`, sandbox);
+const { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary } = sandbox.__cardTest;
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
@@ -97,4 +97,20 @@ test('additional tiles can render independently when built-in buttons are disabl
   assert.equal(html.match(/class="tile-grid"/g)?.length, 1);
   assert.equal(html.match(/class="tile-item"/g)?.length, 1);
   assert.ok(html.includes('75 %'));
+});
+
+test('a paused charge is not shown as charging', () => {
+  for (const state of ['chargingactive', 'charging', 'vehicle2grid', 'v2g']) assert.equal(isChargingActive(state), true, state);
+  for (const state of ['chargingpaused', 'nocharging', 'chargingended', 'chargingerror', 'initialization', '']) assert.equal(isChargingActive(state), false, state);
+});
+
+test('unlocked doors are not shown as secured', () => {
+  for (const state of ['locked', 'secured', 'closed']) assert.equal(doorsSecured(state), true, state);
+  for (const state of ['unlocked', 'selective-unlocked', 'open', '']) assert.equal(doorsSecured(state), false, state);
+});
+
+test('windows without any state are unknown, not closed', () => {
+  assert.deepEqual(plain(windowSummary([undefined, undefined, { state: 'unavailable' }, { state: 'unknown' }])), { known: false, open: 0 });
+  assert.deepEqual(plain(windowSummary([{ state: 'off' }, undefined, undefined, undefined])), { known: true, open: 0 });
+  assert.deepEqual(plain(windowSummary([{ state: 'on' }, { state: 'INTERMEDIATE' }, { state: 'CLOSED' }, undefined])), { known: true, open: 2 });
 });

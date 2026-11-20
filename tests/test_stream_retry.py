@@ -532,3 +532,101 @@ async def test_a_stop_still_cancels_a_retry_waiting_for_the_lock() -> None:
 
     assert task.done()
     start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("refused", "stopped", "handed_over"),
+    [(False, False, True), (True, False, False), (False, True, False)],
+)
+async def test_a_retry_that_fails_hands_over_to_the_reconnect_chain(refused, stopped, handed_over) -> None:
+    """A timeout or a non credential refusal must not end the retries there.
+
+    A credentials refusal is already with handle_unauthorized, and a stopped
+    stream must stay stopped.
+    """
+
+    async def _timed_out() -> None:
+        raise TimeoutError("MQTT connection timed out after 20 seconds")
+
+    manager = _retry_manager(_timed_out)
+    manager._shut_down = False
+    manager._intentional_disconnect = stopped
+    manager.credentials_refused = refused
+    with patch.object(stream_reconnect, "request_reconnect") as request:
+        stream_reconnect.schedule_retry(manager, 0)
+        await manager._retry_task
+
+    assert request.called is handed_over
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_custom_broker_is_not_retried() -> None:
+    """After repeated refusals the retries really stop, whoever asks for one."""
+
+    async def _refused() -> None:
+        raise ConnectionError("MQTT connection failed: Bad username or password")
+
+    manager = _retry_manager(_refused)
+    manager._custom_auth_retry_blocked = True
+    manager._reconnect_task = None
+
+    stream_reconnect.schedule_retry(manager, 0)
+    stream_reconnect.request_reconnect(manager)
+
+    assert manager._retry_task is None
+    assert manager._reconnect_task is None
+
+
+def test_a_drop_before_the_connack_is_not_named_as_a_connack_refusal() -> None:
+    """paho reports MQTT_ERR_PROTOCOL as 2, which as a CONNACK means a bad client id."""
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+        manager = CardataStreamManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+        manager._call_on_loop = MagicMock()
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def connect_async(_host, _port, keepalive=None):
+                manager._handle_disconnect(client, userdata, 2)
+
+            client.connect_async = connect_async
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            with pytest.raises(ConnectionError, match="Connection lost before MQTT handshake"):
+                manager._start_client()
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_a_connect_finishing_after_a_forced_stop_is_torn_down() -> None:
+    """async_stop forces the stop when a connect holds the lock over its timeout.
+
+    The connect then stores its client anyway. Kept, it would run on the old
+    token and, with the stop flag still set, never be reconnected after a drop.
+    """
+    manager = _shutdown_manager()
+
+    async def _connect_while_stop_is_forced(_func) -> None:
+        manager._intentional_disconnect = True
+
+    manager.hass.async_add_executor_job = _connect_while_stop_is_forced
+    manager._async_stop_locked = AsyncMock()
+
+    await manager._async_start_locked()
+
+    manager._async_stop_locked.assert_awaited_once()

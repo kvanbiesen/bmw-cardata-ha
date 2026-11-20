@@ -36,6 +36,9 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import UnitOfLength
+from homeassistant.util.unit_conversion import DistanceConverter
+
 from .const import (
     DESC_BATTERY_SIZE_MAX,
     DESC_CHARGING_AC_AMPERE,
@@ -65,12 +68,30 @@ from .const import (
 from .descriptor_state import DescriptorState
 from .magic_soc import MagicSOCPredictor
 from .soc_prediction import SOCPredictor
+from .units import normalize_unit
 from .utils import redact_vin
 
 if TYPE_CHECKING:
     from .coordinator import CardataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _mileage_km(value: Any, unit: str | None) -> float | None:
+    """Return an odometer reading in km, or None when it is not a number.
+
+    The coordinator stores the reading in the unit it came in. That is miles
+    for a car that reports in miles, and for a reading corrected from BMW's
+    km/mi mix-up (#405). The driving predictions all work in km.
+    """
+    try:
+        mileage = float(value)
+    except (TypeError, ValueError):
+        return None
+    if normalize_unit(unit) == UnitOfLength.MILES:
+        return DistanceConverter.convert(mileage, UnitOfLength.MILES, UnitOfLength.KILOMETERS)
+    return mileage
+
 
 _OVERRIDE_AUX_POWER = 0.3  # kW - estimated auxiliary power load during charging (for SOC prediction)
 
@@ -516,12 +537,7 @@ def get_magic_soc(
         return predicted
 
     mileage_state = vehicle_data.get(DESC_TRAVELLED_DISTANCE)
-    mileage = None
-    if mileage_state and mileage_state.value is not None:
-        try:
-            mileage = float(mileage_state.value)
-        except (TypeError, ValueError):
-            pass
+    mileage = _mileage_km(mileage_state.value, mileage_state.unit) if mileage_state else None
 
     return magic_soc.get_magic_soc(vin=vin, bmw_soc=bmw_soc, mileage=mileage)
 
@@ -713,9 +729,8 @@ def anchor_driving_session(
     if not mileage_state or mileage_state.value is None:
         _LOGGER.debug("Magic SOC: Cannot anchor %s — no mileage in vehicle_state", redact_vin(vin))
         return
-    try:
-        current_mileage = float(mileage_state.value)
-    except (TypeError, ValueError):
+    current_mileage = _mileage_km(mileage_state.value, mileage_state.unit)
+    if current_mileage is None:
         return
 
     capacity_kwh: float | None = None
@@ -782,12 +797,7 @@ def end_driving_session(
                 pass
 
     mileage_state = vehicle_state.get(DESC_TRAVELLED_DISTANCE)
-    end_mileage = None
-    if mileage_state and mileage_state.value is not None:
-        try:
-            end_mileage = float(mileage_state.value)
-        except (TypeError, ValueError):
-            pass
+    end_mileage = _mileage_km(mileage_state.value, mileage_state.unit) if mileage_state else None
 
     magic_soc.end_driving_session(vin, end_soc, end_mileage)
 
@@ -943,12 +953,11 @@ def process_soc_descriptors(
                             schedule_debounce = True
                     if vin in magic_soc_pred._driving_sessions:
                         mileage_state = vehicle_state.get(DESC_TRAVELLED_DISTANCE)
-                        if mileage_state and mileage_state.value is not None:
-                            try:
-                                current_mileage = float(mileage_state.value)
-                                magic_soc_pred.reanchor_driving_session(vin, soc_val, current_mileage)
-                            except (TypeError, ValueError):
-                                pass
+                        current_mileage = (
+                            _mileage_km(mileage_state.value, mileage_state.unit) if mileage_state else None
+                        )
+                        if current_mileage is not None:
+                            magic_soc_pred.reanchor_driving_session(vin, soc_val, current_mileage)
                     else:
                         bmw_moving = coordinator._last_bmw_is_moving.get(vin)
                         gps_moving = coordinator._last_derived_is_moving.get(vin)
@@ -1022,9 +1031,12 @@ def process_soc_descriptors(
                         pass
 
         elif descriptor == DESC_TRAVELLED_DISTANCE:
-            if value is not None:
+            # The stored state carries the unit the coordinator resolved; a
+            # REST poll sends this descriptor without one.
+            mileage_state = vehicle_state.get(DESC_TRAVELLED_DISTANCE)
+            mileage = _mileage_km(mileage_state.value, mileage_state.unit) if mileage_state else None
+            if mileage is not None:
                 try:
-                    mileage = float(value)
                     coordinator._motion_detector.update_mileage(vin, mileage)
                     needs_anchor = magic_soc_pred.update_driving_mileage(vin, mileage)
                     if needs_anchor or vin not in magic_soc_pred._driving_sessions:

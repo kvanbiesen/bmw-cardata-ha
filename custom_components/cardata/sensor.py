@@ -159,7 +159,13 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         elif self._descriptor == MAGIC_SOC_DESCRIPTOR:
             self._coordinator._magic_soc.signal_magic_soc_entity_created(self._vin)
 
-        if getattr(self, "_attr_native_value", None) is None:
+        # A bootstrap seeds fresh API data before the platforms load, and the
+        # state from before the restart must not overwrite it. The update
+        # below then takes the fresh value, its unit and its classes.
+        if (
+            getattr(self, "_attr_native_value", None) is None
+            and self._coordinator.get_state(self.vin, self.descriptor) is None
+        ):
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
                 unit = last_state.attributes.get("unit_of_measurement")

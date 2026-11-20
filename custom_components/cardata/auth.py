@@ -39,6 +39,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from . import stream_reconnect
 from .const import (
     DEFAULT_REFRESH_INTERVAL,
     DOMAIN,
@@ -356,6 +357,7 @@ async def handle_stream_error(
                     await runtime.stream.async_start()
                 except Exception as start_err:
                     _LOGGER.debug("BMW still refuses the stream for entry %s: %s", entry.entry_id, start_err)
+                    stream_reconnect.recover_failed_start(runtime.stream)
                 return
 
             if runtime.reauth_pending:
@@ -397,9 +399,25 @@ async def handle_stream_error(
                             _report_connection_conflict(hass, runtime, entry, notification_id)
                             return
                         _LOGGER.warning("MQTT reconnect after credential refresh failed: %s", start_err)
+                        stream_reconnect.recover_failed_start(runtime.stream)
                     return
 
-                except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
+                except (TimeoutError, aiohttp.ClientError) as err:
+                    # BMW's token endpoint could not be reached, which says
+                    # nothing about the credentials: no reauth, and no attempt
+                    # counted against them. The stream is stopped, so hand it to
+                    # the reconnect chain, and let the next refusal refresh again
+                    # rather than count as a refresh tried moments ago.
+                    _LOGGER.warning(
+                        "Token refresh after unauthorized could not reach BMW for entry %s: %s",
+                        entry.entry_id,
+                        err,
+                    )
+                    runtime.last_refresh_attempt = 0.0
+                    stream_reconnect.request_reconnect(runtime.stream)
+                    return
+
+                except CardataAuthError as err:
                     # Check if this is just a concurrent refresh attempt (not a real failure)
                     if ERR_TOKEN_REFRESH_IN_PROGRESS in str(err):
                         _LOGGER.debug(
@@ -510,7 +528,7 @@ async def async_ensure_container_for_entry(
     """Ensure HV container exists for entry.
 
     If a container with matching descriptors is already stored, reuses it.
-    Otherwise, deletes any stale containers and creates a fresh one.
+    Otherwise, creates a fresh one and then deletes the stale ones.
 
     This function should ONLY be called during bootstrap, or by the poll when
     no container is stored at all. NOT during token refresh, MQTT reconnects,
@@ -557,8 +575,8 @@ async def async_ensure_container_for_entry(
     rate_limiter = runtime.container_rate_limiter if runtime else None
 
     try:
-        # Reset deletes old matching containers before creating fresh one,
-        # ensuring updated descriptors are used (not loose-match reuse).
+        # Reset creates a fresh container and then deletes the old matching
+        # ones, so updated descriptors are used (not loose-match reuse).
         container_id = await container_manager.async_reset_hv_container(access_token, rate_limiter)
     except CardataContainerError as err:
         _LOGGER.error(
@@ -677,14 +695,10 @@ async def async_token_refresh_loop(hass: HomeAssistant, entry_id: str) -> None:
                         await runtime.stream.async_start()
                     except Exception as err:
                         _LOGGER.warning("Proactive MQTT reconnect after token refresh failed: %s", err)
-                        # async_stop succeeded but async_start failed — MQTT is dead.
-                        # Schedule a recovery attempt so the stream doesn't stay down
-                        # until the next token refresh cycle (~45 min).
-                        try:
-                            await asyncio.sleep(5)
-                            await runtime.stream.async_start()
-                        except Exception as retry_err:
-                            _LOGGER.error("MQTT recovery retry also failed: %s", retry_err)
+                        # async_stop succeeded but async_start failed, so the
+                        # stream is down. Leave the retries to the reconnect
+                        # chain rather than until the next token refresh.
+                        stream_reconnect.recover_failed_start(runtime.stream)
 
             except CardataAuthError as err:
                 # Check if this is just a concurrent refresh attempt (not a real failure)

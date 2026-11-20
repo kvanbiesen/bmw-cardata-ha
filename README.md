@@ -238,7 +238,7 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 - Each VIN becomes a device in HA (`VIN` pulled from CarData).
 - Sensors/binary sensors are auto-created from the descriptors that emit data. Most get a readable title from BMW's catalogue (e.g. `Door state (front driver)`); a descriptor with no catalogue title falls back to a name derived from the descriptor path.
 - The device tracker (location entity) is restored from the entity registry on restart, so it keeps its last known position even before MQTT data arrives.
-- The windows and the sunroof get a binary sensor with the `window` device class, which reports open or closed and can drive a `window.opened` trigger. The string sensor that reports the raw BMW enum (`CLOSED`, `INTERMEDIATE`, `OPEN`) is still there but hidden on a new install, so unhide it from the entity settings if you want the intermediate position.
+- The windows and the sunroof get a binary sensor with the `window` device class, which reports open or closed and can drive a `window.opened` trigger. The string sensor that reports the raw BMW enum (`CLOSED`, `INTERMEDIATE`, `OPEN`) is still there but hidden on a new install, so unhide it from the entity settings if you want the intermediate position. The vehicle card reads the windows from the binary sensors, and shows them as unknown rather than closed when none of them has a state.
 - The lifetime grid energy counters (`Charging EV Energy supplied total` and the engine on/off pair) are cumulative meters, so they carry the `energy` device class with a `total_increasing` state class and can be picked as a source in the Home Assistant energy dashboard. BMW documents them for plug-in hybrids, so a full electric car may not report them at all.
 - The OBFCM fuel counters (`OBFCM Fuel consumption total` and the two PHEV variants) are cumulative meters as well, and now carry `total_increasing` in place of the `measurement` that Home Assistant does not allow on a volume reading. Their long-term statistics change from an average to a total, so the figures recorded before the change will not line up with the ones after it.
 - The battery energy readings (installed size, current and maximum energy content, energy still needed for a full charge) are a stored level rather than consumption, so they use the `energy_storage` device class. The energy dashboard cannot take them as a source: it needs a figure that only climbs, and a charge level goes up and down.
@@ -265,7 +265,7 @@ Available configuration options:
 | `device_id` | *(required)* | Device ID of the BMW vehicle (from the cardata integration) |
 | `license_plate` | *(empty)* | License plate number, shown instead of VIN when set |
 | `show_title` | `true` | Vehicle name / card header. Set to `false` to hide it without the flash-of-unstyled-content you get from hiding it via card-mod. |
-| `soc_source` | `soc` | Battery level source for the bar: `soc` (BMW last known), `predicted` (charging prediction), or `magic` (driving prediction) |
+| `soc_source` | `soc` | Battery level source for the bar: `soc` (BMW last known: the battery header, or the displayed SOC on cars that send no header such as the Neue Klasse), `predicted` (charging prediction), or `magic` (driving prediction) |
 | `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm). Windows, tailgate, and hood only show red when the car is parked and locked with the item open (walked-away alert). Alarm indicator: green when armed, blue when unarmed, red when triggered. |
 | `color_alert_border` | *(blank)* | Border color (hex, e.g. `#f44336`) drawn around an indicator button whenever it's in its "alert" state (unlocked/open while parked and locked, alarm triggered). Leave blank to keep the current look (no border). |
 | `show_range` | `true` | Battery / fuel level bar with range |
@@ -340,9 +340,8 @@ layout is unchanged.
 ### Custom Map Marker (optional)
 
 By default, the mini-map (and any other `type: map` card showing the vehicle's
-device tracker) renders a plain marker. To use your own picture instead, drop
-an image in the same folder the integration already stores the vehicle's
-auto-fetched photo:
+device tracker) shows the vehicle's auto-fetched photo. To use your own picture
+instead, drop an image in the same folder the integration stores that photo in:
 
 ```
 /config/www/community/cardata/<VIN>_marker.png   (or .jpg / .jpeg / .webp)
@@ -354,8 +353,10 @@ but the VIN must otherwise match exactly (find it on the vehicle's device
 page). Restart Home Assistant (or reload the integration) after adding the
 file for it to take effect.
 
-If no marker picture is present, the map falls back to the device tracker's
-own icon (`mdi:car` by default, or whatever you've customized it to via
+Both are served from `/local/community/cardata/`, a fixed address, so the
+device tracker's state does not change when Home Assistant rotates the image
+entity's access token. If neither picture is present, the map falls back to the
+device tracker's own icon (`mdi:car` by default, or whatever you've customized it to via
 Settings → Entities → the device tracker → icon override), and only falls
 back further to Home Assistant's default abbreviated-text marker if neither
 is set.
@@ -654,12 +655,12 @@ When the option is disabled, the service no-ops with a warning — leaving it al
 The integration can fetch your BMW charging session history from the past 30 days. This is **disabled by default** to conserve your API quota.
 
 - **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Enable Charging History
-- **API cost**: 1 call per vehicle per day (from your 50-call daily quota)
+- **API cost**: 1 call per vehicle per day (from your 50-call daily quota). The daily fetch reads one page of history; the `fetch_charging_history` service follows every page
 - **Sensors**: Creates two entities per vehicle. A diagnostic sensor showing session count and last charge date, and `Charging History Energy`, a counter that adds up the grid energy of every session BMW reports. The counter carries the `energy` device class with a `total_increasing` state class, so it can be picked as a source in the Home Assistant energy dashboard. Both read the same daily fetch, so the counter costs no extra API calls
 - **Reloads and restarts**: The history summary and its recorded session attributes remain available until a new BMW response arrives. An empty new coordinator does not erase them or trigger an extra API request. A successful response with no sessions clears the old history. The energy counter retains its total and counted sessions independently, so restoring the display cannot count energy twice.
-- **First reading**: the counter starts at the total of the sessions BMW currently reports, and Home Assistant takes that first value as the starting point, so charging from before you enabled it is not back-filled into the dashboard. Everything charged after that is counted normally
+- **First reading**: the counter starts at the total of the sessions BMW currently reports, and Home Assistant takes that first value as the starting point, so charging from before you enabled it is not back-filled into the dashboard. Everything charged after that is counted normally. A restart before that first fetch keeps the counter unknown rather than reporting 0, so the first fetch is still taken as the starting point
 - **Attributes**: Summarised session data (start/end time, start/end SOC, energy consumed, charging duration, mileage, time zone, preconditioning flag). Full raw data — including `chargingLocation`, `publicChargingPoint`, `chargingCostInformation`, and `chargingBlocks` — is returned by the `cardata.fetch_charging_history` service (see below)
-- **Manual trigger / response service**: `cardata.fetch_charging_history` supports `response_variable:` and returns a dict keyed by VIN containing the full session list as BMW sends it. Optional `from` and `to` fields (ISO-8601 strings) let you query any date range; without them the last 30 days are fetched. Multi-page results are followed automatically via `next_token`
+- **Manual trigger / response service**: `cardata.fetch_charging_history` supports `response_variable:` and returns a dict keyed by VIN containing the full session list as BMW sends it. Optional `from` and `to` fields (ISO-8601 strings) let you query any date range, a time without an offset being read as Home Assistant's local time; without them the last 30 days are fetched, and with `to` alone the 30 days before it. A call with `from` or `to` only returns the sessions: the two entities keep the default 30 day window, so a long range cannot be counted into `Charging History Energy` a second time. Multi-page results are followed automatically via `next_token`. A bad date, an invalid VIN or a fetch that fails for every vehicle stops the call with an error, which a script can catch with `continue_on_error`
 
 ## Tyre Diagnosis (Optional)
 
@@ -669,6 +670,7 @@ The integration can fetch tyre health and wear data from BMW's Smart Maintenance
 - **API cost**: 1 call per vehicle per day (from your 50-call daily quota)
 - **Sensor**: Creates a diagnostic sensor per vehicle showing aggregate tyre status
 - **Attributes**: Per-wheel data including dimension, wear, season, manufacturer, defect status, and production date
+- **Reloads and restarts**: The status and its attributes stay as they were until the next daily read
 - **Manual trigger**: Use `cardata.fetch_tyre_diagnosis` service in Developer Tools
 
 ## Service Schedule (Condition Based Services)
@@ -715,8 +717,8 @@ BMW imposes a **50 calls/day** limit on the CarData API. This integration does n
 - **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor, subject to the same per-VIN cooldown.
 - **Charge-finish polling**: Some vehicles never report the end of a charge over the stream, which leaves the predicted SOC climbing until the next scheduled poll. When BMW's own estimate of the time left runs out, or the prediction reaches the charge target, the integration asks once whether the charge is still running. At most one call per charge, and no more than one an hour per vehicle.
 - **Charge-start polling**: BMW resets the AC phase count when a charge ends and reports the real one when the next charge starts, and some vehicles only ever send it in response to an API call. When a charge starts without a phase count for that charge, the integration polls once a minute later. This one is not subject to the trip-end cooldown, which would otherwise swallow it whenever a car is plugged in shortly after arriving home; it has its own cooldown of an hour per vehicle. Charges whose phase count is already known, and DC charges, poll nothing.
-- **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. Each VIN is judged on its own, and only VINs whose last poll is older than the staleness threshold are fetched, so in multi-car setups the fresh ones consume no API calls.
-- **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
+- **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. Each VIN is judged on its own, and only VINs whose last poll is older than the staleness threshold are fetched, so in multi-car setups the fresh ones consume no API calls. The time of each VIN's last successful poll is stored, so a restart does not poll a VIN that was polled recently.
+- **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The time of each call is stored, so a restart or reload does not make it again. The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
 - **Multi-VIN setups**: All vehicles share the same 50 call/day limit. The poll interval scales with VIN count plus any enabled daily features. Each VIN is guaranteed at least 1 poll per day; BMW's 429 backoff handles actual quota enforcement.
 - **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay (1h, 2h, 4h, 8h, up to 24h). Because the quota resets at midnight UTC, a backoff that would run past the reset is shortened to end at it, so API calls resume as soon as the quota is back instead of sitting out the rest of a long backoff. A `Retry-After` header sent by BMW takes precedence over that backoff and is not shortened to the quota reset, but it is still floored at 60 seconds and capped at 24 hours.
 
@@ -791,6 +793,7 @@ The integration is organized into focused modules:
 | `auth.py` | Token refresh loop, reauth flow, stream error handling |
 | `runtime.py` | Per-entry runtime data, locks, session health |
 | `telematics.py` | Scheduled API polling, trip-end/charge-end triggers |
+| `charging_history.py` | Charging history fetch (daily poll and `fetch_charging_history` service) |
 | `container.py` | Telematic container CRUD, signature-based reuse |
 | `services.py` | HA service handlers (API calls, migrations, container management) |
 | `ratelimit.py` | Rate limiting: 429 backoff, unauthorized loop protection, container rate limiter |

@@ -398,8 +398,12 @@ class CardataStreamManager:
                 self._circuit_breaker.record_failure()
             raise
 
-        if self._shut_down:
-            # The entry let go of this manager while the connect was running.
+        if self._shut_down or self._intentional_disconnect:
+            # The entry let go of this manager while the connect was running,
+            # or async_stop gave up waiting for the lock and forced the stop.
+            # This start cleared _intentional_disconnect, so only that forced
+            # stop can have set it since. A client kept now would run on the
+            # old token and, with the flag still set, never be reconnected.
             await self._async_stop_locked()
 
     async def async_stop(self) -> None:
@@ -752,15 +756,6 @@ class CardataStreamManager:
                 self._schedule_retry_threadsafe(10)
                 return
 
-            now = time.monotonic()
-            if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
-                if debug_enabled():
-                    _LOGGER.debug("BMW MQTT connection refused shortly after disconnect; scheduling retry")
-                self._safe_loop_stop(client)
-                self._client = None
-                self._schedule_retry_threadsafe(3)
-                return
-
             # Auth Faliure - Log as debug to reduce alarm, its self-healing
             _LOGGER.debug("BMW MQTT connection requires auth (rc=%s); refresh credentials", rc)
             self._run_coro_safe(stream_reconnect.handle_unauthorized(self))
@@ -850,7 +845,9 @@ class CardataStreamManager:
         # the MQTT handshake completed (on_connect was never called).
         # Signal it immediately so _start_client doesn't wait the full timeout.
         if self._connect_event is not None and not self._connect_event.is_set():
-            self._connect_rc = rc if rc != 0 else -1
+            # rc is a paho MQTT_ERR_* code here, not a CONNACK one, so it must
+            # not be read against the CONNACK reasons; this handler logs it.
+            self._connect_rc = -1
             self._connect_event.set()
 
         # Only log if not an intentional disconnect
@@ -968,6 +965,7 @@ class CardataStreamManager:
                             "BMW MQTT reconnect failed after credential refresh: %s",
                             err,
                         )
+                        stream_reconnect.recover_failed_start(self)
                 return
 
             if self._client:
@@ -991,5 +989,6 @@ class CardataStreamManager:
                 await self.async_start()
             except Exception as err:
                 _LOGGER.warning("BMW MQTT reconnect failed after credential update: %s", err)
+                stream_reconnect.recover_failed_start(self)
         finally:
             self._credential_lock.release()

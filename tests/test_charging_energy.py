@@ -284,6 +284,19 @@ class TestRestart:
         await counter.async_added_to_hass()
         assert counter.native_value is None
 
+    async def test_a_restart_before_the_first_fetch_stays_unknown(self):
+        """What is stored before any fetch must not come back as a zero."""
+        before = build()
+        await before.async_added_to_hass()
+        stored = before.extra_restore_state_data
+
+        after = build(last_state=LastState("unknown"), last_extra=stored)
+        await after.async_added_to_hass()
+        assert after.native_value is None
+
+        after._apply_sessions([session(3, 10.0), session(2, 5.5)])
+        assert after.native_value == 15.5
+
     async def test_what_is_stored_reloads_into_the_same_total(self):
         counter = build()
         counter._apply_sessions([session(3, 10.0), session(2, 5.5)])

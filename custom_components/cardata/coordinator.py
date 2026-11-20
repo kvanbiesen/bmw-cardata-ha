@@ -118,8 +118,8 @@ class CardataCoordinator:
     # Per-VIN timestamp of last successful telematic API poll (unix time)
     _last_poll_at: dict[str, float] = field(default_factory=dict, init=False)
     # Per-VIN pending implausible odometer reading awaiting corroboration:
-    # (value, unit, first_seen_unix_time)
-    _mileage_pending_reading: dict[str, tuple[float, str | None, float]] = field(default_factory=dict, init=False)
+    # (value, unit)
+    _mileage_pending_reading: dict[str, tuple[float, str | None]] = field(default_factory=dict, init=False)
     # VINs whose travelledDistance baseline came from HA's restored entity
     # state rather than a validated live reading - restore is unauthenticated
     # (see issue #405), so the next live reading replaces it unconditionally
@@ -150,11 +150,6 @@ class CardataCoordinator:
     # How close a second, later reading must be to a previously-rejected one
     # to be treated as corroborating evidence of a genuine large jump
     _MILEAGE_CORROBORATION_TOLERANCE: float = 1.0
-    # Conversion factor used only to *test* whether an unlabelled odometer
-    # reading matches the existing baseline in the other unit system; the
-    # value we store is always the raw, unconverted number - Home Assistant's
-    # own SensorEntity unit conversion (device_class=DISTANCE) does the actual
-    # display maths once we tag it with the correct unit.
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
     # Memory protection: limit total descriptors per VIN
@@ -185,10 +180,6 @@ class CardataCoordinator:
     # Storage for daily-poll data (VIN → parsed response)
     _charging_history: dict[str, list[dict[str, Any]]] = field(default_factory=dict, init=False)
     _tyre_diagnosis: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
-
-    # Per-VIN timestamp of last daily fetch (unix time)
-    _last_charging_history_fetch: dict[str, float] = field(default_factory=dict, init=False)
-    _last_tyre_diagnosis_fetch: dict[str, float] = field(default_factory=dict, init=False)
 
     # Callback set by sensor.py to create virtual sensors after platform setup
     _create_sensor_callback: Callable[[str, str], None] | None = field(default=None, init=False, repr=False)
@@ -279,7 +270,6 @@ class CardataCoordinator:
     def update_charging_history(self, vin: str, sessions: list[dict[str, Any]]) -> None:
         """Store charging history and dispatch signal."""
         self._charging_history[vin] = sessions
-        self._last_charging_history_fetch[vin] = time.time()
         self._safe_dispatcher_send(self.signal_charging_history, vin)
 
     def has_charging_history(self, vin: str) -> bool:
@@ -293,8 +283,11 @@ class CardataCoordinator:
     def update_tyre_diagnosis(self, vin: str, data: dict[str, Any]) -> None:
         """Store tyre diagnosis and dispatch signal."""
         self._tyre_diagnosis[vin] = data
-        self._last_tyre_diagnosis_fetch[vin] = time.time()
         self._safe_dispatcher_send(self.signal_tyre_diagnosis, vin)
+
+    def has_tyre_diagnosis(self, vin: str) -> bool:
+        """Whether this coordinator has a tyre diagnosis response for a VIN."""
+        return vin in self._tyre_diagnosis
 
     def get_tyre_diagnosis(self, vin: str) -> dict[str, Any]:
         """Return stored tyre diagnosis for a VIN."""
@@ -377,6 +370,23 @@ class CardataCoordinator:
     def record_telematic_poll(self, vin: str) -> None:
         """Record that a telematic API poll succeeded for this VIN."""
         self._last_poll_at[vin] = time.time()
+
+    def poll_times(self) -> dict[str, float]:
+        """Return the last successful poll time of each VIN, for storing."""
+        return dict(self._last_poll_at)
+
+    def restore_poll_times(self, stored: Any) -> None:
+        """Take back stored poll times, so a restart does not poll every VIN at once.
+
+        A time in the future comes from a clock that has since gone back and
+        is left out, as the VIN then simply counts as never polled.
+        """
+        if not isinstance(stored, dict):
+            return
+        now = time.time()
+        for vin, polled_at in stored.items():
+            if isinstance(vin, str) and isinstance(polled_at, (int, float)) and 0 < polled_at <= now:
+                self._last_poll_at.setdefault(vin, float(polled_at))
 
     def get_manual_battery_capacity(self, vin: str) -> float | None:
         """Get manual battery capacity for a VIN (user input).
@@ -693,7 +703,6 @@ class CardataCoordinator:
             # of its own in last_telematic_api_at.
             self.last_message_at = datetime.now(UTC)
             self._last_vin_message_at[vin] = time.time()
-            self._motion_detector.update_mqtt_activity(vin)
 
             if self.connection_status != "connected":
                 self.connection_status = "connected"
@@ -972,7 +981,7 @@ class CardataCoordinator:
             )
             return True, store_unit, compare_value
 
-        self._mileage_pending_reading[vin] = (compare_value, store_unit, time.time())
+        self._mileage_pending_reading[vin] = (compare_value, store_unit)
         _LOGGER.warning(
             "Ignoring implausible odometer reading for VIN %s: %s %s -> %s %s; keeping previous value "
             "pending a corroborating reading",
