@@ -41,6 +41,9 @@ from .utils import is_valid_vin, redact_vin
 
 _LOGGER = logging.getLogger(__name__)
 
+# ponytail: cap at 20 pages; upgrade if BMW ever returns more than ~600 sessions
+MAX_PAGES = 20
+
 
 async def async_fetch_charging_history(
     entry: ConfigEntry,
@@ -48,6 +51,8 @@ async def async_fetch_charging_history(
     vin: str,
     from_dt: datetime | None = None,
     to_dt: datetime | None = None,
+    *,
+    max_pages: int = MAX_PAGES,
 ) -> list[dict[str, Any]] | None:
     """Fetch charging history for a single VIN, following next_token pagination.
 
@@ -55,6 +60,8 @@ async def async_fetch_charging_history(
     from_dt/to_dt default to the last 30 days when omitted. Only that default
     window is stored for the entities: the energy counter forgets sessions
     after 90 days, so a wider range would add older sessions to it again.
+    Each page is one API call; the daily fetch passes max_pages=1 to stay
+    within the one call per vehicle the poll budget sets aside for it.
     """
     from datetime import datetime as dt, timedelta
 
@@ -81,8 +88,6 @@ async def async_fetch_charging_history(
     all_sessions: list[dict[str, Any]] = []
     next_token: str | None = None
     page = 0
-    # ponytail: cap at 20 pages; upgrade if BMW ever returns more than ~600 sessions
-    MAX_PAGES = 20
 
     while True:
         params = dict(base_params)
@@ -128,12 +133,16 @@ async def async_fetch_charging_history(
             _LOGGER.warning("Charging history for %s returned the same page token twice; stopping", redacted)
             break
 
-        if not next_token or page >= MAX_PAGES:
-            if next_token and page >= MAX_PAGES:
+        if not next_token:
+            break
+        if page >= max_pages:
+            if max_pages < MAX_PAGES:
+                _LOGGER.debug("Charging history for %s has more pages than the %d read", redacted, max_pages)
+            else:
                 _LOGGER.warning(
                     "Charging history for %s truncated at %d pages (%d sessions total)",
                     redacted,
-                    MAX_PAGES,
+                    max_pages,
                     len(all_sessions),
                 )
             break

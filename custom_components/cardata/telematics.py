@@ -948,7 +948,7 @@ async def _async_daily_fetches(
                 coordinator._last_charging_history_fetch[vin] = now
                 fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
                 if fresh_entry:
-                    await async_fetch_charging_history(fresh_entry, runtime, vin)
+                    await async_fetch_charging_history(fresh_entry, runtime, vin, max_pages=1)
 
         if coordinator.enable_tyre_diagnosis:
             last = coordinator._last_tyre_diagnosis_fetch.get(vin, 0.0)

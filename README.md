@@ -654,7 +654,7 @@ When the option is disabled, the service no-ops with a warning — leaving it al
 The integration can fetch your BMW charging session history from the past 30 days. This is **disabled by default** to conserve your API quota.
 
 - **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Enable Charging History
-- **API cost**: 1 call per vehicle per day (from your 50-call daily quota)
+- **API cost**: 1 call per vehicle per day (from your 50-call daily quota). The daily fetch reads one page of history; the `fetch_charging_history` service follows every page
 - **Sensors**: Creates two entities per vehicle. A diagnostic sensor showing session count and last charge date, and `Charging History Energy`, a counter that adds up the grid energy of every session BMW reports. The counter carries the `energy` device class with a `total_increasing` state class, so it can be picked as a source in the Home Assistant energy dashboard. Both read the same daily fetch, so the counter costs no extra API calls
 - **Reloads and restarts**: The history summary and its recorded session attributes remain available until a new BMW response arrives. An empty new coordinator does not erase them or trigger an extra API request. A successful response with no sessions clears the old history. The energy counter retains its total and counted sessions independently, so restoring the display cannot count energy twice.
 - **First reading**: the counter starts at the total of the sessions BMW currently reports, and Home Assistant takes that first value as the starting point, so charging from before you enabled it is not back-filled into the dashboard. Everything charged after that is counted normally

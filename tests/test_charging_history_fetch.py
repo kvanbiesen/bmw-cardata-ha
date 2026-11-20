@@ -32,7 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from custom_components.cardata import charging_history
+from custom_components.cardata import charging_history, telematics
 from custom_components.cardata.http_retry import HttpResponse
 
 VIN = "WBA12345678901234"
@@ -105,3 +105,32 @@ class TestStore:
 
         assert sessions == [session(1)]
         runtime.coordinator.update_charging_history.assert_not_called()
+
+
+class TestDailyBudget:
+    """The daily fetch is budgeted as one call per vehicle."""
+
+    async def test_one_page_when_asked_for_one(self, entry, runtime):
+        with patch_request(page([session(1)], "abc")) as request:
+            sessions = await charging_history.async_fetch_charging_history(entry, runtime, VIN, max_pages=1)
+
+        assert request.await_count == 1
+        assert sessions == [session(1)]
+
+    async def test_the_daily_poll_asks_for_one_page(self, entry, runtime):
+        hass = MagicMock()
+        hass.config_entries.async_get_entry.return_value = entry
+        runtime.coordinator.enable_charging_history = True
+        runtime.coordinator.enable_tyre_diagnosis = False
+        runtime.coordinator._last_charging_history_fetch = {}
+        runtime.stream = None
+        runtime.container_manager = None
+        fetch = AsyncMock(return_value=[])
+        with (
+            patch("custom_components.cardata.auth.async_ensure_valid_token", AsyncMock(return_value=True)),
+            patch.object(telematics, "async_fetch_charging_history", fetch),
+            patch.object(telematics, "cbs_fetch_due", return_value=False),
+        ):
+            await telematics._async_daily_fetches(hass, entry, runtime, [VIN])
+
+        assert fetch.await_args.kwargs == {"max_pages": 1}
