@@ -510,7 +510,7 @@ async def async_ensure_container_for_entry(
     """Ensure HV container exists for entry.
 
     If a container with matching descriptors is already stored, reuses it.
-    Otherwise, deletes any stale containers and creates a fresh one.
+    Otherwise, creates a fresh one and then deletes the stale ones.
 
     This function should ONLY be called during bootstrap, or by the poll when
     no container is stored at all. NOT during token refresh, MQTT reconnects,
@@ -557,8 +557,8 @@ async def async_ensure_container_for_entry(
     rate_limiter = runtime.container_rate_limiter if runtime else None
 
     try:
-        # Reset deletes old matching containers before creating fresh one,
-        # ensuring updated descriptors are used (not loose-match reuse).
+        # Reset creates a fresh container and then deletes the old matching
+        # ones, so updated descriptors are used (not loose-match reuse).
         container_id = await container_manager.async_reset_hv_container(access_token, rate_limiter)
     except CardataContainerError as err:
         _LOGGER.error(

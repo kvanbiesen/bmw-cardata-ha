@@ -808,9 +808,9 @@ async def _async_cbs_container_id(
 ) -> str | None:
     """Return the service schedule container, creating it when there is none.
 
-    Creating it lists the account's containers, deletes any left under the same
-    name and creates a new one: two calls on a clean account, once per install
-    or after BMW drops the container.
+    Creating it lists the account's containers, creates a new one and then
+    deletes any left under the same name: two calls on a clean account, once
+    per install or after BMW drops the container.
     """
     manager = CardataContainerManager(
         session=runtime.session,
