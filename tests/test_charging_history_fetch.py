@@ -26,11 +26,13 @@
 """Tests for the charging history fetch and its pagination."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
+from homeassistant.util import dt as dt_util
 
 from custom_components.cardata import charging_history, telematics
 from custom_components.cardata.http_retry import HttpResponse
@@ -146,3 +148,33 @@ class TestPartialHistory:
 
         assert sessions == [session(1)]
         assert "incomplete: page 2 failed" in caplog.text
+
+
+class TestRange:
+    """The range goes out in UTC, whatever offset it came with."""
+
+    @staticmethod
+    async def sent(entry, runtime, **bounds):
+        with patch_request(page([])) as request:
+            await charging_history.async_fetch_charging_history(entry, runtime, VIN, **bounds)
+        return request.await_args.kwargs["params"]
+
+    async def test_an_offset_is_converted(self, entry, runtime):
+        start = datetime(2026, 11, 13, 9, 0, tzinfo=timezone(timedelta(hours=1)))
+        end = datetime(2026, 11, 14, 9, 0, tzinfo=timezone(timedelta(hours=1)))
+
+        params = await self.sent(entry, runtime, from_dt=start, to_dt=end)
+
+        assert params["from"] == "2026-11-13T08:00:00.000Z"
+        assert params["to"] == "2026-11-14T08:00:00.000Z"
+
+    async def test_no_offset_means_local_time(self, entry, runtime):
+        saved = dt_util.get_default_time_zone()
+        dt_util.set_default_time_zone(ZoneInfo("Europe/Brussels"))
+        try:
+            params = await self.sent(entry, runtime, from_dt=datetime(2026, 7, 1, 12, 0), to_dt=datetime(2026, 7, 2))
+        finally:
+            dt_util.set_default_time_zone(saved)
+
+        assert params["from"] == "2026-07-01T10:00:00.000Z"
+        assert params["to"] == "2026-07-01T22:00:00.000Z"

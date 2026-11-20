@@ -84,10 +84,10 @@ fetch_charging_history:
       description: Optional VIN to query. If omitted, fetches for all known VINs.
       example: WBY31AW090FP15359
     from:
-      description: "Start of the date range (ISO-8601). Defaults to 30 days ago."
+      description: "Start of the date range (ISO-8601). Without an offset it is local time. Defaults to 30 days ago."
       example: "2026-01-01T00:00:00Z"
     to:
-      description: "End of the date range (ISO-8601). Defaults to now."
+      description: "End of the date range (ISO-8601). Without an offset it is local time. Defaults to now."
       example: "2026-11-16T23:59:59Z"
 fetch_tyre_diagnosis:
   name: Fetch Tyre Diagnosis

@@ -28,10 +28,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.util import dt as dt_util
 
 from .api_parsing import try_parse_json
 from .const import API_BASE_URL, API_VERSION
@@ -63,8 +64,6 @@ async def async_fetch_charging_history(
     Each page is one API call; the daily fetch passes max_pages=1 to stay
     within the one call per vehicle the poll budget sets aside for it.
     """
-    from datetime import datetime as dt, timedelta
-
     if not is_valid_vin(vin):
         return None
 
@@ -77,10 +76,13 @@ async def async_fetch_charging_history(
         "x-version": API_VERSION,
         "Accept": "application/json",
     }
-    now = dt.now(UTC)
+    # The API wants UTC. A time without an offset is taken as local time.
+    now = dt_util.utcnow()
+    start = dt_util.as_utc(from_dt) if from_dt else now - timedelta(days=30)
+    end = dt_util.as_utc(to_dt) if to_dt else now
     base_params = {
-        "from": (from_dt or (now - timedelta(days=30))).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-        "to": (to_dt or now).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "from": start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "to": end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
     }
     url = f"{API_BASE_URL}/customers/vehicles/{vin}/chargingHistory"
     redacted = redact_vin(vin)
