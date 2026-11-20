@@ -850,7 +850,9 @@ class CardataStreamManager:
         # the MQTT handshake completed (on_connect was never called).
         # Signal it immediately so _start_client doesn't wait the full timeout.
         if self._connect_event is not None and not self._connect_event.is_set():
-            self._connect_rc = rc if rc != 0 else -1
+            # rc is a paho MQTT_ERR_* code here, not a CONNACK one, so it must
+            # not be read against the CONNACK reasons; this handler logs it.
+            self._connect_rc = -1
             self._connect_event.set()
 
         # Only log if not an intentional disconnect

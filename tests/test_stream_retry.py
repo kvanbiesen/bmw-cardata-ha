@@ -576,3 +576,37 @@ async def test_a_blocked_custom_broker_is_not_retried() -> None:
 
     assert manager._retry_task is None
     assert manager._reconnect_task is None
+
+
+def test_a_drop_before_the_connack_is_not_named_as_a_connack_refusal() -> None:
+    """paho reports MQTT_ERR_PROTOCOL as 2, which as a CONNACK means a bad client id."""
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+        manager = CardataStreamManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+        manager._call_on_loop = MagicMock()
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def connect_async(_host, _port, keepalive=None):
+                manager._handle_disconnect(client, userdata, 2)
+
+            client.connect_async = connect_async
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            with pytest.raises(ConnectionError, match="Connection lost before MQTT handshake"):
+                manager._start_client()
+    finally:
+        loop.close()
