@@ -315,6 +315,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     def _handle_image_state_change(self, event: Event) -> None:
         self.async_write_ha_state()
 
+    @callback
     def _handle_update(self, vin: str, descriptor: str) -> None:
         """Handle location updates from coordinator.
 
