@@ -146,6 +146,12 @@ class CardataChargingEnergySensor(CardataEntity, RestoreEntity, SensorEntity):
             data = stored.as_dict()
             total = _as_number(data.get("total"))
             counted = data.get("counted")
+            if total == 0 and counted == {}:
+                # Nothing was ever counted, which is also what is stored before
+                # the first fetch. Publishing that zero would make the first
+                # fetch look like the whole window charged in one hour, so start
+                # as if nothing had been stored, and skip the state below too.
+                return False
             if total is not None and (counted is None or isinstance(counted, dict)):
                 self._total = total
                 self._counted = None if counted is None else _clean_counted(counted)
