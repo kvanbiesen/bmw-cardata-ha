@@ -25,6 +25,7 @@
 
 """Tests for the service schedule container, read once a day on its own."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -127,6 +128,7 @@ def runtime():
         coordinator=coordinator,
         stream=None,
         container_manager=None,
+        container_recreate_lock=asyncio.Lock(),
     )
 
 
@@ -375,6 +377,24 @@ class TestMissingHvContainer:
         assert result.status is None
         assert result.reason == "missing_container"
         request.assert_not_awaited()
+
+    async def test_two_fetches_at_once_create_one_container(self, setup):
+        hass, entry, runtime = setup
+
+        async def ensure(target, *_):
+            await asyncio.sleep(0)
+            target.data = {**target.data, "hv_container_id": f"hv-{ensure_mock.await_count}"}
+            return True
+
+        ensure_mock = AsyncMock(side_effect=ensure)
+        with patch("custom_components.cardata.auth.async_ensure_container_for_entry", ensure_mock):
+            first, second = await asyncio.gather(
+                telematics._async_recreate_missing_container(hass, entry, runtime),
+                telematics._async_recreate_missing_container(hass, entry, runtime),
+            )
+
+        assert ensure_mock.await_count == 1
+        assert first == second == "hv-1"
 
     async def test_no_attempt_while_rate_limited(self, setup):
         hass, entry, runtime = setup

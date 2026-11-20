@@ -101,6 +101,9 @@ class CardataRuntimeData:
     # trip-end cooldown, one bucket per purpose so that a poll for one reason
     # cannot swallow a poll needed for another.
     _immediate_poll_at: dict[tuple[str, str], float] = field(default_factory=dict, init=False)
+    # Held while a poll recreates a missing HV container, so that a second
+    # fetch waits and reuses it instead of resetting it away.
+    container_recreate_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     def __post_init__(self):
         """Initialize rate limiters if not provided."""

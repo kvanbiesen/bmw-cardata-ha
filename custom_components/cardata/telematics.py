@@ -137,10 +137,14 @@ async def _async_recreate_missing_container(
             _LOGGER.debug("Not recreating HV container for entry %s yet: %s", entry.entry_id, reason)
             return None
 
-    _LOGGER.info("No HV container stored for entry %s; creating one so polling can resume", entry.entry_id)
-    if not await async_ensure_container_for_entry(entry, hass, runtime.container_manager):
-        return None
-    container_id = entry.data.get("hv_container_id")
+    async with runtime.container_recreate_lock:
+        # Another fetch may have created one while this one waited.
+        container_id = entry.data.get("hv_container_id")
+        if not (isinstance(container_id, str) and container_id):
+            _LOGGER.info("No HV container stored for entry %s; creating one so polling can resume", entry.entry_id)
+            if not await async_ensure_container_for_entry(entry, hass, runtime.container_manager):
+                return None
+            container_id = entry.data.get("hv_container_id")
     return container_id if isinstance(container_id, str) and container_id else None
 
 
