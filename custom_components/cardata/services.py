@@ -767,7 +767,7 @@ async def async_handle_fetch_charging_history(call: ServiceCall) -> dict[str, An
     """Handle fetch_charging_history service call."""
     from datetime import datetime as dt
 
-    from .telematics import async_fetch_charging_history
+    from .charging_history import async_fetch_charging_history
 
     hass = call.hass
     resolved = _resolve_target(hass, call.data)

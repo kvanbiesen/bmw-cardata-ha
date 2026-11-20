@@ -791,6 +791,7 @@ The integration is organized into focused modules:
 | `auth.py` | Token refresh loop, reauth flow, stream error handling |
 | `runtime.py` | Per-entry runtime data, locks, session health |
 | `telematics.py` | Scheduled API polling, trip-end/charge-end triggers |
+| `charging_history.py` | Charging history fetch (daily poll and `fetch_charging_history` service) |
 | `container.py` | Telematic container CRUD, signature-based reuse |
 | `services.py` | HA service handlers (API calls, migrations, container management) |
 | `ratelimit.py` | Rate limiting: 429 backoff, unauthorized loop protection, container rate limiter |
