@@ -141,35 +141,38 @@ class CardataContainerManager:
                     raise CardataContainerError(f"Container creation rate limited: {block_reason}")
 
             containers = await self._list_containers(access_token)
+            # Use name+purpose match (not strict signature) so reset also
+            # cleans up containers with older/different descriptor sets,
+            # including loosely-reused ones.
+            stale_ids = [
+                container["containerId"]
+                for container in containers
+                if self._matches_name_purpose(container) and isinstance(container.get("containerId"), str)
+            ]
 
             # Create before deleting: if BMW refuses the new container (rate
             # limit, outage, rejected descriptor), the old one is still there
             # and polling carries on with it.
-            new_id = await self._create_container(access_token)
-            if new_id and rate_limiter:
+            deleted_ids: list[str] = []
+            try:
+                new_id = await self._create_container(access_token)
+            except CardataContainerError as err:
+                # CU-124: the account already holds BMW's maximum number of
+                # containers, so nothing can be created until one is deleted.
+                if "CU-124" not in str(err) or not stale_ids:
+                    raise
+                _LOGGER.warning(
+                    "[%s] Container limit reached; deleting the old %s container(s) and trying again",
+                    self._entry_id,
+                    self._name,
+                )
+                deleted_ids = await self._delete_containers(access_token, stale_ids)
+                stale_ids = []
+                new_id = await self._create_container(access_token)
+            if rate_limiter:
                 rate_limiter.record_creation()
 
-            deleted_ids: list[str] = []
-            for container in containers:
-                container_id = container.get("containerId")
-                if not isinstance(container_id, str):
-                    continue
-                # Use name+purpose match (not strict signature) so reset also
-                # cleans up containers with older/different descriptor sets,
-                # including loosely-reused ones.
-                if not self._matches_name_purpose(container):
-                    continue
-                try:
-                    await self._delete_container(access_token, container_id)
-                except CardataContainerError as err:
-                    _LOGGER.warning(
-                        "[%s] Failed to delete container %s: %s",
-                        self._entry_id,
-                        container_id,
-                        redact_sensitive_data(str(err)),
-                    )
-                    continue
-                deleted_ids.append(container_id)
+            deleted_ids += await self._delete_containers(access_token, stale_ids)
 
             if deleted_ids and debug_enabled():
                 _LOGGER.debug(
@@ -214,6 +217,23 @@ class CardataContainerManager:
         purpose = container.get("purpose")
         name = container.get("name")
         return isinstance(purpose, str) and purpose == self._purpose and isinstance(name, str) and name == self._name
+
+    async def _delete_containers(self, access_token: str, container_ids: list[str]) -> list[str]:
+        """Delete each container, logging a failure and moving on; return those deleted."""
+        deleted: list[str] = []
+        for container_id in container_ids:
+            try:
+                await self._delete_container(access_token, container_id)
+            except CardataContainerError as err:
+                _LOGGER.warning(
+                    "[%s] Failed to delete container %s: %s",
+                    self._entry_id,
+                    container_id,
+                    redact_sensitive_data(str(err)),
+                )
+                continue
+            deleted.append(container_id)
+        return deleted
 
     async def _delete_container(self, access_token: str, container_id: str) -> None:
         try:

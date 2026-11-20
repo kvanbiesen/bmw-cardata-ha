@@ -202,6 +202,43 @@ class TestContainerManager:
         )
 
 
+class TestContainerLimit:
+    """At BMW's container limit the old containers make room for the new one."""
+
+    CU_124 = CardataContainerError(
+        'HTTP 403: {"exveErrorId":"CU-124","exveErrorMsg":"Maximum number of containers reached"}', status=403
+    )
+
+    async def test_the_old_container_goes_first_then_the_create_is_retried(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, self.CU_124, {}, {"containerId": "hv-new"}])
+
+        assert await manager.async_reset_hv_container("token") == "hv-new"
+
+        assert [(c.args[0], c.args[1]) for c in manager._request.await_args_list] == [
+            ("GET", "/customers/containers"),
+            ("POST", "/customers/containers"),
+            ("DELETE", "/customers/containers/hv-old"),
+            ("POST", "/customers/containers"),
+        ]
+
+    async def test_nothing_of_ours_to_delete_leaves_the_error(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[listing(), self.CU_124])
+
+        with pytest.raises(CardataContainerError):
+            await manager.async_reset_hv_container("token")
+
+    async def test_another_refusal_deletes_nothing(self):
+        manager = CardataContainerManager(session=MagicMock(), entry_id="entry")
+        manager._request = AsyncMock(side_effect=[ACCOUNT, CardataContainerError("HTTP 500: busy", status=500)])
+
+        with pytest.raises(CardataContainerError):
+            await manager.async_reset_hv_container("token")
+
+        assert manager._request.await_count == 2
+
+
 class TestFetch:
     """One read of the service schedule, and what each answer does."""
 
