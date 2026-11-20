@@ -32,9 +32,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
 
-from custom_components.cardata import charging_history, telematics
+from custom_components.cardata import charging_history, services, telematics
+from custom_components.cardata.const import DOMAIN
 from custom_components.cardata.http_retry import HttpResponse
 
 VIN = "WBA12345678901234"
@@ -186,3 +188,39 @@ class TestRange:
 
         assert params["from"] == "2026-03-01T00:00:00.000Z"
         assert params["to"] == "2026-03-31T00:00:00.000Z"
+
+
+class TestService:
+    """Scripts using response_variable see why the call failed."""
+
+    @pytest.fixture
+    def call(self, entry, runtime):
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry": runtime}}
+        hass.config_entries.async_get_entry.return_value = entry
+        runtime.coordinator.data = {VIN: {}}
+        return lambda **data: SimpleNamespace(hass=hass, data=data)
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"vin": "not-a-vin"},
+            {"from": "yesterday"},
+            {"to": "tomorrow"},
+            {"from": "2026-02-01T00:00:00Z", "to": "2026-01-01T00:00:00Z"},
+        ],
+    )
+    async def test_bad_input_is_refused(self, call, data):
+        with patch_request() as request, pytest.raises(ServiceValidationError):
+            await services.async_handle_fetch_charging_history(call(**data))
+
+        request.assert_not_awaited()
+
+    async def test_a_failed_fetch_raises(self, call):
+        failed = HttpResponse(status=500, text="", headers={})
+        with patch_request(failed), pytest.raises(HomeAssistantError):
+            await services.async_handle_fetch_charging_history(call())
+
+    async def test_sessions_come_back_by_vin(self, call):
+        with patch_request(page([session(1)])):
+            assert await services.async_handle_fetch_charging_history(call()) == {VIN: [session(1)]}

@@ -44,6 +44,8 @@ import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.util import dt as dt_util
 
 from .api_parsing import get_first_key
 from .const import (
@@ -763,8 +765,12 @@ CHARGING_HISTORY_SERVICE_SCHEMA = vol.Schema(
 )
 
 
-async def async_handle_fetch_charging_history(call: ServiceCall) -> dict[str, Any] | None:
-    """Handle fetch_charging_history service call."""
+async def async_handle_fetch_charging_history(call: ServiceCall) -> dict[str, Any]:
+    """Handle fetch_charging_history service call.
+
+    Errors are raised rather than logged: with response_variable, Home
+    Assistant refuses a None answer with a generic error of its own.
+    """
     from datetime import datetime as dt
 
     from .charging_history import async_fetch_charging_history
@@ -772,37 +778,35 @@ async def async_handle_fetch_charging_history(call: ServiceCall) -> dict[str, An
     hass = call.hass
     resolved = _resolve_target(hass, call.data)
     if not resolved:
-        return None
+        raise ServiceValidationError("No BMW CarData entry to fetch from, see the log for why")
 
     _, target_entry, runtime = resolved
     vin = call.data.get("vin")
 
     if vin:
         if not is_valid_vin(vin):
-            _LOGGER.error("Cardata fetch_charging_history: invalid VIN format")
-            return None
+            raise ServiceValidationError("Invalid VIN format")
         vins = [vin]
     else:
         vins = list(runtime.coordinator.data.keys())
 
     if not vins:
-        _LOGGER.error("Cardata fetch_charging_history: no VINs available")
-        return None
+        raise ServiceValidationError("No vehicles known yet")
 
     from_dt: dt | None = None
     to_dt: dt | None = None
     if raw_from := call.data.get("from"):
         try:
             from_dt = dt.fromisoformat(raw_from.replace("Z", "+00:00"))
-        except ValueError:
-            _LOGGER.error("Cardata fetch_charging_history: invalid 'from' date: %s", raw_from)
-            return None
+        except ValueError as err:
+            raise ServiceValidationError(f"Invalid 'from' date: {raw_from}") from err
     if raw_to := call.data.get("to"):
         try:
             to_dt = dt.fromisoformat(raw_to.replace("Z", "+00:00"))
-        except ValueError:
-            _LOGGER.error("Cardata fetch_charging_history: invalid 'to' date: %s", raw_to)
-            return None
+        except ValueError as err:
+            raise ServiceValidationError(f"Invalid 'to' date: {raw_to}") from err
+    if from_dt and to_dt and dt_util.as_utc(from_dt) > dt_util.as_utc(to_dt):
+        raise ServiceValidationError("'from' is later than 'to'")
 
     result: dict[str, list] = {}
     for v in vins:
@@ -810,7 +814,9 @@ async def async_handle_fetch_charging_history(call: ServiceCall) -> dict[str, An
         if sessions is not None:
             result[v] = sessions
 
-    return result if result else None
+    if not result:
+        raise HomeAssistantError("Fetching the charging history failed, see the log for why")
+    return result
 
 
 async def async_handle_fetch_tyre_diagnosis(call: ServiceCall) -> None:
