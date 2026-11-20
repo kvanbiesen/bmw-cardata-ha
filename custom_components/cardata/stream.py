@@ -752,15 +752,6 @@ class CardataStreamManager:
                 self._schedule_retry_threadsafe(10)
                 return
 
-            now = time.monotonic()
-            if rc == 5 and self._last_disconnect is not None and now - self._last_disconnect < 10:
-                if debug_enabled():
-                    _LOGGER.debug("BMW MQTT connection refused shortly after disconnect; scheduling retry")
-                self._safe_loop_stop(client)
-                self._client = None
-                self._schedule_retry_threadsafe(3)
-                return
-
             # Auth Faliure - Log as debug to reduce alarm, its self-healing
             _LOGGER.debug("BMW MQTT connection requires auth (rc=%s); refresh credentials", rc)
             self._run_coro_safe(stream_reconnect.handle_unauthorized(self))
