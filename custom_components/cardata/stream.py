@@ -968,6 +968,7 @@ class CardataStreamManager:
                             "BMW MQTT reconnect failed after credential refresh: %s",
                             err,
                         )
+                        stream_reconnect.recover_failed_start(self)
                 return
 
             if self._client:
@@ -991,5 +992,6 @@ class CardataStreamManager:
                 await self.async_start()
             except Exception as err:
                 _LOGGER.warning("BMW MQTT reconnect failed after credential update: %s", err)
+                stream_reconnect.recover_failed_start(self)
         finally:
             self._credential_lock.release()

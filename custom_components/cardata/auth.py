@@ -39,6 +39,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from . import stream_reconnect
 from .const import (
     DEFAULT_REFRESH_INTERVAL,
     DOMAIN,
@@ -356,6 +357,7 @@ async def handle_stream_error(
                     await runtime.stream.async_start()
                 except Exception as start_err:
                     _LOGGER.debug("BMW still refuses the stream for entry %s: %s", entry.entry_id, start_err)
+                    stream_reconnect.recover_failed_start(runtime.stream)
                 return
 
             if runtime.reauth_pending:
@@ -397,6 +399,7 @@ async def handle_stream_error(
                             _report_connection_conflict(hass, runtime, entry, notification_id)
                             return
                         _LOGGER.warning("MQTT reconnect after credential refresh failed: %s", start_err)
+                        stream_reconnect.recover_failed_start(runtime.stream)
                     return
 
                 except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
@@ -677,14 +680,10 @@ async def async_token_refresh_loop(hass: HomeAssistant, entry_id: str) -> None:
                         await runtime.stream.async_start()
                     except Exception as err:
                         _LOGGER.warning("Proactive MQTT reconnect after token refresh failed: %s", err)
-                        # async_stop succeeded but async_start failed — MQTT is dead.
-                        # Schedule a recovery attempt so the stream doesn't stay down
-                        # until the next token refresh cycle (~45 min).
-                        try:
-                            await asyncio.sleep(5)
-                            await runtime.stream.async_start()
-                        except Exception as retry_err:
-                            _LOGGER.error("MQTT recovery retry also failed: %s", retry_err)
+                        # async_stop succeeded but async_start failed, so the
+                        # stream is down. Leave the retries to the reconnect
+                        # chain rather than until the next token refresh.
+                        stream_reconnect.recover_failed_start(runtime.stream)
 
             except CardataAuthError as err:
                 # Check if this is just a concurrent refresh attempt (not a real failure)

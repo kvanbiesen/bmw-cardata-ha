@@ -57,6 +57,20 @@ def _reconnect_abandoned(manager: CardataStreamManager) -> bool:
     return False
 
 
+def recover_failed_start(manager: CardataStreamManager) -> None:
+    """Hand a start that failed to the reconnect chain, which retries with backoff.
+
+    Only the chain retries after a failure. A start made anywhere else and
+    lost to a timeout, a dropped connection or a CONNACK other than a
+    credentials refusal would otherwise leave the stream down until the next
+    token refresh. A credentials refusal is left alone: the connect callback
+    has already handed it to handle_unauthorized.
+    """
+    if manager._shut_down or manager._intentional_disconnect or manager.credentials_refused:
+        return
+    request_reconnect(manager)
+
+
 def request_reconnect(manager: CardataStreamManager) -> None:
     """Start a reconnect, keeping a single chain running.
 
@@ -387,8 +401,9 @@ def schedule_retry(manager: CardataStreamManager, delay: float) -> None:
                     await manager._async_start_locked()
         except asyncio.CancelledError:
             return
-        except Exception as err:  # pragma: no cover - defensive logging
+        except Exception as err:
             _LOGGER.warning("BMW MQTT retry failed: %s", err)
+            recover_failed_start(manager)
         finally:
             if manager._retry_task is asyncio.current_task():
                 manager._retry_task = None

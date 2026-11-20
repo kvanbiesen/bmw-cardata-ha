@@ -532,3 +532,29 @@ async def test_a_stop_still_cancels_a_retry_waiting_for_the_lock() -> None:
 
     assert task.done()
     start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("refused", "stopped", "handed_over"),
+    [(False, False, True), (True, False, False), (False, True, False)],
+)
+async def test_a_retry_that_fails_hands_over_to_the_reconnect_chain(refused, stopped, handed_over) -> None:
+    """A timeout or a non credential refusal must not end the retries there.
+
+    A credentials refusal is already with handle_unauthorized, and a stopped
+    stream must stay stopped.
+    """
+
+    async def _timed_out() -> None:
+        raise TimeoutError("MQTT connection timed out after 20 seconds")
+
+    manager = _retry_manager(_timed_out)
+    manager._shut_down = False
+    manager._intentional_disconnect = stopped
+    manager.credentials_refused = refused
+    with patch.object(stream_reconnect, "request_reconnect") as request:
+        stream_reconnect.schedule_retry(manager, 0)
+        await manager._retry_task
+
+    assert request.called is handed_over
