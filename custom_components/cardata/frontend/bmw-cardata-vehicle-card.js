@@ -28,6 +28,16 @@ const normalizeState = (stateObj) => {
   return String(raw).trim().toLowerCase();
 };
 
+// "unlocked" contains "locked", so the unlock check has to come first.
+const doorsSecured = (state) =>
+  !state.includes("unlock") && (state.includes("closed") || state.includes("locked") || state.includes("secured"));
+
+// CHARGINGPAUSED contains "charging" but is not charging, as for the backend.
+const CHARGING_INACTIVE_STATES = new Set(["nocharging", "chargingended", "chargingerror", "chargingpaused"]);
+const isChargingActive = (state) =>
+  !CHARGING_INACTIVE_STATES.has(state) &&
+  (state.includes("charging") || state.includes("vehicle2grid") || state === "v2g");
+
 const formatState = (stateObj, hass) => {
   if (!stateObj) return "—";
   const state = stateObj.state;
@@ -1579,20 +1589,8 @@ class BmwCardataVehicleCard extends HTMLElement {
     const isLocked = (lockState.includes("lock") || lockState === "secured") && !lockState.includes("unlock");
     const doorsOverallKnown = doorsOverallRaw !== "";
     const doorsOverallOpen = doorsOverallRaw.includes("open");
-    const doorsOverallSecured =
-      doorsOverallRaw.includes("closed") ||
-      doorsOverallRaw.includes("locked") ||
-      doorsOverallRaw.includes("secured");
-    const chargingActive =
-      hasCharging &&
-      chargingState !== "nocharging" &&
-      chargingState !== "chargingended" &&
-      chargingState !== "chargingerror" &&
-      (
-        chargingState.includes("charging") ||
-        chargingState.includes("vehicle2grid") ||
-        chargingState === "v2g"
-      );
+    const doorsOverallSecured = doorsSecured(doorsOverallRaw);
+    const chargingActive = hasCharging && isChargingActive(chargingState);
 
     const indicatorItems = [
       {
