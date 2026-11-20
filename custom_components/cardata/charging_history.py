@@ -111,6 +111,7 @@ async def async_fetch_charging_history(
             if page == 0:
                 _LOGGER.warning("Failed to fetch charging history for %s", redacted)
                 return None
+            _LOGGER.warning("Charging history for %s is incomplete: page %d failed", redacted, page + 1)
             break
 
         ok, payload = try_parse_json(response.text)
@@ -118,6 +119,7 @@ async def async_fetch_charging_history(
             if page == 0:
                 _LOGGER.warning("Invalid charging history response for %s", redacted)
                 return None
+            _LOGGER.warning("Charging history for %s is incomplete: page %d was invalid", redacted, page + 1)
             break
 
         page_sessions = payload.get("data", [])

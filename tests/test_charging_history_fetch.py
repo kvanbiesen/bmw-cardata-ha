@@ -134,3 +134,15 @@ class TestDailyBudget:
             await telematics._async_daily_fetches(hass, entry, runtime, [VIN])
 
         assert fetch.await_args.kwargs == {"max_pages": 1}
+
+
+class TestPartialHistory:
+    """A later page that fails keeps what came before, and says so."""
+
+    async def test_a_failed_later_page_is_logged(self, entry, runtime, caplog):
+        failed = HttpResponse(status=429, text="", headers={})
+        with patch_request(page([session(1)], "abc"), failed):
+            sessions = await charging_history.async_fetch_charging_history(entry, runtime, VIN)
+
+        assert sessions == [session(1)]
+        assert "incomplete: page 2 failed" in caplog.text
