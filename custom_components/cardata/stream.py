@@ -398,8 +398,12 @@ class CardataStreamManager:
                 self._circuit_breaker.record_failure()
             raise
 
-        if self._shut_down:
-            # The entry let go of this manager while the connect was running.
+        if self._shut_down or self._intentional_disconnect:
+            # The entry let go of this manager while the connect was running,
+            # or async_stop gave up waiting for the lock and forced the stop.
+            # This start cleared _intentional_disconnect, so only that forced
+            # stop can have set it since. A client kept now would run on the
+            # old token and, with the flag still set, never be reconnected.
             await self._async_stop_locked()
 
     async def async_stop(self) -> None:

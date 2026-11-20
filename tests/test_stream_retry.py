@@ -610,3 +610,23 @@ def test_a_drop_before_the_connack_is_not_named_as_a_connack_refusal() -> None:
                 manager._start_client()
     finally:
         loop.close()
+
+
+@pytest.mark.asyncio
+async def test_a_connect_finishing_after_a_forced_stop_is_torn_down() -> None:
+    """async_stop forces the stop when a connect holds the lock over its timeout.
+
+    The connect then stores its client anyway. Kept, it would run on the old
+    token and, with the stop flag still set, never be reconnected after a drop.
+    """
+    manager = _shutdown_manager()
+
+    async def _connect_while_stop_is_forced(_func) -> None:
+        manager._intentional_disconnect = True
+
+    manager.hass.async_add_executor_job = _connect_while_stop_is_forced
+    manager._async_stop_locked = AsyncMock()
+
+    await manager._async_start_locked()
+
+    manager._async_stop_locked.assert_awaited_once()
