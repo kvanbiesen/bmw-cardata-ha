@@ -320,6 +320,16 @@ class SOCPredictor:
             # Check if we have a last predicted that's higher
             last_pred = self._last_predicted_soc.get(vin, 0.0)
             anchor_soc = max(current_soc, last_pred)
+            # A charge still waiting for its final SOC would otherwise be
+            # finished by a reading taken during this one, counting part of
+            # this charge as its gain. One lost sample is the safer outcome.
+            if self._pending_sessions.pop(vin, None) is not None:
+                _LOGGER.debug(
+                    "SOC: Dropping the pending session for %s: a new charge started before its final SOC",
+                    redact_vin(vin),
+                )
+                if self._on_learning_updated:
+                    self._on_learning_updated(vin)
 
         resolved_method = self._charging_method.get(vin) or (charging_method.upper() if charging_method else "AC")
         self._charging_method[vin] = resolved_method

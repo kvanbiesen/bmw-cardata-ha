@@ -600,3 +600,29 @@ class TestMileageUnit:
 
         mileage = coordinator._magic_soc.update_driving_mileage.call_args.args[1]
         assert mileage == pytest.approx(10000.0, abs=0.01)
+
+
+class TestPendingSessionAtANewCharge:
+    """A charge still waiting for its final SOC is not finished by the next one."""
+
+    def test_a_new_charge_drops_it(self):
+        from custom_components.cardata.soc_types import PendingSession
+
+        predictor = SOCPredictor()
+        saved = MagicMock()
+        predictor._on_learning_updated = saved
+        predictor._pending_sessions["VIN"] = PendingSession(
+            end_timestamp=datetime.now(UTC).timestamp(),
+            anchor_soc=40.0,
+            total_energy_kwh=5.0,
+            charging_method="AC",
+            battery_capacity_kwh=80.0,
+        )
+
+        predictor.anchor_session("VIN", 46.0, 80.0)
+        # Read during the new charge, it would put the efficiency at a believable 0.88.
+        predictor.update_bmw_soc("VIN", 45.5)
+
+        assert "VIN" not in predictor._pending_sessions
+        assert predictor._learned_efficiency.get("VIN") is None
+        saved.assert_called_with("VIN")
