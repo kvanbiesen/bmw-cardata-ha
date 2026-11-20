@@ -178,3 +178,11 @@ class TestRange:
 
         assert params["from"] == "2026-07-01T10:00:00.000Z"
         assert params["to"] == "2026-07-01T22:00:00.000Z"
+
+    async def test_the_start_defaults_to_30_days_before_the_end(self, entry, runtime):
+        end = datetime(2026, 3, 31, tzinfo=UTC)
+
+        params = await self.sent(entry, runtime, to_dt=end)
+
+        assert params["from"] == "2026-03-01T00:00:00.000Z"
+        assert params["to"] == "2026-03-31T00:00:00.000Z"

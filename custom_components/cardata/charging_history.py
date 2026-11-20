@@ -58,7 +58,7 @@ async def async_fetch_charging_history(
     """Fetch charging history for a single VIN, following next_token pagination.
 
     Returns all sessions on success, None on failure.
-    from_dt/to_dt default to the last 30 days when omitted. Only that default
+    to_dt defaults to now, and from_dt to 30 days before to_dt. Only that default
     window is stored for the entities: the energy counter forgets sessions
     after 90 days, so a wider range would add older sessions to it again.
     Each page is one API call; the daily fetch passes max_pages=1 to stay
@@ -78,8 +78,8 @@ async def async_fetch_charging_history(
     }
     # The API wants UTC. A time without an offset is taken as local time.
     now = dt_util.utcnow()
-    start = dt_util.as_utc(from_dt) if from_dt else now - timedelta(days=30)
     end = dt_util.as_utc(to_dt) if to_dt else now
+    start = dt_util.as_utc(from_dt) if from_dt else end - timedelta(days=30)
     base_params = {
         "from": start.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         "to": end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
