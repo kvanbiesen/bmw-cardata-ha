@@ -150,11 +150,6 @@ class CardataCoordinator:
     # How close a second, later reading must be to a previously-rejected one
     # to be treated as corroborating evidence of a genuine large jump
     _MILEAGE_CORROBORATION_TOLERANCE: float = 1.0
-    # Conversion factor used only to *test* whether an unlabelled odometer
-    # reading matches the existing baseline in the other unit system; the
-    # value we store is always the raw, unconverted number - Home Assistant's
-    # own SensorEntity unit conversion (device_class=DISTANCE) does the actual
-    # display maths once we tag it with the correct unit.
     _CLEANUP_INTERVAL: int = 10  # Run VIN cleanup every N diagnostic cycles
     _cleanup_counter: int = field(default=0, init=False)
     # Memory protection: limit total descriptors per VIN
