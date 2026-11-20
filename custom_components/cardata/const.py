@@ -329,6 +329,11 @@ TYRE_DIAGNOSIS_LAST_FETCH_KEY = "tyre_diagnosis_last_fetch"
 # Unix time of the last successful telematic poll per VIN, kept across restarts
 LAST_POLL_BY_VIN_KEY = "last_poll_by_vin"
 
+# The string sensor already owns "{vin}_{descriptor}", and frontend_cards maps a
+# unique_id to an entity_id without looking at the domain, so a shared id would
+# hand the vehicle card's window lookups to the binary sensor.
+OPENING_UNIQUE_ID_SUFFIX = "_open"
+
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"
 # Vehicles with fewer descriptors are likely "ghost" cars from family sharing with limited access
 MIN_TELEMETRY_DESCRIPTORS = 5

@@ -82,6 +82,13 @@ const isOpenState = (stateObj) => {
   return state.includes("open") || state === "intermediate" || state === "on" || state === "true";
 };
 
+// Without a single window state the windows are unknown, not closed: a
+// disabled or missing sensor must not read as an all clear.
+const windowSummary = (stateObjs) => ({
+  known: stateObjs.some((stateObj) => normalizeState(stateObj) !== ""),
+  open: stateObjs.filter((stateObj) => isOpenState(stateObj)).length,
+});
+
 const isOnState = (stateObj) => {
   const state = normalizeState(stateObj);
   if (!state) return false;
@@ -1539,12 +1546,13 @@ class BmwCardataVehicleCard extends HTMLElement {
     const rangeElectricEntity = entities.range_electric || "";
     const rangeFuelEntity = entities.range_fuel || "";
 
-    const openWindows = [
+    const windows = windowSummary([
       read("window_front_driver"),
       read("window_front_passenger"),
       read("window_rear_driver"),
       read("window_rear_passenger"),
-    ].filter((stateObj) => isOpenState(stateObj)).length;
+    ]);
+    const openWindows = windows.open;
 
     const hoodOpen = isOpenState(read("hood"));
     const tailgateOpen = isOpenState(read("tailgate"));
@@ -1617,9 +1625,15 @@ class BmwCardataVehicleCard extends HTMLElement {
         : null,
       {
         icon: openWindows > 0 ? "mdi:car-windshield-outline" : "mdi:car-windshield",
-        stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 ? "" : "good",
+        stateClass: openWindows > 0 && !isMoving && isLocked ? "alert" : openWindows > 0 || !windows.known ? "" : "good",
         entity: windowEntity,
-        title: `${t("windows")}: ${openWindows > 0 ? `${openWindows} ${t("windows_open_count")}` : t("windows_closed")}`,
+        title: `${t("windows")}: ${
+          openWindows > 0
+            ? `${openWindows} ${t("windows_open_count")}`
+            : windows.known
+              ? t("windows_closed")
+              : t("unknown")
+        }`,
       },
       hasCharging
         ? {

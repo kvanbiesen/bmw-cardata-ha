@@ -45,7 +45,7 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .condition_based_services import DESC_CBS_SERVICE_DUE
-from .const import DOMAIN, OPENING_STATUS_DESCRIPTORS
+from .const import DOMAIN, OPENING_STATUS_DESCRIPTORS, OPENING_UNIQUE_ID_SUFFIX
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
 from .runtime import CardataRuntimeData
@@ -83,10 +83,6 @@ OPENING_STATUS_TITLES = {
     "vehicle.cabin.sunroof.status": "Sunroof open",
 }
 
-# The string sensor already owns "{vin}_{descriptor}", and frontend_cards maps a
-# unique_id to an entity_id without looking at the domain, so a shared id would
-# hand the vehicle card's window lookups to the binary sensor.
-OPENING_UNIQUE_ID_SUFFIX = "_open"
 
 OPENING_CLOSED_VALUES = frozenset({"CLOSED"})
 OPENING_OPEN_VALUES = frozenset({"OPEN", "INTERMEDIATE"})

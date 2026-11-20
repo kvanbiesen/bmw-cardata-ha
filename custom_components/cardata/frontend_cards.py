@@ -47,6 +47,7 @@ from .const import (
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
     MANUAL_TANK_CAPACITY_DESCRIPTOR,
+    OPENING_UNIQUE_ID_SUFFIX,
     PREDICTED_SOC_DESCRIPTOR,
 )
 from .utils import is_valid_vin
@@ -265,6 +266,10 @@ def _build_unique_id_map(hass: HomeAssistant) -> dict[str, str]:
         for entry in registry.entities.values():
             if getattr(entry, "platform", None) != DOMAIN:
                 continue
+            # A disabled entity has no state, so the card could never read it
+            # and would take it for closed or empty.
+            if entry.disabled_by is not None:
+                continue
             if entry.unique_id and entry.entity_id:
                 mapping[entry.unique_id] = entry.entity_id
         return mapping
@@ -371,7 +376,11 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
             ("hood", "vehicle.body.hood.isOpen"),
             ("lights", "vehicle.body.lights.isRunningOn"),
         ]:
+            # A window is read from its open binary sensor first: the enum
+            # string behind it starts hidden, and users may disable it.
             entity_id = unique_id_map.get(f"{vin}_{descriptor}")
+            if key.startswith("window_"):
+                entity_id = unique_id_map.get(f"{vin}_{descriptor}{OPENING_UNIQUE_ID_SUFFIX}") or entity_id
             if entity_id:
                 entities[key] = entity_id
 
