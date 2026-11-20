@@ -33,6 +33,7 @@ import time
 from contextlib import suppress
 
 import aiohttp
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -529,7 +530,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 {
                     "title": "BMW CarData Setup Failed",
                     "message": f"Bootstrap failed to retrieve vehicle metadata: {error_message}.",
-                    "notification_id": f"{DOMAIN}_{entry.entry_id}_bootstrap_failed",
+                    "notification_id": _bootstrap_failed_notification_id(entry),
                 },
             )
             raise ConfigEntryNotReady(f"Bootstrap failed to retrieve vehicle metadata: {error_message}. ")
@@ -620,6 +621,9 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Reload integration when options change (Magic SOC toggle, debug, keepalive, etc.)
         entry.async_on_unload(entry.add_update_listener(_make_options_listener(options)))
 
+        # A retry that got through leaves the notice of the failed one behind.
+        persistent_notification.async_dismiss(hass, _bootstrap_failed_notification_id(entry))
+
         setup_succeeded = True
         return True
 
@@ -643,6 +647,10 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await _async_cleanup_on_failure(hass, entry, refresh_task)
             if session and not session.closed:
                 await session.close()
+
+
+def _bootstrap_failed_notification_id(entry: ConfigEntry) -> str:
+    return f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
 
 
 async def _cancel_task_with_timeout(task: asyncio.Task, name: str, timeout: float = 5.0) -> None:
