@@ -326,6 +326,8 @@ CBS_LAST_FETCH_KEY = "cbs_last_fetch"
 # When the optional daily fetches were last asked for, per VIN, kept across restarts
 CHARGING_HISTORY_LAST_FETCH_KEY = "charging_history_last_fetch"
 TYRE_DIAGNOSIS_LAST_FETCH_KEY = "tyre_diagnosis_last_fetch"
+# Unix time of the last successful telematic poll per VIN, kept across restarts
+LAST_POLL_BY_VIN_KEY = "last_poll_by_vin"
 
 # Minimum number of telemetry descriptors required to consider a vehicle as "real"
 # Vehicles with fewer descriptors are likely "ghost" cars from family sharing with limited access

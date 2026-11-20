@@ -55,6 +55,7 @@ from .const import (
     CHARGING_HISTORY_LAST_FETCH_KEY,
     DAILY_FETCH_INTERVAL,
     DOMAIN,
+    LAST_POLL_BY_VIN_KEY,
     MIN_TELEMETRY_DESCRIPTORS,
     TARGET_DAILY_POLLS,
     TYRE_DIAGNOSIS_LAST_FETCH_KEY,
@@ -415,6 +416,7 @@ async def async_perform_telematic_fetch(
 
     # Update timestamp and signal if we got any data
     if any_success:
+        await async_store_poll_times(hass, entry, runtime.coordinator)
         runtime.coordinator.last_telematic_api_at = datetime.now(UTC)
         async_dispatcher_send(runtime.coordinator.hass, runtime.coordinator.signal_diagnostics)
         _LOGGER.debug("Cardata telematic fetch succeeded for at least one VIN")
@@ -968,6 +970,11 @@ async def _async_daily_fetches(
             fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
             if fresh_entry:
                 await async_fetch_condition_based_services(hass, fresh_entry, runtime, vin)
+
+
+async def async_store_poll_times(hass: HomeAssistant, entry: ConfigEntry, coordinator: CardataCoordinator) -> None:
+    """Store the last successful poll time of each VIN in the entry."""
+    await async_update_entry_data(hass, entry, {LAST_POLL_BY_VIN_KEY: coordinator.poll_times()})
 
 
 async def async_update_last_telematic_poll(hass: HomeAssistant, entry: ConfigEntry, timestamp: float) -> None:

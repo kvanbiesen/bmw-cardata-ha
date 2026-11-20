@@ -372,6 +372,23 @@ class CardataCoordinator:
         """Record that a telematic API poll succeeded for this VIN."""
         self._last_poll_at[vin] = time.time()
 
+    def poll_times(self) -> dict[str, float]:
+        """Return the last successful poll time of each VIN, for storing."""
+        return dict(self._last_poll_at)
+
+    def restore_poll_times(self, stored: Any) -> None:
+        """Take back stored poll times, so a restart does not poll every VIN at once.
+
+        A time in the future comes from a clock that has since gone back and
+        is left out, as the VIN then simply counts as never polled.
+        """
+        if not isinstance(stored, dict):
+            return
+        now = time.time()
+        for vin, polled_at in stored.items():
+            if isinstance(vin, str) and isinstance(polled_at, (int, float)) and 0 < polled_at <= now:
+                self._last_poll_at.setdefault(vin, float(polled_at))
+
     def get_manual_battery_capacity(self, vin: str) -> float | None:
         """Get manual battery capacity for a VIN (user input).
 

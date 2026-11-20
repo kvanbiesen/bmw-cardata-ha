@@ -60,6 +60,7 @@ from .const import (
     DESC_REMAINING_FUEL,
     DIAGNOSTIC_LOG_INTERVAL,
     DOMAIN,
+    LAST_POLL_BY_VIN_KEY,
     MAGIC_SOC_DESCRIPTOR,
     MQTT_KEEPALIVE,
     OPTION_CUSTOM_MQTT_ENABLED,
@@ -276,6 +277,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # successful fetch, while the stored last_telematic_poll also records
         # failed and rate limited attempts. The sensor restores its own state.
         await async_restore_vehicle_metadata(hass, entry, coordinator)
+        coordinator.restore_poll_times(entry.data.get(LAST_POLL_BY_VIN_KEY))
 
         # CRITICAL FIX: Pre-populate coordinator.names from restored device_metadata
         # Entities check coordinator.names for the vehicle name prefix, so we must
