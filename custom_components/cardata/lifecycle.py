@@ -662,6 +662,23 @@ def _bootstrap_failed_notification_id(entry: ConfigEntry) -> str:
     return f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
 
 
+async def async_cleanup_if_last_entry(hass: HomeAssistant) -> None:
+    """Remove the services and the card resource once no entry is loaded.
+
+    Runs on unload, and when an entry is removed: Home Assistant removes an
+    entry that is waiting to retry its setup without unloading it, and
+    setup registers both before it can fail.
+    """
+    domain_data = hass.data.get(DOMAIN)
+    if domain_data is None:
+        return
+    if any(not key.startswith("_") for key in domain_data):
+        return
+    async_unregister_services(hass)
+    await async_unload_frontend_cards_if_last_entry(hass)
+    hass.data.pop(DOMAIN, None)
+
+
 async def _async_save_soc_sessions(data: CardataRuntimeData) -> None:
     """Save the charging and driving SOC sessions."""
     if data.soc_store is None:
@@ -730,16 +747,7 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         _LOGGER.error("Error closing aiohttp session: %s", err)
 
-    # Clean up services if this is the last entry
-    remaining_entries = [k for k in domain_data.keys() if not k.startswith("_")]
-    if not remaining_entries:
-        async_unregister_services(hass)
-        await async_unload_frontend_cards_if_last_entry(hass)
-        domain_data.pop("_service_registered", None)
-        domain_data.pop("_registered_services", None)
-
-    if not domain_data or not remaining_entries:
-        hass.data.pop(DOMAIN, None)
+    await async_cleanup_if_last_entry(hass)
 
     cleanup_entry_lock(entry.entry_id)
 

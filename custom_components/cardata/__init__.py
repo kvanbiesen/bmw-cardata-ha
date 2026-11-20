@@ -34,7 +34,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
 from .const import ALLOWED_VINS_KEY, DOMAIN, VEHICLE_METADATA
-from .lifecycle import PLATFORMS, async_setup_cardata, async_unload_cardata
+from .lifecycle import PLATFORMS, async_cleanup_if_last_entry, async_setup_cardata, async_unload_cardata
 from .runtime import async_update_entry_data
 from .utils import redact_vin
 
@@ -62,6 +62,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle removal of config entry."""
     _LOGGER.debug("Config entry %s removed", entry.entry_id)
+    await async_cleanup_if_last_entry(hass)
 
 
 async def async_remove_config_entry_device(
