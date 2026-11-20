@@ -52,10 +52,12 @@ from .const import (
     CBS_CONTAINER_PURPOSE,
     CBS_CONTAINER_SIGNATURE_KEY,
     CBS_LAST_FETCH_KEY,
+    CHARGING_HISTORY_LAST_FETCH_KEY,
     DAILY_FETCH_INTERVAL,
     DOMAIN,
     MIN_TELEMETRY_DESCRIPTORS,
     TARGET_DAILY_POLLS,
+    TYRE_DIAGNOSIS_LAST_FETCH_KEY,
     VEHICLE_METADATA,
 )
 from .container import CardataContainerError, CardataContainerManager
@@ -782,9 +784,9 @@ async def async_fetch_tyre_diagnosis(
     return True
 
 
-def cbs_fetch_due(entry_data: Mapping[str, Any], vin: str, now: float) -> bool:
-    """Return True when the service schedule of a VIN is due for a read."""
-    last_fetch = entry_data.get(CBS_LAST_FETCH_KEY)
+def daily_fetch_due(entry_data: Mapping[str, Any], key: str, vin: str, now: float) -> bool:
+    """Return True when the daily fetch stamped under key is due for a VIN."""
+    last_fetch = entry_data.get(key)
     last = last_fetch.get(vin) if isinstance(last_fetch, dict) else None
     if not isinstance(last, (int, float)) or last > now:
         # Never read, or stamped by a clock that has since gone back.
@@ -792,12 +794,16 @@ def cbs_fetch_due(entry_data: Mapping[str, Any], vin: str, now: float) -> bool:
     return now - last >= DAILY_FETCH_INTERVAL
 
 
-async def _async_record_cbs_attempt(hass: HomeAssistant, entry: ConfigEntry, vin: str, now: float) -> None:
-    """Store when the service schedule of a VIN was last asked for."""
-    last_fetch = entry.data.get(CBS_LAST_FETCH_KEY)
+async def _async_record_daily_attempt(hass: HomeAssistant, entry: ConfigEntry, key: str, vin: str, now: float) -> None:
+    """Store when the daily fetch stamped under key was last asked for a VIN.
+
+    Stored before the call, so that neither a failure nor a restart spends
+    another call on it before the day is up.
+    """
+    last_fetch = entry.data.get(key)
     updated = dict(last_fetch) if isinstance(last_fetch, dict) else {}
     updated[vin] = now
-    await async_update_entry_data(hass, entry, {CBS_LAST_FETCH_KEY: updated})
+    await async_update_entry_data(hass, entry, {key: updated})
 
 
 async def _async_cbs_container_id(
@@ -943,28 +949,22 @@ async def _async_daily_fetches(
     now = time.time()
 
     for vin in vins:
-        if coordinator.enable_charging_history:
-            last = coordinator._last_charging_history_fetch.get(vin, 0.0)
-            if now - last >= DAILY_FETCH_INTERVAL:
-                # Record attempt upfront so failures don't retry every cycle
-                coordinator._last_charging_history_fetch[vin] = now
-                fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
-                if fresh_entry:
-                    await async_fetch_charging_history(fresh_entry, runtime, vin, max_pages=1)
+        if coordinator.enable_charging_history and daily_fetch_due(
+            entry.data, CHARGING_HISTORY_LAST_FETCH_KEY, vin, now
+        ):
+            await _async_record_daily_attempt(hass, entry, CHARGING_HISTORY_LAST_FETCH_KEY, vin, now)
+            fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
+            if fresh_entry:
+                await async_fetch_charging_history(fresh_entry, runtime, vin, max_pages=1)
 
-        if coordinator.enable_tyre_diagnosis:
-            last = coordinator._last_tyre_diagnosis_fetch.get(vin, 0.0)
-            if now - last >= DAILY_FETCH_INTERVAL:
-                # Record attempt upfront so failures don't retry every cycle
-                coordinator._last_tyre_diagnosis_fetch[vin] = now
-                fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
-                if fresh_entry:
-                    await async_fetch_tyre_diagnosis(fresh_entry, runtime, vin)
+        if coordinator.enable_tyre_diagnosis and daily_fetch_due(entry.data, TYRE_DIAGNOSIS_LAST_FETCH_KEY, vin, now):
+            await _async_record_daily_attempt(hass, entry, TYRE_DIAGNOSIS_LAST_FETCH_KEY, vin, now)
+            fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
+            if fresh_entry:
+                await async_fetch_tyre_diagnosis(fresh_entry, runtime, vin)
 
-        if cbs_fetch_due(entry.data, vin, now):
-            # Stored before the call, so that neither a failure nor a restart
-            # spends another call on it before the day is up.
-            await _async_record_cbs_attempt(hass, entry, vin, now)
+        if daily_fetch_due(entry.data, CBS_LAST_FETCH_KEY, vin, now):
+            await _async_record_daily_attempt(hass, entry, CBS_LAST_FETCH_KEY, vin, now)
             fresh_entry = hass.config_entries.async_get_entry(entry.entry_id)
             if fresh_entry:
                 await async_fetch_condition_based_services(hass, fresh_entry, runtime, vin)

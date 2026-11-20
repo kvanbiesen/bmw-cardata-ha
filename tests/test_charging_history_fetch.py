@@ -126,14 +126,13 @@ class TestDailyBudget:
         hass.config_entries.async_get_entry.return_value = entry
         runtime.coordinator.enable_charging_history = True
         runtime.coordinator.enable_tyre_diagnosis = False
-        runtime.coordinator._last_charging_history_fetch = {}
         runtime.stream = None
         runtime.container_manager = None
         fetch = AsyncMock(return_value=[])
         with (
             patch("custom_components.cardata.auth.async_ensure_valid_token", AsyncMock(return_value=True)),
             patch.object(telematics, "async_fetch_charging_history", fetch),
-            patch.object(telematics, "cbs_fetch_due", return_value=False),
+            patch.object(telematics, "async_fetch_condition_based_services", AsyncMock()),
         ):
             await telematics._async_daily_fetches(hass, entry, runtime, [VIN])
 

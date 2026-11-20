@@ -186,10 +186,6 @@ class CardataCoordinator:
     _charging_history: dict[str, list[dict[str, Any]]] = field(default_factory=dict, init=False)
     _tyre_diagnosis: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
 
-    # Per-VIN timestamp of last daily fetch (unix time)
-    _last_charging_history_fetch: dict[str, float] = field(default_factory=dict, init=False)
-    _last_tyre_diagnosis_fetch: dict[str, float] = field(default_factory=dict, init=False)
-
     # Callback set by sensor.py to create virtual sensors after platform setup
     _create_sensor_callback: Callable[[str, str], None] | None = field(default=None, init=False, repr=False)
 
@@ -279,7 +275,6 @@ class CardataCoordinator:
     def update_charging_history(self, vin: str, sessions: list[dict[str, Any]]) -> None:
         """Store charging history and dispatch signal."""
         self._charging_history[vin] = sessions
-        self._last_charging_history_fetch[vin] = time.time()
         self._safe_dispatcher_send(self.signal_charging_history, vin)
 
     def has_charging_history(self, vin: str) -> bool:
@@ -293,7 +288,6 @@ class CardataCoordinator:
     def update_tyre_diagnosis(self, vin: str, data: dict[str, Any]) -> None:
         """Store tyre diagnosis and dispatch signal."""
         self._tyre_diagnosis[vin] = data
-        self._last_tyre_diagnosis_fetch[vin] = time.time()
         self._safe_dispatcher_send(self.signal_tyre_diagnosis, vin)
 
     def get_tyre_diagnosis(self, vin: str) -> dict[str, Any]:

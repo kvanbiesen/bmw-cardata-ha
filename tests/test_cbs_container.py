@@ -40,11 +40,13 @@ from custom_components.cardata.const import (
     CBS_CONTAINER_PURPOSE,
     CBS_CONTAINER_SIGNATURE_KEY,
     CBS_LAST_FETCH_KEY,
+    CHARGING_HISTORY_LAST_FETCH_KEY,
     DAILY_FETCH_INTERVAL,
     DESC_CONDITION_BASED_SERVICES,
     HV_BATTERY_CONTAINER_NAME,
     HV_BATTERY_CONTAINER_PURPOSE,
     HV_BATTERY_DESCRIPTORS,
+    TYRE_DIAGNOSIS_LAST_FETCH_KEY,
 )
 from custom_components.cardata.container import CardataContainerError, CardataContainerManager
 from custom_components.cardata.http_retry import HttpResponse
@@ -428,17 +430,17 @@ class TestSchedule:
     """Once a day per vehicle, failed or not, restart or not."""
 
     def test_due_when_never_read(self):
-        assert telematics.cbs_fetch_due({}, VIN, NOW)
-        assert telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {"OTHER": NOW}}, VIN, NOW)
+        assert telematics.daily_fetch_due({}, CBS_LAST_FETCH_KEY, VIN, NOW)
+        assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {"OTHER": NOW}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     def test_not_due_within_a_day(self):
-        assert not telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - 3600}}, VIN, NOW)
+        assert not telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - 3600}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     def test_due_after_a_day(self):
-        assert telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - DAILY_FETCH_INTERVAL}}, VIN, NOW)
+        assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - DAILY_FETCH_INTERVAL}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     def test_due_when_stamped_in_the_future(self):
-        assert telematics.cbs_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW + 3600}}, VIN, NOW)
+        assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW + 3600}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     async def test_a_failed_read_is_not_retried_before_the_next_day(self, hass, entry, runtime):
         fetch = AsyncMock(return_value=False)
@@ -466,6 +468,35 @@ class TestSchedule:
 
         assert fetch.await_count == 1
         assert entry.data[CBS_LAST_FETCH_KEY] == {VIN: NOW}
+
+
+class TestOptionalDailyFetches:
+    """Charging history and tyre diagnosis keep their day across a restart."""
+
+    @pytest.mark.parametrize(
+        ("option", "fetcher", "key"),
+        [
+            ("enable_charging_history", "async_fetch_charging_history", CHARGING_HISTORY_LAST_FETCH_KEY),
+            ("enable_tyre_diagnosis", "async_fetch_tyre_diagnosis", TYRE_DIAGNOSIS_LAST_FETCH_KEY),
+        ],
+    )
+    async def test_a_restart_does_not_fetch_again(self, hass, entry, runtime, option, fetcher, key):
+        entry.data[CBS_LAST_FETCH_KEY] = {VIN: NOW}
+        setattr(runtime.coordinator, option, True)
+        fetch = AsyncMock(return_value=None)
+        with (
+            patch("custom_components.cardata.auth.async_ensure_valid_token", AsyncMock(return_value=True)),
+            patch.object(telematics, fetcher, fetch),
+            patch.object(telematics.time, "time", return_value=NOW),
+        ):
+            await telematics._async_daily_fetches(hass, entry, runtime, [VIN])
+            # A new coordinator after a restart, with the entry as it was stored.
+            runtime.coordinator = MagicMock(enable_charging_history=False, enable_tyre_diagnosis=False)
+            setattr(runtime.coordinator, option, True)
+            await telematics._async_daily_fetches(hass, entry, runtime, [VIN])
+
+        assert fetch.await_count == 1
+        assert entry.data[key] == {VIN: NOW}
 
 
 class TestBudget:
