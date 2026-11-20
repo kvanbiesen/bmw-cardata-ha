@@ -121,9 +121,6 @@ class MotionDetector:
         # VINs that are currently charging (definitely not moving)
         self._charging_vins: set[str] = set()
 
-        # VIN -> datetime of last MQTT stream message (excludes telematics API)
-        self._last_mqtt_stream_at: dict[str, datetime] = {}
-
         # VIN -> last known door lock state (e.g. "locked", "selectiveLocked", "unlocked", "secured")
         self._door_lock_state: dict[str, str] = {}
 
@@ -386,14 +383,6 @@ class MotionDetector:
         else:
             self._charging_vins.discard(vin)
 
-    def update_mqtt_activity(self, vin: str) -> None:
-        """Record that an MQTT stream message was received for this VIN.
-
-        Only call this for real MQTT stream messages, NOT telematics API responses.
-        Currently unused by motion detection but kept for diagnostics.
-        """
-        self._last_mqtt_stream_at[vin] = datetime.now(UTC)
-
     def update_door_lock_state(self, vin: str, state: str) -> None:
         """Update door lock state tracking.
 
@@ -653,7 +642,6 @@ class MotionDetector:
         self._last_mileage_change.pop(vin, None)
         self._is_moving_entity_signaled.discard(vin)
         self._charging_vins.discard(vin)
-        self._last_mqtt_stream_at.pop(vin, None)
         self._door_lock_state.pop(vin, None)
         self._door_unlocked_at.pop(vin, None)
 

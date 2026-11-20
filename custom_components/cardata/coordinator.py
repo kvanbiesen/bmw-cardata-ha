@@ -703,7 +703,6 @@ class CardataCoordinator:
             # of its own in last_telematic_api_at.
             self.last_message_at = datetime.now(UTC)
             self._last_vin_message_at[vin] = time.time()
-            self._motion_detector.update_mqtt_activity(vin)
 
             if self.connection_status != "connected":
                 self.connection_status = "connected"
