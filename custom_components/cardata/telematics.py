@@ -333,7 +333,9 @@ async def async_perform_telematic_fetch(
 
             # Container invalidated by BMW (CU-105): token is fine, but the
             # stored container_id is no longer accepted. Clear it so the next
-            # bootstrap re-discovers / recreates a container.
+            # poll creates a new one. The bootstrap flag stays: that poll
+            # recovers without a full bootstrap on the next restart, and if
+            # it cannot create the container it clears the flag itself.
             if response.is_container_invalid:
                 _LOGGER.warning(
                     "Cardata fetch_telematic_data: container %s no longer valid for %s "
@@ -341,11 +343,7 @@ async def async_perform_telematic_fetch(
                     cid,
                     redacted_vin,
                 )
-                await async_update_entry_data(
-                    hass,
-                    entry,
-                    {"hv_container_id": None, BOOTSTRAP_COMPLETE: False},
-                )
+                await async_update_entry_data(hass, entry, {"hv_container_id": None})
                 container_invalid = True
                 break  # Stop trying other containers
 
