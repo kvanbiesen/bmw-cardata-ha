@@ -42,6 +42,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, HomeAssistant
 
 from .const import (
+    DESC_SOC_DISPLAYED,
     DESC_SOC_HEADER,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
@@ -341,7 +342,8 @@ def _build_vehicle_list(hass: HomeAssistant) -> list[dict[str, Any]]:
             entities["range_fuel"] = fuel_range
 
         # Battery SOC sources.
-        if soc_entity := unique_id_map.get(f"{vin}_{DESC_SOC_HEADER}"):
+        # A Neue Klasse car never sends header, so its SOC is the displayed one.
+        if soc_entity := _pick_first_entity(hass, unique_id_map, vin, [DESC_SOC_HEADER, DESC_SOC_DISPLAYED]):
             entities["soc"] = soc_entity
         if predicted_soc := unique_id_map.get(f"{vin}_{PREDICTED_SOC_DESCRIPTOR}"):
             entities["soc_predicted"] = predicted_soc

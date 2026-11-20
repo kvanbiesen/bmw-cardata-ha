@@ -265,7 +265,7 @@ Available configuration options:
 | `device_id` | *(required)* | Device ID of the BMW vehicle (from the cardata integration) |
 | `license_plate` | *(empty)* | License plate number, shown instead of VIN when set |
 | `show_title` | `true` | Vehicle name / card header. Set to `false` to hide it without the flash-of-unstyled-content you get from hiding it via card-mod. |
-| `soc_source` | `soc` | Battery level source for the bar: `soc` (BMW last known), `predicted` (charging prediction), or `magic` (driving prediction) |
+| `soc_source` | `soc` | Battery level source for the bar: `soc` (BMW last known: the battery header, or the displayed SOC on cars that send no header such as the Neue Klasse), `predicted` (charging prediction), or `magic` (driving prediction) |
 | `show_indicators` | `true` | Status indicator row (locks, doors, windows, alarm). Windows, tailgate, and hood only show red when the car is parked and locked with the item open (walked-away alert). Alarm indicator: green when armed, blue when unarmed, red when triggered. |
 | `color_alert_border` | *(blank)* | Border color (hex, e.g. `#f44336`) drawn around an indicator button whenever it's in its "alert" state (unlocked/open while parked and locked, alarm triggered). Leave blank to keep the current look (no border). |
 | `show_range` | `true` | Battery / fuel level bar with range |
