@@ -450,8 +450,9 @@ class SOCPredictor:
         Also updates last_predicted_soc when not charging (passthrough mode).
         For PHEVs, also syncs down if actual SOC is lower than predicted
         (hybrid system can deplete battery in ways that don't register as "not charging").
-        Snaps predicted SOC to BMW SOC when not charging.
-        Attempts to finalize any pending session waiting for BMW SOC.
+        When not charging, a BEV keeps a sub-integer prediction that is within
+        0.5 of the BMW SOC, since BMW reports whole percents; otherwise the
+        prediction snaps to it. Attempts to finalize any pending session waiting for BMW SOC.
 
         Args:
             vin: Vehicle identification number
