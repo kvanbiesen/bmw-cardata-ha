@@ -10,8 +10,10 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import EntityPlatform
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.cardata.const import DOMAIN
+from custom_components.cardata.const import DESC_SOC_HEADER, DOMAIN
 from custom_components.cardata.coordinator import CardataCoordinator
+from custom_components.cardata.descriptor_state import DescriptorState
+from custom_components.cardata.sensor import CardataSensor
 from custom_components.cardata.sensor_charging_energy import CardataChargingEnergySensor
 from custom_components.cardata.sensor_diagnostics import CardataChargingHistorySensor, CardataTyreDiagnosisSensor
 
@@ -199,3 +201,29 @@ async def test_tyre_diagnosis_survives_a_reload_until_the_next_read(hass, setup_
     await hass.async_block_till_done()
     assert hass.states.get(sensor_id).state == "no data"
     assert "mountedTyres" not in hass.states.get(sensor_id).attributes
+
+
+@pytest.mark.parametrize(("seeded", "expected"), [(None, 61.0), ("74", 74.0)])
+async def test_a_restored_state_does_not_overwrite_a_fresh_reading(hass, setup_platform, seeded, expected):
+    """A bootstrap seeds API data before the platforms load; the old state must not win."""
+    make_coordinator, add = setup_platform
+
+    def reading(value):
+        return DescriptorState(value=value, unit="%", timestamp="2026-11-20T10:00:00Z")
+
+    coordinator = make_coordinator()
+    coordinator.data[VIN] = {DESC_SOC_HEADER: reading("61")}
+    sensor = CardataSensor(coordinator, VIN, DESC_SOC_HEADER)
+    platform = await add([sensor])
+    sensor_id = sensor.entity_id
+    assert float(hass.states.get(sensor_id).state) == 61.0
+
+    await platform.async_reset()
+    await hass.async_block_till_done()
+    coordinator = make_coordinator()
+    if seeded is not None:
+        coordinator.data[VIN] = {DESC_SOC_HEADER: reading(seeded)}
+    await add([CardataSensor(coordinator, VIN, DESC_SOC_HEADER)])
+
+    assert float(hass.states.get(sensor_id).state) == expected
+    assert float(coordinator.get_state(VIN, DESC_SOC_HEADER).value) == expected
