@@ -94,7 +94,6 @@ from .services import async_register_services, async_unregister_services
 from .stream import CardataStreamManager
 from .telematics import async_telematic_poll_loop
 from .utils import (
-    async_cancel_task,
     get_externally_owned_vins,
     partition_restored_vins,
     redact_vin,
@@ -509,24 +508,29 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Wait for bootstrap task to FULLY complete (including async_seed_telematic_data)
             # This ensures coordinator.names is populated AND telematic data is seeded
             # before we set up platforms (which create entities)
-            try:
-                await asyncio.wait_for(runtime_data.bootstrap_task, timeout=30.0)
-                bootstrap_completed = True
-                _LOGGER.debug("Bootstrap completed successfully")
-            except TimeoutError:
+            # asyncio.wait, unlike wait_for, leaves the task running on timeout.
+            done, _ = await asyncio.wait({runtime_data.bootstrap_task}, timeout=30.0)
+            if not done:
+                # Cancelling it would leave the cars named by VIN for the whole
+                # session and the bootstrap to run again on every restart.
+                # Finished in the background, it stores the metadata, marks
+                # itself complete and names the devices through the usual
+                # signals. Unload cancels it if it is still running then.
                 _LOGGER.warning(
-                    "Bootstrap did not complete within 30 seconds. Devices will update names when metadata arrives."
+                    "Bootstrap did not complete within 30 seconds; it carries on in the background "
+                    "and devices will update their names when the metadata arrives."
                 )
-                # Cancel the timed-out task to prevent it running in background
+                # It logs its own failure; collect the result so asyncio does not.
+                runtime_data.bootstrap_task.add_done_callback(lambda task: task.cancelled() or task.exception())
+            else:
                 try:
-                    await async_cancel_task(runtime_data.bootstrap_task)
-                except Exception as cancel_err:
-                    _LOGGER.debug("Error cancelling bootstrap task: %s", cancel_err)
-                runtime_data.bootstrap_task = None
-            except Exception as err:
-                _LOGGER.warning("Bootstrap failed: %s", err)
-                bootstrap_error = str(err)
-                runtime_data.bootstrap_task = None
+                    runtime_data.bootstrap_task.result()
+                    bootstrap_completed = True
+                    _LOGGER.debug("Bootstrap completed successfully")
+                except Exception as err:
+                    _LOGGER.warning("Bootstrap failed: %s", err)
+                    bootstrap_error = str(err)
+                    runtime_data.bootstrap_task = None
 
         # Check if we have vehicle names after bootstrap attempt
         # If bootstrap was required and explicitly failed, abort setup
