@@ -558,3 +558,21 @@ async def test_a_retry_that_fails_hands_over_to_the_reconnect_chain(refused, sto
         await manager._retry_task
 
     assert request.called is handed_over
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_custom_broker_is_not_retried() -> None:
+    """After repeated refusals the retries really stop, whoever asks for one."""
+
+    async def _refused() -> None:
+        raise ConnectionError("MQTT connection failed: Bad username or password")
+
+    manager = _retry_manager(_refused)
+    manager._custom_auth_retry_blocked = True
+    manager._reconnect_task = None
+
+    stream_reconnect.schedule_retry(manager, 0)
+    stream_reconnect.request_reconnect(manager)
+
+    assert manager._retry_task is None
+    assert manager._reconnect_task is None

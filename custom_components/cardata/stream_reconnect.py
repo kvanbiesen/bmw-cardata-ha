@@ -41,6 +41,18 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _custom_auth_blocked(manager: CardataStreamManager) -> bool:
+    """Tell whether a custom broker refused the credentials too often to retry.
+
+    Only a reload clears it, once the user has fixed the credentials.
+    """
+    if getattr(manager, "_custom_auth_retry_blocked", False):
+        if debug_enabled():
+            _LOGGER.debug("Not retrying the custom MQTT broker: it refused the credentials repeatedly")
+        return True
+    return False
+
+
 def _reconnect_abandoned(manager: CardataStreamManager) -> bool:
     """Tell whether a reconnect that slept should give up.
 
@@ -85,6 +97,8 @@ def request_reconnect(manager: CardataStreamManager) -> None:
     connection has now dropped. Otherwise the request is kept for when the
     chain ends, in case its attempt succeeded just before the drop.
     """
+    if _custom_auth_blocked(manager):
+        return
     task = manager._reconnect_task
     if task is not None and not task.done() and task is not asyncio.current_task():
         if manager._reconnect_waiting is not task:
@@ -363,6 +377,8 @@ async def async_cancel_retry(manager: CardataStreamManager) -> None:
 
 def schedule_retry(manager: CardataStreamManager, delay: float) -> None:
     """Schedule a retry connection attempt after a delay."""
+    if _custom_auth_blocked(manager):
+        return
     if manager._retry_task is not None and not manager._retry_task.done():
         return
     if manager._circuit_breaker.check():
