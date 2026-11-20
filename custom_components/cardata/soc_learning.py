@@ -374,14 +374,10 @@ def _finalize_learning(
     session: ChargingSession,
     end_soc: float,
 ) -> None:
-    """Finalize learning from a completed session."""
-    if session.restored:
-        _LOGGER.info(
-            "SOC: Skipping learning for restored session %s (energy data incomplete)",
-            redact_vin(vin),
-        )
-        return
+    """Finalize learning from a completed session.
 
+    end_session, the only caller, has already turned away a restored session.
+    """
     # Prefer session-level fields (survive re-anchors) over segment-level
     start_soc = session.session_start_soc if session.session_start_soc is not None else session.anchor_soc
     energy = session.session_total_energy_kwh if session.session_total_energy_kwh > 0 else session.total_energy_kwh
