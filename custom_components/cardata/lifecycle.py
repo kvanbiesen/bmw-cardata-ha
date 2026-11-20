@@ -35,8 +35,8 @@ from contextlib import suppress
 import aiohttp
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
 
@@ -474,6 +474,15 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime_data.trip_poll_cooldown_seconds = max(1, int(cooldown_min)) * 60
         hass.data[DOMAIN][entry.entry_id] = runtime_data
 
+        # Home Assistant does not unload config entries when it stops, so the
+        # save in async_unload_cardata never runs then. Without this, whatever
+        # changed since the last periodic save, up to about 5 minutes of a
+        # charging session, is lost on every restart.
+        async def _async_save_soc_on_stop(_event: Event) -> None:
+            await _async_save_soc_sessions(runtime_data)
+
+        entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_save_soc_on_stop))
+
         # Now create refresh loop (runtime is stored, task can read it after first sleep)
         refresh_task = hass.loop.create_task(async_token_refresh_loop(hass, entry.entry_id))
         runtime_data.refresh_task = refresh_task
@@ -653,6 +662,20 @@ def _bootstrap_failed_notification_id(entry: ConfigEntry) -> str:
     return f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
 
 
+async def _async_save_soc_sessions(data: CardataRuntimeData) -> None:
+    """Save the charging and driving SOC sessions."""
+    if data.soc_store is None:
+        return
+    try:
+        session_data = {
+            **data.coordinator._soc_predictor.get_session_data(),
+            **data.coordinator._magic_soc.get_session_data(),
+        }
+        await data.soc_store.async_save(session_data)
+    except Exception as err:
+        _LOGGER.warning("Failed to save SOC session data on shutdown: %s", err)
+
+
 async def _cancel_task_with_timeout(task: asyncio.Task, name: str, timeout: float = 5.0) -> None:
     """Cancel an asyncio task and wait for it to finish, with timeout protection."""
     task.cancel()
@@ -676,16 +699,7 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
 
-    # Save SOC session data before shutdown
-    if data.soc_store is not None:
-        try:
-            session_data = {
-                **data.coordinator._soc_predictor.get_session_data(),
-                **data.coordinator._magic_soc.get_session_data(),
-            }
-            await data.soc_store.async_save(session_data)
-        except Exception as err:
-            _LOGGER.warning("Failed to save SOC session data on shutdown: %s", err)
+    await _async_save_soc_sessions(data)
 
     # Stop coordinator
     await data.coordinator.async_stop_watchdog()
