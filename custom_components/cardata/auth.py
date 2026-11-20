@@ -402,7 +402,22 @@ async def handle_stream_error(
                         stream_reconnect.recover_failed_start(runtime.stream)
                     return
 
-                except (TimeoutError, CardataAuthError, aiohttp.ClientError) as err:
+                except (TimeoutError, aiohttp.ClientError) as err:
+                    # BMW's token endpoint could not be reached, which says
+                    # nothing about the credentials: no reauth, and no attempt
+                    # counted against them. The stream is stopped, so hand it to
+                    # the reconnect chain, and let the next refusal refresh again
+                    # rather than count as a refresh tried moments ago.
+                    _LOGGER.warning(
+                        "Token refresh after unauthorized could not reach BMW for entry %s: %s",
+                        entry.entry_id,
+                        err,
+                    )
+                    runtime.last_refresh_attempt = 0.0
+                    stream_reconnect.request_reconnect(runtime.stream)
+                    return
+
+                except CardataAuthError as err:
                     # Check if this is just a concurrent refresh attempt (not a real failure)
                     if ERR_TOKEN_REFRESH_IN_PROGRESS in str(err):
                         _LOGGER.debug(

@@ -24,14 +24,16 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.cardata.const import DEFAULT_SCOPE, DOMAIN
+from custom_components.cardata.device_flow import CardataAuthError
 
 CLIENT_ID = "31C3B263-A9B7-4C8E-B123-456789ABCDEF"
 
@@ -360,3 +362,46 @@ async def test_a_stream_recovery_leaves_the_users_authorization_open(hass):
     assert [flow["flow_id"] for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN)] == [
         user_flow["flow_id"]
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("refresh_error", "reauth"),
+    [
+        (TimeoutError(), False),
+        (aiohttp.ClientError("token host unreachable"), False),
+        (CardataAuthError("refused"), True),
+    ],
+)
+async def test_only_a_refused_refresh_starts_reauth(hass, refresh_error, reauth):
+    """A token endpoint that cannot be reached says nothing about the credentials."""
+    from custom_components.cardata import auth
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    entry.add_to_hass(hass)
+    protection = MagicMock()
+    runtime = SimpleNamespace(
+        _handling_unauthorized=False,
+        reauth_in_progress=False,
+        reauth_pending=False,
+        reauth_flow_id=None,
+        connection_conflict=False,
+        last_reauth_attempt=0.0,
+        last_refresh_attempt=0.0,
+        unauthorized_protection=protection,
+        session=MagicMock(),
+        stream=MagicMock(),
+        container_manager=None,
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+
+    with (
+        patch.object(auth, "refresh_tokens_for_entry", AsyncMock(side_effect=refresh_error)),
+        patch.object(auth.stream_reconnect, "request_reconnect") as reconnect,
+        patch.object(hass.config_entries.flow, "async_init", AsyncMock(return_value={"flow_id": "f"})) as flow,
+    ):
+        await auth.handle_stream_error(hass, entry, "unauthorized")
+
+    assert flow.called is reauth
+    assert protection.record_attempt.called is reauth
+    assert reconnect.called is not reauth
