@@ -45,7 +45,7 @@ from . import stream_reconnect
 from .const import LOCK_ACQUIRE_TIMEOUT
 from .debug import debug_enabled
 from .stream_circuit_breaker import CircuitBreaker
-from .utils import redact_vin_in_text, redact_vin_payload
+from .utils import redact_identifier, redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -489,6 +489,12 @@ class CardataStreamManager:
     def set_status_callback(self, callback: Callable[[str, str | None], Awaitable[None]]) -> None:
         self._status_callback = callback
 
+    def _hide_gcid(self, text: str | None) -> str | None:
+        """Redact the GCID and any VIN inside a topic or client id for logs."""
+        if isinstance(text, str) and self._gcid:
+            text = text.replace(self._gcid, redact_identifier(self._gcid))
+        return redact_vin_in_text(text)
+
     @property
     def debug_info(self) -> dict[str, str | int | bool]:
         """Return connection parameters for diagnostics."""
@@ -510,14 +516,16 @@ class CardataStreamManager:
                 "protocol": "MQTTv311",
             }
 
+        # These end up in a sensor's attributes, which the recorder keeps and
+        # every user can read, so the account identifiers are cut short.
         return {
             "custom_broker": False,
-            "client_id": self._client_id,
-            "gcid": self._gcid,
+            "client_id": redact_identifier(self._client_id),
+            "gcid": redact_identifier(self._gcid),
             "host": self._host,
             "port": self._port,
             "keepalive": self._keepalive,
-            "topic": f"{self._gcid}/+",
+            "topic": f"{redact_identifier(self._gcid)}/+",
             "clean_session": True,
             "protocol": "MQTTv311",
             "id_token": redacted_token,
@@ -550,7 +558,7 @@ class CardataStreamManager:
         if debug_enabled():
             _LOGGER.debug(
                 "Initializing MQTT client: client_id=%s host=%s port=%s custom_broker=%s",
-                client_id,
+                self._hide_gcid(client_id),
                 self._host,
                 self._port,
                 self._custom_broker,
@@ -571,7 +579,7 @@ class CardataStreamManager:
             if debug_enabled():
                 _LOGGER.debug(
                     "MQTT credentials set for GCID %s (token length=%s)",
-                    self._gcid,
+                    redact_identifier(self._gcid),
                     len(self._password or ""),
                 )
 
@@ -704,7 +712,7 @@ class CardataStreamManager:
             if topic:
                 result = client.subscribe(topic)
                 if debug_enabled():
-                    _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
+                    _LOGGER.debug("Subscribed to %s result=%s", self._hide_gcid(topic), result)
             if self._reauth_notified:
                 # Schedule async reset of flags with proper locking
                 self._run_coro_safe(stream_reconnect.async_clear_reauth_state(self))
@@ -821,7 +829,7 @@ class CardataStreamManager:
             if debug_enabled():
                 _LOGGER.debug(
                     "BMW MQTT message on %s: %s",
-                    redact_vin_in_text(msg.topic),
+                    self._hide_gcid(msg.topic),
                     redact_vin_payload(payload),
                 )
             if not self._message_callback:
@@ -943,7 +951,9 @@ class CardataStreamManager:
             reconnect_required = False
 
             if gcid and gcid != self._gcid:
-                _LOGGER.debug("Updating MQTT GCID from %s to %s", self._gcid, gcid)
+                _LOGGER.debug(
+                    "Updating MQTT GCID from %s to %s", redact_identifier(self._gcid), redact_identifier(gcid)
+                )
                 self._gcid = gcid
                 reconnect_required = True
 

@@ -83,6 +83,13 @@ def redact_vins(vins: Iterable[str]) -> list[str]:
     return [redact_vin(v) for v in vins]
 
 
+def redact_identifier(value: str | None) -> str:
+    """Return an account identifier such as the GCID cut to its first four characters."""
+    if not isinstance(value, str) or not value:
+        return "<none>"
+    return f"{value[:4]}****"
+
+
 _VIN_PATTERN = re.compile(r"\b[A-HJ-NPR-Z0-9]{11,17}\b", re.IGNORECASE)
 
 

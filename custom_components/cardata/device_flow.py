@@ -36,7 +36,7 @@ from typing import Any
 import aiohttp
 
 from .const import DEVICE_CODE_URL, HTTP_TIMEOUT, TOKEN_URL
-from .utils import redact_sensitive_data
+from .utils import redact_identifier, redact_sensitive_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,9 +94,9 @@ async def poll_for_tokens(
     max_consecutive_500s = 3  # Give up after 3 consecutive 500s
 
     _LOGGER.debug(
-        "Starting token polling: client_id=%s, device_code=%s..., timeout=%ds",
-        client_id[:16] + "..." if len(client_id) > 16 else client_id,
-        device_code[:8] + "..." if device_code and len(device_code) > 8 else device_code,
+        "Starting token polling: client_id=%s, device_code=%s, timeout=%ds",
+        redact_identifier(client_id),
+        redact_identifier(device_code),
         timeout,
     )
 
