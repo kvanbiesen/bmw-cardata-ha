@@ -447,6 +447,12 @@ class ChargingSession:
     # the energy it gives says nothing about the real efficiency: learning
     # from it would measure how often BMW reports the SOC instead.
     power_is_derived: bool = False
+    # Gross energy integrated with a known current, and the same energy times
+    # that current, so learning files the charge under the current it mostly
+    # ran at rather than under its last reading. Not persisted: a session
+    # reloaded from disk is not learned from.
+    current_energy_kwh: float = 0.0
+    current_ampere_kwh: float = 0.0
     # False when the battery capacity is the user's own figure and BMW's own
     # disagrees with it.  The inferred phase count scales directly with capacity,
     # so a figure known to be contradicted cannot support one.
@@ -512,6 +518,12 @@ class ChargingSession:
             capacity_trusted=data.get("capacity_trusted", True),
         )
 
+    def learning_current(self) -> float | None:
+        """Return the current the charge mostly ran at, weighted by energy."""
+        if self.current_energy_kwh > 0:
+            return self.current_ampere_kwh / self.current_energy_kwh
+        return self.last_current
+
     def accumulate_energy(self, power_kw: float, aux_power_kw: float, timestamp: float) -> None:
         """Accumulate net energy using trapezoidal integration.
 
@@ -542,6 +554,9 @@ class ChargingSession:
                 self.total_energy_kwh += energy
                 self.session_total_energy_kwh += energy
                 self.session_gross_energy_kwh += avg_power * capped_hours
+                if self.last_current:
+                    self.current_energy_kwh += avg_power * capped_hours
+                    self.current_ampere_kwh += avg_power * capped_hours * self.last_current
         self.last_power_kw = power_kw
         self.last_aux_kw = aux_power_kw
         self.last_energy_update = timestamp

@@ -553,7 +553,7 @@ Two independent signs that a charge is over are each worth one API call to settl
 
 The predicted SOC sensor automatically learns your vehicle's charging efficiency:
 
-- **AC charging efficiency**: Starts at 90%, learns per charging condition (phases, voltage, current)
+- **AC charging efficiency**: Starts at 90%, learns per charging condition (phases, voltage, current), filing each charge under the current it mostly ran at
 - **DC charging efficiency**: Starts at 93%, learns from actual DC sessions
 - Both AC and DC use the same **efficiency matrix** with per-condition outlier detection, history tracking, and trend analysis
 - Uses **Exponential Moving Average (EMA)** with adaptive learning rate (converges fast initially, settles to 20%)

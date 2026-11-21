@@ -689,6 +689,40 @@ class TestDerivedPowerLearning:
         assert ChargingSession.from_dict(session.to_dict()).power_is_derived
 
 
+class TestLearningCurrent:
+    """A charge is filed under the current it mostly ran at, not its last reading."""
+
+    def test_a_short_taper_at_the_end_does_not_move_the_bracket(self):
+        clock = [1_800_000_000.0]
+        with (
+            patch("time.time", lambda: clock[0]),
+            patch("custom_components.cardata.soc_types.time.time", lambda: clock[0]),
+            patch("custom_components.cardata.soc_prediction.datetime") as frozen,
+        ):
+            frozen.now.side_effect = lambda tz=None: datetime.fromtimestamp(clock[0], UTC)
+            frozen.fromisoformat = datetime.fromisoformat
+            predictor = SOCPredictor()
+            predictor.update_bmw_soc("VIN", 40.0)
+            predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+            predictor.anchor_session("VIN", 40.0, 29.0, "AC")
+            predictor.update_ac_charging_data("VIN", 230.0, 16.0, 1, 0.3)
+            for _ in range(300):
+                clock[0] += 30
+                predictor.periodic_update_all()
+            predictor.update_ac_charging_data("VIN", 230.0, 6.0, None, 0.3)
+            for _ in range(20):
+                clock[0] += 30
+                predictor.periodic_update_all()
+            session = predictor._sessions["VIN"]
+            predictor.update_charging_status("VIN", "NOCHARGING")
+            predictor.end_session("VIN", 0.0, None)
+            clock[0] += 60
+            predictor.update_bmw_soc("VIN", 40.0 + 0.9 * session.session_total_energy_kwh / 29.0 * 100)
+
+        (condition,) = predictor.get_learned_efficiency("VIN").efficiency_matrix
+        assert condition.current_bracket == 16
+
+
 class TestNullChargingStatus:
     """An API reply can carry the charging status as null."""
 

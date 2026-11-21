@@ -259,7 +259,7 @@ def end_session(
             battery_capacity_kwh=session.battery_capacity_kwh,
             phases=session.phases,
             voltage=session.last_voltage if session.last_voltage else 230.0,
-            current=session.last_current if session.last_current else 16.0,
+            current=session.learning_current() or 16.0,
         )
 
     # Clear active session and charging method
@@ -393,7 +393,7 @@ def _finalize_learning(
         charging_method=session.charging_method,
         phases=session.phases,
         voltage=session.last_voltage if session.last_voltage else 230.0,
-        current=session.last_current if session.last_current else 16.0,
+        current=session.learning_current() or 16.0,
         end_soc=end_soc,
         label="session",
     )
