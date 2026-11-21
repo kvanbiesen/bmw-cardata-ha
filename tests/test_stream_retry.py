@@ -747,3 +747,21 @@ def test_a_refused_stream_is_handed_back_to_the_chain() -> None:
     with patch.object(stream_reconnect, "request_reconnect") as reconnect:
         stream_reconnect.restart_refused_stream(manager)
     reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_chain_replaces_a_waiting_retry() -> None:
+    """A refused login asks for a retry and its failed start for a chain; only one may run."""
+    manager = _shutdown_manager()
+    manager._async_start_locked = AsyncMock()
+
+    stream_reconnect.schedule_retry(manager, 3)
+    retry = manager._retry_task
+    with patch.object(stream_reconnect, "async_reconnect", AsyncMock()):
+        stream_reconnect.request_reconnect(manager)
+        await manager._reconnect_task
+    await asyncio.sleep(0)
+
+    assert retry.cancelled()
+    assert manager._retry_task is None
+    manager._async_start_locked.assert_not_awaited()

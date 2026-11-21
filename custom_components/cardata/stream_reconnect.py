@@ -115,6 +115,13 @@ def request_reconnect(manager: CardataStreamManager) -> None:
     """
     if _custom_auth_blocked(manager):
         return
+    # The chain covers whatever a retry still waiting would do. A refused
+    # login or subscription asks for both, and running the two side by side
+    # doubles the attempts and opens the circuit breaker sooner.
+    retry = manager._retry_task
+    if retry is not None and not retry.done() and retry is not asyncio.current_task():
+        retry.cancel()
+        manager._retry_task = None
     task = manager._reconnect_task
     if task is not None and not task.done() and task is not asyncio.current_task():
         if manager._reconnect_waiting is not task:
