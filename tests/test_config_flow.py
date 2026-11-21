@@ -620,3 +620,29 @@ async def test_mqtt_broker_credentials_can_be_cleared(hass):
         if getattr(key, "description", None) and "suggested_value" in key.description
     }
     assert suggested[OPTION_CUSTOM_MQTT_USERNAME] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("taken", [False, True])
+async def test_a_reauth_on_another_client_moves_the_unique_id(hass, taken):
+    """Adding the old client again later must not pick the entry now on the new one."""
+    new_client = "41C3B263-A9B7-4C8E-B123-456789ABCDEF"
+    existing = MockConfigEntry(domain=DOMAIN, unique_id=CLIENT_ID, data={"client_id": CLIENT_ID})
+    existing.add_to_hass(hass)
+    if taken:
+        MockConfigEntry(domain=DOMAIN, unique_id=new_client, data={"client_id": new_client}).add_to_hass(hass)
+
+    with (
+        patch("custom_components.cardata.device_flow.request_device_code", AsyncMock(return_value=DEVICE_DATA)),
+        patch("custom_components.cardata.device_flow.poll_for_tokens", AsyncMock(return_value=TOKEN_DATA)),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": existing.entry_id},
+            data={"client_id": new_client, "entry_id": existing.entry_id},
+        )
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], user_input={"confirmed": True})
+
+    assert result["reason"] == "reauth_successful"
+    assert existing.data["client_id"] == new_client
+    assert existing.unique_id == (CLIENT_ID if taken else new_client)

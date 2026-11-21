@@ -294,7 +294,15 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             merged = dict(self._reauth_entry.data)
             merged.update(entry_data)
             merged.pop("reauth_pending", None)
-            self.hass.config_entries.async_update_entry(self._reauth_entry, data=merged)
+            # A reauth can move the entry to another client id. Its unique id
+            # follows, or adding the old client again later would pick this
+            # entry for removal; another entry already holding it keeps it.
+            unique_id = self._reauth_entry.unique_id
+            if self._client_id and self.hass.config_entries.async_entry_for_domain_unique_id(
+                DOMAIN, self._client_id
+            ) in (None, self._reauth_entry):
+                unique_id = self._client_id
+            self.hass.config_entries.async_update_entry(self._reauth_entry, data=merged, unique_id=unique_id)
             runtime = self.hass.data.get(DOMAIN, {}).get(self._reauth_entry.entry_id)
             if runtime:
                 runtime.reauth_in_progress = False
