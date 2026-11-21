@@ -45,6 +45,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.util import dt as dt_util
 
 from .api_parsing import get_first_key
@@ -710,18 +711,20 @@ def async_register_services(hass: HomeAssistant) -> None:
         schema=UPDATE_CHARGING_POWER_SCHEMA,
     )
 
-    # Developer migration service
+    # The developer services rename entities and delete containers on the
+    # BMW account, so only an administrator may call them.
     if not hass.services.has_service(DOMAIN, "migrate_entity_ids"):
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             "migrate_entity_ids",
             async_handle_migrate,
             schema=MIGRATE_SERVICE_SCHEMA,
         )
 
-    # Developer HV container cleanup service
     if not hass.services.has_service(DOMAIN, "clean_hv_containers"):
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             "clean_hv_containers",
             async_handle_clean_containers,

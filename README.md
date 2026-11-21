@@ -703,8 +703,8 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_charging_history` fetches charging sessions and returns the full BMW payload (including location, cost, charging point). Defaults to the last 30 days; optional `from`/`to` ISO-8601 fields select any range. Follows pagination automatically. Returns a `response_variable` dict keyed by VIN — use it in scripts/automations to log sessions to your own long-term store. Uses 1 API call per page per vehicle.
 - `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_vehicle_images` manually fetches vehicle images for all configured vehicles.
-- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`).
-- `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them. Entity IDs you picked yourself are left alone unless `force` is set.
+- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`). Administrators only.
+- `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them. Entity IDs you picked yourself are left alone unless `force` is set. Administrators only.
 - `cardata.update_charging_power` injects a locally measured charging power reading (kW) into the SOC predictor. Requires the **Use external power meter for charging** option to be enabled under Settings. Intended for users with a smart meter who want to feed accurate real-time power into the prediction instead of relying on BMW's V×A — see the section below.
 
 ## API Quota and MQTT Streaming
