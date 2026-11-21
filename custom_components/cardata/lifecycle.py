@@ -34,7 +34,7 @@ from contextlib import suppress
 
 import aiohttp
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -680,6 +680,10 @@ async def async_cleanup_if_last_entry(hass: HomeAssistant) -> None:
     if domain_data is None:
         return
     if any(not key.startswith("_") for key in domain_data):
+        return
+    # An entry still setting up has not stored its runtime yet; taking the
+    # services and the domain data from under it would fail that setup.
+    if any(other.state is ConfigEntryState.SETUP_IN_PROGRESS for other in hass.config_entries.async_entries(DOMAIN)):
         return
     async_unregister_services(hass)
     await async_unload_frontend_cards_if_last_entry(hass)

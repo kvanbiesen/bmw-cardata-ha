@@ -69,3 +69,19 @@ async def test_removing_an_entry_removes_its_soc_learning(hass, hass_storage):
     await async_remove_entry(hass, entry)
 
     assert key not in hass_storage
+
+
+async def test_an_entry_still_setting_up_keeps_them(hass):
+    """It stores its runtime only late in its setup, after the network calls."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    removed = MockConfigEntry(domain=DOMAIN)
+    removed.add_to_hass(hass)
+    MockConfigEntry(domain=DOMAIN, state=ConfigEntryState.SETUP_IN_PROGRESS).add_to_hass(hass)
+    async_register_services(hass)
+    hass.data[DOMAIN] = {"_service_registered": True}
+
+    await async_remove_entry(hass, removed)
+
+    assert hass.services.has_service(DOMAIN, "fetch_telematic_data")
+    assert DOMAIN in hass.data
