@@ -32,8 +32,8 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
-    SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -52,7 +52,6 @@ from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
-from homeassistant.helpers.restore_state import RestoreEntity
 
 from .condition_based_services import (
     CBS_ATTRIBUTE_KEYS,
@@ -113,7 +112,7 @@ CHARGING_HISTORY_RESTORE_DESCRIPTORS = frozenset(
 )
 
 
-class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
+class CardataSensor(CardataEntity, RestoreSensor):
     """Sensor for generic telematic data."""
 
     _attr_should_poll = False
@@ -168,8 +167,17 @@ class CardataSensor(CardataEntity, RestoreEntity, SensorEntity):
         ):
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
+                # The state and its unit attribute are what the user sees, in a
+                # unit picked in the entity settings or by the unit system. The
+                # coordinator works in the vehicle's own unit, which is stored
+                # apart; a state saved before that was stored has only the first.
+                state_value = last_state.state
                 unit = last_state.attributes.get("unit_of_measurement")
-                validated_state = validate_restored_state(last_state.state, unit, self._descriptor)
+                sensor_data = await self.async_get_last_sensor_data()
+                if sensor_data is not None and sensor_data.native_value is not None:
+                    state_value = str(sensor_data.native_value)
+                    unit = sensor_data.native_unit_of_measurement
+                validated_state = validate_restored_state(state_value, unit, self._descriptor)
                 if validated_state is None:
                     # Invalid restored state - skip restoration
                     last_state = None
