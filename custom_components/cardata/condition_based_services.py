@@ -69,6 +69,11 @@ _KNOWN_CBS_ITEMS: dict[int, tuple[str, str]] = {
     100: ("vehicleCheck", "Vehicle check"),
 }
 
+# These have translations; other CBS items are created dynamically.
+KNOWN_CBS_DESCRIPTORS = frozenset(f"{CBS_DESCRIPTOR_PREFIX}{key}" for key, _ in _KNOWN_CBS_ITEMS.values()) | {
+    DESC_CBS_SERVICE_DUE
+}
+
 CBS_ICONS: dict[str, str] = {
     f"{CBS_DESCRIPTOR_PREFIX}engineOil": "mdi:oil",
     f"{CBS_DESCRIPTOR_PREFIX}brakeFluid": "mdi:car-brake-fluid-level",

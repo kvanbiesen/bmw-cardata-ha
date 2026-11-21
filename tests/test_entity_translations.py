@@ -6,7 +6,7 @@ import re
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -17,6 +17,7 @@ from homeassistant.helpers.translation import async_get_translations, async_tran
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.cardata.binary_sensor import OPENING_STATUS_TITLES, CardataBinarySensor
+from custom_components.cardata.condition_based_services import CBS_DESCRIPTOR_PREFIX, KNOWN_CBS_DESCRIPTORS
 from custom_components.cardata.const import DOMAIN
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.descriptor_titles import DESCRIPTOR_TITLES
@@ -105,7 +106,6 @@ async def platforms(hass, entity_registry, device_registry):
     "descriptor,german_name",
     [
         (SOC, "Hochvoltbatterie – Ladezustand"),
-        ("vehicle.status.conditionBasedServices.engineOil", "Service – Motoröl"),
         ("vehicle.electronicControlUnit.diagnosticTroubleCodes.raw", "Fahrzeug – Fehlerspeicher"),
     ],
 )
@@ -204,6 +204,123 @@ async def test_unknown_descriptors_keep_readable_fallback(platforms, coordinator
 
 
 @pytest.mark.parametrize(
+    ("factory", "domain", "item", "title", "value", "raw_state"),
+    [
+        (CardataSensor, "sensor", "frontBrakePads", "Service Front brake pads", "PENDING", "PENDING"),
+    ],
+)
+@pytest.mark.parametrize("custom_name", [None, "Mein eigener Wartungsname"])
+async def test_cbs_keeps_legacy_naming_ids_and_raw_states(
+    hass, platforms, coordinator, factory, domain, item, title, value, raw_state, custom_name
+):
+    """CBS keeps the naming and identity behavior from before localization."""
+    descriptor = f"{CBS_DESCRIPTOR_PREFIX}{item}"
+    coordinator.get_state.return_value = DescriptorState(value=value, unit=None, timestamp=None)
+    entry, add = platforms
+    registry = er.async_get(hass)
+    unique_id = f"{VIN}_{descriptor}"
+    row = registry.async_get_or_create(
+        domain,
+        DOMAIN,
+        unique_id,
+        config_entry=entry,
+        suggested_object_id="my_existing_service",
+        original_name=f"i4 {title}",
+        has_entity_name=False,
+    )
+    registry.async_update_entity(row.entity_id, name=custom_name)
+    with patch.dict(DESCRIPTOR_TITLES, {descriptor: title}):
+        for language in ("de", "en"):
+            sensor = factory(coordinator, VIN, descriptor)
+            platform = await add([sensor], domain, language)
+            state = hass.states.get(row.entity_id)
+            assert sensor.entity_id == row.entity_id
+            assert sensor.unique_id == unique_id
+            assert sensor.translation_key is None
+            assert sensor.has_entity_name is False
+            assert registry.async_get(row.entity_id).name == custom_name
+            assert sensor.name == f"i4 {title}"
+            assert state.attributes["friendly_name"] == (custom_name or f"i4 {title}")
+            assert state.state == raw_state
+            if domain == "sensor":
+                assert Template("{{ state_translated('" + row.entity_id + "') }}", hass).async_render() == raw_state
+            coordinator.names[VIN] = "i4 renamed"
+            async_dispatcher_send(hass, f"{DOMAIN}_{coordinator.entry_id}_name", VIN, "i4 renamed")
+            assert sensor.name == f"i4 renamed {title}"
+            assert sensor.entity_id == row.entity_id
+            assert registry.async_get(row.entity_id).name == custom_name
+            await platform.async_reset()
+            await hass.async_block_till_done()
+            coordinator.names[VIN] = "i4"
+
+
+@pytest.mark.parametrize(
+    ("factory", "domain", "item", "german", "english", "value", "raw_state"),
+    [
+        (CardataSensor, "sensor", "engineOil", "Service – Motoröl", "Service Engine oil", "OVERDUE", "OVERDUE"),
+        (
+            CardataSensor,
+            "sensor",
+            "brakeFluid",
+            "Service – Bremsflüssigkeit",
+            "Service Brake fluid",
+            "OVERDUE",
+            "OVERDUE",
+        ),
+        (
+            CardataSensor,
+            "sensor",
+            "statutoryInspection",
+            "Service – Hauptuntersuchung",
+            "Service Statutory vehicle inspection",
+            "OVERDUE",
+            "OVERDUE",
+        ),
+        (CardataSensor, "sensor", "vehicleCheck", "Fahrzeug-Check", "Service Vehicle check", "OVERDUE", "OVERDUE"),
+        (CardataBinarySensor, "binary_sensor", "serviceDue", "Service fällig", "Service due", True, "on"),
+    ],
+)
+@pytest.mark.parametrize("custom_name", [None, "Mein eigener Wartungsname"])
+async def test_known_cbs_localizes_without_changing_identity(
+    hass, platforms, coordinator, factory, domain, item, german, english, value, raw_state, custom_name
+):
+    """Known service items translate while retaining old IDs and custom names."""
+    descriptor = f"{CBS_DESCRIPTOR_PREFIX}{item}"
+    assert descriptor in KNOWN_CBS_DESCRIPTORS
+    coordinator.get_state.return_value = DescriptorState(value=value, unit=None, timestamp=None)
+    entry, add = platforms
+    registry = er.async_get(hass)
+    unique_id = f"{VIN}_{descriptor}"
+    row = registry.async_get_or_create(
+        domain,
+        DOMAIN,
+        unique_id,
+        config_entry=entry,
+        suggested_object_id="existing_service",
+        original_name=f"i4 {english}",
+        has_entity_name=False,
+    )
+    registry.async_update_entity(row.entity_id, name=custom_name)
+    for language, expected in (("de", german), ("en", english)):
+        sensor = factory(coordinator, VIN, descriptor)
+        platform = await add([sensor], domain, language)
+        state = hass.states.get(row.entity_id)
+        assert sensor.entity_id == row.entity_id
+        assert sensor.unique_id == unique_id
+        assert sensor.translation_key == descriptor.lower().replace(".", "_")
+        assert sensor.has_entity_name is True
+        assert registry.async_get(row.entity_id).name == custom_name
+        assert sensor.name == expected
+        assert state.attributes["friendly_name"] == (custom_name or f"i4 {expected}")
+        assert state.state == raw_state
+        if domain == "sensor":
+            translated = Template("{{ state_translated('" + row.entity_id + "') }}", hass).async_render()
+            assert translated == ("Überfällig" if language == "de" else "Overdue")
+        await platform.async_reset()
+        await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
     "factory",
     [
         CardataVehicleMetadataSensor,
@@ -247,16 +364,24 @@ def test_catalogue_coverage_and_valid_translation_keys():
     """Prevent missing translations and collisions as descriptors are added."""
     en = json.loads((TRANSLATIONS / "en.json").read_text())["entity"]
     de = json.loads((TRANSLATIONS / "de.json").read_text())["entity"]
-    descriptor_keys = {descriptor.lower().replace(".", "_") for descriptor in DESCRIPTOR_TITLES}
-    assert len(descriptor_keys) == len(DESCRIPTOR_TITLES)
+    descriptors = {
+        descriptor
+        for descriptor in DESCRIPTOR_TITLES
+        if not descriptor.startswith(CBS_DESCRIPTOR_PREFIX) or descriptor in KNOWN_CBS_DESCRIPTORS
+    }
+    descriptor_keys = {descriptor.lower().replace(".", "_") for descriptor in descriptors}
+    assert len(descriptor_keys) == len(descriptors)
     for domain in ("sensor", "binary_sensor"):
         assert descriptor_keys <= en[domain].keys()
         assert en[domain].keys() == de[domain].keys()
+        assert not any(key.startswith("vehicle_status_conditionbasedservices_frontbrakepads") for key in en[domain])
         for key in en[domain]:
             assert re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", key)
             assert en[domain][key]["name"].strip()
             assert de[domain][key]["name"].strip()
         for descriptor, name in DESCRIPTOR_TITLES.items():
+            if descriptor.startswith(CBS_DESCRIPTOR_PREFIX) and descriptor not in KNOWN_CBS_DESCRIPTORS:
+                continue
             key = descriptor.lower().replace(".", "_")
             expected = OPENING_STATUS_TITLES.get(descriptor, name) if domain == "binary_sensor" else name
             assert en[domain][key]["name"] == expected

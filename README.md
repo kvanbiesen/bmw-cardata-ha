@@ -248,6 +248,7 @@ Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarDa
 ### Entity names and state displays
 
 Sensor and binary sensor names use Home Assistant's translation system. English and German names are included; other languages fall back to English. The names follow the Home Assistant system language. Reload the integration or restart Home Assistant after changing it.
+Known Condition Based Services and the derived service-due binary sensor are translated; other service items retain their existing names and state handling.
 
 Existing entity IDs, unique IDs, and custom names are preserved. Sensor states retain BMW's original values, so automations and templates continue to use values such as `PRICE_OPTIMIZED`. Known states are displayed using translated labels. Unknown codes pass through unchanged. Numeric values and binary sensor on/off states are unaffected.
 

@@ -39,6 +39,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .condition_based_services import CBS_DESCRIPTOR_PREFIX, KNOWN_CBS_DESCRIPTORS
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
@@ -265,7 +266,10 @@ class CardataSensorEntity(CardataEntity):
 
     def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
         super().__init__(coordinator, vin, descriptor)
-        if descriptor in DESCRIPTOR_TITLES or descriptor in SENSOR_TITLES:
+        if descriptor.startswith(CBS_DESCRIPTOR_PREFIX) and descriptor not in KNOWN_CBS_DESCRIPTORS:
+            # Unknown CBS items keep their existing naming path.
+            self._attr_has_entity_name = False
+        elif descriptor in DESCRIPTOR_TITLES or descriptor in SENSOR_TITLES:
             self._attr_translation_key = descriptor.lower().replace(".", "_")
             # Even _attr_name = None overrides Home Assistant's translated name.
             del self._attr_name
@@ -276,6 +280,9 @@ class CardataSensorEntity(CardataEntity):
         return SENSOR_TITLES.get(self._descriptor) or super()._format_name()
 
     async def async_added_to_hass(self) -> None:
+        if self.descriptor.startswith(CBS_DESCRIPTOR_PREFIX) and self.descriptor not in KNOWN_CBS_DESCRIPTORS:
+            await super().async_added_to_hass()
+            return
         # HA supplies the device prefix. The legacy listener would overwrite
         # the translated entity name, so update the device registry instead.
         await RestoreEntity.async_added_to_hass(self)
@@ -287,7 +294,10 @@ class CardataSensorEntity(CardataEntity):
 
     @callback
     def _handle_vehicle_name(self, vin: str, name: str) -> None:
-        """Refresh the device prefix when BMW metadata arrives after setup."""
+        """Refresh the vehicle name when BMW metadata arrives after setup."""
+        if self.descriptor.startswith(CBS_DESCRIPTOR_PREFIX) and self.descriptor not in KNOWN_CBS_DESCRIPTORS:
+            super()._handle_vehicle_name(vin, name)
+            return
         if vin != self._resolve_vin() or not self.device_entry:
             return
         registry = dr.async_get(self.hass)
