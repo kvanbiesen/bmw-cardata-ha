@@ -439,6 +439,21 @@ async def handle_stream_error(
                         # the reconnect chain, which picks up the new token.
                         stream_reconnect.restart_refused_stream(runtime.stream)
                         return
+                    if err.status not in (400, 401, 403):
+                        # A rate limit or a reply that is not JSON says nothing
+                        # about the credentials, and a reauth would pause the
+                        # polling until a reconnect: try again like a refresh
+                        # that could not reach BMW. Setup no longer fails on a
+                        # stream refusal, so this is also where one at startup,
+                        # on an expired token, ends up.
+                        _LOGGER.warning(
+                            "Token refresh after unauthorized failed for entry %s: %s; trying again later",
+                            entry.entry_id,
+                            err,
+                        )
+                        runtime.last_refresh_attempt = 0.0
+                        stream_reconnect.restart_refused_stream(runtime.stream)
+                        return
                     _LOGGER.warning(
                         "Token refresh after unauthorized failed for entry %s: %s",
                         entry.entry_id,

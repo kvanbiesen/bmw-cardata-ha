@@ -40,6 +40,7 @@ from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
 
+from . import stream_reconnect
 from .auth import (
     async_ensure_container_for_entry,
     async_token_refresh_loop,
@@ -575,9 +576,16 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("Starting MQTT connection after bootstrap")
                 await manager.async_start()
             except Exception as err:
-                if refreshed_token:
-                    raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT after token refresh: {err}") from err
-                raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
+                # Setup goes on without the stream: polling works without it,
+                # and failing here would drop the runtime the refusal handling
+                # needs to tell a token BMW refuses from a stream another client
+                # holds. Anything short of a refusal goes to the reconnect chain.
+                _LOGGER.warning(
+                    "Unable to connect to BMW MQTT for entry %s: %s; continuing without the stream for now",
+                    entry.entry_id,
+                    err,
+                )
+                stream_reconnect.recover_failed_start(manager)
 
         # Start coordinator watchdog
         await coordinator.async_start_watchdog()

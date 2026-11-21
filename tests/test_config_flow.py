@@ -370,7 +370,8 @@ async def test_a_stream_recovery_leaves_the_users_authorization_open(hass):
     [
         (TimeoutError(), False),
         (aiohttp.ClientError("token host unreachable"), False),
-        (CardataAuthError("refused"), True),
+        (CardataAuthError("refused", status=401), True),
+        (CardataAuthError("rate limited", status=429), False),
     ],
 )
 async def test_only_a_refused_refresh_starts_reauth(hass, refresh_error, reauth):

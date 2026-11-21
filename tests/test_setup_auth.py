@@ -25,6 +25,7 @@
 
 """Tests for a token BMW refuses while the entry sets up."""
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -93,11 +94,13 @@ async def test_a_rate_limited_refresh_does_not_ask_for_reauth(hass):
         patch.object(CardataStreamManager, "_start_client", _refused_start),
         patch("custom_components.cardata.lifecycle.async_telematic_poll_loop", AsyncMock()),
         patch("custom_components.cardata.device_flow.request_device_code", AsyncMock(return_value=DEVICE_DATA)),
+        patch("custom_components.cardata.stream_reconnect.request_reconnect"),
     ):
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
         assert entry.state is not ConfigEntryState.SETUP_ERROR
+        assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
         if entry.state is ConfigEntryState.LOADED:
             await hass.config_entries.async_unload(entry.entry_id)
             await hass.async_block_till_done()
@@ -132,3 +135,41 @@ async def test_a_refused_refresh_with_an_expired_token_asks_for_reauth(hass):
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
     assert entry.data["refresh_token"] == "new-refresh"
     reload.assert_called_once_with(entry.entry_id)
+
+
+async def test_a_stream_held_by_another_client_at_startup_still_loads_the_entry(hass):
+    """The tokens are fine; polling must run and the conflict be named rather than retried forever."""
+    from homeassistant.components import persistent_notification
+
+    entry = _entry(time.time())
+    entry.add_to_hass(hass)
+    poll_loop = AsyncMock()
+    original_init = CardataStreamManager.__init__
+
+    def no_reconnect_delay(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._min_reconnect_interval = 0
+
+    with (
+        patch("custom_components.cardata.auth.refresh_tokens", AsyncMock(return_value=TOKENS)),
+        patch.object(CardataStreamManager, "__init__", no_reconnect_delay),
+        patch.object(CardataStreamManager, "_start_client", _refused_start),
+        patch("custom_components.cardata.lifecycle.async_telematic_poll_loop", poll_loop),
+        patch("custom_components.cardata.stream_reconnect.request_reconnect"),
+    ):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert entry.state is ConfigEntryState.LOADED
+        assert poll_loop.called
+        # The refusal handling runs from the MQTT callback, outside the tasks Home Assistant tracks.
+        runtime = hass.data[DOMAIN][entry.entry_id]
+        for _ in range(100):
+            if runtime.connection_conflict:
+                break
+            await asyncio.sleep(0.01)
+        assert runtime.connection_conflict
+        assert f"{DOMAIN}_reauth_{entry.entry_id}" in persistent_notification._async_get_or_create_notifications(hass)
+
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
