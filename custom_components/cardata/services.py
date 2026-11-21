@@ -38,7 +38,7 @@ import json
 import logging
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import aiohttp
@@ -108,24 +108,29 @@ CLEAN_CONTAINERS_SCHEMA = vol.Schema(
 )
 
 
-def _finite_kw(value: Any) -> float:
-    """Validate a power reading as a finite number of kW.
+def _kw_up_to(limit: float) -> Callable[[Any], float]:
+    """Return a validator for a power reading: a finite number of kW, at most limit.
 
     Coerce alone takes "nan" and "inf", which would stay in the session's
-    energy for the rest of the charge.
+    energy for the rest of the charge, and a reading in watts would pass as
+    kilowatts. The limits are the ones the service's own selectors show.
     """
-    power = float(vol.Coerce(float)(value))
-    if not math.isfinite(power):
-        raise vol.Invalid("expected a finite power in kW")
-    return power
+
+    def validate(value: Any) -> float:
+        power = float(vol.Coerce(float)(value))
+        if not math.isfinite(power) or power > limit:
+            raise vol.Invalid(f"expected a finite power of at most {limit:g} kW")
+        return power
+
+    return validate
 
 
 UPDATE_CHARGING_POWER_SCHEMA = vol.Schema(
     {
         vol.Optional("entry_id"): str,
         vol.Required("vin"): str,
-        vol.Required("power_kw"): _finite_kw,
-        vol.Optional("aux_power_kw", default=0.0): _finite_kw,
+        vol.Required("power_kw"): _kw_up_to(350.0),
+        vol.Optional("aux_power_kw", default=0.0): _kw_up_to(10.0),
     }
 )
 

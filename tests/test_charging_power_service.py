@@ -36,8 +36,8 @@ VIN = "WBA00000000000001"
 
 
 @pytest.mark.parametrize("field", ["power_kw", "aux_power_kw"])
-@pytest.mark.parametrize("value", ["nan", "inf", "-inf", float("nan")])
-def test_a_reading_that_is_not_a_number_is_refused(field, value):
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", float("nan"), 7400])
+def test_a_reading_that_is_not_a_power_in_kw_is_refused(field, value):
     data = {"vin": VIN, "power_kw": 7.2, field: value}
     with pytest.raises(vol.Invalid):
         UPDATE_CHARGING_POWER_SCHEMA(data)
