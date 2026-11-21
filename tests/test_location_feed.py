@@ -30,7 +30,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.cardata import binary_sensor as binary_sensor_platform
@@ -79,6 +78,21 @@ def test_halves_with_matching_timestamps_pair():
 def test_halves_without_timestamps_pair_on_arrival():
     assert coordinates_paired(None, None, 100.0, 110.0)[0]
     assert not coordinates_paired(None, None, 100.0, 140.0)[0]
+
+
+def test_halves_of_two_fixes_do_not_pair_however_close_they_arrive():
+    """The first half of the next fix lands while its other half is still on the way."""
+    assert not coordinates_paired("2026-11-21T08:00:00Z", "2026-11-21T08:00:20Z", 100.0, 117.6)[0]
+
+
+def test_a_new_half_is_not_fed_with_the_previous_fix(coordinator):
+    _send(coordinator, LOCATION_LATITUDE_DESCRIPTOR, 52.52, "2026-11-21T08:00:00Z")
+    _send(coordinator, LOCATION_LONGITUDE_DESCRIPTOR, 13.405, "2026-11-21T08:00:00Z")
+    with patch.object(coordinator, "_update_location_tracking") as feed:
+        _send(coordinator, LOCATION_LATITUDE_DESCRIPTOR, 52.53, "2026-11-21T08:00:20Z")
+        feed.assert_not_called()
+        _send(coordinator, LOCATION_LONGITUDE_DESCRIPTOR, 13.41, "2026-11-21T08:00:20Z")
+        feed.assert_called_once_with(VIN, 52.53, 13.41)
 
 
 @patch("custom_components.cardata.coordinator.async_call_later")
