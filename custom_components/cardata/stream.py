@@ -256,8 +256,13 @@ class CardataStreamManager:
         while a connect holds the lock never marks the disconnect intentional.
         After a reload the entry id is back in hass.data, so nothing else tells
         a reconnect still in flight that this manager is no longer wanted.
+        A reconnect chain asleep in its backoff is cancelled rather than left
+        to find that out when it wakes, up to ten minutes later.
         """
         self._shut_down = True
+        task = self._reconnect_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
 
     async def async_start(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking

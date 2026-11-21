@@ -796,3 +796,21 @@ def test_the_network_thread_does_not_carry_the_gcid() -> None:
         assert gcid not in manager._hide_gcid(f'{{"entityId": "{gcid}", "data": {{}}}}')
     finally:
         loop.close()
+
+
+@pytest.mark.asyncio
+async def test_a_shut_down_cancels_a_sleeping_reconnect_chain() -> None:
+    """Unload must not leave a chain asleep in its backoff for minutes."""
+    manager = _shutdown_manager()
+
+    async def _sleeping_chain(_manager) -> None:
+        await asyncio.sleep(600)
+
+    with patch.object(stream_reconnect, "async_reconnect", _sleeping_chain):
+        stream_reconnect.request_reconnect(manager)
+        chain = manager._reconnect_task
+        await asyncio.sleep(0)
+        manager.shut_down()
+        await asyncio.sleep(0)
+
+    assert chain.cancelled()
