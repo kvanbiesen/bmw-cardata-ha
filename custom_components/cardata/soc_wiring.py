@@ -190,6 +190,17 @@ def _is_at_or_after(state: DescriptorState, reference: datetime | None) -> bool:
         return True
 
 
+# How long before the status change a battery reading still counts as taken
+# at the end of the charge. Both come in the same burst of messages.
+CHARGE_END_READING_SECONDS = 60
+
+
+def _charge_end_reference(status_state: DescriptorState) -> datetime | None:
+    """Return the earliest time a reading can have and still describe the charge end."""
+    ended_at = _descriptor_timestamp(status_state)
+    return ended_at - timedelta(seconds=CHARGE_END_READING_SECONDS) if ended_at is not None else None
+
+
 def _belongs_to_plug_in(state: DescriptorState, vehicle_state: dict[str, DescriptorState]) -> bool:
     """Whether a reading was taken since the cable went in."""
     return _is_at_or_after(state, _plug_in_timestamp(vehicle_state))
@@ -679,6 +690,21 @@ def end_soc_session(
             pass
 
     target_soc = _target_soc(vehicle_state)
+    # A charge that reached its target is learned from at once, which needs a
+    # battery reading from the end of the charge. BMW sends that reading and
+    # the status change as separate messages in either order, and the one
+    # before can sit just short of the target, within the tolerance. Such a
+    # reading makes the session wait for the next one like an interrupted
+    # charge. One at the target is the end however old it is, since BMW only
+    # sends a reading when it changes.
+    status_state = vehicle_state.get(DESC_CHARGING_STATUS)
+    stale = (
+        soc_state is not None
+        and status_state is not None
+        and not _is_at_or_after(soc_state, _charge_end_reference(status_state))
+    )
+    if current_soc is None or (stale and target_soc is not None and current_soc < target_soc):
+        target_soc = None
 
     if current_soc is None:
         current_soc = soc_predictor._last_predicted_soc.get(vin)

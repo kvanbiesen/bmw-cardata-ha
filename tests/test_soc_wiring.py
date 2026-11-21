@@ -40,6 +40,7 @@ from custom_components.cardata.const import (
     DESC_CHARGING_POWER,
     DESC_CHARGING_STATUS,
     DESC_CHARGING_TIME_REMAINING,
+    DESC_SOC_HEADER,
     DESC_SOC_TARGET,
     DESC_TRAVELLED_DISTANCE,
 )
@@ -53,6 +54,7 @@ from custom_components.cardata.soc_wiring import (
     _descriptor_phases,
     _mileage_km,
     charge_should_have_ended,
+    end_soc_session,
     needs_phase_count_poll,
     process_soc_descriptors,
 )
@@ -580,6 +582,42 @@ class TestNullChargingStatus:
 
         assert predictor.is_charging("VIN")
         assert predictor.has_active_session("VIN")
+
+
+class TestChargeEndAtTarget:
+    """A charge that reached its target is only learned from at once on a reading from its end."""
+
+    ENDED = "2026-11-21T17:58:31Z"
+    EARLIER = "2026-11-21T17:40:02Z"
+
+    def _ended(self, header, header_timestamp):
+        predictor = SOCPredictor()
+        predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+        predictor.anchor_session("VIN", 50.0, 50.0, "AC", target_soc=80.0)
+        predictor._sessions["VIN"].session_total_energy_kwh = 16.0
+        predictor.update_charging_status("VIN", "NOCHARGING")
+        vehicle_state = {
+            DESC_SOC_HEADER: _state(header, header_timestamp),
+            DESC_SOC_TARGET: _state(80),
+            DESC_CHARGING_STATUS: _state("NOCHARGING", self.ENDED),
+        }
+        end_soc_session(predictor, "VIN", vehicle_state, {})
+        return predictor
+
+    def test_a_reading_from_the_charge_end_finalises_at_once(self):
+        predictor = self._ended(80, self.ENDED)
+        assert "VIN" not in predictor._pending_sessions
+
+    def test_a_reading_at_the_target_from_before_the_end_finalises_at_once(self):
+        """BMW only sends a reading when it changes, so this one is the end of the charge."""
+        predictor = self._ended(80, self.EARLIER)
+        assert "VIN" not in predictor._pending_sessions
+
+    def test_a_reading_from_before_the_end_waits_for_the_next_one(self):
+        predictor = self._ended(78, self.EARLIER)
+        assert "VIN" in predictor._pending_sessions
+        predictor.update_bmw_soc("VIN", 80.0)
+        assert "VIN" not in predictor._pending_sessions
 
 
 class TestChargeTargetChange:

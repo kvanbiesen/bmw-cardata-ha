@@ -573,7 +573,7 @@ For learning to occur, a charging session must meet these criteria:
 ### Session Finalization
 
 Learning happens when a charging session ends:
-- **Target reached**: If charging stops within 2% of the target SOC, learning happens immediately
+- **Target reached**: If charging stops within 2% of the target SOC, learning happens immediately, provided the battery reading came with the end of the charge or already sits at the target (otherwise it waits for the next one, as below)
 - **Charge interrupted**: If stopped before target, waits for BMW SOC confirmation:
   - DC charging: 5-minute grace period
   - AC charging: 15-minute grace period
