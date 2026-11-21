@@ -58,6 +58,7 @@ from .condition_based_services import (
     CBS_DEFAULT_ICON,
     CBS_ICONS,
     is_cbs_item_descriptor,
+    remember_cbs_title,
 )
 from .const import (
     CHARGING_ENERGY_DESCRIPTOR,
@@ -216,6 +217,13 @@ class CardataSensor(CardataEntity, RestoreSensor):
                         restored_attributes = {
                             key: last_state.attributes[key] for key in attribute_keys if key in last_state.attributes
                         }
+                    # A CBS item the integration does not know is named from
+                    # BMW's title, which is only in memory until the next read.
+                    title = (restored_attributes or {}).get("title")
+                    if is_cbs_item_descriptor(self._descriptor) and isinstance(title, str) and title:
+                        remember_cbs_title(self._descriptor, title)
+                        self._base_name = self._format_name() or self._vin
+                        self._update_name(write_state=False)
                     await self._coordinator.async_restore_descriptor_state(
                         self.vin,
                         self.descriptor,
