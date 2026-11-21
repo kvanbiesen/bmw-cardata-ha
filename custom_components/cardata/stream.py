@@ -315,6 +315,12 @@ class CardataStreamManager:
         if self._shut_down:
             return
 
+        # A start undoes an earlier stop even when it goes no further: a
+        # start the circuit breaker blocks must not leave the stop flag set,
+        # or the reconnect chain would give up on the stream for good.
+        self._disconnect_future = None
+        self._intentional_disconnect = False
+
         # Forget the previous verdict so callers cannot read it as the outcome
         # of an attempt that never reached the broker.
         self._last_connack_rc = None
@@ -358,9 +364,6 @@ class CardataStreamManager:
                     self._connection_state.value,
                 )
             return
-
-        self._disconnect_future = None
-        self._intentional_disconnect = False
 
         if self._last_disconnect is not None:
             elapsed = time.monotonic() - self._last_disconnect

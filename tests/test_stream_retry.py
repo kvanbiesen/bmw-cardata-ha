@@ -630,3 +630,19 @@ async def test_a_connect_finishing_after_a_forced_stop_is_torn_down() -> None:
     await manager._async_start_locked()
 
     manager._async_stop_locked.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_start_blocked_by_the_breaker_clears_the_stop_flag() -> None:
+    """A stop and start the breaker blocks must leave the stream to the reconnect chain."""
+    manager = _shutdown_manager()
+    manager._intentional_disconnect = True
+    manager._circuit_breaker.check = lambda: True
+
+    with pytest.raises(ConnectionError):
+        await manager._async_start_locked()
+
+    assert not manager._intentional_disconnect
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.recover_failed_start(manager)
+    reconnect.assert_called_once_with(manager)
