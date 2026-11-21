@@ -166,3 +166,16 @@ async def test_a_new_image_for_a_disabled_image_entity_is_ignored(hass, monkeypa
     assert len(added) == 1 and added[0].hass is None
 
     await handlers["new_image"](OWN_VIN)
+
+
+def test_basic_data_fetched_again_keeps_the_image_path():
+    """The path is found on disk, not sent by BMW; a later basic data fetch must not drop it."""
+    from custom_components.cardata.device_info import apply_basic_data
+
+    device_metadata = {OWN_VIN: {"vehicle_image_path": f"/config/www/community/cardata/{OWN_VIN}.png"}}
+    names: dict = {}
+    payload = {"brand": "BMW", "modelName": "i4 eDrive40", "series": "4"}
+
+    apply_basic_data(OWN_VIN, payload, device_metadata, names, MagicMock(), lambda *args: None, "entry")
+
+    assert device_metadata[OWN_VIN]["vehicle_image_path"].endswith(f"{OWN_VIN}.png")
