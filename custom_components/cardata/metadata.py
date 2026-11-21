@@ -191,11 +191,15 @@ async def async_fetch_and_store_vehicle_images(
     headers: dict[str, str],
     vins: list[str],
     session: aiohttp.ClientSession,
+    *,
+    retry_unavailable: bool = False,
 ) -> None:
     """Fetch vehicle images for each VIN and store as PNG files.
 
     Images are stored in /config/www/community/cardata/{vin}.png
-    Only fetches if file doesn't exist - NEVER refetches!
+    Only fetches if file doesn't exist - NEVER refetches! The empty marker an
+    earlier 404 left is retried only with retry_unavailable, which the manual
+    fetch service passes: BMW may have an image for the car by now.
 
     Args:
         hass: Home Assistant instance
@@ -230,7 +234,7 @@ async def async_fetch_and_store_vehicle_images(
         try:
             # CRITICAL: Check if file already exists
             file_size = await hass.async_add_executor_job(lambda p: p.stat().st_size if p.exists() else -1, image_path)
-            if file_size == 0:
+            if file_size == 0 and not retry_unavailable:
                 # Empty marker left by an earlier 404: BMW has no image for this car
                 _LOGGER.debug("No vehicle image available for %s (marker file), skipping", redacted_vin)
                 continue

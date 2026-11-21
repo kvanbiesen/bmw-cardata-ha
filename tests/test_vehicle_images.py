@@ -26,7 +26,7 @@
 """Tests for restoring the cached vehicle images from disk."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -99,6 +99,27 @@ async def test_the_404_marker_is_not_taken_for_an_image(hass):
 
     assert "vehicle_image_path" not in coordinator.device_metadata[OWN_VIN]
     session.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry", [False, True])
+async def test_only_the_manual_fetch_asks_again_after_a_404(hass, retry):
+    """BMW may have an image for the car by now; the automatic fetches must not keep asking."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(device_metadata={OWN_VIN: {}}, signal_new_image="test_new_image")
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(
+        coordinator=coordinator, image_fetch_pending=None
+    )
+    response = MagicMock(status=404)
+    session = MagicMock()
+    session.get.return_value.__aenter__ = AsyncMock(return_value=response)
+    session.get.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    await _write_image(hass, OWN_VIN, b"")
+    await async_fetch_and_store_vehicle_images(hass, entry, {}, [OWN_VIN], session, retry_unavailable=retry)
+
+    assert session.get.called is retry
 
 
 @pytest.mark.asyncio

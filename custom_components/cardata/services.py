@@ -906,4 +906,4 @@ async def async_fetch_vehicle_images_service(call) -> None:
         from .metadata import async_fetch_and_store_vehicle_images
 
         _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
-        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, session)
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, session, retry_unavailable=True)
