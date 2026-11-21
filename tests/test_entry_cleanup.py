@@ -29,6 +29,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.cardata import async_remove_entry
 from custom_components.cardata.const import DOMAIN
+from custom_components.cardata.lifecycle import soc_learning_store_for
 from custom_components.cardata.services import async_register_services
 
 
@@ -55,3 +56,16 @@ async def test_another_loaded_entry_keeps_them(hass):
 
     assert hass.services.has_service(DOMAIN, "fetch_telematic_data")
     assert "other_entry" in hass.data[DOMAIN]
+
+
+async def test_removing_an_entry_removes_its_soc_learning(hass, hass_storage):
+    """An entry added later gets an id of its own, so nothing would read the old file again."""
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    key = f"cardata.soc_learning.{entry.entry_id}"
+    await soc_learning_store_for(hass, entry.entry_id).async_save({"learned_efficiency": {}})
+    assert key in hass_storage
+
+    await async_remove_entry(hass, entry)
+
+    assert key not in hass_storage

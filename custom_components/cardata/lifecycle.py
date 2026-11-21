@@ -232,9 +232,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator.session_start_time = time.time()
 
         # Set up SOC learning storage
-        soc_learning_store: Store = Store(
-            hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry.entry_id}"
-        )
+        soc_learning_store = soc_learning_store_for(hass, entry.entry_id)
 
         # Load SOC session data (v1 learned efficiency or v2 full session state)
         try:
@@ -664,6 +662,11 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 def _bootstrap_failed_notification_id(entry: ConfigEntry) -> str:
     return f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
+
+
+def soc_learning_store_for(hass: HomeAssistant, entry_id: str) -> Store:
+    """Return the store that keeps an entry's SOC sessions and learning."""
+    return Store(hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry_id}")
 
 
 async def async_cleanup_if_last_entry(hass: HomeAssistant) -> None:
