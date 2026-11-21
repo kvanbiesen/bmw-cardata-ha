@@ -42,7 +42,14 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class CardataAuthError(Exception):
-    """Raised when the BMW OAuth service rejects a request."""
+    """Raised when the BMW OAuth service rejects a request.
+
+    status is the HTTP status of the reply when there was one.
+    """
+
+    def __init__(self, message: str = "", *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 async def request_device_code(
@@ -248,7 +255,7 @@ async def refresh_tokens(
                     safe_data = {
                         k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
                     }
-                    raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}")
+                    raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}", status=resp.status)
 
                 # Server errors - retry
                 if 500 <= resp.status < 600 and attempt < max_retries:
@@ -276,7 +283,7 @@ async def refresh_tokens(
                 safe_data = {
                     k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
                 }
-                raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}")
+                raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}", status=resp.status)
 
         except TimeoutError as err:
             last_error = err

@@ -221,7 +221,7 @@ Or:
 6. Small tip, on newer cars with Idrive7, you can force the sensor creation by opening the BMW/Mini App and press lock doors; on older ones like idrive6, You have to start the car, maybe even drive it a little bit
 
 ### Reauthorization
-If BMW rejects the token (e.g. because the portal revoked it), please use the Configure > Start Device Authorization Again tool
+If BMW rejects the token (e.g. because the portal revoked it), please use the Configure > Start Device Authorization Again tool. When Home Assistant starts with a token BMW no longer accepts, the integration asks for the new authorization itself, under Settings > Devices & services.
 
 When BMW refuses the stream using tokens it has just issued, the integration reports that instead of asking you to reauthorize, because the credentials are clearly accepted. That usually means something else holds the one stream connection your account gets, so see the custom MQTT broker section below. If nothing else is connected, the client ID is probably missing the `cardata:streaming:read` scope, which does need a new device authorization.
 

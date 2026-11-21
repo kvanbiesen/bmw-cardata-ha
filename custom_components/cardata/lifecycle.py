@@ -37,7 +37,7 @@ from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
 
 from .auth import (
@@ -45,6 +45,7 @@ from .auth import (
     async_token_refresh_loop,
     container_signature_outdated,
     handle_stream_error,
+    is_token_expired,
     refresh_tokens_for_entry,
 )
 from .bootstrap import async_run_bootstrap
@@ -430,7 +431,21 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             await refresh_tokens_for_entry(entry, session, manager, container_manager)
             refreshed_token = True
-        except (CardataAuthError, TimeoutError, aiohttp.ClientError) as err:
+        except CardataAuthError as err:
+            # BMW refused the refresh. While the stored token is still valid the
+            # entry runs on it, and a later refusal reaches the runtime's own
+            # handling. Once that one has expired too there is nothing left to
+            # try, so ask for a new authorization now. Only for a refusal: a
+            # rate limit or a reply that is not JSON says nothing about the
+            # refresh token, and a reauth would end the setup retries.
+            if err.status in (400, 401, 403) and is_token_expired(entry)[0]:
+                raise ConfigEntryAuthFailed(f"BMW refused the token refresh: {err}") from err
+            _LOGGER.warning(
+                "Initial token refresh failed for entry %s: %s; continuing with stored token",
+                entry.entry_id,
+                err,
+            )
+        except (TimeoutError, aiohttp.ClientError) as err:
             _LOGGER.warning(
                 "Initial token refresh failed for entry %s: %s; continuing with stored token",
                 entry.entry_id,
@@ -638,8 +653,8 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         setup_succeeded = True
         return True
 
-    except ConfigEntryNotReady:
-        # Expected exception for setup retries - re-raise without extra logging
+    except (ConfigEntryNotReady, ConfigEntryAuthFailed):
+        # Expected exceptions for setup retries and reauth - re-raise without extra logging
         raise
 
     except (TimeoutError, aiohttp.ClientError) as err:
