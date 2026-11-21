@@ -128,6 +128,46 @@ def test_the_poll_loop_polls_after_one_interval_when_the_clock_went_back():
     assert polls and polls[0] - start <= 30 * 60
 
 
+class TestTripPollCooldown:
+    """A trip-end poll BMW failed still holds the next one off."""
+
+    @staticmethod
+    def _runtime(coordinator):
+        import asyncio
+
+        from custom_components.cardata.runtime import CardataRuntimeData
+
+        runtime = object.__new__(CardataRuntimeData)
+        runtime.coordinator = coordinator
+        runtime.enable_trip_poll = True
+        runtime.trip_poll_cooldown_seconds = 600
+        runtime._trip_poll_vins = set()
+        runtime._trip_poll_event = asyncio.Event()
+        runtime._immediate_poll_at = {}
+        return runtime
+
+    def test_a_failed_poll_still_starts_the_cooldown(self, coordinator):
+        runtime = self._runtime(coordinator)
+        runtime.request_trip_poll(VIN)
+        runtime.get_trip_poll_vins()
+        # The poll failed, so no poll time was recorded.
+        assert coordinator.seconds_since_last_poll(VIN) is None
+
+        runtime.request_trip_poll(VIN)
+
+        assert runtime.get_trip_poll_vins() == set()
+
+    def test_the_cooldown_ends(self, coordinator):
+        runtime = self._runtime(coordinator)
+        runtime.request_trip_poll(VIN)
+        runtime.get_trip_poll_vins()
+        runtime._immediate_poll_at[(VIN, "trip end")] -= 601
+
+        runtime.request_trip_poll(VIN)
+
+        assert runtime.get_trip_poll_vins() == {VIN}
+
+
 class TestStore:
     """What is stored is what comes back."""
 

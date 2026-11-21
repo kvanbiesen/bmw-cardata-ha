@@ -197,17 +197,26 @@ class CardataRuntimeData:
             )
             return
 
+        # Counted from the last poll that returned data and from the last one
+        # asked for here, whichever is newer: a poll BMW failed records no
+        # data, and every trip or charge end after it would otherwise poll
+        # again with no cooldown at all.
         cooldown = self.trip_poll_cooldown_seconds
+        now = time.time()
         age = self.coordinator.seconds_since_last_poll(vin)
+        asked = self._immediate_poll_at.get((vin, "trip end"))
+        if asked is not None and asked <= now and (age is None or now - asked < age):
+            age = now - asked
         if age is not None and age < cooldown:
             _LOGGER.debug(
-                "Skipping trip-end poll for VIN %s (polled %.0fs ago, cooldown %ds)",
+                "Skipping trip-end poll for VIN %s (polled or asked for %.0fs ago, cooldown %ds)",
                 redact_vin(vin),
                 age,
                 cooldown,
             )
             return
 
+        self._immediate_poll_at[(vin, "trip end")] = now
         self._enqueue_poll(vin)
         _LOGGER.debug("Trip ended for VIN %s, requesting immediate API poll", redact_vin(vin))
 
