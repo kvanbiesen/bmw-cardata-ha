@@ -135,6 +135,10 @@ class CardataCoordinator:
     # BMW never reports the end of costs one poll rather than one per heartbeat
     _charge_end_poll_asked: set[str] = field(default_factory=set, init=False)
     _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # Set once the entry lets go of this coordinator. A message paho queued
+    # before the stream stopped can still land afterwards, and must not arm
+    # timers or send signals the next coordinator's platforms would receive.
+    _stopped: bool = field(default=False, init=False)
     _pending_manager: UpdateBatcher = field(default_factory=UpdateBatcher, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
@@ -621,6 +625,8 @@ class CardataCoordinator:
     # --- Message handling ---
 
     async def async_handle_message(self, payload: dict[str, Any], *, is_telematic: bool = False) -> None:
+        if self._stopped:
+            return
         vin = payload.get("vin")
         data = payload.get("data") or {}
         if not vin or not isinstance(data, dict):
@@ -1081,6 +1087,8 @@ class CardataCoordinator:
         the request for nothing, which is what a poll on arriving home does to the
         charge that follows it.
         """
+        if self._stopped:
+            return
         if not needs_phase_count_poll(self.data.get(vin, {})):
             return
 
@@ -1113,7 +1121,7 @@ class CardataCoordinator:
     async def _async_schedule_debounced_update(self) -> None:
         """Schedule debounced coordinator update."""
         async with self._debounce_lock:
-            if self._update_debounce_handle is not None:
+            if self._update_debounce_handle is not None or self._stopped:
                 return
 
             self._update_debounce_handle = async_call_later(
@@ -1246,6 +1254,7 @@ class CardataCoordinator:
         self.watchdog_task = self.hass.loop.create_task(self._watchdog_loop())
 
     async def async_stop_watchdog(self) -> None:
+        self._stopped = True
         if self.watchdog_task:
             self.watchdog_task.cancel()
             try:

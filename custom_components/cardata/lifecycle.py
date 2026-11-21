@@ -750,10 +750,26 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
 
-    await _async_save_soc_sessions(data)
+    # Stop the stream first: a message arriving while the rest is torn down
+    # would arm timers again, send signals and create entities on platforms
+    # that are on their way out.
+    # The refresh loop goes before the stop, which would otherwise wait for a
+    # reconnect of its in progress; a connect it leaves running in the
+    # executor sees the shut down and drops its client.
+    data.stream.shut_down()
+    if data.refresh_task:
+        await _cancel_task_with_timeout(data.refresh_task, "Refresh")
+    try:
+        await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
+    except TimeoutError:
+        _LOGGER.warning("MQTT stream stop timed out after 10 seconds. Proceeding with unload anyway.")
+    except Exception as err:
+        _LOGGER.error("Error stopping MQTT stream: %s", err)
 
     # Stop coordinator
     await data.coordinator.async_stop_watchdog()
+
+    await _async_save_soc_sessions(data)
 
     # Unload platforms
     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -766,15 +782,6 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ]:
         if task:
             await _cancel_task_with_timeout(task, name)
-
-    # Stop MQTT stream with timeout protection
-    data.stream.shut_down()
-    try:
-        await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
-    except TimeoutError:
-        _LOGGER.warning("MQTT stream stop timed out after 10 seconds. Proceeding with unload anyway.")
-    except Exception as err:
-        _LOGGER.error("Error stopping MQTT stream: %s", err)
 
     try:
         await data.session.close()
