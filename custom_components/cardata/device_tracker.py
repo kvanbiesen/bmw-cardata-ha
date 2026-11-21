@@ -227,12 +227,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
                 try:
                     self._current_lat = float(lat)
                     self._current_lon = float(lon)
-                    _LOGGER.debug(
-                        "Restored last known location for %s: %.6f, %.6f",
-                        self._redacted_vin,
-                        self._current_lat,
-                        self._current_lon,
-                    )
+                    _LOGGER.debug("Restored last known location for %s", self._redacted_vin)
                     # Write state immediately — super().async_added_to_hass() already
                     # wrote state with lat/lon=None before we restored the values here.
                     self.async_write_ha_state()
@@ -265,21 +260,13 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             if self._current_lat is None or self._current_lon is None:
                 self._current_lat = initial_lat
                 self._current_lon = initial_lon
-                _LOGGER.debug(
-                    "Initialized location from coordinator for %s: %.6f, %.6f",
-                    self._redacted_vin,
-                    self._current_lat,
-                    self._current_lon,
-                )
+                _LOGGER.debug("Initialized location from coordinator for %s", self._redacted_vin)
                 self.async_write_ha_state()
             else:
                 _LOGGER.debug(
-                    "Updated tracking coordinates for %s (restored: %.6f, %.6f, fresh: %.6f, %.6f)",
+                    "Updated tracking coordinates for %s (%.0fm from the restored location)",
                     self._redacted_vin,
-                    self._current_lat,
-                    self._current_lon,
-                    initial_lat,
-                    initial_lon,
+                    haversine_m(self._current_lat, self._current_lon, initial_lat, initial_lon),
                 )
                 # Process the fresh coordinates through normal movement detection
                 await self._process_coordinate_pair()
@@ -435,13 +422,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self._current_lat = lat
             self._current_lon = lon
             self.schedule_update_ha_state()
-            _LOGGER.debug(
-                "GPS initial for %s (%s): lat=%.6f lon=%.6f",
-                self._redacted_vin,
-                reason,
-                lat,
-                lon,
-            )
+            _LOGGER.debug("GPS initial for %s (%s)", self._redacted_vin, reason)
             return
 
         # GPS didn't show enough distance — check if vehicle is moving
@@ -457,11 +438,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             self.schedule_update_ha_state()
 
         _LOGGER.debug(
-            "GPS paired for %s (%s): lat=%.6f lon=%.6f%s",
+            "GPS paired for %s (%s)%s",
             self._redacted_vin,
             reason,
-            lat,
-            lon,
             "" if position_changed else " (position unchanged)",
         )
 

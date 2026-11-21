@@ -45,7 +45,7 @@ from . import stream_reconnect
 from .const import LOCK_ACQUIRE_TIMEOUT
 from .debug import debug_enabled
 from .stream_circuit_breaker import CircuitBreaker
-from .utils import redact_identifier, redact_vin_in_text, redact_vin_payload
+from .utils import redact_identifier, redact_location_in_text, redact_vin_in_text, redact_vin_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -847,7 +847,7 @@ class CardataStreamManager:
                 _LOGGER.debug(
                     "BMW MQTT message on %s: %s",
                     self._hide_gcid(msg.topic),
-                    redact_vin_payload(payload),
+                    redact_vin_payload(redact_location_in_text(payload)),
                 )
             if not self._message_callback:
                 return

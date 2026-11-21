@@ -193,3 +193,19 @@ class TestRedactIdentifier:
     def test_nothing_to_redact(self):
         assert utils.redact_identifier(None) == "<none>"
         assert utils.redact_identifier("") == "<none>"
+
+
+class TestRedactLocation:
+    """The position never reaches the logs."""
+
+    def test_both_coordinates_are_hidden_and_the_rest_kept(self):
+        payload = (
+            '{"data": {"vehicle.cabin.infotainment.navigation.currentLocation.latitude": '
+            '{"timestamp": "2026-11-21T08:00:00Z", "value": 48.137154}, '
+            '"vehicle.cabin.infotainment.navigation.currentLocation.longitude": {"value": -11.5761}, '
+            '"vehicle.cabin.infotainment.navigation.currentLocation.heading": {"value": 90}}}'
+        )
+        redacted = utils.redact_location_in_text(payload)
+        assert "48.137154" not in redacted and "11.5761" not in redacted
+        assert 'currentLocation.heading": {"value": 90}' in redacted
+        assert '"timestamp": "2026-11-21T08:00:00Z"' in redacted
