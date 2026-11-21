@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Aktivér dækdiagnose (dagligt API-kald)",
           "enable_trip_end_polling": "Aktivér polling ved afslutning af køretur",
           "trip_poll_cooldown_minutes": "Ventetid mellem polls ved afslutning af køretur (minutter)",
-          "enable_external_power_injection": "Brug ekstern elmåler til opladning"
+          "enable_external_power_injection": "Brug ekstern elmåler til opladning",
+          "extra_descriptors": "Ekstra telematiske deskriptorer"
         },
         "data_description": {
           "enable_charging_history": "Henter historik over ladesessioner fra BMW én gang dagligt. Bruger 1 ekstra API-kald pr. køretøj pr. dag fra din daglige kvote på 50 kald.",
           "enable_tyre_diagnosis": "Henter data om dækkenes tilstand og slid fra BMW én gang dagligt. Bruger 1 ekstra API-kald pr. køretøj pr. dag fra din daglige kvote på 50 kald.",
           "enable_trip_end_polling": "Når funktionen er aktiveret, udløses et øjeblikkeligt API-kald, hver gang køretøjet stopper. Deaktivér dette, hvis du kører mange korte ture og rammer den daglige API-grænse. Planlagte polls fortsætter uanset denne indstilling.",
           "trip_poll_cooldown_minutes": "Minimum ventetid mellem polls ved afslutning af køretur for samme køretøj (standard: 10). Øg denne værdi for at reducere API-forbruget ved mange korte ture.",
-          "enable_external_power_injection": "Tillad en automation at sende lokalt målt ladeeffekt til SOC-forudsigelsen via tjenesten cardata.update_charging_power. Når friske lokale målinger modtages, undertrykkes BMW's V×A-baserede måling. Lad denne være deaktiveret, medmindre du bruger en smart elmåler og har tilsluttet den."
+          "enable_external_power_injection": "Tillad en automation at sende lokalt målt ladeeffekt til SOC-forudsigelsen via tjenesten cardata.update_charging_power. Når friske lokale målinger modtages, undertrykkes BMW's V×A-baserede måling. Lad denne være deaktiveret, medmindre du bruger en smart elmåler og har tilsluttet den.",
+          "extra_descriptors": "Yderligere BMW-deskriptorer, der skal hentes, adskilt med kommaer (f.eks. vehicle.electricalSystem.battery.serviceDemand.recharge). Gemmes i dine indstillinger, så de overlever opdateringer af integrationen. Ændring af listen genopretter HV-containeren. Hvis BMW afviser en deskriptor, fortsætter integrationen med sin standardliste og viser en meddelelse."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Sæt flueben i feltet for at bekræfte.",
       "reset_failed": "Nulstilling af container mislykkedes: {error}",
       "missing_token": "Der er ingen adgangstoken. Godkend integrationen igen.",
-      "cleanup_failed": "Oprydning af entiteter mislykkedes: {error}"
+      "cleanup_failed": "Oprydning af entiteter mislykkedes: {error}",
+      "invalid_descriptor": "Hver deskriptor skal starte med \"vehicle.\""
     },
     "abort": {
       "auth_failed": "BMW-godkendelsessvaret var ufuldstændigt (manglende tokens). Prøv igen.",

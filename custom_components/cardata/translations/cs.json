@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Zapnout diagnostiku pneumatik (denní API požadavek)",
           "enable_trip_end_polling": "Zapnout dotazování po skončení jízdy",
           "trip_poll_cooldown_minutes": "Prodleva mezi dotazy po skončení jízdy (minuty)",
-          "enable_external_power_injection": "Použít externí měřič výkonu pro nabíjení"
+          "enable_external_power_injection": "Použít externí měřič výkonu pro nabíjení",
+          "extra_descriptors": "Další telematické deskriptory"
         },
         "data_description": {
           "enable_charging_history": "Jednou denně načte z BMW historii nabíjecích relací. Spotřebuje 1 API požadavek navíc na vozidlo a den z vaší denní kvóty 50 požadavků.",
           "enable_tyre_diagnosis": "Jednou denně načte z BMW data o stavu a opotřebení pneumatik. Spotřebuje 1 API požadavek navíc na vozidlo a den z vaší denní kvóty 50 požadavků.",
           "enable_trip_end_polling": "Když je zapnuto, spustí okamžitý API dotaz pokaždé, když vozidlo zastaví. Vypněte to, pokud jezdíte hodně krátkých jízd a vyčerpáváte denní limit API. Plánované dotazování běží nezávisle.",
           "trip_poll_cooldown_minutes": "Minimální prodleva mezi dotazy po skončení jízdy u stejného vozidla (výchozí: 10). Zvyšte ji, abyste snížili spotřebu API při častých krátkých jízdách.",
-          "enable_external_power_injection": "Umožní automatizaci posílat lokálně naměřený nabíjecí výkon do predikce SOC pomocí služby cardata.update_charging_power. Dokud přicházejí čerstvé lokální hodnoty, hodnota V×A z BMW se potlačí. Nechte vypnuté, pokud nemáte chytrý elektroměr a nezapojili jste ho."
+          "enable_external_power_injection": "Umožní automatizaci posílat lokálně naměřený nabíjecí výkon do predikce SOC pomocí služby cardata.update_charging_power. Dokud přicházejí čerstvé lokální hodnoty, hodnota V×A z BMW se potlačí. Nechte vypnuté, pokud nemáte chytrý elektroměr a nezapojili jste ho.",
+          "extra_descriptors": "Další deskriptory BMW, které se mají dotazovat, oddělené čárkami (např. vehicle.electricalSystem.battery.serviceDemand.recharge). Ukládají se ve vašem nastavení, takže přetrvají aktualizace integrace. Změna seznamu znovu vytvoří HV kontejner. Pokud BMW některý deskriptor odmítne, integrace dál dotazuje svůj standardní seznam a zobrazí oznámení."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Pro potvrzení zaškrtněte políčko.",
       "reset_failed": "Resetování kontejneru selhalo: {error}",
       "missing_token": "Není k dispozici žádný přístupový token. Autorizujte integraci znovu.",
-      "cleanup_failed": "Vyčištění entit selhalo: {error}"
+      "cleanup_failed": "Vyčištění entit selhalo: {error}",
+      "invalid_descriptor": "Každý deskriptor musí začínat \"vehicle.\""
     },
     "abort": {
       "auth_failed": "Autorizační odpověď BMW byla neúplná (chybí tokeny). Zkuste to prosím znovu.",

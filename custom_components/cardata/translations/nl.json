@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Bandendiagnose inschakelen (dagelijkse API-aanroep)",
           "enable_trip_end_polling": "Ritbeëindiging polling inschakelen",
           "trip_poll_cooldown_minutes": "Ritbeëindiging polling wachttijd (minuten)",
-          "enable_external_power_injection": "Externe vermogensmeter gebruiken voor laden"
+          "enable_external_power_injection": "Externe vermogensmeter gebruiken voor laden",
+          "extra_descriptors": "Extra telematica-descriptors"
         },
         "data_description": {
           "enable_charging_history": "Haalt eenmaal per dag de geschiedenis van laadsessies op bij BMW. Gebruikt 1 extra API-aanroep per voertuig per dag uit uw dagelijkse quotum van 50 aanroepen.",
           "enable_tyre_diagnosis": "Haalt eenmaal per dag gegevens over bandenconditie en slijtage op bij BMW. Gebruikt 1 extra API-aanroep per voertuig per dag uit uw dagelijkse quotum van 50 aanroepen.",
           "enable_trip_end_polling": "Wanneer ingeschakeld, wordt er onmiddellijk een API-aanroep gedaan telkens wanneer het voertuig stopt. Schakel dit uit als u veel korte ritten maakt en de dagelijkse API-limiet bereikt. De geplande polling loopt hoe dan ook door.",
           "trip_poll_cooldown_minutes": "Minimale wachttijd tussen ritbeëindiging-pollings voor hetzelfde voertuig (standaard: 10). Verhoog deze om het API-gebruik bij frequente korte ritten te verminderen.",
-          "enable_external_power_injection": "Staat een automatisering toe om lokaal gemeten laadvermogen naar de SOC-voorspelling te sturen via de service cardata.update_charging_power. Zolang er verse lokale metingen binnenkomen, wordt de V×A-waarde van BMW onderdrukt. Laat dit uitgeschakeld tenzij u een slimme meter gebruikt en deze hebt aangesloten."
+          "enable_external_power_injection": "Staat een automatisering toe om lokaal gemeten laadvermogen naar de SOC-voorspelling te sturen via de service cardata.update_charging_power. Zolang er verse lokale metingen binnenkomen, wordt de V×A-waarde van BMW onderdrukt. Laat dit uitgeschakeld tenzij u een slimme meter gebruikt en deze hebt aangesloten.",
+          "extra_descriptors": "Extra BMW-descriptors om op te vragen, gescheiden door komma's (bijv. vehicle.electricalSystem.battery.serviceDemand.recharge). Ze worden in je instellingen opgeslagen en blijven dus behouden bij updates van de integratie. Het wijzigen van de lijst maakt de HV-container opnieuw aan. Als BMW een descriptor weigert, blijft de integratie zijn standaardlijst opvragen en toont een melding."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Vink het vakje aan om te bevestigen.",
       "reset_failed": "Container resetten mislukt: {error}",
       "missing_token": "Er is geen toegangstoken beschikbaar. Autoriseer de integratie opnieuw.",
-      "cleanup_failed": "Entiteiten opruimen mislukt: {error}"
+      "cleanup_failed": "Entiteiten opruimen mislukt: {error}",
+      "invalid_descriptor": "Elke descriptor moet beginnen met \"vehicle.\""
     },
     "abort": {
       "auth_failed": "De BMW-goedkeuring was onvolledig (ontbrekende tokens). Probeer het opnieuw.",

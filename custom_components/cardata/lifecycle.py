@@ -82,6 +82,7 @@ from .const import (
     SOC_LEARNING_STORAGE_KEY,
     SOC_LEARNING_STORAGE_VERSION,
     has_hv_battery,
+    hv_descriptors,
 )
 from .container import CardataContainerManager
 from .coordinator import CardataCoordinator
@@ -382,6 +383,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             session=session,
             entry_id=entry.entry_id,
             initial_container_id=data.get("hv_container_id"),
+            descriptors=hv_descriptors(entry.options),
         )
 
         # Set up stream manager
@@ -443,7 +445,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Ensure HV container if token refresh didn't succeed, or once after an
         # update changed the descriptor list (no API call when it matches).
-        if container_manager and (not refreshed_token or container_signature_outdated(entry.data)):
+        if container_manager and (not refreshed_token or container_signature_outdated(entry.data, entry.options)):
             container_ready = await async_ensure_container_for_entry(entry, hass, container_manager)
             if not container_ready and not container_manager.container_id:
                 _LOGGER.error(

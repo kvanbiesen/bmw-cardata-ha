@@ -38,14 +38,16 @@
           "enable_tyre_diagnosis": "Habilitar diagnóstico de neumáticos (consulta diaria a la API)",
           "enable_trip_end_polling": "Activar consulta al final del viaje",
           "trip_poll_cooldown_minutes": "Tiempo entre consultas de fin de viaje (minutos)",
-          "enable_external_power_injection": "Usar un medidor de potencia externo para la carga"
+          "enable_external_power_injection": "Usar un medidor de potencia externo para la carga",
+          "extra_descriptors": "Descriptores telemáticos adicionales"
         },
         "data_description": {
           "enable_charging_history": "Obtiene de BMW el historial de sesiones de carga una vez al día. Consume 1 llamada adicional a la API por vehículo y día de su cuota diaria de 50 llamadas.",
           "enable_tyre_diagnosis": "Obtiene de BMW los datos de estado y desgaste de los neumáticos una vez al día. Consume 1 llamada adicional a la API por vehículo y día de su cuota diaria de 50 llamadas.",
           "enable_trip_end_polling": "Cuando está habilitado, lanza una consulta inmediata a la API cada vez que el vehículo se detiene. Deshabilítelo si hace muchos trayectos cortos y alcanza el límite diario de la API. La consulta programada se ejecuta igualmente.",
           "trip_poll_cooldown_minutes": "Espera mínima entre consultas de fin de viaje para el mismo vehículo (predeterminado: 10). Auméntela para reducir el uso de la API en trayectos cortos frecuentes.",
-          "enable_external_power_injection": "Permite que una automatización envíe la potencia de carga medida localmente al predictor de SOC mediante el servicio cardata.update_charging_power. Mientras lleguen lecturas locales recientes, se ignora el valor V×A procedente de BMW. Déjelo deshabilitado salvo que use un medidor inteligente y lo haya conectado."
+          "enable_external_power_injection": "Permite que una automatización envíe la potencia de carga medida localmente al predictor de SOC mediante el servicio cardata.update_charging_power. Mientras lleguen lecturas locales recientes, se ignora el valor V×A procedente de BMW. Déjelo deshabilitado salvo que use un medidor inteligente y lo haya conectado.",
+          "extra_descriptors": "Descriptores de BMW adicionales que consultar, separados por comas (p. ej. vehicle.electricalSystem.battery.serviceDemand.recharge). Se guardan en tu configuración, por lo que se conservan tras las actualizaciones de la integración. Cambiar la lista vuelve a crear el contenedor HV. Si BMW rechaza un descriptor, la integración sigue consultando su lista estándar y muestra una notificación."
         }
       },
       "action_mqtt_broker": {
@@ -80,7 +82,8 @@
       "confirm": "Marca la casilla para confirmar.",
       "reset_failed": "Error al restablecer el contenedor: {error}",
       "missing_token": "No hay ningún token de acceso. Vuelve a autorizar la integración.",
-      "cleanup_failed": "Error al limpiar las entidades: {error}"
+      "cleanup_failed": "Error al limpiar las entidades: {error}",
+      "invalid_descriptor": "Cada descriptor debe empezar por \"vehicle.\""
     },
     "abort": {
       "auth_failed": "La respuesta de autorización de BMW estaba incompleta (faltan tokens). Inténtalo de nuevo.",
