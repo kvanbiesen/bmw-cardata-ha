@@ -29,7 +29,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.cardata import coordinator_housekeeping as housekeeping
-from custom_components.cardata.const import DESC_CHARGING_STATUS
+from custom_components.cardata.const import DESC_CHARGING_STATUS, DOMAIN
 from custom_components.cardata.descriptor_state import DescriptorState
 from custom_components.cardata.soc_prediction import SOCPredictor
 
@@ -78,3 +78,31 @@ def test_a_charge_not_anchored_yet_is_retried():
     anchor = _reconnect(predictor, "CHARGINGACTIVE")
 
     anchor.assert_called_once()
+
+
+def test_a_charge_end_poll_refused_by_its_cooldown_is_asked_again():
+    """The hourly cooldown can refuse it; the next heartbeat must still ask."""
+    predictor = SOCPredictor()
+    predictor.update_charging_status(VIN, "CHARGINGACTIVE")
+    predictor.anchor_session(VIN, 50.0, 30.0, "AC")
+    coordinator = MagicMock()
+    coordinator._lock = asyncio.Lock()
+    coordinator._soc_predictor = predictor
+    coordinator._charge_end_poll_asked = set()
+    coordinator.data = {VIN: {}}
+    coordinator._pending_manager.add_update.return_value = False
+    coordinator._cleanup_counter = 0
+    coordinator._CLEANUP_INTERVAL = 1000
+    runtime = MagicMock()
+    runtime.request_charge_end_poll.side_effect = [False, True]
+    coordinator.hass.data = {DOMAIN: {coordinator.entry_id: runtime}}
+
+    with (
+        patch.object(housekeeping, "charge_should_have_ended", return_value=True),
+        patch.object(housekeeping, "async_check_stale_pending_updates", AsyncMock()),
+    ):
+        for _ in range(3):
+            asyncio.run(housekeeping.async_log_diagnostics(coordinator))
+
+    assert runtime.request_charge_end_poll.call_count == 2
+    assert coordinator._charge_end_poll_asked == {VIN}

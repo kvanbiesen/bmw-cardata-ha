@@ -195,8 +195,10 @@ async def async_log_diagnostics(coordinator: CardataCoordinator) -> None:
         runtime = coordinator.hass.data.get(DOMAIN, {}).get(coordinator.entry_id)
         if runtime is None:
             continue
-        coordinator._charge_end_poll_asked.add(vin)
+        # Marked only once queued: a poll the hourly cooldown refuses is asked
+        # again on a later heartbeat rather than never for this charge.
         if runtime.request_charge_end_poll(vin):
+            coordinator._charge_end_poll_asked.add(vin)
             _LOGGER.debug(
                 "Charge running on %s should be over, requesting API poll",
                 redact_vin(vin),
