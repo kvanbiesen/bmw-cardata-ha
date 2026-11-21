@@ -236,6 +236,7 @@ class CardataEntity(RestoreEntity):
             self._name_unsub = None
         await super().async_will_remove_from_hass()
 
+    @callback
     def _handle_vehicle_name(self, vin: str, name: str) -> None:
         # Coordinator sends canonical VIN; resolve our vin and compare
         resolved_vin = self._resolve_vin()

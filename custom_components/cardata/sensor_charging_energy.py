@@ -38,6 +38,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfEnergy
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
@@ -175,6 +176,7 @@ class CardataChargingEnergySensor(CardataEntity, RestoreEntity, SensorEntity):
         self._counted = None
         return True
 
+    @callback
     def _handle_update(self, vin: str) -> None:
         """Take in a fresh charging history fetch."""
         if vin != self._vin:
