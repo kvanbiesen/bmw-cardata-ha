@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -106,12 +107,25 @@ CLEAN_CONTAINERS_SCHEMA = vol.Schema(
     }
 )
 
+
+def _finite_kw(value: Any) -> float:
+    """Validate a power reading as a finite number of kW.
+
+    Coerce alone takes "nan" and "inf", which would stay in the session's
+    energy for the rest of the charge.
+    """
+    power = float(vol.Coerce(float)(value))
+    if not math.isfinite(power):
+        raise vol.Invalid("expected a finite power in kW")
+    return power
+
+
 UPDATE_CHARGING_POWER_SCHEMA = vol.Schema(
     {
         vol.Optional("entry_id"): str,
         vol.Required("vin"): str,
-        vol.Required("power_kw"): vol.Coerce(float),
-        vol.Optional("aux_power_kw", default=0.0): vol.Coerce(float),
+        vol.Required("power_kw"): _finite_kw,
+        vol.Optional("aux_power_kw", default=0.0): _finite_kw,
     }
 )
 
@@ -621,16 +635,18 @@ async def async_handle_update_charging_power(call: ServiceCall) -> None:
         _LOGGER.error("Cardata update_charging_power: invalid or missing VIN")
         return
 
-    power_kw = float(call.data["power_kw"])
-    if power_kw < 0:
+    # A meter can dip just below zero at idle. Such a reading is skipped
+    # rather than refused, which would fail the automation calling it.
+    power_kw = call.data["power_kw"]
+    aux_power_kw = call.data["aux_power_kw"]
+    if power_kw < 0 or aux_power_kw < 0:
         _LOGGER.error(
-            "Cardata update_charging_power: negative power (%.3f kW) rejected for %s",
+            "Cardata update_charging_power: negative power (%.3f kW, aux %.3f kW) ignored for %s",
             power_kw,
+            aux_power_kw,
             redact_vin(vin),
         )
         return
-
-    aux_power_kw = float(call.data.get("aux_power_kw", 0.0) or 0.0)
 
     coordinator = getattr(runtime, "coordinator", None)
     soc_predictor = getattr(coordinator, "_soc_predictor", None) if coordinator else None
