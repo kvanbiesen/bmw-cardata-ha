@@ -45,6 +45,8 @@ from .const import (
     DOMAIN,
     ERR_TOKEN_REFRESH_IN_PROGRESS,
     HV_BATTERY_DESCRIPTORS,
+    HV_CONTAINER_CREATE_FAILED_KEY,
+    HV_CONTAINER_CREATE_RETRY_SECONDS,
     LOCK_ACQUIRE_TIMEOUT,
 )
 from .container import CardataContainerManager
@@ -583,6 +585,19 @@ async def async_ensure_container_for_entry(
         _LOGGER.debug("Using existing container %s (signature matches)", hv_container_id)
         return True
 
+    # The in-memory rate limiter starts over with every setup, and setup runs
+    # this before there is one at all. Without a note of the last failure, a
+    # create BMW keeps refusing would be tried again on every restart, reload
+    # and setup retry, two calls each time.
+    failed_at = data.get(HV_CONTAINER_CREATE_FAILED_KEY)
+    if isinstance(failed_at, (int, float)) and 0 <= time.time() - failed_at < HV_CONTAINER_CREATE_RETRY_SECONDS:
+        _LOGGER.debug(
+            "Not creating the HV container for entry %s: the last attempt failed %.0f seconds ago",
+            entry.entry_id,
+            time.time() - failed_at,
+        )
+        return False
+
     # Log reason for recreation
     if hv_container_id and stored_signature != desired_signature:
         _LOGGER.info(
@@ -606,10 +621,17 @@ async def async_ensure_container_for_entry(
             entry.entry_id,
             err,
         )
+        # Only a create BMW turned down is held back. A timeout, a network
+        # error or the local limiter carry no status, a stale token (401) is
+        # refreshed, a rate limit (429) has its own backoff and a server error
+        # passes, and the next attempt may well succeed after any of them.
+        if err.status is not None and 400 <= err.status < 500 and err.status not in (401, 429):
+            await async_update_entry_data(hass, entry, {HV_CONTAINER_CREATE_FAILED_KEY: time.time()})
         return False
 
     if not container_id:
         _LOGGER.error("Container creation returned no ID")
+        await async_update_entry_data(hass, entry, {HV_CONTAINER_CREATE_FAILED_KEY: time.time()})
         return False
 
     actual_signature = container_manager.container_signature or desired_signature
@@ -626,6 +648,7 @@ async def async_ensure_container_for_entry(
         "hv_container_id": container_id,
         "hv_descriptor_signature": actual_signature,
         "container_ids": [container_id],
+        HV_CONTAINER_CREATE_FAILED_KEY: None,
     }
     await async_update_entry_data(hass, entry, update_data)
     _LOGGER.info("Ensured HV container %s for entry %s", container_id, entry.entry_id)

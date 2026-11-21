@@ -27,6 +27,7 @@
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -422,6 +423,52 @@ class TestMissingHvContainer:
 
         assert ensure_mock.await_count == 1
         assert first == second == "hv-1"
+
+    async def test_a_failed_create_is_not_tried_again_within_the_hour(self, setup):
+        """The in-memory limiter starts over with each setup, so the failure is kept in the entry."""
+        hass, entry, runtime = setup
+        reset = AsyncMock(side_effect=CardataContainerError("HTTP 400: CU-400", status=400))
+        with (
+            self.valid_token(),
+            patch.object(CardataContainerManager, "async_reset_hv_container", reset),
+            patch_request(),
+        ):
+            await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+            await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+
+        assert reset.await_count == 1
+
+    @pytest.mark.parametrize(
+        "error",
+        [CardataContainerError("Request timed out"), CardataContainerError("HTTP 503", status=503)],
+    )
+    async def test_a_create_that_never_reached_bmw_is_tried_again(self, setup, error):
+        """A timeout or a server error says nothing about what BMW would answer, so the next poll tries again."""
+        hass, entry, runtime = setup
+        reset = AsyncMock(side_effect=error)
+        with (
+            self.valid_token(),
+            patch.object(CardataContainerManager, "async_reset_hv_container", reset),
+            patch_request(),
+        ):
+            await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+            await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+
+        assert reset.await_count == 2
+
+    async def test_a_create_an_hour_after_a_failure_goes_ahead(self, setup):
+        hass, entry, runtime = setup
+        entry.data = {**entry.data, "hv_container_create_failed_at": time.time() - 3601}
+        reset = AsyncMock(return_value="hv-new")
+        with (
+            self.valid_token(),
+            patch.object(CardataContainerManager, "async_reset_hv_container", reset),
+            patch_request(response(200, json.dumps({"telematicData": {}}))),
+        ):
+            await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+
+        assert reset.await_count == 1
+        assert entry.data["hv_container_create_failed_at"] is None
 
     async def test_no_attempt_while_rate_limited(self, setup):
         hass, entry, runtime = setup

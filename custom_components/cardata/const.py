@@ -328,6 +328,10 @@ CHARGING_HISTORY_LAST_FETCH_KEY = "charging_history_last_fetch"
 TYRE_DIAGNOSIS_LAST_FETCH_KEY = "tyre_diagnosis_last_fetch"
 # Unix time of the last successful telematic poll per VIN, kept across restarts
 LAST_POLL_BY_VIN_KEY = "last_poll_by_vin"
+# Unix time of the last HV container create that failed, kept across restarts,
+# and how long the automatic attempts wait after one
+HV_CONTAINER_CREATE_FAILED_KEY = "hv_container_create_failed_at"
+HV_CONTAINER_CREATE_RETRY_SECONDS = 3600
 
 # The string sensor already owns "{vin}_{descriptor}", and frontend_cards maps a
 # unique_id to an entity_id without looking at the domain, so a shared id would
