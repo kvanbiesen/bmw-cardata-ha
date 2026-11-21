@@ -67,6 +67,7 @@ from .device_info import (
     restore_descriptor_state as _di_restore_descriptor_state,
 )
 from .fault_memory import expand_fault_memory
+from .geo_utils import paired_location
 from .magic_soc import MagicSOCPredictor
 from .message_utils import (
     is_within_catalogue_limits,
@@ -295,10 +296,24 @@ class CardataCoordinator:
 
     # --- Derived motion detection from GPS ---
 
+    def _feed_paired_location(self, vin: str) -> None:
+        """Hand the motion detector the vehicle's position once both halves of a fix are in.
+
+        Done here rather than in the device tracker, which Home Assistant never
+        adds when the user disables it: motion detection, trip-end polls and
+        Magic SOC driving sessions all hang off it.
+        """
+        vehicle_state = self.data.get(vin, {})
+        position = paired_location(
+            vehicle_state.get(LOCATION_LATITUDE_DESCRIPTOR), vehicle_state.get(LOCATION_LONGITUDE_DESCRIPTOR)
+        )
+        if position is not None:
+            self._update_location_tracking(vin, *position)
+
     def _update_location_tracking(self, vin: str, lat: float, lon: float) -> bool:
         """Update location tracking and handle isMoving state changes.
 
-        Called by the device tracker whenever a valid GPS pair arrives.
+        Called whenever a valid GPS pair arrives.
         Feeds the motion detector, handles isMoving entity creation and
         state change dispatch, and updates Magic SOC GPS tracking.
 
@@ -677,6 +692,8 @@ class CardataCoordinator:
                 vin, data, is_telematic=is_telematic
             )
 
+        if immediate_updates:
+            self._feed_paired_location(vin)
         for update_vin, descriptor in immediate_updates:
             self._safe_dispatcher_send(self.signal_update, update_vin, descriptor)
 

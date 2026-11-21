@@ -405,3 +405,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     for vin, descriptor in coordinator.iter_descriptors(binary=False):
         if descriptor in OPENING_STATUS_DESCRIPTORS:
             ensure_entity(vin, descriptor)
+
+    # The coordinator announces the derived isMoving sensor on a vehicle's
+    # first GPS fix, which can come before this platform listened: from the
+    # bootstrap seed, or the stream connecting before the platforms load.
+    for vin in coordinator._motion_detector.get_tracked_vins():
+        if coordinator._motion_detector.has_signaled_entity(vin):
+            ensure_entity(vin, "vehicle.isMoving", from_signal=True)

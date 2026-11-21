@@ -31,7 +31,6 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +54,7 @@ from .const import (
 )
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity
-from .geo_utils import haversine_m
+from .geo_utils import coordinates_paired, haversine_m
 from .metadata import get_images_directory
 from .runtime import CardataRuntimeData
 from .utils import async_wait_for_bootstrap, redact_vin
@@ -156,9 +155,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     _attr_translation_key = "car"
     _NAME_WAIT = 2.0  # seconds to wait for coordinator name before continuing
 
-    # Timing thresholds for coordinate pairing logic
-    _PAIR_WINDOW_ARRIVAL = 30.0  # seconds - arrival-time fallback window
-    _PAIR_WINDOW_BMW_TS = 5.0  # seconds - BMW payload timestamp pairing
     # seconds (10 minutes) - discard very old coordinates
     _MAX_STALE_TIME = 600
 
@@ -374,56 +370,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         # Schedule async processing - hass.add_job is thread-safe
         self.hass.add_job(self._process_coordinate_pair)
 
-    @staticmethod
-    def _parse_bmw_timestamp(ts: str | None) -> datetime | None:
-        """Parse a BMW ISO-8601 timestamp string into a datetime."""
-        if not ts:
-            return None
-        try:
-            return datetime.fromisoformat(ts)
-        except (ValueError, TypeError):
-            return None
-
-    def _check_coordinate_pairing(self, lat_time: float, lon_time: float) -> tuple[bool, str]:
-        """Check if lat/lon form a valid pair using BMW timestamps or arrival time.
-
-        Returns (accepted, reason_string).
-        """
-        redacted_vin = self._redacted_vin
-
-        # Primary: compare BMW payload timestamps (same GPS fix = same/close timestamp)
-        lat_ts = self._parse_bmw_timestamp(self._last_lat_bmw_ts)
-        lon_ts = self._parse_bmw_timestamp(self._last_lon_bmw_ts)
-
-        if lat_ts is not None and lon_ts is not None:
-            try:
-                bmw_diff = abs((lat_ts - lon_ts).total_seconds())
-            except TypeError:
-                # Mixed aware/naive timestamps - skip to arrival-time fallback
-                bmw_diff = None
-            if bmw_diff is not None:
-                if bmw_diff <= self._PAIR_WINDOW_BMW_TS:
-                    return True, f"BMW timestamp paired (Δts={bmw_diff:.1f}s)"
-                _LOGGER.debug(
-                    "BMW timestamps too far apart for %s (Δts=%.1fs > %.1fs) - falling back to arrival time",
-                    redacted_vin,
-                    bmw_diff,
-                    self._PAIR_WINDOW_BMW_TS,
-                )
-
-        # Fallback: arrival-time pairing with relaxed window
-        arrival_diff = abs(lat_time - lon_time)
-        if arrival_diff <= self._PAIR_WINDOW_ARRIVAL:
-            return True, f"arrival-time paired (Δt={arrival_diff:.1f}s)"
-
-        _LOGGER.debug(
-            "Coordinates too far apart for %s (Δt=%.1fs > %.1fs window, no BMW timestamp match) - waiting for pair",
-            redacted_vin,
-            arrival_diff,
-            self._PAIR_WINDOW_ARRIVAL,
-        )
-        return False, ""
-
     async def _process_coordinate_pair(self) -> None:
         """Process coordinate pair with intelligent pairing, smoothing, and movement threshold."""
         lat = self._last_lat
@@ -455,8 +401,9 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             return
 
         # Check coordinate pairing via BMW timestamps or arrival time
-        accepted, pair_method = self._check_coordinate_pairing(lat_time, lon_time)
+        accepted, pair_method = coordinates_paired(self._last_lat_bmw_ts, self._last_lon_bmw_ts, lat_time, lon_time)
         if not accepted:
+            _LOGGER.debug("Coordinates for %s do not pair (%s) - waiting for pair", redacted_vin, pair_method)
             return
 
         # Calculate distance from current position
@@ -470,8 +417,6 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
             f"paired ({pair_method}, {distance:.1f}m)" if self._current_lat is not None else f"initial ({pair_method})"
         )
 
-        # Always propagate paired coordinates to the motion detector
-        # (keeps GPS freshness current, feeds park readings even for 0m updates)
         # Only update HA device tracker position when movement exceeds threshold
         # or vehicle is confirmed moving (mileage fallback for sparse GPS)
         await self._apply_new_coordinates(lat, lon, update_reason, position_changed)
@@ -479,14 +424,11 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
     async def _apply_new_coordinates(self, lat: float, lon: float, reason: str, position_changed: bool = False) -> None:
         """Apply paired GPS coordinates.
 
-        Always feeds the coordinator's location tracking (motion detector,
-        GPS freshness, park readings). Only updates the HA device tracker
-        position when movement exceeds the GPS threshold or the vehicle is
-        confirmed moving by the motion detector (which includes mileage).
+        Only updates the HA device tracker position when movement exceeds the
+        GPS threshold or the vehicle is confirmed moving by the motion
+        detector (which includes mileage). The coordinator feeds the motion
+        detector itself, so it works with this entity disabled.
         """
-        # Feed the coordinator — it handles motion detection and isMoving
-        self._coordinator._update_location_tracking(self._vin, lat, lon)
-
         if self._current_lat is None:
             # First GPS ever (no restored state) — establish reference point
             self._current_lat = lat

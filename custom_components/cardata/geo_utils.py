@@ -28,6 +28,14 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime
+from typing import Any
+
+# BMW sends a fix's latitude and longitude as two messages. Halves whose BMW
+# timestamps are this close belong to one fix; without usable timestamps,
+# halves that arrived this close together are taken as one.
+PAIR_WINDOW_BMW_TS = 5.0
+PAIR_WINDOW_ARRIVAL = 30.0
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -39,3 +47,61 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def coordinates_paired(
+    lat_timestamp: str | None,
+    lon_timestamp: str | None,
+    lat_arrival: float,
+    lon_arrival: float,
+) -> tuple[bool, str]:
+    """Tell whether a latitude and a longitude belong to the same GPS fix.
+
+    Returns whether they do and how that was decided, for the logs.
+    """
+    lat_ts = _parse_timestamp(lat_timestamp)
+    lon_ts = _parse_timestamp(lon_timestamp)
+    bmw_note = ""
+    if lat_ts is not None and lon_ts is not None:
+        try:
+            bmw_diff = abs((lat_ts - lon_ts).total_seconds())
+        except TypeError:
+            # Naive and aware timestamps mixed: fall back to arrival time
+            bmw_diff = None
+        if bmw_diff is not None:
+            if bmw_diff <= PAIR_WINDOW_BMW_TS:
+                return True, f"BMW timestamp paired (Δts={bmw_diff:.1f}s)"
+            bmw_note = f"BMW Δts={bmw_diff:.1f}s, "
+
+    arrival_diff = abs(lat_arrival - lon_arrival)
+    if arrival_diff <= PAIR_WINDOW_ARRIVAL:
+        return True, f"{bmw_note}arrival-time paired (Δt={arrival_diff:.1f}s)"
+    return False, f"{bmw_note}arrived {arrival_diff:.1f}s apart"
+
+
+def paired_location(lat_state: Any, lon_state: Any) -> tuple[float, float] | None:
+    """Return the position two stored coordinate readings give, if they form one fix.
+
+    Each reading carries value, BMW timestamp and last_seen arrival time.
+    """
+    if lat_state is None or lon_state is None:
+        return None
+    try:
+        lat = float(lat_state.value)
+        lon = float(lon_state.value)
+    except (TypeError, ValueError):
+        return None
+    # (0, 0) is what an invalid fix reads
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0.0 and lon == 0.0):
+        return None
+    paired, _ = coordinates_paired(lat_state.timestamp, lon_state.timestamp, lat_state.last_seen, lon_state.last_seen)
+    return (lat, lon) if paired else None
