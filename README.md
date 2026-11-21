@@ -70,7 +70,7 @@ On the integration main page, there is now a "Configure" button. You can use it 
 - **Settings** (toggle optional features like Magic SOC, Charging History, Tyre Diagnosis, trip-end polling cooldown)
 
 And manual API calls, these should be automatically called when needed, but if it seems that your device names aren't being updated, it might be worth it to run these manually.
-- **Initiate vehicles (API)** (fetch all vehicle VINs on your account and create entities)
+- **Log vehicle mappings (API)** (fetch the vehicles mapped to your account and write them to the log, to check which VINs and mapping types BMW reports)
 - **Get basic vehicle information (API)** (fetches vehicle details like model, series, etc. for all known VINs)
 - **Get telematics data (API)** (fetches telematics data from the CarData API)
 

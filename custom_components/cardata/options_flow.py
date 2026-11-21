@@ -74,7 +74,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             menu_options={
                 "action_refresh_tokens": "Refresh tokens",
                 "action_reauth": "Start device authorization again",
-                "action_fetch_mappings": "Initiate vehicles (API)",
+                "action_fetch_mappings": "Log vehicle mappings (API)",
                 "action_fetch_basic": "Get basic vehicle information (API)",
                 "action_fetch_telematic": "Get telematics data (API)",
                 "action_reset_container": "Reset telemetry container",
