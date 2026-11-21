@@ -308,8 +308,14 @@ async def handle_stream_error(
     hass: HomeAssistant,
     entry: ConfigEntry,
     reason: str,
+    *,
+    from_api: bool = False,
 ) -> None:
-    """Handle stream connection errors, managing reauth flow."""
+    """Handle stream connection errors, managing reauth flow.
+
+    from_api marks a token the REST API refused, which says nothing about
+    another client holding the stream and always takes the refresh path.
+    """
     # Check if runtime data exists (entry might be unloading or not yet set up)
     domain_data = hass.data.get(DOMAIN, {})
     runtime: CardataRuntimeData | None = domain_data.get(entry.entry_id)
@@ -344,7 +350,7 @@ async def handle_stream_error(
         try:
             now = time.time()
 
-            if runtime.connection_conflict:
+            if runtime.connection_conflict and not from_api:
                 # Already diagnosed as something other than our credentials, so
                 # a refresh would not change BMW's answer. Keep reconnecting
                 # anyway: getting in is the only way we learn the connection
@@ -442,7 +448,11 @@ async def handle_stream_error(
             elif now - runtime.last_refresh_success < 30:
                 # Refused again with tokens BMW issued moments ago, after a
                 # restart that failed short of BMW's answer: the credentials
-                # are not the problem, so a reauth would not help.
+                # are not the problem, so a reauth would not help. The API
+                # says nothing about the stream, and reports again after its
+                # own backoff, when the refresh path is open again.
+                if from_api:
+                    return
                 _report_connection_conflict(hass, runtime, entry, notification_id)
                 stream_reconnect.restart_refused_stream(runtime.stream)
                 return

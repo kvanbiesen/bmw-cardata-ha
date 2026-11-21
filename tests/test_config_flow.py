@@ -494,6 +494,67 @@ async def test_a_refusal_just_after_a_good_refresh_is_not_a_reauth(hass):
     reconnect.assert_called_once_with(runtime.stream)
 
 
+@pytest.mark.asyncio
+async def test_an_api_refusal_just_after_a_good_refresh_is_not_a_taken_stream(hass):
+    """The poll's refusal says nothing about the stream, which may be up and well."""
+    import time
+
+    from custom_components.cardata import auth
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    entry.add_to_hass(hass)
+    now = time.time()
+    runtime = _unauthorized_runtime(last_refresh_attempt=now - 12, last_refresh_success=now - 12)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+
+    with (
+        patch.object(auth.stream_reconnect, "request_reconnect") as reconnect,
+        patch.object(hass.config_entries.flow, "async_init", AsyncMock()) as flow,
+    ):
+        await auth.handle_stream_error(hass, entry, "unauthorized", from_api=True)
+
+    flow.assert_not_called()
+    assert not runtime.connection_conflict
+    reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("from_api", "refreshed"), [(False, False), (True, True)])
+async def test_a_known_stream_conflict_does_not_hide_an_api_refusal(hass, from_api, refreshed):
+    """Another client on the stream says nothing about a token the API refused."""
+    from custom_components.cardata import auth
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    entry.add_to_hass(hass)
+    runtime = SimpleNamespace(
+        _handling_unauthorized=False,
+        reauth_in_progress=False,
+        reauth_pending=False,
+        reauth_flow_id=None,
+        connection_conflict=True,
+        last_reauth_attempt=0.0,
+        last_refresh_attempt=0.0,
+        last_refresh_success=0.0,
+        unauthorized_protection=MagicMock(),
+        session=MagicMock(),
+        stream=MagicMock(_shut_down=False, async_start=AsyncMock()),
+        container_manager=None,
+    )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+
+    with (
+        patch.object(auth, "refresh_tokens_for_entry", AsyncMock()) as refresh,
+        patch.object(auth.stream_reconnect, "request_reconnect") as reconnect,
+    ):
+        await auth.handle_stream_error(hass, entry, "unauthorized", from_api=from_api)
+
+    assert refresh.called is refreshed
+    # A refreshed token restarts the stream at once; a stream refusal leaves it to the chain.
+    assert runtime.stream.async_start.await_count == int(refreshed)
+    assert reconnect.called is not refreshed
+
+
+@pytest.mark.asyncio
 async def test_mqtt_broker_credentials_can_be_cleared(hass):
     """The frontend leaves an emptied field out, which must not restore the stored value."""
     from custom_components.cardata.const import (

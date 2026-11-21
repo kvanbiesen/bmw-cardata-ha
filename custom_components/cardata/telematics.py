@@ -728,7 +728,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                         )
                         return
                     try:
-                        await handle_stream_error(hass, entry, "unauthorized")
+                        await handle_stream_error(hass, entry, "unauthorized", from_api=True)
                     except Exception as err:
                         _LOGGER.debug("Failed to trigger reauth from telematic poll: %s", err)
             else:
