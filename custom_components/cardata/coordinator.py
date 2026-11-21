@@ -365,7 +365,14 @@ class CardataCoordinator:
         last = self._last_poll_at.get(vin)
         if last is None:
             return None
-        return time.time() - last
+        now = time.time()
+        if last > now:
+            # The clock went back since. Count from now rather than hold the
+            # VIN off the stale list and inside the trip cooldown until the
+            # clock catches up.
+            self._last_poll_at[vin] = now
+            return 0.0
+        return now - last
 
     def record_telematic_poll(self, vin: str) -> None:
         """Record that a telematic API poll succeeded for this VIN."""

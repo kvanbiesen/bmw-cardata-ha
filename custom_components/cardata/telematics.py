@@ -540,6 +540,11 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # Calculate wait time until next check
             backoff_multiplier = 2**consecutive_failures if consecutive_failures > 0 else 1
             current_interval = min(check_interval * backoff_multiplier, max_backoff)
+            # A check time in the future comes from a clock that has since
+            # gone back. Waiting for it to catch up would hold every poll up
+            # by as much, so it counts as a check made now.
+            if last_check_time > now:
+                last_check_time = now
             wait = current_interval - (now - last_check_time)
 
             # Always wait at least 1 second to prevent spin
