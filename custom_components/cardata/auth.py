@@ -349,15 +349,14 @@ async def handle_stream_error(
                 # a refresh would not change BMW's answer. Keep reconnecting
                 # anyway: getting in is the only way we learn the connection
                 # has been freed, and nothing else would clear the verdict.
+                # Through the reconnect chain, which backs off and may already
+                # be running: every refusal reaches this handler, and a start
+                # of its own beside the chain's would double the attempts.
                 _LOGGER.debug(
                     "Stream still refused for entry %s with credentials BMW accepts; retrying without a refresh",
                     entry.entry_id,
                 )
-                try:
-                    await runtime.stream.async_start()
-                except Exception as start_err:
-                    _LOGGER.debug("BMW still refuses the stream for entry %s: %s", entry.entry_id, start_err)
-                    stream_reconnect.recover_failed_start(runtime.stream)
+                stream_reconnect.restart_refused_stream(runtime.stream)
                 return
 
             if runtime.reauth_pending:
@@ -389,6 +388,7 @@ async def handle_stream_error(
                     runtime.reauth_in_progress = False
                     runtime.last_reauth_attempt = 0.0
                     runtime.reauth_pending = False
+                    runtime.last_refresh_success = now
                     _LOGGER.info("BMW credentials refreshed successfully after auth failure")
 
                     # Reconnect MQTT with the new credentials
@@ -397,6 +397,7 @@ async def handle_stream_error(
                     except Exception as start_err:
                         if runtime.stream.credentials_refused:
                             _report_connection_conflict(hass, runtime, entry, notification_id)
+                            stream_reconnect.restart_refused_stream(runtime.stream)
                             return
                         _LOGGER.warning("MQTT reconnect after credential refresh failed: %s", start_err)
                         stream_reconnect.recover_failed_start(runtime.stream)
@@ -414,7 +415,7 @@ async def handle_stream_error(
                         err,
                     )
                     runtime.last_refresh_attempt = 0.0
-                    stream_reconnect.request_reconnect(runtime.stream)
+                    stream_reconnect.restart_refused_stream(runtime.stream)
                     return
 
                 except CardataAuthError as err:
@@ -424,7 +425,11 @@ async def handle_stream_error(
                             "Token refresh skipped for entry %s: another refresh already in progress",
                             entry.entry_id,
                         )
-                        # Don't record as unauthorized attempt - the other refresh will handle it
+                        # Not an unauthorized attempt. The stream is stopped
+                        # though, and the other refresh only restarts it when
+                        # it is the refresh loop with a new token, so hand it to
+                        # the reconnect chain, which picks up the new token.
+                        stream_reconnect.restart_refused_stream(runtime.stream)
                         return
                     _LOGGER.warning(
                         "Token refresh after unauthorized failed for entry %s: %s",
@@ -434,6 +439,13 @@ async def handle_stream_error(
                     if runtime and runtime.unauthorized_protection:
                         runtime.unauthorized_protection.record_attempt()
                         _LOGGER.debug("Token refresh failed, attempt recorded")
+            elif now - runtime.last_refresh_success < 30:
+                # Refused again with tokens BMW issued moments ago, after a
+                # restart that failed short of BMW's answer: the credentials
+                # are not the problem, so a reauth would not help.
+                _report_connection_conflict(hass, runtime, entry, notification_id)
+                stream_reconnect.restart_refused_stream(runtime.stream)
+                return
             else:
                 runtime.reauth_pending = True
                 _LOGGER.debug(

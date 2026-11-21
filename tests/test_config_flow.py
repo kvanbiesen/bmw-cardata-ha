@@ -388,9 +388,10 @@ async def test_only_a_refused_refresh_starts_reauth(hass, refresh_error, reauth)
         connection_conflict=False,
         last_reauth_attempt=0.0,
         last_refresh_attempt=0.0,
+        last_refresh_success=0.0,
         unauthorized_protection=protection,
         session=MagicMock(),
-        stream=MagicMock(),
+        stream=MagicMock(_shut_down=False),
         container_manager=None,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
@@ -407,7 +408,92 @@ async def test_only_a_refused_refresh_starts_reauth(hass, refresh_error, reauth)
     assert reconnect.called is not reauth
 
 
+def _unauthorized_runtime(**overrides):
+    runtime = SimpleNamespace(
+        _handling_unauthorized=False,
+        reauth_in_progress=False,
+        reauth_pending=False,
+        reauth_flow_id=None,
+        connection_conflict=False,
+        last_reauth_attempt=0.0,
+        last_refresh_attempt=0.0,
+        last_refresh_success=0.0,
+        unauthorized_protection=MagicMock(),
+        session=MagicMock(),
+        stream=MagicMock(_shut_down=False, async_start=AsyncMock()),
+        container_manager=None,
+    )
+    for key, value in overrides.items():
+        setattr(runtime, key, value)
+    return runtime
+
+
 @pytest.mark.asyncio
+async def test_a_refusal_during_a_stream_conflict_goes_to_the_reconnect_chain(hass):
+    """Every refusal reaches the handler, so a start of its own would double the chain's attempts."""
+    from custom_components.cardata import auth
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    entry.add_to_hass(hass)
+    runtime = _unauthorized_runtime(connection_conflict=True)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+
+    with patch.object(auth.stream_reconnect, "request_reconnect") as reconnect:
+        await auth.handle_stream_error(hass, entry, "unauthorized")
+
+    reconnect.assert_called_once_with(runtime.stream)
+    runtime.stream.async_start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_meeting_another_refresh_hands_the_stream_on(hass):
+    """The stream is stopped by then, and the other refresh need not restart it."""
+    from custom_components.cardata import auth
+    from custom_components.cardata.const import ERR_TOKEN_REFRESH_IN_PROGRESS
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    entry.add_to_hass(hass)
+    runtime = _unauthorized_runtime()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+
+    with (
+        patch.object(
+            auth, "refresh_tokens_for_entry", AsyncMock(side_effect=CardataAuthError(ERR_TOKEN_REFRESH_IN_PROGRESS))
+        ),
+        patch.object(auth.stream_reconnect, "request_reconnect") as reconnect,
+        patch.object(hass.config_entries.flow, "async_init", AsyncMock()) as flow,
+    ):
+        await auth.handle_stream_error(hass, entry, "unauthorized")
+
+    reconnect.assert_called_once_with(runtime.stream)
+    flow.assert_not_called()
+    runtime.unauthorized_protection.record_attempt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_just_after_a_good_refresh_is_not_a_reauth(hass):
+    """BMW refusing tokens it issued moments ago says the stream is taken, not the credentials."""
+    import time
+
+    from custom_components.cardata import auth
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    entry.add_to_hass(hass)
+    now = time.time()
+    runtime = _unauthorized_runtime(last_refresh_attempt=now - 12, last_refresh_success=now - 12)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime
+
+    with (
+        patch.object(auth.stream_reconnect, "request_reconnect") as reconnect,
+        patch.object(hass.config_entries.flow, "async_init", AsyncMock()) as flow,
+    ):
+        await auth.handle_stream_error(hass, entry, "unauthorized")
+
+    flow.assert_not_called()
+    assert runtime.connection_conflict
+    reconnect.assert_called_once_with(runtime.stream)
+
+
 async def test_mqtt_broker_credentials_can_be_cleared(hass):
     """The frontend leaves an emptied field out, which must not restore the stored value."""
     from custom_components.cardata.const import (
@@ -473,4 +559,3 @@ async def test_mqtt_broker_credentials_can_be_cleared(hass):
         if getattr(key, "description", None) and "suggested_value" in key.description
     }
     assert suggested[OPTION_CUSTOM_MQTT_USERNAME] == ""
-

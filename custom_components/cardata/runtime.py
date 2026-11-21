@@ -70,6 +70,8 @@ class CardataRuntimeData:
     reauth_flow_id: str | None = None
     last_reauth_attempt: float = 0.0
     last_refresh_attempt: float = 0.0
+    # When a refresh forced by a stream refusal last succeeded
+    last_refresh_success: float = 0.0
     reauth_pending: bool = False
     # Set when BMW refuses the stream with credentials it has just issued,
     # which means the credentials are not what it objects to.

@@ -704,3 +704,46 @@ def test_a_connect_finishing_after_an_unload_disconnects(unload_on_store) -> Non
         created[0].loop_stop.assert_called_once()
     finally:
         loop.close()
+
+
+@pytest.mark.asyncio
+async def test_every_refusal_reaches_the_entry_handler() -> None:
+    """A later refusal must still get a token refresh, not only the first one."""
+    manager = _shutdown_manager()
+    reasons: list[str] = []
+
+    async def _error_callback(reason: str) -> None:
+        reasons.append(reason)
+
+    manager._error_callback = _error_callback
+    manager.async_stop = AsyncMock()
+
+    for _ in range(3):
+        await stream_reconnect.handle_unauthorized(manager)
+
+    assert reasons == ["unauthorized"] * 3
+
+
+def test_a_refused_stream_is_handed_back_to_the_chain() -> None:
+    """The refusal's own stop marks it intentional, which a chain would obey and give up."""
+    manager = CardataStreamManager(
+        hass=MagicMock(), client_id="client", gcid="gcid", id_token="token", host="localhost", port=8883, keepalive=30
+    )
+    manager._intentional_disconnect = True
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.restart_refused_stream(manager)
+    assert not manager._intentional_disconnect
+    reconnect.assert_called_once_with(manager)
+
+    # Entered from an API refusal while the stream is up, it is left alone.
+    manager._connection_state = ConnectionState.CONNECTED
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.restart_refused_stream(manager)
+    reconnect.assert_not_called()
+
+    manager._connection_state = ConnectionState.DISCONNECTED
+    manager.shut_down()
+    manager._intentional_disconnect = True
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.restart_refused_stream(manager)
+    reconnect.assert_not_called()
