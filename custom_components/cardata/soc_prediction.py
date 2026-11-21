@@ -426,6 +426,11 @@ class SOCPredictor:
             local_session = self._sessions.get(vin)
             if local_session is not None:
                 local_session.local_power_seen = True
+                # The heartbeat replays this reading rather than rebuilding
+                # BMW's last voltage times current once the reading is no
+                # longer fresh: a meter that went to 0 W stays at 0 W until
+                # BMW reports something new, however rarely the meter calls.
+                local_session.power_is_reported = True
         else:
             last_local = self._last_local_power_update.get(vin)
             if last_local is not None and now - last_local <= LOCAL_POWER_TTL_SECONDS:
@@ -813,6 +818,11 @@ class SOCPredictor:
         """
         if session.last_power_kw > 0:
             return
+        # A session that had real power, from BMW or the user's meter, is not
+        # one without telemetry: its zero means the charge stopped, and a
+        # power worked back from a later SOC step would start it again.
+        if session.power_is_reported or session.local_power_seen or session.last_voltage:
+            return
         if new_soc <= old_anchor_soc:
             return
         if session.battery_capacity_kwh <= 0:
@@ -1146,7 +1156,11 @@ class SOCPredictor:
         # Calculate power if we have both voltage and current
         power_kw = _calc_ac_power_kw(session)
         if power_kw is not None:
-            session.power_is_reported = False
+            # A fresh reading from the user's meter outranks this one, and the
+            # heartbeat must keep replaying the meter's figure after it ages.
+            last_local = self._last_local_power_update.get(vin)
+            if last_local is None or time.time() - last_local > LOCAL_POWER_TTL_SECONDS:
+                session.power_is_reported = False
             _LOGGER.debug(
                 "Calculated AC power for %s: %.2f kW (%.1fV × %.1fA, %d phases)",
                 redact_vin(vin),

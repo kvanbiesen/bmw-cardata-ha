@@ -629,7 +629,7 @@ If you have a smart meter that reports the power delivered to the car, you can f
 
 - **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Use external power meter for charging
 - **Service**: `cardata.update_charging_power` with fields `vin`, `power_kw`, and optional `aux_power_kw`. A call with a power that is not a finite number is refused, and one with a negative power is logged and ignored.
-- **Precedence**: Freshness-based. While a local reading has arrived within the last 120 seconds, BMW-sourced V×A and `charging.power` updates are suppressed. When local readings stop (car driven away, meter offline), the predictor falls back to BMW after the timeout — no manual switching needed.
+- **Precedence**: Freshness-based. While a local reading has arrived within the last 120 seconds, BMW-sourced V×A and `charging.power` updates are suppressed. When local readings stop (car driven away, meter offline), the predictor falls back to BMW after the timeout — no manual switching needed. Until BMW reports something new it keeps the meter's last reading, so a single 0 W at stop time holds even when the automation only calls on changes.
 - **Typical setup**: A Home Assistant automation that triggers on your meter's power sensor changes (or on a 10–30 second interval) and calls the service with the current reading. **Gate the automation on the car being home** — otherwise the meter will happily push 0 W while the car is away at a public charger, holding the freshness gate and blocking BMW's V×A updates from the public session.
 
 ```yaml

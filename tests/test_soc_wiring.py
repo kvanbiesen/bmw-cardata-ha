@@ -567,6 +567,83 @@ class TestDcPowerUnit:
         assert power_kw == 50.0
 
 
+class TestLocalMeterZero:
+    """A meter's 0 W must hold on a voltage and current car, however rarely the meter calls."""
+
+    def test_the_heartbeat_keeps_the_meters_zero(self):
+        clock = [1_800_000_000.0]
+        with (
+            patch("time.time", lambda: clock[0]),
+            patch("custom_components.cardata.soc_types.time.time", lambda: clock[0]),
+        ):
+            predictor = SOCPredictor()
+            predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+            predictor.anchor_session("VIN", 50.0, 29.0, "AC")
+            predictor.update_ac_charging_data("VIN", 231.0, 10.0, 1, 0.3)
+            clock[0] += 30
+            predictor.periodic_update_all()
+            # The wallbox is cut and the meter reports 0 W once.
+            predictor.update_power_reading("VIN", 0.0, 0.0, from_local=True)
+            energy = predictor._sessions["VIN"].total_energy_kwh
+            for _ in range(120):
+                clock[0] += 30
+                predictor.periodic_update_all()
+
+        session = predictor._sessions["VIN"]
+        assert session.last_power_kw == 0.0
+        assert session.total_energy_kwh == pytest.approx(energy)
+
+    def test_a_bmw_reading_inside_the_meters_window_does_not_undo_it(self):
+        """BMW's stale voltage and current must not come back once the meter's 0 W ages."""
+        clock = [1_800_000_000.0]
+        with (
+            patch("time.time", lambda: clock[0]),
+            patch("custom_components.cardata.soc_types.time.time", lambda: clock[0]),
+        ):
+            predictor = SOCPredictor()
+            predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+            predictor.anchor_session("VIN", 50.0, 29.0, "AC")
+            predictor.update_ac_charging_data("VIN", 231.0, 16.0, 1, 0.3)
+            predictor.update_power_reading("VIN", 0.0, 0.0, from_local=True)
+            clock[0] += 30
+            predictor.update_ac_charging_data("VIN", 231.0, 16.0, 1, 0.3)
+            energy = predictor._sessions["VIN"].total_energy_kwh
+            for _ in range(20):
+                clock[0] += 30
+                predictor.periodic_update_all()
+
+        session = predictor._sessions["VIN"]
+        assert session.last_power_kw == 0.0
+        assert session.total_energy_kwh == pytest.approx(energy)
+
+    def test_a_later_soc_step_does_not_start_it_again(self):
+        """A poll reading above the prediction must not be turned into a power."""
+        clock = [1_800_000_000.0]
+        with (
+            patch("time.time", lambda: clock[0]),
+            patch("custom_components.cardata.soc_types.time.time", lambda: clock[0]),
+        ):
+            predictor = SOCPredictor()
+            predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+            predictor.anchor_session("VIN", 50.0, 80.0, "AC")
+            predictor.update_ac_charging_data("VIN", 230.0, 16.0, 3, 0.0)
+            for _ in range(20):
+                clock[0] += 30
+                predictor.periodic_update_all()
+            predictor.update_power_reading("VIN", 0.0, 0.0, from_local=True)
+            clock[0] += 400
+            predictor.periodic_update_all()
+            predictor.update_bmw_soc("VIN", round(predictor._sessions["VIN"].last_predicted_soc) + 1.0)
+            energy = predictor._sessions["VIN"].total_energy_kwh
+            for _ in range(60):
+                clock[0] += 30
+                predictor.periodic_update_all()
+
+        session = predictor._sessions["VIN"]
+        assert session.last_power_kw == 0.0
+        assert session.total_energy_kwh == pytest.approx(energy)
+
+
 class TestNullChargingStatus:
     """An API reply can carry the charging status as null."""
 
