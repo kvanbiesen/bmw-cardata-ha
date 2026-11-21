@@ -128,6 +128,65 @@ def test_the_poll_loop_polls_after_one_interval_when_the_clock_went_back():
     assert polls and polls[0] - start <= 30 * 60
 
 
+def test_the_poll_loop_waits_for_a_bootstrap_still_seeding():
+    """A bootstrap past 30 s seeds every vehicle itself; polling first would fetch each one twice."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from custom_components.cardata.const import DOMAIN
+
+    start = 1_800_000_000.0
+    clock = {"now": start}
+    stored = {}
+    runtime = MagicMock()
+    runtime.trip_poll_event = None
+    runtime.reauth_in_progress = False
+    runtime.coordinator.data = {VIN: {}}
+    runtime.coordinator._allowed_vins = {VIN}
+    runtime.coordinator.seconds_since_last_poll.return_value = None
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"entry": runtime}}
+    hass.config_entries.async_get_entry.return_value = MagicMock(data=stored)
+    polls = []
+
+    async def fetch(*_args, **_kwargs):
+        polls.append(clock["now"] - start)
+        raise asyncio.CancelledError
+
+    real_sleep = asyncio.sleep
+
+    async def sleep(seconds):
+        clock["now"] += seconds
+        if clock["now"] - start > 86400:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    async def run():
+        gate = asyncio.Event()
+
+        async def bootstrap():
+            await gate.wait()
+            stored["last_telematic_poll"] = clock["now"]
+
+        runtime.bootstrap_task = asyncio.ensure_future(bootstrap())
+        with (
+            patch.object(telematics.time, "time", side_effect=lambda: clock["now"]),
+            patch.object(telematics.asyncio, "sleep", side_effect=sleep),
+            patch.object(telematics, "async_perform_telematic_fetch", side_effect=fetch),
+            patch.object(telematics, "daily_calls_per_vin", return_value=0),
+            patch.object(telematics, "_async_daily_fetches", AsyncMock()),
+        ):
+            loop_task = asyncio.ensure_future(telematics.async_telematic_poll_loop(hass, "entry"))
+            for _ in range(5):
+                await real_sleep(0)
+            assert polls == []
+            gate.set()
+            await loop_task
+
+    asyncio.run(run())
+    assert polls and polls[0] >= 30 * 60
+
+
 class TestTripPollCooldown:
     """A trip-end poll BMW failed still holds the next one off."""
 

@@ -441,6 +441,14 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     if runtime is None:
         return
 
+    # A bootstrap still running in the background seeds every vehicle with a
+    # poll of its own. Starting before it would poll each one a second time,
+    # and its stamp is only stored once it has seeded.
+    bootstrap_task = runtime.bootstrap_task
+    if bootstrap_task is not None and not bootstrap_task.done():
+        _LOGGER.debug("Telematic poll loop waiting for the bootstrap of entry %s", entry_id)
+        await asyncio.wait({bootstrap_task})
+
     # Staleness threshold scales with VIN count and daily feature overhead.
     # Targets ~24 total scheduled API calls/day, including daily optional fetches.
     consecutive_failures = 0
