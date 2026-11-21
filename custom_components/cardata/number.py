@@ -35,12 +35,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DESC_REMAINING_FUEL,
+    DESC_SOC_DISPLAYED,
+    DESC_SOC_HEADER,
     DOMAIN,
     MANUAL_CAPACITY_DESCRIPTOR,
     MANUAL_TANK_CAPACITY_DESCRIPTOR,
@@ -76,33 +79,32 @@ async def async_setup_entry(
     created_battery_vins: set[str] = set()
     created_tank_vins: set[str] = set()
 
+    def battery_capacity_number(vin: str) -> list[NumberEntity]:
+        """Return the manual battery capacity input for a vehicle, once."""
+        if vin in created_battery_vins:
+            return []
+        created_battery_vins.add(vin)
+        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+        _LOGGER.debug("Created manual battery capacity input for %s (%s)", vehicle_name, redact_vin(vin))
+        return [ManualBatteryCapacityNumber(coordinator=coordinator, vin=vin, vehicle_name=vehicle_name)]
+
+    def tank_capacity_number(vin: str) -> list[NumberEntity]:
+        """Return the manual tank capacity input for a vehicle, once."""
+        if vin in created_tank_vins:
+            return []
+        created_tank_vins.add(vin)
+        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
+        _LOGGER.debug("Created manual tank capacity input for %s (%s)", vehicle_name, redact_vin(vin))
+        return [ManualTankCapacityNumber(coordinator=coordinator, vin=vin, vehicle_name=vehicle_name)]
+
     for vin in all_vins:
         vehicle_data = coordinator.data.get(vin, {})
-        vehicle_name = coordinator.names.get(vin, redact_vin(vin))
-
         # Manual battery capacity for EV/PHEV vehicles
         if has_hv_battery(vehicle_data):
-            entities.append(
-                ManualBatteryCapacityNumber(
-                    coordinator=coordinator,
-                    vin=vin,
-                    vehicle_name=vehicle_name,
-                )
-            )
-            created_battery_vins.add(vin)
-            _LOGGER.debug("Created manual battery capacity input for %s (%s)", vehicle_name, redact_vin(vin))
-
+            entities.extend(battery_capacity_number(vin))
         # Manual tank capacity for vehicles with fuel data
         if DESC_REMAINING_FUEL in vehicle_data:
-            entities.append(
-                ManualTankCapacityNumber(
-                    coordinator=coordinator,
-                    vin=vin,
-                    vehicle_name=vehicle_name,
-                )
-            )
-            created_tank_vins.add(vin)
-            _LOGGER.debug("Created manual tank capacity input for %s (%s)", vehicle_name, redact_vin(vin))
+            entities.extend(tank_capacity_number(vin))
 
     # Restore previously created entities from entity registry (for VINs not yet in coordinator data)
     entity_registry = async_get(hass)
@@ -114,47 +116,27 @@ async def async_setup_entry(
         if not unique_id or "_" not in unique_id:
             continue
 
-        # Restore manual battery capacity entities
         if unique_id.endswith(f"_{MANUAL_CAPACITY_DESCRIPTOR}"):
-            vin = unique_id.removesuffix(f"_{MANUAL_CAPACITY_DESCRIPTOR}")
-            if vin not in created_battery_vins:
-                vehicle_name = coordinator.names.get(vin, redact_vin(vin))
-                entities.append(
-                    ManualBatteryCapacityNumber(
-                        coordinator=coordinator,
-                        vin=vin,
-                        vehicle_name=vehicle_name,
-                    )
-                )
-                created_battery_vins.add(vin)
-                _LOGGER.debug(
-                    "Restored manual battery capacity input for %s (%s) from entity registry",
-                    vehicle_name,
-                    redact_vin(vin),
-                )
-
-        # Restore manual tank capacity entities
+            entities.extend(battery_capacity_number(unique_id.removesuffix(f"_{MANUAL_CAPACITY_DESCRIPTOR}")))
         if unique_id.endswith(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}"):
-            vin = unique_id.removesuffix(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}")
-            if vin not in created_tank_vins:
-                vehicle_name = coordinator.names.get(vin, redact_vin(vin))
-                entities.append(
-                    ManualTankCapacityNumber(
-                        coordinator=coordinator,
-                        vin=vin,
-                        vehicle_name=vehicle_name,
-                    )
-                )
-                created_tank_vins.add(vin)
-                _LOGGER.debug(
-                    "Restored manual tank capacity input for %s (%s) from entity registry",
-                    vehicle_name,
-                    redact_vin(vin),
-                )
+            entities.extend(tank_capacity_number(unique_id.removesuffix(f"_{MANUAL_TANK_CAPACITY_DESCRIPTOR}")))
 
     if entities:
         async_add_entities(entities)
         _LOGGER.debug("Added %d number entities", len(entities))
+
+    # A vehicle whose battery or fuel data arrives after the platform loaded,
+    # from a bootstrap still running or a car added later, gets its inputs then.
+    async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
+        new_numbers: list[NumberEntity] = []
+        if descriptor in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
+            new_numbers = battery_capacity_number(vin)
+        elif descriptor == DESC_REMAINING_FUEL:
+            new_numbers = tank_capacity_number(vin)
+        if new_numbers:
+            async_add_entities(new_numbers)
+
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor))
 
 
 class ManualBatteryCapacityNumber(NumberEntity, RestoreEntity):

@@ -37,10 +37,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 
-from .const import DOMAIN, MAGIC_SOC_DESCRIPTOR, has_hv_battery
+from .const import DESC_SOC_DISPLAYED, DESC_SOC_HEADER, DOMAIN, MAGIC_SOC_DESCRIPTOR, has_hv_battery
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -69,34 +70,32 @@ async def async_setup_entry(
     # Track learning reset buttons created to prevent duplicates
     learning_reset_created: set[str] = set()
 
-    def create_learning_reset_buttons(vin: str) -> None:
-        """Queue the AC and DC reset buttons for a vehicle with an HV battery."""
+    def create_learning_reset_buttons(vin: str) -> list[ButtonEntity]:
+        """Return the AC and DC reset buttons for a vehicle with an HV battery, once."""
         if vin in learning_reset_created:
-            return
+            return []
         learning_reset_created.add(vin)
         vehicle_name = coordinator.names.get(vin, redact_vin(vin))
-        entities.append(
+        _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, redact_vin(vin))
+        return [
             ResetACLearningButton(
                 coordinator=coordinator,
                 vin=vin,
                 vehicle_name=vehicle_name,
                 entry_id=entry.entry_id,
-            )
-        )
-        entities.append(
+            ),
             ResetDCLearningButton(
                 coordinator=coordinator,
                 vin=vin,
                 vehicle_name=vehicle_name,
                 entry_id=entry.entry_id,
-            )
-        )
-        _LOGGER.debug("Created SOC learning reset buttons for %s (%s)", vehicle_name, redact_vin(vin))
+            ),
+        ]
 
     # Create reset buttons for each known EV/PHEV vehicle
     for vin, vehicle_data in coordinator.data.items():
         if has_hv_battery(vehicle_data):
-            create_learning_reset_buttons(vin)
+            entities.extend(create_learning_reset_buttons(vin))
 
     # Track consumption reset buttons created to prevent duplicates
     consumption_reset_created: set[str] = set()
@@ -134,7 +133,7 @@ async def async_setup_entry(
             for kind in LEARNING_RESET_KINDS:
                 suffix = f"_reset_{kind}_learning"
                 if unique_id.endswith(suffix):
-                    create_learning_reset_buttons(unique_id.removesuffix(suffix))
+                    entities.extend(create_learning_reset_buttons(unique_id.removesuffix(suffix)))
                     break
             continue
 
@@ -149,6 +148,16 @@ async def async_setup_entry(
 
     # Register callback for dynamic creation (bootstrap + MQTT-driven Magic SOC sensor creation)
     coordinator._create_consumption_reset_callback = create_consumption_reset_button
+
+    # A vehicle whose battery data arrives after the platform loaded, from a
+    # bootstrap still running or a car added later, gets its buttons then.
+    async def async_handle_new_sensor(vin: str, descriptor: str) -> None:
+        if descriptor in (DESC_SOC_HEADER, DESC_SOC_DISPLAYED):
+            new_buttons = create_learning_reset_buttons(vin)
+            if new_buttons:
+                async_add_entities(new_buttons)
+
+    entry.async_on_unload(async_dispatcher_connect(hass, coordinator.signal_new_sensor, async_handle_new_sensor))
 
 
 class ResetLearningButton(ButtonEntity):
