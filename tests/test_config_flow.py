@@ -405,3 +405,72 @@ async def test_only_a_refused_refresh_starts_reauth(hass, refresh_error, reauth)
     assert flow.called is reauth
     assert protection.record_attempt.called is reauth
     assert reconnect.called is not reauth
+
+
+@pytest.mark.asyncio
+async def test_mqtt_broker_credentials_can_be_cleared(hass):
+    """The frontend leaves an emptied field out, which must not restore the stored value."""
+    from custom_components.cardata.const import (
+        DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX,
+        OPTION_CUSTOM_MQTT_ENABLED,
+        OPTION_CUSTOM_MQTT_HOST,
+        OPTION_CUSTOM_MQTT_PASSWORD,
+        OPTION_CUSTOM_MQTT_PORT,
+        OPTION_CUSTOM_MQTT_TLS,
+        OPTION_CUSTOM_MQTT_TOPIC_PREFIX,
+        OPTION_CUSTOM_MQTT_USERNAME,
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"client_id": CLIENT_ID},
+        options={
+            OPTION_CUSTOM_MQTT_ENABLED: True,
+            OPTION_CUSTOM_MQTT_HOST: "broker.local",
+            OPTION_CUSTOM_MQTT_PORT: 1883,
+            OPTION_CUSTOM_MQTT_USERNAME: "old-user",
+            OPTION_CUSTOM_MQTT_PASSWORD: "old-pass",
+            OPTION_CUSTOM_MQTT_TLS: "off",
+            OPTION_CUSTOM_MQTT_TOPIC_PREFIX: "custom/",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "action_mqtt_broker"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            OPTION_CUSTOM_MQTT_ENABLED: True,
+            OPTION_CUSTOM_MQTT_HOST: "broker.local",
+            OPTION_CUSTOM_MQTT_PORT: 1883,
+            OPTION_CUSTOM_MQTT_TLS: "off",
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[OPTION_CUSTOM_MQTT_USERNAME] == ""
+    assert entry.options[OPTION_CUSTOM_MQTT_PASSWORD] == ""
+    assert entry.options[OPTION_CUSTOM_MQTT_TOPIC_PREFIX] == DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX
+
+    # Shown again after an error, the emptied fields stay empty.
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "action_mqtt_broker"}
+    )
+    entry_options = dict(entry.options, **{OPTION_CUSTOM_MQTT_USERNAME: "old-user"})
+    hass.config_entries.async_update_entry(entry, options=entry_options)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {OPTION_CUSTOM_MQTT_ENABLED: True, OPTION_CUSTOM_MQTT_HOST: " ", OPTION_CUSTOM_MQTT_PORT: 1883},
+    )
+    assert result["errors"] == {OPTION_CUSTOM_MQTT_HOST: "mqtt_host_required"}
+    suggested = {
+        str(key): key.description["suggested_value"]
+        for key in result["data_schema"].schema
+        if getattr(key, "description", None) and "suggested_value" in key.description
+    }
+    assert suggested[OPTION_CUSTOM_MQTT_USERNAME] == ""
+
