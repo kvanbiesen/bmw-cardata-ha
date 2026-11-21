@@ -347,6 +347,21 @@ class TestRegularPoll:
 
         assert [c.kwargs["params"] for c in request.await_args_list] == [{"containerId": "hv-1"}]
 
+    async def test_the_poll_is_recorded_before_its_data_is_handled(self, hass, entry, runtime):
+        """A charge end the poll reveals must not queue another poll straight away."""
+        runtime.coordinator.data = {VIN: {}}
+        calls = []
+        runtime.coordinator.record_telematic_poll.side_effect = lambda vin: calls.append("record")
+        runtime.coordinator.async_handle_message.side_effect = lambda *args, **kwargs: calls.append("handle")
+        payload = {"telematicData": {"vehicle.drivetrain.electricEngine.charging.status": {"value": "NOCHARGING"}}}
+        with (
+            patch("custom_components.cardata.auth.async_ensure_valid_token", AsyncMock(return_value=True)),
+            patch_request(response(200, json.dumps(payload))),
+        ):
+            await telematics.async_perform_telematic_fetch(hass, entry, runtime, vin_override=VIN)
+
+        assert calls == ["record", "handle"]
+
 
 class TestMissingHvContainer:
     """A poll with no HV container stored creates one instead of waiting for a restart."""

@@ -395,8 +395,10 @@ async def async_perform_telematic_fetch(
             break  # Stop trying other VINs
 
         if merged_data:
-            await runtime.coordinator.async_handle_message({"vin": vin, "data": merged_data}, is_telematic=True)
+            # Recorded first: a charge end this data reveals asks for a poll
+            # unless one has just been made, and this one has.
             runtime.coordinator.record_telematic_poll(vin)
+            await runtime.coordinator.async_handle_message({"vin": vin, "data": merged_data}, is_telematic=True)
             any_success = True
 
     # All VINs had fresh MQTT data — nothing to poll, not a failure
