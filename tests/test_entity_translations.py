@@ -56,6 +56,7 @@ def coordinator():
         get_charging_history=Mock(return_value=[]),
         has_charging_history=Mock(return_value=False),
         get_tyre_diagnosis=Mock(return_value={}),
+        has_tyre_diagnosis=Mock(return_value=False),
         get_efficiency_learning_attributes=Mock(return_value={}),
         _soc_predictor=SimpleNamespace(get_learned_efficiency=Mock(return_value=None)),
         connection_status="connected",
