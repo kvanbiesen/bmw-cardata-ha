@@ -970,18 +970,22 @@ class CardataCoordinator:
             converted_delta = converted - existing_value
             if self._MILEAGE_DECREASE_TOLERANCE <= converted_delta <= self._MAX_PLAUSIBLE_MILEAGE_JUMP:
                 self._mileage_pending_reading.pop(vin, None)
+                # Stored in the unit already there, as a reading labelled with
+                # the other unit is (#429). Kept in the other unit, it would
+                # switch the odometer to that unit for good, since every
+                # correctly labelled reading after it is converted into it.
                 _LOGGER.warning(
                     "Correcting unit-mismatched odometer reading for VIN %s: unlabelled raw value %s "
-                    "matches the existing %s %s when treated as %s; storing as %s %s",
+                    "matches the existing %s %s when treated as %s; storing as %.1f %s",
                     redacted_vin,
                     value,
                     existing_value,
                     existing_unit,
                     other_unit,
-                    value,
-                    other_unit,
+                    converted,
+                    existing_unit,
                 )
-                return True, other_unit, value
+                return True, existing_unit, converted
 
         # Not resolvable as a unit-swap. Require a second, corroborating
         # reading before accepting a jump this large - a single implausible
