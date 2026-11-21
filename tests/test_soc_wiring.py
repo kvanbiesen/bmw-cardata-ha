@@ -26,7 +26,7 @@
 """Tests for soc_wiring helpers, focusing on charging phase handling."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -359,6 +359,28 @@ class TestApplyAcPower:
         vehicle_state = self._state_with(self.LAST_CHARGE_END, power=0, phases="1-PHASES")
         assert _apply_ac_power(predictor, self.VIN, vehicle_state)
         assert predictor._sessions[self.VIN].last_power_kw == pytest.approx(3.68)
+
+    def test_a_reported_zero_stops_a_car_without_voltage_and_current(self):
+        """An i4 or Neue Klasse car only sends charging.power, so its zero must count."""
+        predictor = self._predictor()
+
+        def reported(power):
+            return {
+                DESC_CHARGING_POWER: _state(power, self.PLUGGED_IN, unit="kW"),
+                DESC_CHARGING_PORT_STATUS: _state("CONNECTED", self.PLUGGED_IN),
+            }
+
+        assert _apply_ac_power(predictor, self.VIN, reported(6.72))
+        assert _apply_ac_power(predictor, self.VIN, reported(0))
+        session = predictor._sessions[self.VIN]
+        assert session.last_power_kw == 0
+        energy = session.total_energy_kwh
+        with (
+            patch("time.time", lambda: session.last_energy_update + 3600),
+            patch("custom_components.cardata.soc_types.time.time", lambda: session.last_energy_update + 3600),
+        ):
+            predictor.periodic_update_all()
+        assert session.total_energy_kwh == energy
 
     def test_no_readings_at_all(self):
         """Nothing to apply when the vehicle reports neither source."""

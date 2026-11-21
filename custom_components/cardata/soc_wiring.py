@@ -405,8 +405,11 @@ def _apply_ac_power(
     if voltage and current and phases is not None:
         return soc_predictor.update_ac_charging_data(vin, voltage, current, phases, aux_kw)
 
+    # A reported zero only gives way to a voltage and current pair. Without
+    # one it is the only reading there is, and dropping it would leave the
+    # heartbeat charging at the last positive figure through a pause.
     power_kw = _plug_in_power_kw(vehicle_state)
-    if power_kw is not None and power_kw > 0:
+    if power_kw is not None and (power_kw > 0 or not (voltage and current)):
         soc_predictor.use_reported_power(vin, power_kw, voltage, current, aux_kw)
         return True
 
