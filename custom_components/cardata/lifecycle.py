@@ -31,6 +31,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from typing import Any
 
 import aiohttp
 from homeassistant.components import persistent_notification
@@ -687,9 +688,20 @@ def _bootstrap_failed_notification_id(entry: ConfigEntry) -> str:
     return f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
 
 
+class _SocLearningStore(Store):
+    """The SOC learning store, which still opens what older releases wrote."""
+
+    async def _async_migrate_func(self, old_major_version: int, old_minor_version: int, old_data: Any) -> Any:
+        # Version 1, written by 4.7.0 to 4.7.4, held only the learned efficiency
+        # per VIN. The loader still reads that layout, so it is taken as it is;
+        # without this Home Assistant refuses the file and the next save
+        # replaces it with an empty one.
+        return old_data
+
+
 def soc_learning_store_for(hass: HomeAssistant, entry_id: str) -> Store:
     """Return the store that keeps an entry's SOC sessions and learning."""
-    return Store(hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry_id}")
+    return _SocLearningStore(hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry_id}")
 
 
 async def async_cleanup_if_last_entry(hass: HomeAssistant) -> None:

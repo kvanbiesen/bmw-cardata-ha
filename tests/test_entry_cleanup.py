@@ -85,3 +85,21 @@ async def test_an_entry_still_setting_up_keeps_them(hass):
 
     assert hass.services.has_service(DOMAIN, "fetch_telematic_data")
     assert DOMAIN in hass.data
+
+
+async def test_a_learning_store_from_version_1_is_still_read(hass, hass_storage):
+    """4.7.0 to 4.7.4 wrote the learned efficiency per VIN under version 1."""
+    from custom_components.cardata.soc_prediction import SOCPredictor
+    from custom_components.cardata.soc_types import LearnedEfficiency
+
+    vin = "WBA00000000000001"
+    learned = LearnedEfficiency()
+    learned.update_efficiency(1, 230.0, 16.0, False, 0.87)
+    key = "cardata.soc_learning.entry"
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {vin: learned.to_dict()}}
+
+    stored = await soc_learning_store_for(hass, "entry").async_load()
+    predictor = SOCPredictor()
+    predictor.load_session_data(stored)
+
+    assert predictor.get_learned_efficiency(vin) is not None
