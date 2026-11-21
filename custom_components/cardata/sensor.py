@@ -77,7 +77,7 @@ from .const import (
     has_hv_battery,
 )
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataEntity, forget_removed_vehicles
 from .fault_memory import FAULT_MEMORY_ATTRIBUTE_KEYS, FAULT_MEMORY_ICON
 from .runtime import CardataRuntimeData
 from .sensor_charging_energy import CardataChargingEnergySensor
@@ -417,6 +417,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     charging_history_entities: dict[str, CardataChargingHistorySensor] = {}
     charging_energy_entities: dict[str, CardataChargingEnergySensor] = {}
     tyre_diagnosis_entities: dict[str, CardataTyreDiagnosisSensor] = {}
+    forget_removed_vehicles(
+        hass,
+        entry,
+        entities,
+        metadata_entities,
+        efficiency_entities,
+        charging_history_entities,
+        charging_energy_entities,
+        tyre_diagnosis_entities,
+    )
 
     def ensure_charging_history_sensors(vin: str) -> None:
         """Ensure the charging history entities exist for VIN when option is enabled.

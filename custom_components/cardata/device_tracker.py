@@ -53,7 +53,7 @@ from .const import (
     LOCATION_LONGITUDE_DESCRIPTOR,
 )
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataEntity, forget_removed_vehicles
 from .geo_utils import coordinates_paired, haversine_m
 from .metadata import get_images_directory
 from .runtime import CardataRuntimeData
@@ -103,6 +103,7 @@ async def async_setup_entry(
     await async_wait_for_bootstrap(stream_manager, context="Device tracker setup")
 
     trackers: dict[str, CardataDeviceTracker] = {}
+    forget_removed_vehicles(hass, config_entry, trackers)
 
     def ensure_tracker(vin: str) -> None:
         """Ensure device tracker exists for VIN."""

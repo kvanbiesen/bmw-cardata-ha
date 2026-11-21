@@ -457,6 +457,11 @@ DAILY_FETCH_INTERVAL = 86400  # 24 hours
 ALLOWED_VINS_KEY = "allowed_vins"
 
 
+def vehicle_removed_signal(entry_id: str) -> str:
+    """Return the signal sent when the user deletes one of an entry's vehicle devices."""
+    return f"{DOMAIN}_{entry_id}_vehicle_removed"
+
+
 def has_hv_battery(vehicle_state: Container[str]) -> bool:
     """Return True when a vehicle reports a high voltage battery.
 

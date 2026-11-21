@@ -38,7 +38,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataEntity, forget_removed_vehicles
 from .runtime import CardataRuntimeData
 from .utils import redact_vin
 
@@ -115,6 +115,7 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = runtime_data.coordinator
 
     entities: dict[str, CardataImage] = {}
+    forget_removed_vehicles(hass, config_entry, entities)
 
     def ensure_entity(vin: str) -> None:
         """Create an image entity for the VIN if image bytes are available."""

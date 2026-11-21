@@ -49,6 +49,7 @@ from .const import (
     MANUAL_TANK_CAPACITY_DESCRIPTOR,
     has_hv_battery,
 )
+from .entity import forget_removed_vehicles
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -78,6 +79,7 @@ async def async_setup_entry(
 
     created_battery_vins: set[str] = set()
     created_tank_vins: set[str] = set()
+    forget_removed_vehicles(hass, entry, created_battery_vins, created_tank_vins)
 
     def battery_capacity_number(vin: str) -> list[NumberEntity]:
         """Return the manual battery capacity input for a vehicle, once."""

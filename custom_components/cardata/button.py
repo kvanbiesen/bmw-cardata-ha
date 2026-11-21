@@ -42,6 +42,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_entries_for_config_entry, async_get
 
 from .const import DESC_SOC_DISPLAYED, DESC_SOC_HEADER, DOMAIN, MAGIC_SOC_DESCRIPTOR, has_hv_battery
+from .entity import forget_removed_vehicles
 from .utils import redact_vin
 
 if TYPE_CHECKING:
@@ -99,6 +100,7 @@ async def async_setup_entry(
 
     # Track consumption reset buttons created to prevent duplicates
     consumption_reset_created: set[str] = set()
+    forget_removed_vehicles(hass, entry, learning_reset_created, consumption_reset_created)
 
     def create_consumption_reset_button(vin: str) -> None:
         """Create Reset Magic Learning button for a VIN (called when Magic SOC sensor is created)."""

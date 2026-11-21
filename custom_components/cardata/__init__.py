@@ -32,8 +32,9 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import ALLOWED_VINS_KEY, DOMAIN, VEHICLE_METADATA
+from .const import ALLOWED_VINS_KEY, DOMAIN, VEHICLE_METADATA, vehicle_removed_signal
 from .lifecycle import (
     PLATFORMS,
     async_cleanup_if_last_entry,
@@ -94,6 +95,13 @@ async def async_remove_config_entry_device(
         coordinator.names.pop(vin, None)
         coordinator.device_metadata.pop(vin, None)
         coordinator._allowed_vins.discard(vin)
+        # Likewise the motion detector, which announces the derived isMoving
+        # sensor only once per vehicle.
+        coordinator._motion_detector.cleanup_vin(vin)
+        coordinator._last_derived_is_moving.pop(vin, None)
+        # The platforms forget the entities they built for it, so a VIN that
+        # reports again gets them back.
+        async_dispatcher_send(hass, vehicle_removed_signal(config_entry.entry_id), vin)
 
     allowed = [v for v in config_entry.data.get(ALLOWED_VINS_KEY, []) if v != vin]
     metadata = dict(config_entry.data.get(VEHICLE_METADATA) or {})
