@@ -784,6 +784,11 @@ class CardataStreamManager:
             except json.JSONDecodeError:
                 _LOGGER.debug("Failed to parse MQTT message as JSON: %s", redact_vin_in_text(payload[:100]))
                 return
+            # A custom broker can carry other messages under the prefix, a
+            # bridge's status for instance, which are not vehicle data.
+            if not isinstance(data, dict):
+                _LOGGER.debug("Ignoring MQTT message that is not a JSON object on %s", self._hide_gcid(msg.topic))
+                return
             self._run_coro_safe(cast(Coroutine[Any, Any, None], self._message_callback(data)))
         except Exception as err:
             # Catch-all to prevent crashing the MQTT callback thread

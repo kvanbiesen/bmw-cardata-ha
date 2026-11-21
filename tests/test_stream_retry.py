@@ -814,3 +814,17 @@ async def test_a_shut_down_cancels_a_sleeping_reconnect_chain() -> None:
         await asyncio.sleep(0)
 
     assert chain.cancelled()
+
+
+@pytest.mark.parametrize("body", [b"[1, 2]", b"42", b'"online"'])
+def test_a_message_that_is_not_an_object_is_dropped(body) -> None:
+    """A custom broker can carry a bridge's status under the same prefix."""
+    manager = CardataStreamManager(
+        hass=MagicMock(), client_id="client", gcid="gcid", id_token="token", host="localhost", port=8883, keepalive=30
+    )
+    manager._message_callback = AsyncMock()
+    manager._run_coro_safe = MagicMock()
+
+    manager._handle_message(MagicMock(), {}, SimpleNamespace(topic="bmw/status", payload=body))
+
+    manager._run_coro_safe.assert_not_called()
