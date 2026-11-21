@@ -677,6 +677,20 @@ class CardataStreamManager:
                 self._client = None
                 raise ConnectionError("MQTT connection failed: subscription refused")
 
+            # An unload can retire the manager while this runs in the executor:
+            # the start that asked for it was cancelled with its task, and the
+            # unload's stop found no client to stop yet. Nothing would ever stop
+            # this one, so it goes here, checked after the store for the same
+            # reason as above.
+            if self._shut_down:
+                self._client = None
+                self._intentional_disconnect = True
+                try:
+                    client.disconnect()
+                except Exception as err:
+                    _LOGGER.debug("Error disconnecting MQTT client of an unloaded entry: %s", err)
+                raise ConnectionError("MQTT connection dropped: entry unloaded")
+
             loop_started = False  # Loop now managed by self._client
 
         except Exception as err:

@@ -646,3 +646,61 @@ async def test_a_start_blocked_by_the_breaker_clears_the_stop_flag() -> None:
     with patch.object(stream_reconnect, "request_reconnect") as reconnect:
         stream_reconnect.recover_failed_start(manager)
     reconnect.assert_called_once_with(manager)
+
+
+@pytest.mark.parametrize("unload_on_store", [False, True])
+def test_a_connect_finishing_after_an_unload_disconnects(unload_on_store) -> None:
+    """A start cancelled with the refresh task leaves its connect running in the executor.
+
+    The unload's stop finds no client yet, so the connect must drop the client
+    itself, whether the unload lands before the store or on it.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+
+        class UnloadingManager(CardataStreamManager):
+            @property
+            def _client(self):
+                return self.__dict__.get("_stored_client")
+
+            @_client.setter
+            def _client(self, value):
+                if value is not None and unload_on_store:
+                    self.shut_down()
+                self.__dict__["_stored_client"] = value
+
+        manager = UnloadingManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+        created = []
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def loop_start():
+                if not unload_on_store:
+                    manager.shut_down()
+                manager._handle_connect(client, userdata, {}, 0)
+
+            client.loop_start = loop_start
+            created.append(client)
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            with pytest.raises(ConnectionError):
+                manager._start_client()
+
+        assert manager.client is None
+        created[0].disconnect.assert_called_once()
+        created[0].loop_stop.assert_called_once()
+    finally:
+        loop.close()
