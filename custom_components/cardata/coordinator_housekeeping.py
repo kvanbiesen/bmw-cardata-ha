@@ -33,7 +33,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from .const import (
-    DESC_CHARGING_STATUS,
     DOMAIN,
     MAGIC_SOC_DESCRIPTOR,
     PREDICTED_SOC_DESCRIPTOR,
@@ -62,41 +61,39 @@ async def async_handle_connection_event(
     elif status == "connected":
         coordinator.last_disconnect_reason = None
 
+        # The predictor has seen every charging status the coordinator stored,
+        # from the stream and the API alike. The only ones it has not are states
+        # restored from before a restart, which can be older than the charging
+        # state the SOC store kept, so they must not change it: that started or
+        # ended a session behind the predictor's back. A charge it knows about
+        # but could not anchor yet is retried here.
         async with coordinator._lock:
             for vin in coordinator._soc_predictor.get_tracked_vins():
                 vehicle_state = coordinator.data.get(vin)
                 if not vehicle_state:
                     continue
+                if not coordinator._soc_predictor.is_charging(vin):
+                    continue
+                if coordinator._soc_predictor.has_active_session(vin):
+                    continue
 
-                status_state = vehicle_state.get(DESC_CHARGING_STATUS)
-                if status_state and status_state.value:
-                    status_val = str(status_state.value)
-                    coordinator._soc_predictor.update_charging_status(vin, status_val)
+                _LOGGER.info("Reconnection: restoring charging session for %s", redact_vin(vin))
+                manual_cap = coordinator.get_manual_battery_capacity(vin)
+                anchor_soc_session(
+                    coordinator._soc_predictor,
+                    coordinator._magic_soc,
+                    vin,
+                    vehicle_state,
+                    manual_cap,
+                )
 
-                    if coordinator._soc_predictor.is_charging(
-                        vin
-                    ) and not coordinator._soc_predictor.has_active_session(vin):
-                        _LOGGER.info(
-                            "Reconnection: restoring charging session for %s (status: %s)",
-                            redact_vin(vin),
-                            status_val,
-                        )
-                        manual_cap = coordinator.get_manual_battery_capacity(vin)
-                        anchor_soc_session(
-                            coordinator._soc_predictor,
-                            coordinator._magic_soc,
-                            vin,
-                            vehicle_state,
-                            manual_cap,
-                        )
-
-                        if _apply_ac_power(coordinator._soc_predictor, vin, vehicle_state):
-                            restored = coordinator._soc_predictor._sessions.get(vin)
-                            _LOGGER.info(
-                                "Reconnection: restored AC charging data for %s (%.2f kW)",
-                                redact_vin(vin),
-                                restored.last_power_kw if restored else 0.0,
-                            )
+                if _apply_ac_power(coordinator._soc_predictor, vin, vehicle_state):
+                    restored = coordinator._soc_predictor._sessions.get(vin)
+                    _LOGGER.info(
+                        "Reconnection: restored AC charging data for %s (%.2f kW)",
+                        redact_vin(vin),
+                        restored.last_power_kw if restored else 0.0,
+                    )
     await async_log_diagnostics(coordinator)
 
 
