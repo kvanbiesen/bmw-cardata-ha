@@ -765,3 +765,34 @@ async def test_a_reconnect_chain_replaces_a_waiting_retry() -> None:
     assert retry.cancelled()
     assert manager._retry_task is None
     manager._async_start_locked.assert_not_awaited()
+
+
+def test_the_network_thread_does_not_carry_the_gcid() -> None:
+    """paho names its thread after the client id, and Home Assistant logs the thread name."""
+    import threading
+
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+        gcid = "d2b6e8a1-1c3f-4e5a-9b7d-0f12ab34cd56"
+        manager = CardataStreamManager(
+            hass=hass, client_id="client", gcid=gcid, id_token="token", host="localhost", port=8883, keepalive=30
+        )
+        created = []
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            client._thread = threading.Thread(target=lambda: None, name=f"paho-mqtt-client-{kwargs['client_id']}")
+            userdata = kwargs.get("userdata") or {}
+            client.loop_start = lambda: manager._handle_connect(client, userdata, {}, 0)
+            created.append(client)
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            manager._start_client()
+
+        assert gcid not in created[0]._thread.name
+        assert gcid not in manager._hide_gcid(f'{{"entityId": "{gcid}", "data": {{}}}}')
+    finally:
+        loop.close()

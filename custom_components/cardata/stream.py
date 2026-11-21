@@ -45,7 +45,7 @@ from .const import LOCK_ACQUIRE_TIMEOUT
 from .debug import debug_enabled
 from .stream_circuit_breaker import CircuitBreaker
 from .stream_client import build_client
-from .utils import redact_identifier, redact_location_in_text, redact_vin_in_text, redact_vin_payload
+from .utils import redact_identifier, redact_location_in_text, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -553,6 +553,12 @@ class CardataStreamManager:
             client.connect_async(self._host, self._port, keepalive=self._keepalive)
             client.loop_start()
             loop_started = True
+            # paho names its network thread after the client id, which is the
+            # GCID, and Home Assistant prints the thread name on every log line
+            # from it, warnings included.
+            network_thread = getattr(client, "_thread", None)
+            if network_thread is not None:
+                network_thread.name = "cardata-mqtt"
 
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
@@ -764,7 +770,7 @@ class CardataStreamManager:
                 _LOGGER.debug(
                     "BMW MQTT message on %s: %s",
                     self._hide_gcid(msg.topic),
-                    redact_vin_payload(redact_location_in_text(payload)),
+                    self._hide_gcid(redact_location_in_text(payload)),
                 )
             if not self._message_callback:
                 return
