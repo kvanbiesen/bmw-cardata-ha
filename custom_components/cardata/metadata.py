@@ -249,7 +249,9 @@ async def async_fetch_and_store_vehicle_images(
                         coordinator.device_metadata[vin] = {}
                     coordinator.device_metadata[vin]["vehicle_image_path"] = str(image_path)
                     async_dispatcher_send(hass, coordinator.signal_new_image, vin)
-                    _LOGGER.debug("Vehicle image file exists for %s at %s", redacted_vin, str(image_path))
+                    _LOGGER.debug(
+                        "Vehicle image file exists for %s at %s", redacted_vin, redact_vin_in_text(str(image_path))
+                    )
                 except Exception as err:
                     safe_err = redact_vin_in_text(str(err))
                     _LOGGER.warning("Failed to load vehicle image file for %s: %s", redacted_vin, safe_err)
