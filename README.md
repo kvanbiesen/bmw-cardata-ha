@@ -781,6 +781,7 @@ The integration is organized into focused modules:
 | `magic_soc.py` | Driving SOC: distance-based consumption prediction, adaptive EMA learning |
 | `stream.py` | MQTT connection management, credential hot-swap |
 | `stream_circuit_breaker.py` | Circuit breaker for reconnection rate limiting |
+| `stream_client.py` | Builds the MQTT client: topic, credentials, callbacks, TLS |
 | `stream_reconnect.py` | Reconnection, unauthorized handling, retry scheduling |
 | `geo_utils.py` | Shared geographic utilities (Haversine distance, pairing the latitude and longitude of a GPS fix) |
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
