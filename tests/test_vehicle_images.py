@@ -113,3 +113,35 @@ async def test_the_restore_leaves_the_stored_basic_data_alone(hass):
 
     assert entry.data[VEHICLE_METADATA] == {OWN_VIN: {"name": "car"}}
     assert coordinator.device_metadata[OWN_VIN]["vehicle_image_path"].endswith(f"{OWN_VIN}.png")
+
+
+@pytest.mark.asyncio
+async def test_a_new_image_for_a_disabled_image_entity_is_ignored(hass, monkeypatch, tmp_path):
+    """Home Assistant never adds a disabled entity, so it has no state to write."""
+    from custom_components.cardata import image as image_module
+
+    image_path = tmp_path / f"{OWN_VIN}.png"
+    image_path.write_bytes(b"png")
+    coordinator = MagicMock(
+        hass=hass,
+        data={},
+        device_metadata={OWN_VIN: {"vehicle_image_path": str(image_path)}},
+        names={OWN_VIN: "i4"},
+        _allowed_vins_initialized=False,
+        signal_new_image="new_image",
+    )
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(coordinator=coordinator)
+    handlers = {}
+    monkeypatch.setattr(
+        image_module,
+        "async_dispatcher_connect",
+        lambda _hass, signal, handler: handlers.setdefault(signal, handler),
+    )
+    added = []
+
+    await image_module.async_setup_entry(hass, entry, added.extend)
+    assert len(added) == 1 and added[0].hass is None
+
+    await handlers["new_image"](OWN_VIN)
