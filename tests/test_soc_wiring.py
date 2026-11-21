@@ -543,6 +543,23 @@ class TestDcPowerUnit:
         assert power_kw == 50.0
 
 
+class TestNullChargingStatus:
+    """An API reply can carry the charging status as null."""
+
+    def test_a_null_status_does_not_end_the_charge(self):
+        coordinator = MagicMock()
+        predictor = SOCPredictor()
+        predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+        predictor.anchor_session("VIN", 50.0, 30.0, "AC")
+        coordinator._soc_predictor = predictor
+        vehicle_state = {DESC_CHARGING_STATUS: _state("CHARGINGACTIVE")}
+
+        process_soc_descriptors(coordinator, "VIN", {DESC_CHARGING_STATUS: {"value": None}}, vehicle_state)
+
+        assert predictor.is_charging("VIN")
+        assert predictor.has_active_session("VIN")
+
+
 class TestChargeTargetChange:
     """The target is captured at the anchor; a change mid-charge must reach the session."""
 

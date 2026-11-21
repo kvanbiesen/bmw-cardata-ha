@@ -827,8 +827,12 @@ def process_soc_descriptors(
         value = descriptor_payload.get("value")
 
         if descriptor == DESC_CHARGING_STATUS:
+            # An API reply can carry the status as null, which says nothing
+            # about the charge; the coordinator does not store it either.
+            if not value:
+                continue
             was_charging = soc_predictor.is_charging(vin)
-            status_changed = soc_predictor.update_charging_status(vin, str(value) if value else None)
+            status_changed = soc_predictor.update_charging_status(vin, str(value))
             if status_changed:
                 coordinator._motion_detector.set_charging(vin, soc_predictor.is_charging(vin))
                 manual_cap = coordinator.get_manual_battery_capacity(vin)
