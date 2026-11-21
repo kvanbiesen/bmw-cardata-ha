@@ -443,6 +443,10 @@ class ChargingSession:
     # the SOC gained over the same period counts in full, which reads as a charge
     # storing more than it should.  Cleared whenever a measuring window opens.
     energy_uncounted: bool = False
+    # The power was worked back from SOC steps at the default efficiency, so
+    # the energy it gives says nothing about the real efficiency: learning
+    # from it would measure how often BMW reports the SOC instead.
+    power_is_derived: bool = False
     # False when the battery capacity is the user's own figure and BMW's own
     # disagrees with it.  The inferred phase count scales directly with capacity,
     # so a figure known to be contradicted cannot support one.
@@ -470,6 +474,7 @@ class ChargingSession:
             "phases_source": self.phases_source,
             "power_is_reported": self.power_is_reported,
             "local_power_seen": self.local_power_seen,
+            "power_is_derived": self.power_is_derived,
             "capacity_trusted": self.capacity_trusted,
         }
 
@@ -503,6 +508,7 @@ class ChargingSession:
                 PHASES_REPORTED if data.get("phases", 1) > 1 else PHASES_ASSUMED,
             ),
             local_power_seen=data.get("local_power_seen", False),
+            power_is_derived=data.get("power_is_derived", False),
             capacity_trusted=data.get("capacity_trusted", True),
         )
 

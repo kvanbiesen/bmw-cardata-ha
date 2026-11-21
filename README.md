@@ -514,7 +514,7 @@ The integration includes a predicted SOC (State of Charge) sensor that estimates
 
 ### Vehicles Without Power Telemetry
 
-Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or voltage/current via MQTT. For these vehicles, the integration derives an implied charging power from BMW SOC changes: when an API poll delivers a higher SOC than the previous anchor and no real power data exists, the average power is back-calculated from the SOC delta, elapsed time, and default efficiency. The heartbeat then extrapolates between polls using this derived value, giving smooth SOC progression instead of staircase jumps every 30 minutes. Real power data (if it arrives later) overwrites the derived value automatically.
+Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or voltage/current via MQTT. For these vehicles, the integration derives an implied charging power from BMW SOC changes: when an API poll delivers a higher SOC than the previous anchor and no real power data exists, the average power is back-calculated from the SOC delta, elapsed time, and default efficiency. The heartbeat then extrapolates between polls using this derived value, giving smooth SOC progression instead of staircase jumps every 30 minutes. Real power data (if it arrives later) overwrites the derived value automatically. A charge that ran on a derived power is not learned from, since its energy came from the default efficiency and only reflects how often BMW reported the SOC.
 
 ### Charging Phases
 

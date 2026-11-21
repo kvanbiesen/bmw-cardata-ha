@@ -644,6 +644,51 @@ class TestLocalMeterZero:
         assert session.total_energy_kwh == pytest.approx(energy)
 
 
+class TestDerivedPowerLearning:
+    """Power worked back from SOC steps must not be learned from."""
+
+    def test_a_session_on_derived_power_is_not_learned(self):
+        """A car without power telemetry, its SOC polled every 30 minutes: 3.7 kW at 90% into 40 kWh."""
+        clock = [1_800_000_000.0]
+        rate = 3.7 * 0.90 / 40.0 * 100 / 3600  # % per second
+        with (
+            patch("time.time", lambda: clock[0]),
+            patch("custom_components.cardata.soc_types.time.time", lambda: clock[0]),
+            patch("custom_components.cardata.soc_prediction.datetime") as frozen,
+        ):
+            frozen.now.side_effect = lambda tz=None: datetime.fromtimestamp(clock[0], UTC)
+            frozen.fromisoformat = datetime.fromisoformat
+            predictor = SOCPredictor()
+            predictor.update_bmw_soc("VIN", 50.0)
+            predictor.update_charging_status("VIN", "CHARGINGACTIVE")
+            predictor.anchor_session("VIN", 50.0, 40.0, "AC")
+            elapsed = 0
+            soc = 50.0
+            while soc < 80:
+                for _ in range(60):
+                    clock[0] += 30
+                    elapsed += 30
+                    predictor.periodic_update_all()
+                soc = min(50.0 + rate * elapsed, 80.0)
+                predictor.update_bmw_soc("VIN", float(int(soc)))
+            assert predictor._sessions["VIN"].power_is_derived
+            predictor.update_charging_status("VIN", "NOCHARGING")
+            predictor.end_session("VIN", 80.0, None)
+            clock[0] += 60
+            predictor.update_bmw_soc("VIN", 80.0)
+
+        assert predictor.get_learned_efficiency("VIN") is None
+
+    def test_the_flag_survives_a_restart(self):
+        from custom_components.cardata.soc_types import ChargingSession
+
+        predictor = SOCPredictor()
+        predictor.anchor_session("VIN", 50.0, 40.0, "AC")
+        session = predictor._sessions["VIN"]
+        session.power_is_derived = True
+        assert ChargingSession.from_dict(session.to_dict()).power_is_derived
+
+
 class TestNullChargingStatus:
     """An API reply can carry the charging status as null."""
 

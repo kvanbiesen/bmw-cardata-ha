@@ -837,6 +837,7 @@ class SOCPredictor:
         implied_power = energy_in_battery / (elapsed_seconds / 3600.0 * efficiency)
 
         session.last_power_kw = implied_power
+        session.power_is_derived = True
 
         _LOGGER.debug(
             "SOC: Derived charging power for %s: %.2f kW (%.1f%% -> %.1f%% over %.0f min)",
