@@ -31,20 +31,23 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from typing import Any
 
 import aiohttp
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.storage import Store
 
+from . import stream_reconnect
 from .auth import (
     async_ensure_container_for_entry,
     async_token_refresh_loop,
     container_signature_outdated,
     handle_stream_error,
+    is_token_expired,
     refresh_tokens_for_entry,
 )
 from .bootstrap import async_run_bootstrap
@@ -232,9 +235,7 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator.session_start_time = time.time()
 
         # Set up SOC learning storage
-        soc_learning_store: Store = Store(
-            hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry.entry_id}"
-        )
+        soc_learning_store = soc_learning_store_for(hass, entry.entry_id)
 
         # Load SOC session data (v1 learned efficiency or v2 full session state)
         try:
@@ -432,7 +433,21 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             await refresh_tokens_for_entry(entry, session, manager, container_manager)
             refreshed_token = True
-        except (CardataAuthError, TimeoutError, aiohttp.ClientError) as err:
+        except CardataAuthError as err:
+            # BMW refused the refresh. While the stored token is still valid the
+            # entry runs on it, and a later refusal reaches the runtime's own
+            # handling. Once that one has expired too there is nothing left to
+            # try, so ask for a new authorization now. Only for a refusal: a
+            # rate limit or a reply that is not JSON says nothing about the
+            # refresh token, and a reauth would end the setup retries.
+            if err.status in (400, 401, 403) and is_token_expired(entry)[0]:
+                raise ConfigEntryAuthFailed(f"BMW refused the token refresh: {err}") from err
+            _LOGGER.warning(
+                "Initial token refresh failed for entry %s: %s; continuing with stored token",
+                entry.entry_id,
+                err,
+            )
+        except (TimeoutError, aiohttp.ClientError) as err:
             _LOGGER.warning(
                 "Initial token refresh failed for entry %s: %s; continuing with stored token",
                 entry.entry_id,
@@ -562,9 +577,16 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("Starting MQTT connection after bootstrap")
                 await manager.async_start()
             except Exception as err:
-                if refreshed_token:
-                    raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT after token refresh: {err}") from err
-                raise ConfigEntryNotReady(f"Unable to connect to BMW MQTT: {err}") from err
+                # Setup goes on without the stream: polling works without it,
+                # and failing here would drop the runtime the refusal handling
+                # needs to tell a token BMW refuses from a stream another client
+                # holds. Anything short of a refusal goes to the reconnect chain.
+                _LOGGER.warning(
+                    "Unable to connect to BMW MQTT for entry %s: %s; continuing without the stream for now",
+                    entry.entry_id,
+                    err,
+                )
+                stream_reconnect.recover_failed_start(manager)
 
         # Start coordinator watchdog
         await coordinator.async_start_watchdog()
@@ -640,8 +662,8 @@ async def async_setup_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         setup_succeeded = True
         return True
 
-    except ConfigEntryNotReady:
-        # Expected exception for setup retries - re-raise without extra logging
+    except (ConfigEntryNotReady, ConfigEntryAuthFailed):
+        # Expected exceptions for setup retries and reauth - re-raise without extra logging
         raise
 
     except (TimeoutError, aiohttp.ClientError) as err:
@@ -666,6 +688,22 @@ def _bootstrap_failed_notification_id(entry: ConfigEntry) -> str:
     return f"{DOMAIN}_{entry.entry_id}_bootstrap_failed"
 
 
+class _SocLearningStore(Store):
+    """The SOC learning store, which still opens what older releases wrote."""
+
+    async def _async_migrate_func(self, old_major_version: int, old_minor_version: int, old_data: Any) -> Any:
+        # Version 1, written by 4.7.0 to 4.7.4, held only the learned efficiency
+        # per VIN. The loader still reads that layout, so it is taken as it is;
+        # without this Home Assistant refuses the file and the next save
+        # replaces it with an empty one.
+        return old_data
+
+
+def soc_learning_store_for(hass: HomeAssistant, entry_id: str) -> Store:
+    """Return the store that keeps an entry's SOC sessions and learning."""
+    return _SocLearningStore(hass, SOC_LEARNING_STORAGE_VERSION, f"{SOC_LEARNING_STORAGE_KEY}.{entry_id}")
+
+
 async def async_cleanup_if_last_entry(hass: HomeAssistant) -> None:
     """Remove the services and the card resource once no entry is loaded.
 
@@ -677,6 +715,10 @@ async def async_cleanup_if_last_entry(hass: HomeAssistant) -> None:
     if domain_data is None:
         return
     if any(not key.startswith("_") for key in domain_data):
+        return
+    # An entry still setting up has not stored its runtime yet; taking the
+    # services and the domain data from under it would fail that setup.
+    if any(other.state is ConfigEntryState.SETUP_IN_PROGRESS for other in hass.config_entries.async_entries(DOMAIN)):
         return
     async_unregister_services(hass)
     await async_unload_frontend_cards_if_last_entry(hass)
@@ -720,10 +762,26 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     data: CardataRuntimeData = domain_data.pop(entry.entry_id)
 
-    await _async_save_soc_sessions(data)
+    # Stop the stream first: a message arriving while the rest is torn down
+    # would arm timers again, send signals and create entities on platforms
+    # that are on their way out.
+    # The refresh loop goes before the stop, which would otherwise wait for a
+    # reconnect of its in progress; a connect it leaves running in the
+    # executor sees the shut down and drops its client.
+    data.stream.shut_down()
+    if data.refresh_task:
+        await _cancel_task_with_timeout(data.refresh_task, "Refresh")
+    try:
+        await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
+    except TimeoutError:
+        _LOGGER.warning("MQTT stream stop timed out after 10 seconds. Proceeding with unload anyway.")
+    except Exception as err:
+        _LOGGER.error("Error stopping MQTT stream: %s", err)
 
     # Stop coordinator
     await data.coordinator.async_stop_watchdog()
+
+    await _async_save_soc_sessions(data)
 
     # Unload platforms
     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -736,15 +794,6 @@ async def async_unload_cardata(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ]:
         if task:
             await _cancel_task_with_timeout(task, name)
-
-    # Stop MQTT stream with timeout protection
-    data.stream.shut_down()
-    try:
-        await asyncio.wait_for(data.stream.async_stop(), timeout=10.0)
-    except TimeoutError:
-        _LOGGER.warning("MQTT stream stop timed out after 10 seconds. Proceeding with unload anyway.")
-    except Exception as err:
-        _LOGGER.error("Error stopping MQTT stream: %s", err)
 
     try:
         await data.session.close()

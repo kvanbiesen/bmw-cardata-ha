@@ -36,13 +36,20 @@ from typing import Any
 import aiohttp
 
 from .const import DEVICE_CODE_URL, HTTP_TIMEOUT, TOKEN_URL
-from .utils import redact_sensitive_data
+from .utils import redact_identifier, redact_sensitive_data
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class CardataAuthError(Exception):
-    """Raised when the BMW OAuth service rejects a request."""
+    """Raised when the BMW OAuth service rejects a request.
+
+    status is the HTTP status of the reply when there was one.
+    """
+
+    def __init__(self, message: str = "", *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 async def request_device_code(
@@ -94,9 +101,9 @@ async def poll_for_tokens(
     max_consecutive_500s = 3  # Give up after 3 consecutive 500s
 
     _LOGGER.debug(
-        "Starting token polling: client_id=%s, device_code=%s..., timeout=%ds",
-        client_id[:16] + "..." if len(client_id) > 16 else client_id,
-        device_code[:8] + "..." if device_code and len(device_code) > 8 else device_code,
+        "Starting token polling: client_id=%s, device_code=%s, timeout=%ds",
+        redact_identifier(client_id),
+        redact_identifier(device_code),
         timeout,
     )
 
@@ -248,7 +255,7 @@ async def refresh_tokens(
                     safe_data = {
                         k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
                     }
-                    raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}")
+                    raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}", status=resp.status)
 
                 # Server errors - retry
                 if 500 <= resp.status < 600 and attempt < max_retries:
@@ -276,7 +283,7 @@ async def refresh_tokens(
                 safe_data = {
                     k: v for k, v in data_dict.items() if k not in ("access_token", "refresh_token", "id_token")
                 }
-                raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}")
+                raise CardataAuthError(f"Token refresh failed ({resp.status}): {safe_data}", status=resp.status)
 
         except TimeoutError as err:
             last_error = err

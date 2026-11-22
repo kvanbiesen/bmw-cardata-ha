@@ -26,7 +26,7 @@
 """Tests for restoring the cached vehicle images from disk."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -102,6 +102,27 @@ async def test_the_404_marker_is_not_taken_for_an_image(hass):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("retry", [False, True])
+async def test_only_the_manual_fetch_asks_again_after_a_404(hass, retry):
+    """BMW may have an image for the car by now; the automatic fetches must not keep asking."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(device_metadata={OWN_VIN: {}}, signal_new_image="test_new_image")
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(
+        coordinator=coordinator, image_fetch_pending=None
+    )
+    response = MagicMock(status=404)
+    session = MagicMock()
+    session.get.return_value.__aenter__ = AsyncMock(return_value=response)
+    session.get.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    await _write_image(hass, OWN_VIN, b"")
+    await async_fetch_and_store_vehicle_images(hass, entry, {}, [OWN_VIN], session, retry_unavailable=retry)
+
+    assert session.get.called is retry
+
+
+@pytest.mark.asyncio
 async def test_the_restore_leaves_the_stored_basic_data_alone(hass):
     """The image path is found on disk at every start; it does not belong in BMW's payload."""
     entry = MockConfigEntry(domain=DOMAIN, data={VEHICLE_METADATA: {OWN_VIN: {"name": "car"}}})
@@ -113,3 +134,48 @@ async def test_the_restore_leaves_the_stored_basic_data_alone(hass):
 
     assert entry.data[VEHICLE_METADATA] == {OWN_VIN: {"name": "car"}}
     assert coordinator.device_metadata[OWN_VIN]["vehicle_image_path"].endswith(f"{OWN_VIN}.png")
+
+
+@pytest.mark.asyncio
+async def test_a_new_image_for_a_disabled_image_entity_is_ignored(hass, monkeypatch, tmp_path):
+    """Home Assistant never adds a disabled entity, so it has no state to write."""
+    from custom_components.cardata import image as image_module
+
+    image_path = tmp_path / f"{OWN_VIN}.png"
+    image_path.write_bytes(b"png")
+    coordinator = MagicMock(
+        hass=hass,
+        data={},
+        device_metadata={OWN_VIN: {"vehicle_image_path": str(image_path)}},
+        names={OWN_VIN: "i4"},
+        _allowed_vins_initialized=False,
+        signal_new_image="new_image",
+    )
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(coordinator=coordinator)
+    handlers = {}
+    monkeypatch.setattr(
+        image_module,
+        "async_dispatcher_connect",
+        lambda _hass, signal, handler: handlers.setdefault(signal, handler),
+    )
+    added = []
+
+    await image_module.async_setup_entry(hass, entry, added.extend)
+    assert len(added) == 1 and added[0].hass is None
+
+    await handlers["new_image"](OWN_VIN)
+
+
+def test_basic_data_fetched_again_keeps_the_image_path():
+    """The path is found on disk, not sent by BMW; a later basic data fetch must not drop it."""
+    from custom_components.cardata.device_info import apply_basic_data
+
+    device_metadata = {OWN_VIN: {"vehicle_image_path": f"/config/www/community/cardata/{OWN_VIN}.png"}}
+    names: dict = {}
+    payload = {"brand": "BMW", "modelName": "i4 eDrive40", "series": "4"}
+
+    apply_basic_data(OWN_VIN, payload, device_metadata, names, MagicMock(), lambda *args: None, "entry")
+
+    assert device_metadata[OWN_VIN]["vehicle_image_path"].endswith(f"{OWN_VIN}.png")

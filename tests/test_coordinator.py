@@ -163,8 +163,9 @@ class TestMileageSafeguard:
         await self._send_reading(coordinator, 93760, None)
 
         state = coordinator.get_state(TEST_VIN, DESC_TRAVELLED_DISTANCE)
-        assert state.value == 93760  # stored raw/unconverted
-        assert state.unit == "km"  # tagged so HA's own converter displays it correctly
+        # Converted into the unit already stored, so the odometer stays in miles
+        assert state.value == pytest.approx(58259.76, abs=0.01)
+        assert state.unit == "mi"
 
     @pytest.mark.asyncio
     async def test_unit_flip_without_real_change_is_not_significant(self, coordinator):

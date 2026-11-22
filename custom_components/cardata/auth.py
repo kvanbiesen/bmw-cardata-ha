@@ -45,6 +45,8 @@ from .const import (
     DOMAIN,
     ERR_TOKEN_REFRESH_IN_PROGRESS,
     HV_BATTERY_DESCRIPTORS,
+    HV_CONTAINER_CREATE_FAILED_KEY,
+    HV_CONTAINER_CREATE_RETRY_SECONDS,
     LOCK_ACQUIRE_TIMEOUT,
 )
 from .container import CardataContainerManager
@@ -308,8 +310,14 @@ async def handle_stream_error(
     hass: HomeAssistant,
     entry: ConfigEntry,
     reason: str,
+    *,
+    from_api: bool = False,
 ) -> None:
-    """Handle stream connection errors, managing reauth flow."""
+    """Handle stream connection errors, managing reauth flow.
+
+    from_api marks a token the REST API refused, which says nothing about
+    another client holding the stream and always takes the refresh path.
+    """
     # Check if runtime data exists (entry might be unloading or not yet set up)
     domain_data = hass.data.get(DOMAIN, {})
     runtime: CardataRuntimeData | None = domain_data.get(entry.entry_id)
@@ -344,20 +352,19 @@ async def handle_stream_error(
         try:
             now = time.time()
 
-            if runtime.connection_conflict:
+            if runtime.connection_conflict and not from_api:
                 # Already diagnosed as something other than our credentials, so
                 # a refresh would not change BMW's answer. Keep reconnecting
                 # anyway: getting in is the only way we learn the connection
                 # has been freed, and nothing else would clear the verdict.
+                # Through the reconnect chain, which backs off and may already
+                # be running: every refusal reaches this handler, and a start
+                # of its own beside the chain's would double the attempts.
                 _LOGGER.debug(
                     "Stream still refused for entry %s with credentials BMW accepts; retrying without a refresh",
                     entry.entry_id,
                 )
-                try:
-                    await runtime.stream.async_start()
-                except Exception as start_err:
-                    _LOGGER.debug("BMW still refuses the stream for entry %s: %s", entry.entry_id, start_err)
-                    stream_reconnect.recover_failed_start(runtime.stream)
+                stream_reconnect.restart_refused_stream(runtime.stream)
                 return
 
             if runtime.reauth_pending:
@@ -389,6 +396,7 @@ async def handle_stream_error(
                     runtime.reauth_in_progress = False
                     runtime.last_reauth_attempt = 0.0
                     runtime.reauth_pending = False
+                    runtime.last_refresh_success = now
                     _LOGGER.info("BMW credentials refreshed successfully after auth failure")
 
                     # Reconnect MQTT with the new credentials
@@ -397,6 +405,7 @@ async def handle_stream_error(
                     except Exception as start_err:
                         if runtime.stream.credentials_refused:
                             _report_connection_conflict(hass, runtime, entry, notification_id)
+                            stream_reconnect.restart_refused_stream(runtime.stream)
                             return
                         _LOGGER.warning("MQTT reconnect after credential refresh failed: %s", start_err)
                         stream_reconnect.recover_failed_start(runtime.stream)
@@ -414,7 +423,7 @@ async def handle_stream_error(
                         err,
                     )
                     runtime.last_refresh_attempt = 0.0
-                    stream_reconnect.request_reconnect(runtime.stream)
+                    stream_reconnect.restart_refused_stream(runtime.stream)
                     return
 
                 except CardataAuthError as err:
@@ -424,7 +433,26 @@ async def handle_stream_error(
                             "Token refresh skipped for entry %s: another refresh already in progress",
                             entry.entry_id,
                         )
-                        # Don't record as unauthorized attempt - the other refresh will handle it
+                        # Not an unauthorized attempt. The stream is stopped
+                        # though, and the other refresh only restarts it when
+                        # it is the refresh loop with a new token, so hand it to
+                        # the reconnect chain, which picks up the new token.
+                        stream_reconnect.restart_refused_stream(runtime.stream)
+                        return
+                    if err.status not in (400, 401, 403):
+                        # A rate limit or a reply that is not JSON says nothing
+                        # about the credentials, and a reauth would pause the
+                        # polling until a reconnect: try again like a refresh
+                        # that could not reach BMW. Setup no longer fails on a
+                        # stream refusal, so this is also where one at startup,
+                        # on an expired token, ends up.
+                        _LOGGER.warning(
+                            "Token refresh after unauthorized failed for entry %s: %s; trying again later",
+                            entry.entry_id,
+                            err,
+                        )
+                        runtime.last_refresh_attempt = 0.0
+                        stream_reconnect.restart_refused_stream(runtime.stream)
                         return
                     _LOGGER.warning(
                         "Token refresh after unauthorized failed for entry %s: %s",
@@ -434,6 +462,17 @@ async def handle_stream_error(
                     if runtime and runtime.unauthorized_protection:
                         runtime.unauthorized_protection.record_attempt()
                         _LOGGER.debug("Token refresh failed, attempt recorded")
+            elif now - runtime.last_refresh_success < 30:
+                # Refused again with tokens BMW issued moments ago, after a
+                # restart that failed short of BMW's answer: the credentials
+                # are not the problem, so a reauth would not help. The API
+                # says nothing about the stream, and reports again after its
+                # own backoff, when the refresh path is open again.
+                if from_api:
+                    return
+                _report_connection_conflict(hass, runtime, entry, notification_id)
+                stream_reconnect.restart_refused_stream(runtime.stream)
+                return
             else:
                 runtime.reauth_pending = True
                 _LOGGER.debug(
@@ -561,6 +600,19 @@ async def async_ensure_container_for_entry(
         _LOGGER.debug("Using existing container %s (signature matches)", hv_container_id)
         return True
 
+    # The in-memory rate limiter starts over with every setup, and setup runs
+    # this before there is one at all. Without a note of the last failure, a
+    # create BMW keeps refusing would be tried again on every restart, reload
+    # and setup retry, two calls each time.
+    failed_at = data.get(HV_CONTAINER_CREATE_FAILED_KEY)
+    if isinstance(failed_at, (int, float)) and 0 <= time.time() - failed_at < HV_CONTAINER_CREATE_RETRY_SECONDS:
+        _LOGGER.debug(
+            "Not creating the HV container for entry %s: the last attempt failed %.0f seconds ago",
+            entry.entry_id,
+            time.time() - failed_at,
+        )
+        return False
+
     # Log reason for recreation
     if hv_container_id and stored_signature != desired_signature:
         _LOGGER.info(
@@ -584,10 +636,17 @@ async def async_ensure_container_for_entry(
             entry.entry_id,
             err,
         )
+        # Only a create BMW turned down is held back. A timeout, a network
+        # error or the local limiter carry no status, a stale token (401) is
+        # refreshed, a rate limit (429) has its own backoff and a server error
+        # passes, and the next attempt may well succeed after any of them.
+        if err.status is not None and 400 <= err.status < 500 and err.status not in (401, 429):
+            await async_update_entry_data(hass, entry, {HV_CONTAINER_CREATE_FAILED_KEY: time.time()})
         return False
 
     if not container_id:
         _LOGGER.error("Container creation returned no ID")
+        await async_update_entry_data(hass, entry, {HV_CONTAINER_CREATE_FAILED_KEY: time.time()})
         return False
 
     actual_signature = container_manager.container_signature or desired_signature
@@ -604,6 +663,7 @@ async def async_ensure_container_for_entry(
         "hv_container_id": container_id,
         "hv_descriptor_signature": actual_signature,
         "container_ids": [container_id],
+        HV_CONTAINER_CREATE_FAILED_KEY: None,
     }
     await async_update_entry_data(hass, entry, update_data)
     _LOGGER.info("Ensured HV container %s for entry %s", container_id, entry.entry_id)

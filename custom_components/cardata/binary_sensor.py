@@ -47,7 +47,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .condition_based_services import DESC_CBS_SERVICE_DUE
 from .const import DOMAIN, OPENING_STATUS_DESCRIPTORS, OPENING_UNIQUE_ID_SUFFIX
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataEntity, forget_removed_vehicles
 from .runtime import CardataRuntimeData
 from .utils import async_wait_for_bootstrap
 
@@ -317,6 +317,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     await async_wait_for_bootstrap(stream_manager, context="Binary sensor setup")
 
     entities: dict[tuple[str, str], CardataBinarySensor] = {}
+    forget_removed_vehicles(hass, entry, entities)
 
     def ensure_entity(vin: str, descriptor: str, *, assume_binary: bool = False, from_signal: bool = False) -> None:
         """Ensure binary sensor entity exists for VIN + descriptor.
@@ -405,3 +406,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     for vin, descriptor in coordinator.iter_descriptors(binary=False):
         if descriptor in OPENING_STATUS_DESCRIPTORS:
             ensure_entity(vin, descriptor)
+
+    # The coordinator announces the derived isMoving sensor on a vehicle's
+    # first GPS fix, which can come before this platform listened: from the
+    # bootstrap seed, or the stream connecting before the platforms load.
+    for vin in coordinator._motion_detector.get_tracked_vins():
+        if coordinator._motion_detector.has_signaled_entity(vin):
+            ensure_entity(vin, "vehicle.isMoving", from_signal=True)

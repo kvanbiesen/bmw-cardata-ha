@@ -395,8 +395,10 @@ async def async_perform_telematic_fetch(
             break  # Stop trying other VINs
 
         if merged_data:
-            await runtime.coordinator.async_handle_message({"vin": vin, "data": merged_data}, is_telematic=True)
+            # Recorded first: a charge end this data reveals asks for a poll
+            # unless one has just been made, and this one has.
             runtime.coordinator.record_telematic_poll(vin)
+            await runtime.coordinator.async_handle_message({"vin": vin, "data": merged_data}, is_telematic=True)
             any_success = True
 
     # All VINs had fresh MQTT data — nothing to poll, not a failure
@@ -438,6 +440,14 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
     runtime: CardataRuntimeData | None = domain_entries.get(entry_id) if domain_entries else None
     if runtime is None:
         return
+
+    # A bootstrap still running in the background seeds every vehicle with a
+    # poll of its own. Starting before it would poll each one a second time,
+    # and its stamp is only stored once it has seeded.
+    bootstrap_task = runtime.bootstrap_task
+    if bootstrap_task is not None and not bootstrap_task.done():
+        _LOGGER.debug("Telematic poll loop waiting for the bootstrap of entry %s", entry_id)
+        await asyncio.wait({bootstrap_task})
 
     # Staleness threshold scales with VIN count and daily feature overhead.
     # Targets ~24 total scheduled API calls/day, including daily optional fetches.
@@ -538,6 +548,11 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
             # Calculate wait time until next check
             backoff_multiplier = 2**consecutive_failures if consecutive_failures > 0 else 1
             current_interval = min(check_interval * backoff_multiplier, max_backoff)
+            # A check time in the future comes from a clock that has since
+            # gone back. Waiting for it to catch up would hold every poll up
+            # by as much, so it counts as a check made now.
+            if last_check_time > now:
+                last_check_time = now
             wait = current_interval - (now - last_check_time)
 
             # Always wait at least 1 second to prevent spin
@@ -726,7 +741,7 @@ async def async_telematic_poll_loop(hass: HomeAssistant, entry_id: str) -> None:
                         )
                         return
                     try:
-                        await handle_stream_error(hass, entry, "unauthorized")
+                        await handle_stream_error(hass, entry, "unauthorized", from_api=True)
                     except Exception as err:
                         _LOGGER.debug("Failed to trigger reauth from telematic poll: %s", err)
             else:

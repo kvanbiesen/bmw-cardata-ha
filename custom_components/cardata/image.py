@@ -38,9 +38,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity
+from .entity import CardataEntity, forget_removed_vehicles
 from .runtime import CardataRuntimeData
-from .utils import redact_vin
+from .utils import redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -115,11 +115,16 @@ async def async_setup_entry(
     coordinator: CardataCoordinator = runtime_data.coordinator
 
     entities: dict[str, CardataImage] = {}
+    forget_removed_vehicles(hass, config_entry, entities)
 
     def ensure_entity(vin: str) -> None:
         """Create an image entity for the VIN if image bytes are available."""
         if vin in entities:
             entity = entities[vin]
+            # Home Assistant never adds a disabled entity, and writing the
+            # state of one it has not added raises.
+            if entity.hass is None:
+                return
             metadata = coordinator.device_metadata.get(vin, {})
             image_path_str = metadata.get("vehicle_image_path")
             if image_path_str:
@@ -155,7 +160,9 @@ async def async_setup_entry(
         entity = CardataImage(coordinator, vin)
         entities[vin] = entity
         async_add_entities([entity])
-        _LOGGER.debug("Created image entity for VIN: %s with image path: %s", redact_vin(vin), image_path)
+        _LOGGER.debug(
+            "Created image entity for VIN: %s with image path: %s", redact_vin(vin), redact_vin_in_text(str(image_path))
+        )
 
     # Filter by _allowed_vins to prevent creating entities for VINs owned by other entries
     initial_vins = set(coordinator.data.keys()) | set(coordinator.device_metadata.keys())

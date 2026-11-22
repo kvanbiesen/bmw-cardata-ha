@@ -68,7 +68,7 @@ clean_hv_containers:
       example: 550e8400-e29b-41d4-a716-446655440000
 fetch_vehicle_images:
   name: Fetch Vehicle Images
-  description: Manually fetch vehicle images for all configured vehicles.
+  description: Fetch vehicle images for configured vehicles that have none yet, including ones BMW had no image for earlier.
 fetch_charging_history:
   name: Fetch Charging History
   description: >

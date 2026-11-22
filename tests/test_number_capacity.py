@@ -54,25 +54,39 @@ def registry_row(domain: str, unique_id: str) -> SimpleNamespace:
 def platform(monkeypatch):
     """Drive the number platform with a registry and a coordinator we control."""
 
-    def run(rows=(), coordinator_data=None):
+    def run(rows=(), coordinator_data=None, signals=()):
         coordinator = SimpleNamespace(
             data=coordinator_data or {},
             device_metadata={},
             names={VIN: "iX3"},
             _allowed_vins_initialized=False,
             _allowed_vins=set(),
+            signal_new_sensor="new_sensor",
         )
         hass = SimpleNamespace(data={DOMAIN: {"entry": SimpleNamespace(coordinator=coordinator)}})
-        entry = SimpleNamespace(entry_id="entry")
+        entry = SimpleNamespace(entry_id="entry", async_on_unload=lambda _remove: None)
 
         added: list = []
+        handlers: dict = {}
         monkeypatch.setattr(number_module, "async_get", lambda _hass: None)
         monkeypatch.setattr(number_module, "async_entries_for_config_entry", lambda _reg, _entry_id: list(rows))
+        monkeypatch.setattr(
+            number_module,
+            "async_dispatcher_connect",
+            lambda _hass, signal, handler: handlers.setdefault(signal, handler),
+        )
 
         import asyncio
 
-        asyncio.run(async_setup_entry(hass, entry, added.extend))
-        return {entity._attr_unique_id for entity in added}
+        async def setup_and_signal():
+            await async_setup_entry(hass, entry, added.extend)
+            for vin, descriptor in signals:
+                await handlers["new_sensor"](vin, descriptor)
+
+        asyncio.run(setup_and_signal())
+        unique_ids = [entity._attr_unique_id for entity in added]
+        assert len(unique_ids) == len(set(unique_ids))
+        return set(unique_ids)
 
     return run
 
@@ -108,3 +122,24 @@ class TestManualTankCapacity:
     def test_a_phev_gets_both(self, platform):
         data = {VIN: {DESC_SOC_DISPLAYED: object(), DESC_REMAINING_FUEL: object()}}
         assert platform(coordinator_data=data) == {BATTERY_ID, TANK_ID}
+
+
+class TestCapacityInputsLater:
+    """Battery or fuel data arriving after the platform loaded still gets the inputs."""
+
+    def test_a_late_battery_reading_creates_the_battery_input(self, platform):
+        assert platform(signals=[(VIN, DESC_SOC_HEADER)]) == {BATTERY_ID}
+
+    def test_a_late_neue_klasse_reading_creates_the_battery_input(self, platform):
+        assert platform(signals=[(VIN, DESC_SOC_DISPLAYED)]) == {BATTERY_ID}
+
+    def test_a_late_fuel_reading_creates_the_tank_input(self, platform):
+        assert platform(signals=[(VIN, DESC_REMAINING_FUEL)]) == {TANK_ID}
+
+    def test_an_existing_input_is_not_built_twice(self, platform):
+        data = {VIN: {DESC_SOC_HEADER: object(), DESC_REMAINING_FUEL: object()}}
+        signals = [(VIN, DESC_SOC_HEADER), (VIN, DESC_SOC_DISPLAYED), (VIN, DESC_REMAINING_FUEL)]
+        assert platform(coordinator_data=data, signals=signals) == {BATTERY_ID, TANK_ID}
+
+    def test_other_descriptors_create_nothing(self, platform):
+        assert platform(signals=[(VIN, "vehicle.travelledDistance")]) == set()

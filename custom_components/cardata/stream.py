@@ -30,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import ssl
 import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
@@ -45,7 +44,8 @@ from . import stream_reconnect
 from .const import LOCK_ACQUIRE_TIMEOUT
 from .debug import debug_enabled
 from .stream_circuit_breaker import CircuitBreaker
-from .utils import redact_vin_in_text, redact_vin_payload
+from .stream_client import build_client
+from .utils import redact_identifier, redact_location_in_text, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -256,8 +256,13 @@ class CardataStreamManager:
         while a connect holds the lock never marks the disconnect intentional.
         After a reload the entry id is back in hass.data, so nothing else tells
         a reconnect still in flight that this manager is no longer wanted.
+        A reconnect chain asleep in its backoff is cancelled rather than left
+        to find that out when it wakes, up to ten minutes later.
         """
         self._shut_down = True
+        task = self._reconnect_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
 
     async def async_start(self) -> None:
         # Acquire lock with timeout to prevent indefinite blocking
@@ -315,6 +320,12 @@ class CardataStreamManager:
         if self._shut_down:
             return
 
+        # A start undoes an earlier stop even when it goes no further: a
+        # start the circuit breaker blocks must not leave the stop flag set,
+        # or the reconnect chain would give up on the stream for good.
+        self._disconnect_future = None
+        self._intentional_disconnect = False
+
         # Forget the previous verdict so callers cannot read it as the outcome
         # of an attempt that never reached the broker.
         self._last_connack_rc = None
@@ -358,9 +369,6 @@ class CardataStreamManager:
                     self._connection_state.value,
                 )
             return
-
-        self._disconnect_future = None
-        self._intentional_disconnect = False
 
         if self._last_disconnect is not None:
             elapsed = time.monotonic() - self._last_disconnect
@@ -489,6 +497,12 @@ class CardataStreamManager:
     def set_status_callback(self, callback: Callable[[str, str | None], Awaitable[None]]) -> None:
         self._status_callback = callback
 
+    def _hide_gcid(self, text: str | None) -> str | None:
+        """Redact the GCID and any VIN inside a topic or client id for logs."""
+        if isinstance(text, str) and self._gcid:
+            text = text.replace(self._gcid, redact_identifier(self._gcid))
+        return redact_vin_in_text(text)
+
     @property
     def debug_info(self) -> dict[str, str | int | bool]:
         """Return connection parameters for diagnostics."""
@@ -510,104 +524,23 @@ class CardataStreamManager:
                 "protocol": "MQTTv311",
             }
 
+        # These end up in a sensor's attributes, which the recorder keeps and
+        # every user can read, so the account identifiers are cut short.
         return {
             "custom_broker": False,
-            "client_id": self._client_id,
-            "gcid": self._gcid,
+            "client_id": redact_identifier(self._client_id),
+            "gcid": redact_identifier(self._gcid),
             "host": self._host,
             "port": self._port,
             "keepalive": self._keepalive,
-            "topic": f"{self._gcid}/+",
+            "topic": f"{redact_identifier(self._gcid)}/+",
             "clean_session": True,
             "protocol": "MQTTv311",
             "id_token": redacted_token,
         }
 
     def _start_client(self) -> None:
-        if self._custom_broker:
-            # Custom broker: use prefix-based topic (e.g. "bmw/+")
-            prefix = self._custom_mqtt_topic_prefix or "bmw/"
-            topic = f"{prefix}+"
-            client_id = f"cardata-ha-{self._entry_id or 'default'}"
-        else:
-            # BMW broker: use GCID-based topic
-            topic = f"{self._gcid}/+"
-            client_id = self._gcid
-
-        # reconnect_on_failure=False: after a lost connection paho would run its
-        # own reconnect loop in the network thread, in parallel with ours and
-        # without the backoff, the circuit breaker or the token refresh. Both
-        # would then connect under the same client id, and the broker drops the
-        # older session whenever the newer one arrives.
-        client = mqtt.Client(
-            client_id=client_id,
-            clean_session=True,
-            userdata={"topic": topic},
-            protocol=mqtt.MQTTv311,
-            transport="tcp",
-            reconnect_on_failure=False,
-        )
-        if debug_enabled():
-            _LOGGER.debug(
-                "Initializing MQTT client: client_id=%s host=%s port=%s custom_broker=%s",
-                client_id,
-                self._host,
-                self._port,
-                self._custom_broker,
-            )
-
-        if self._custom_broker:
-            # Custom broker: use configured username/password (if any)
-            if self._custom_mqtt_username:
-                client.username_pw_set(
-                    username=self._custom_mqtt_username,
-                    password=self._custom_mqtt_password or "",
-                )
-                if debug_enabled():
-                    _LOGGER.debug("Custom MQTT credentials set for user %s", self._custom_mqtt_username)
-        else:
-            # BMW broker: use GCID + id_token
-            client.username_pw_set(username=self._gcid, password=self._password)
-            if debug_enabled():
-                _LOGGER.debug(
-                    "MQTT credentials set for GCID %s (token length=%s)",
-                    self._gcid,
-                    len(self._password or ""),
-                )
-
-        client.on_connect = self._guarded_callback(self._handle_connect, "connect")
-        client.on_subscribe = self._guarded_callback(self._handle_subscribe, "subscribe")
-        client.on_message = self._guarded_callback(self._handle_message, "message")
-        client.on_disconnect = self._guarded_callback(self._handle_disconnect, "disconnect")
-
-        if self._custom_broker:
-            # Custom broker: configure TLS based on user setting
-            if self._custom_mqtt_tls == "tls":
-                context = ssl.create_default_context()
-                client.tls_set_context(context)
-                client.tls_insecure_set(False)
-            elif self._custom_mqtt_tls == "tls_insecure":
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                client.tls_set_context(context)
-                client.tls_insecure_set(True)
-            # else: "off" — no TLS, plain TCP
-        else:
-            # BMW broker: require TLS 1.3 with full certificate validation
-            context = ssl.create_default_context()
-            if not hasattr(ssl, "TLSVersion") or not hasattr(ssl.TLSVersion, "TLSv1_3"):
-                ssl_lib = getattr(ssl, "OPENSSL_VERSION", "unknown SSL library")
-                raise ConnectionError(
-                    f"BMW CarData MQTT requires TLS 1.3 but your SSL library "
-                    f"({ssl_lib}) does not support it. Upgrade to OpenSSL 1.1.1+, "
-                    f"LibreSSL 3.2.0+, or use a newer Home Assistant OS image."
-                )
-            context.minimum_version = ssl.TLSVersion.TLSv1_3
-            client.tls_set_context(context)
-            client.tls_insecure_set(False)
-
-        client.reconnect_delay_set(min_delay=5, max_delay=60)
+        client = build_client(self)
 
         # Use connect_async() with threading.Event to avoid modifying global socket timeout
         # which could affect other concurrent connections in Home Assistant
@@ -625,6 +558,12 @@ class CardataStreamManager:
             client.connect_async(self._host, self._port, keepalive=self._keepalive)
             client.loop_start()
             loop_started = True
+            # paho names its network thread after the client id, which is the
+            # GCID, and Home Assistant prints the thread name on every log line
+            # from it, warnings included.
+            network_thread = getattr(client, "_thread", None)
+            if network_thread is not None:
+                network_thread.name = "cardata-mqtt"
 
             # Wait for on_connect callback to signal completion
             if not self._connect_event.wait(timeout=self._connect_timeout):
@@ -666,6 +605,20 @@ class CardataStreamManager:
                 self._client = None
                 raise ConnectionError("MQTT connection failed: subscription refused")
 
+            # An unload can retire the manager while this runs in the executor:
+            # the start that asked for it was cancelled with its task, and the
+            # unload's stop found no client to stop yet. Nothing would ever stop
+            # this one, so it goes here, checked after the store for the same
+            # reason as above.
+            if self._shut_down:
+                self._client = None
+                self._intentional_disconnect = True
+                try:
+                    client.disconnect()
+                except Exception as err:
+                    _LOGGER.debug("Error disconnecting MQTT client of an unloaded entry: %s", err)
+                raise ConnectionError("MQTT connection dropped: entry unloaded")
+
             loop_started = False  # Loop now managed by self._client
 
         except Exception as err:
@@ -704,7 +657,7 @@ class CardataStreamManager:
             if topic:
                 result = client.subscribe(topic)
                 if debug_enabled():
-                    _LOGGER.debug("Subscribed to %s result=%s", redact_vin_in_text(topic), result)
+                    _LOGGER.debug("Subscribed to %s result=%s", self._hide_gcid(topic), result)
             if self._reauth_notified:
                 # Schedule async reset of flags with proper locking
                 self._run_coro_safe(stream_reconnect.async_clear_reauth_state(self))
@@ -821,8 +774,8 @@ class CardataStreamManager:
             if debug_enabled():
                 _LOGGER.debug(
                     "BMW MQTT message on %s: %s",
-                    redact_vin_in_text(msg.topic),
-                    redact_vin_payload(payload),
+                    self._hide_gcid(msg.topic),
+                    self._hide_gcid(redact_location_in_text(payload)),
                 )
             if not self._message_callback:
                 return
@@ -830,6 +783,11 @@ class CardataStreamManager:
                 data = json.loads(payload)
             except json.JSONDecodeError:
                 _LOGGER.debug("Failed to parse MQTT message as JSON: %s", redact_vin_in_text(payload[:100]))
+                return
+            # A custom broker can carry other messages under the prefix, a
+            # bridge's status for instance, which are not vehicle data.
+            if not isinstance(data, dict):
+                _LOGGER.debug("Ignoring MQTT message that is not a JSON object on %s", self._hide_gcid(msg.topic))
                 return
             self._run_coro_safe(cast(Coroutine[Any, Any, None], self._message_callback(data)))
         except Exception as err:
@@ -943,7 +901,9 @@ class CardataStreamManager:
             reconnect_required = False
 
             if gcid and gcid != self._gcid:
-                _LOGGER.debug("Updating MQTT GCID from %s to %s", self._gcid, gcid)
+                _LOGGER.debug(
+                    "Updating MQTT GCID from %s to %s", redact_identifier(self._gcid), redact_identifier(gcid)
+                )
                 self._gcid = gcid
                 reconnect_required = True
 

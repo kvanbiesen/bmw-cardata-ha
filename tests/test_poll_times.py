@@ -70,6 +70,163 @@ class TestRestore:
         assert coordinator.seconds_since_last_poll(VIN) < 5
 
 
+class TestClockGoingBack:
+    """A poll time ahead of the clock is counted from now."""
+
+    def test_a_poll_ahead_of_the_clock_counts_from_now(self, coordinator):
+        coordinator.record_telematic_poll(VIN)
+        polled_at = time.time()
+        with patch("custom_components.cardata.coordinator.time.time", return_value=polled_at - 3600):
+            assert coordinator.seconds_since_last_poll(VIN) == 0.0
+        with patch("custom_components.cardata.coordinator.time.time", return_value=polled_at - 3500):
+            assert coordinator.seconds_since_last_poll(VIN) == pytest.approx(100.0)
+
+
+def test_the_poll_loop_polls_after_one_interval_when_the_clock_went_back():
+    """A stored poll a week ahead of the clock must not hold the loop up for a week."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from custom_components.cardata.const import DOMAIN
+
+    start = 1_800_000_000.0
+    clock = {"now": start}
+    runtime = MagicMock()
+    runtime.trip_poll_event = None
+    runtime.reauth_in_progress = False
+    runtime.coordinator.data = {VIN: {f"descriptor{i}": 1 for i in range(50)}}
+    runtime.coordinator._allowed_vins = set()
+    runtime.coordinator.seconds_since_last_poll.return_value = None
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"entry": runtime}}
+    hass.config_entries.async_get_entry.return_value = MagicMock(data={"last_telematic_poll": start + 7 * 86400})
+    polls = []
+
+    async def fetch(*_args, **_kwargs):
+        polls.append(clock["now"])
+        raise asyncio.CancelledError
+
+    real_sleep = asyncio.sleep
+
+    async def sleep(seconds):
+        clock["now"] += seconds
+        if clock["now"] - start > 86400:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    async def run():
+        with (
+            patch.object(telematics.time, "time", side_effect=lambda: clock["now"]),
+            patch.object(telematics.asyncio, "sleep", side_effect=sleep),
+            patch.object(telematics, "async_perform_telematic_fetch", side_effect=fetch),
+            patch.object(telematics, "daily_calls_per_vin", return_value=0),
+            patch.object(telematics, "_async_daily_fetches", AsyncMock()),
+        ):
+            await telematics.async_telematic_poll_loop(hass, "entry")
+
+    asyncio.run(run())
+    assert polls and polls[0] - start <= 30 * 60
+
+
+def test_the_poll_loop_waits_for_a_bootstrap_still_seeding():
+    """A bootstrap past 30 s seeds every vehicle itself; polling first would fetch each one twice."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from custom_components.cardata.const import DOMAIN
+
+    start = 1_800_000_000.0
+    clock = {"now": start}
+    stored = {}
+    runtime = MagicMock()
+    runtime.trip_poll_event = None
+    runtime.reauth_in_progress = False
+    runtime.coordinator.data = {VIN: {}}
+    runtime.coordinator._allowed_vins = {VIN}
+    runtime.coordinator.seconds_since_last_poll.return_value = None
+    hass = MagicMock()
+    hass.data = {DOMAIN: {"entry": runtime}}
+    hass.config_entries.async_get_entry.return_value = MagicMock(data=stored)
+    polls = []
+
+    async def fetch(*_args, **_kwargs):
+        polls.append(clock["now"] - start)
+        raise asyncio.CancelledError
+
+    real_sleep = asyncio.sleep
+
+    async def sleep(seconds):
+        clock["now"] += seconds
+        if clock["now"] - start > 86400:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    async def run():
+        gate = asyncio.Event()
+
+        async def bootstrap():
+            await gate.wait()
+            stored["last_telematic_poll"] = clock["now"]
+
+        runtime.bootstrap_task = asyncio.ensure_future(bootstrap())
+        with (
+            patch.object(telematics.time, "time", side_effect=lambda: clock["now"]),
+            patch.object(telematics.asyncio, "sleep", side_effect=sleep),
+            patch.object(telematics, "async_perform_telematic_fetch", side_effect=fetch),
+            patch.object(telematics, "daily_calls_per_vin", return_value=0),
+            patch.object(telematics, "_async_daily_fetches", AsyncMock()),
+        ):
+            loop_task = asyncio.ensure_future(telematics.async_telematic_poll_loop(hass, "entry"))
+            for _ in range(5):
+                await real_sleep(0)
+            assert polls == []
+            gate.set()
+            await loop_task
+
+    asyncio.run(run())
+    assert polls and polls[0] >= 30 * 60
+
+
+class TestTripPollCooldown:
+    """A trip-end poll BMW failed still holds the next one off."""
+
+    @staticmethod
+    def _runtime(coordinator):
+        import asyncio
+
+        from custom_components.cardata.runtime import CardataRuntimeData
+
+        runtime = object.__new__(CardataRuntimeData)
+        runtime.coordinator = coordinator
+        runtime.enable_trip_poll = True
+        runtime.trip_poll_cooldown_seconds = 600
+        runtime._trip_poll_vins = set()
+        runtime._trip_poll_event = asyncio.Event()
+        runtime._immediate_poll_at = {}
+        return runtime
+
+    def test_a_failed_poll_still_starts_the_cooldown(self, coordinator):
+        runtime = self._runtime(coordinator)
+        runtime.request_trip_poll(VIN)
+        runtime.get_trip_poll_vins()
+        # The poll failed, so no poll time was recorded.
+        assert coordinator.seconds_since_last_poll(VIN) is None
+
+        runtime.request_trip_poll(VIN)
+
+        assert runtime.get_trip_poll_vins() == set()
+
+    def test_the_cooldown_ends(self, coordinator):
+        runtime = self._runtime(coordinator)
+        runtime.request_trip_poll(VIN)
+        runtime.get_trip_poll_vins()
+        runtime._immediate_poll_at[(VIN, "trip end")] -= 601
+
+        runtime.request_trip_poll(VIN)
+
+        assert runtime.get_trip_poll_vins() == {VIN}
+
+
 class TestStore:
     """What is stored is what comes back."""
 

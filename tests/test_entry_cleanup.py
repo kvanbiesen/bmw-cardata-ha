@@ -29,6 +29,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.cardata import async_remove_entry
 from custom_components.cardata.const import DOMAIN
+from custom_components.cardata.lifecycle import soc_learning_store_for
 from custom_components.cardata.services import async_register_services
 
 
@@ -55,3 +56,50 @@ async def test_another_loaded_entry_keeps_them(hass):
 
     assert hass.services.has_service(DOMAIN, "fetch_telematic_data")
     assert "other_entry" in hass.data[DOMAIN]
+
+
+async def test_removing_an_entry_removes_its_soc_learning(hass, hass_storage):
+    """An entry added later gets an id of its own, so nothing would read the old file again."""
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    key = f"cardata.soc_learning.{entry.entry_id}"
+    await soc_learning_store_for(hass, entry.entry_id).async_save({"learned_efficiency": {}})
+    assert key in hass_storage
+
+    await async_remove_entry(hass, entry)
+
+    assert key not in hass_storage
+
+
+async def test_an_entry_still_setting_up_keeps_them(hass):
+    """It stores its runtime only late in its setup, after the network calls."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    removed = MockConfigEntry(domain=DOMAIN)
+    removed.add_to_hass(hass)
+    MockConfigEntry(domain=DOMAIN, state=ConfigEntryState.SETUP_IN_PROGRESS).add_to_hass(hass)
+    async_register_services(hass)
+    hass.data[DOMAIN] = {"_service_registered": True}
+
+    await async_remove_entry(hass, removed)
+
+    assert hass.services.has_service(DOMAIN, "fetch_telematic_data")
+    assert DOMAIN in hass.data
+
+
+async def test_a_learning_store_from_version_1_is_still_read(hass, hass_storage):
+    """4.7.0 to 4.7.4 wrote the learned efficiency per VIN under version 1."""
+    from custom_components.cardata.soc_prediction import SOCPredictor
+    from custom_components.cardata.soc_types import LearnedEfficiency
+
+    vin = "WBA00000000000001"
+    learned = LearnedEfficiency()
+    learned.update_efficiency(1, 230.0, 16.0, False, 0.87)
+    key = "cardata.soc_learning.entry"
+    hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {vin: learned.to_dict()}}
+
+    stored = await soc_learning_store_for(hass, "entry").async_load()
+    predictor = SOCPredictor()
+    predictor.load_session_data(stored)
+
+    assert predictor.get_learned_efficiency(vin) is not None

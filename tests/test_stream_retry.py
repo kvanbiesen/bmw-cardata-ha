@@ -630,3 +630,201 @@ async def test_a_connect_finishing_after_a_forced_stop_is_torn_down() -> None:
     await manager._async_start_locked()
 
     manager._async_stop_locked.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_start_blocked_by_the_breaker_clears_the_stop_flag() -> None:
+    """A stop and start the breaker blocks must leave the stream to the reconnect chain."""
+    manager = _shutdown_manager()
+    manager._intentional_disconnect = True
+    manager._circuit_breaker.check = lambda: True
+
+    with pytest.raises(ConnectionError):
+        await manager._async_start_locked()
+
+    assert not manager._intentional_disconnect
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.recover_failed_start(manager)
+    reconnect.assert_called_once_with(manager)
+
+
+@pytest.mark.parametrize("unload_on_store", [False, True])
+def test_a_connect_finishing_after_an_unload_disconnects(unload_on_store) -> None:
+    """A start cancelled with the refresh task leaves its connect running in the executor.
+
+    The unload's stop finds no client yet, so the connect must drop the client
+    itself, whether the unload lands before the store or on it.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+
+        class UnloadingManager(CardataStreamManager):
+            @property
+            def _client(self):
+                return self.__dict__.get("_stored_client")
+
+            @_client.setter
+            def _client(self, value):
+                if value is not None and unload_on_store:
+                    self.shut_down()
+                self.__dict__["_stored_client"] = value
+
+        manager = UnloadingManager(
+            hass=hass,
+            client_id="client",
+            gcid="gcid",
+            id_token="token",
+            host="localhost",
+            port=8883,
+            keepalive=30,
+        )
+        created = []
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            userdata = kwargs.get("userdata") or {}
+
+            def loop_start():
+                if not unload_on_store:
+                    manager.shut_down()
+                manager._handle_connect(client, userdata, {}, 0)
+
+            client.loop_start = loop_start
+            created.append(client)
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            with pytest.raises(ConnectionError):
+                manager._start_client()
+
+        assert manager.client is None
+        created[0].disconnect.assert_called_once()
+        created[0].loop_stop.assert_called_once()
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_every_refusal_reaches_the_entry_handler() -> None:
+    """A later refusal must still get a token refresh, not only the first one."""
+    manager = _shutdown_manager()
+    reasons: list[str] = []
+
+    async def _error_callback(reason: str) -> None:
+        reasons.append(reason)
+
+    manager._error_callback = _error_callback
+    manager.async_stop = AsyncMock()
+
+    for _ in range(3):
+        await stream_reconnect.handle_unauthorized(manager)
+
+    assert reasons == ["unauthorized"] * 3
+
+
+def test_a_refused_stream_is_handed_back_to_the_chain() -> None:
+    """The refusal's own stop marks it intentional, which a chain would obey and give up."""
+    manager = CardataStreamManager(
+        hass=MagicMock(), client_id="client", gcid="gcid", id_token="token", host="localhost", port=8883, keepalive=30
+    )
+    manager._intentional_disconnect = True
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.restart_refused_stream(manager)
+    assert not manager._intentional_disconnect
+    reconnect.assert_called_once_with(manager)
+
+    # Entered from an API refusal while the stream is up, it is left alone.
+    manager._connection_state = ConnectionState.CONNECTED
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.restart_refused_stream(manager)
+    reconnect.assert_not_called()
+
+    manager._connection_state = ConnectionState.DISCONNECTED
+    manager.shut_down()
+    manager._intentional_disconnect = True
+    with patch.object(stream_reconnect, "request_reconnect") as reconnect:
+        stream_reconnect.restart_refused_stream(manager)
+    reconnect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_chain_replaces_a_waiting_retry() -> None:
+    """A refused login asks for a retry and its failed start for a chain; only one may run."""
+    manager = _shutdown_manager()
+    manager._async_start_locked = AsyncMock()
+
+    stream_reconnect.schedule_retry(manager, 3)
+    retry = manager._retry_task
+    with patch.object(stream_reconnect, "async_reconnect", AsyncMock()):
+        stream_reconnect.request_reconnect(manager)
+        await manager._reconnect_task
+    await asyncio.sleep(0)
+
+    assert retry.cancelled()
+    assert manager._retry_task is None
+    manager._async_start_locked.assert_not_awaited()
+
+
+def test_the_network_thread_does_not_carry_the_gcid() -> None:
+    """paho names its thread after the client id, and Home Assistant logs the thread name."""
+    import threading
+
+    loop = asyncio.new_event_loop()
+    try:
+        hass = MagicMock()
+        hass.loop = loop
+        gcid = "d2b6e8a1-1c3f-4e5a-9b7d-0f12ab34cd56"
+        manager = CardataStreamManager(
+            hass=hass, client_id="client", gcid=gcid, id_token="token", host="localhost", port=8883, keepalive=30
+        )
+        created = []
+
+        def fake_client(*_args, **kwargs):
+            client = MagicMock()
+            client._thread = threading.Thread(target=lambda: None, name=f"paho-mqtt-client-{kwargs['client_id']}")
+            userdata = kwargs.get("userdata") or {}
+            client.loop_start = lambda: manager._handle_connect(client, userdata, {}, 0)
+            created.append(client)
+            return client
+
+        with patch("custom_components.cardata.stream.mqtt.Client", side_effect=fake_client):
+            manager._start_client()
+
+        assert gcid not in created[0]._thread.name
+        assert gcid not in manager._hide_gcid(f'{{"entityId": "{gcid}", "data": {{}}}}')
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_a_shut_down_cancels_a_sleeping_reconnect_chain() -> None:
+    """Unload must not leave a chain asleep in its backoff for minutes."""
+    manager = _shutdown_manager()
+
+    async def _sleeping_chain(_manager) -> None:
+        await asyncio.sleep(600)
+
+    with patch.object(stream_reconnect, "async_reconnect", _sleeping_chain):
+        stream_reconnect.request_reconnect(manager)
+        chain = manager._reconnect_task
+        await asyncio.sleep(0)
+        manager.shut_down()
+        await asyncio.sleep(0)
+
+    assert chain.cancelled()
+
+
+@pytest.mark.parametrize("body", [b"[1, 2]", b"42", b'"online"'])
+def test_a_message_that_is_not_an_object_is_dropped(body) -> None:
+    """A custom broker can carry a bridge's status under the same prefix."""
+    manager = CardataStreamManager(
+        hass=MagicMock(), client_id="client", gcid="gcid", id_token="token", host="localhost", port=8883, keepalive=30
+    )
+    manager._message_callback = AsyncMock()
+    manager._run_coro_safe = MagicMock()
+
+    manager._handle_message(MagicMock(), {}, SimpleNamespace(topic="bmw/status", payload=body))
+
+    manager._run_coro_safe.assert_not_called()

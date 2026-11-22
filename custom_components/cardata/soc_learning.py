@@ -214,8 +214,13 @@ def end_session(
     # Preserve last predicted for stale fallback
     predictor._last_predicted_soc[vin] = session.last_predicted_soc
 
-    if session.restored or _phase_count_misattributed(session):
-        reason = "energy data incomplete" if session.restored else "phase count changed mid-charge"
+    if session.restored or session.power_is_derived or _phase_count_misattributed(session):
+        if session.restored:
+            reason = "energy data incomplete"
+        elif session.power_is_derived:
+            reason = "power derived from SOC steps"
+        else:
+            reason = "phase count changed mid-charge"
         _LOGGER.info(
             "SOC: Ending session for %s without learning (%s)",
             redact_vin(vin),
@@ -254,7 +259,7 @@ def end_session(
             battery_capacity_kwh=session.battery_capacity_kwh,
             phases=session.phases,
             voltage=session.last_voltage if session.last_voltage else 230.0,
-            current=session.last_current if session.last_current else 16.0,
+            current=session.learning_current() or 16.0,
         )
 
     # Clear active session and charging method
@@ -388,7 +393,7 @@ def _finalize_learning(
         charging_method=session.charging_method,
         phases=session.phases,
         voltage=session.last_voltage if session.last_voltage else 230.0,
-        current=session.last_current if session.last_current else 16.0,
+        current=session.learning_current() or 16.0,
         end_soc=end_soc,
         label="session",
     )

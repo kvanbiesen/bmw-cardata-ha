@@ -294,7 +294,15 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
             merged = dict(self._reauth_entry.data)
             merged.update(entry_data)
             merged.pop("reauth_pending", None)
-            self.hass.config_entries.async_update_entry(self._reauth_entry, data=merged)
+            # A reauth can move the entry to another client id. Its unique id
+            # follows, or adding the old client again later would pick this
+            # entry for removal; another entry already holding it keeps it.
+            unique_id = self._reauth_entry.unique_id
+            if self._client_id and self.hass.config_entries.async_entry_for_domain_unique_id(
+                DOMAIN, self._client_id
+            ) in (None, self._reauth_entry):
+                unique_id = self._client_id
+            self.hass.config_entries.async_update_entry(self._reauth_entry, data=merged, unique_id=unique_id)
             runtime = self.hass.data.get(DOMAIN, {}).get(self._reauth_entry.entry_id)
             if runtime:
                 runtime.reauth_in_progress = False
@@ -311,6 +319,10 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
                             id_token=new_token,
                         )
                     )
+            else:
+                # A setup that failed on the refused token left no runtime to
+                # take the new one, and no update listener to reload it.
+                self.hass.config_entries.async_schedule_reload(self._reauth_entry.entry_id)
             notification_id = f"{DOMAIN}_reauth_{self._reauth_entry.entry_id}"
             persistent_notification.async_dismiss(self.hass, notification_id)
             return self.async_abort(reason="reauth_successful")
@@ -324,7 +336,9 @@ class CardataConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: igno
         return self.async_create_entry(title=friendly_title, data=entry_data)
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
-        entry_id = entry_data.get("entry_id")
+        # Our own reauth puts the entry id in the data; one Home Assistant
+        # starts after a failed setup only has it in the context.
+        entry_id = entry_data.get("entry_id") or self.context.get("entry_id")
         if entry_id:
             self._reauth_entry = self.hass.config_entries.async_get_entry(entry_id)
         self._client_id = entry_data.get("client_id")

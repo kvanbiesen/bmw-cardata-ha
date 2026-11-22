@@ -135,6 +135,15 @@ def cbs_item_key(item: dict[str, Any]) -> tuple[str, str] | None:
     return slug, title if isinstance(title, str) else slug
 
 
+def remember_cbs_title(descriptor: str, title: str) -> None:
+    """Name a CBS item after the title BMW sends, unless it already has a name.
+
+    Entity names come from DESCRIPTOR_TITLES, which only knows the common
+    items; the rest are named from what BMW reports.
+    """
+    DESCRIPTOR_TITLES.setdefault(descriptor, f"Service {title}")
+
+
 def expand_condition_based_services(data: dict[str, Any]) -> dict[str, Any]:
     """Replace the raw CBS descriptor in a message by per-item descriptors.
 
@@ -164,9 +173,7 @@ def expand_condition_based_services(data: dict[str, Any]) -> dict[str, Any]:
             continue
         key, title = key_title
         descriptor = f"{CBS_DESCRIPTOR_PREFIX}{key}"
-        # Entity names come from DESCRIPTOR_TITLES; items BMW adds later get
-        # the title it sends.
-        DESCRIPTOR_TITLES.setdefault(descriptor, f"Service {title}")
+        remember_cbs_title(descriptor, title)
         status = status.upper()
         if status not in CBS_OK_STATUSES:
             due_titles.append(title)
