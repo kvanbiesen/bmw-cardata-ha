@@ -36,8 +36,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import aiohttp
@@ -45,6 +46,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.util import dt as dt_util
 
 from .api_parsing import get_first_key
@@ -105,12 +107,30 @@ CLEAN_CONTAINERS_SCHEMA = vol.Schema(
     }
 )
 
+
+def _kw_up_to(limit: float) -> Callable[[Any], float]:
+    """Return a validator for a power reading: a finite number of kW, at most limit.
+
+    Coerce alone takes "nan" and "inf", which would stay in the session's
+    energy for the rest of the charge, and a reading in watts would pass as
+    kilowatts. The limits are the ones the service's own selectors show.
+    """
+
+    def validate(value: Any) -> float:
+        power = float(vol.Coerce(float)(value))
+        if not math.isfinite(power) or power > limit:
+            raise vol.Invalid(f"expected a finite power of at most {limit:g} kW")
+        return power
+
+    return validate
+
+
 UPDATE_CHARGING_POWER_SCHEMA = vol.Schema(
     {
         vol.Optional("entry_id"): str,
         vol.Required("vin"): str,
-        vol.Required("power_kw"): vol.Coerce(float),
-        vol.Optional("aux_power_kw", default=0.0): vol.Coerce(float),
+        vol.Required("power_kw"): _kw_up_to(350.0),
+        vol.Optional("aux_power_kw", default=0.0): _kw_up_to(10.0),
     }
 )
 
@@ -620,16 +640,18 @@ async def async_handle_update_charging_power(call: ServiceCall) -> None:
         _LOGGER.error("Cardata update_charging_power: invalid or missing VIN")
         return
 
-    power_kw = float(call.data["power_kw"])
-    if power_kw < 0:
+    # A meter can dip just below zero at idle. Such a reading is skipped
+    # rather than refused, which would fail the automation calling it.
+    power_kw = call.data["power_kw"]
+    aux_power_kw = call.data["aux_power_kw"]
+    if power_kw < 0 or aux_power_kw < 0:
         _LOGGER.error(
-            "Cardata update_charging_power: negative power (%.3f kW) rejected for %s",
+            "Cardata update_charging_power: negative power (%.3f kW, aux %.3f kW) ignored for %s",
             power_kw,
+            aux_power_kw,
             redact_vin(vin),
         )
         return
-
-    aux_power_kw = float(call.data.get("aux_power_kw", 0.0) or 0.0)
 
     coordinator = getattr(runtime, "coordinator", None)
     soc_predictor = getattr(coordinator, "_soc_predictor", None) if coordinator else None
@@ -710,18 +732,20 @@ def async_register_services(hass: HomeAssistant) -> None:
         schema=UPDATE_CHARGING_POWER_SCHEMA,
     )
 
-    # Developer migration service
+    # The developer services rename entities and delete containers on the
+    # BMW account, so only an administrator may call them.
     if not hass.services.has_service(DOMAIN, "migrate_entity_ids"):
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             "migrate_entity_ids",
             async_handle_migrate,
             schema=MIGRATE_SERVICE_SCHEMA,
         )
 
-    # Developer HV container cleanup service
     if not hass.services.has_service(DOMAIN, "clean_hv_containers"):
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             "clean_hv_containers",
             async_handle_clean_containers,
@@ -887,4 +911,4 @@ async def async_fetch_vehicle_images_service(call) -> None:
         from .metadata import async_fetch_and_store_vehicle_images
 
         _LOGGER.info("Manually fetching vehicle images for %d vehicles", len(vins))
-        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, session)
+        await async_fetch_and_store_vehicle_images(hass, entry, headers, vins, session, retry_unavailable=True)

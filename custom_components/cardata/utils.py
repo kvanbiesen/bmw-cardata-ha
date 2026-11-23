@@ -83,6 +83,13 @@ def redact_vins(vins: Iterable[str]) -> list[str]:
     return [redact_vin(v) for v in vins]
 
 
+def redact_identifier(value: str | None) -> str:
+    """Return an account identifier such as the GCID cut to its first four characters."""
+    if not isinstance(value, str) or not value:
+        return "<none>"
+    return f"{value[:4]}****"
+
+
 _VIN_PATTERN = re.compile(r"\b[A-HJ-NPR-Z0-9]{11,17}\b", re.IGNORECASE)
 
 
@@ -91,6 +98,19 @@ def redact_vin_in_text(text: str | None) -> str | None:
     if not isinstance(text, str):
         return text
     return _VIN_PATTERN.sub(lambda match: redact_vin(match.group(0)), text)
+
+
+# The position in a stream payload: the value of either coordinate descriptor.
+# Bounded quantifiers keep the match linear on whatever the broker sends.
+_LOCATION_VALUE_PATTERN = re.compile(
+    r'(currentLocation\.(?:latitude|longitude)"\s{0,10}:\s{0,10}\{[^{}]{0,200}?"value"\s{0,10}:\s{0,10})'
+    r"(-?[0-9][0-9.eE+-]{0,30})"
+)
+
+
+def redact_location_in_text(text: str) -> str:
+    """Hide the latitude and longitude values in a raw stream payload, for logs."""
+    return _LOCATION_VALUE_PATTERN.sub(r'\1"<redacted>"', text)
 
 
 def redact_vin_payload(payload: Any) -> Any:

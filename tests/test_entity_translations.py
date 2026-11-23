@@ -6,9 +6,10 @@ import re
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from homeassistant.core import State
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import EntityPlatform
@@ -319,6 +320,77 @@ async def test_known_cbs_localizes_without_changing_identity(
             assert translated == ("Überfällig" if language == "de" else "Overdue")
         await platform.async_reset()
         await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("custom_name", [None, "Mein eigener Wartungsname"])
+@pytest.mark.parametrize(
+    ("item", "title", "expected_name", "translated"),
+    [
+        (
+            "statutoryInspection",
+            "Statutory vehicle inspection",
+            "Service – Hauptuntersuchung",
+            True,
+        ),
+        (
+            "futureService",
+            "Battery safety inspection",
+            "i4 Service Battery safety inspection",
+            False,
+        ),
+    ],
+)
+async def test_restored_cbs_preserves_translations_and_bmw_titles(
+    hass, platforms, coordinator, custom_name, item, title, expected_name, translated
+):
+    """Restoring a title must not override known translations or lose unknown names."""
+    entry, add = platforms
+    descriptor = f"{CBS_DESCRIPTOR_PREFIX}{item}"
+    unique_id = f"{VIN}_{descriptor}"
+    registry = er.async_get(hass)
+    row = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        unique_id,
+        config_entry=entry,
+        suggested_object_id="existing_service",
+    )
+    registry.async_update_entity(row.entity_id, name=custom_name)
+
+    async def restore(vin, restored_descriptor, value, unit, timestamp, attributes):
+        coordinator.get_state.return_value = DescriptorState(
+            value=value, unit=unit, timestamp=timestamp, attributes=attributes
+        )
+
+    coordinator.async_restore_descriptor_state = AsyncMock(side_effect=restore)
+    previous = State(row.entity_id, "OVERDUE", {"title": title, "due_date": "2029-07"})
+    # A fresh process has not yet seen the unknown title from BMW.
+    with patch.dict(
+        DESCRIPTOR_TITLES,
+        {descriptor: DESCRIPTOR_TITLES[descriptor]} if translated else {},
+        clear=False,
+    ):
+        if not translated:
+            DESCRIPTOR_TITLES.pop(descriptor, None)
+        sensor = CardataSensor(coordinator, VIN, descriptor)
+        with (
+            patch.object(sensor, "async_get_last_state", new=AsyncMock(return_value=previous)),
+            patch.object(sensor, "async_get_last_sensor_data", new=AsyncMock(return_value=None)),
+        ):
+            await add([sensor])
+        state = hass.states.get(row.entity_id)
+        assert sensor.entity_id == row.entity_id
+        assert sensor.unique_id == unique_id
+        assert registry.async_get(row.entity_id).name == custom_name
+        assert sensor.name == expected_name
+        assert state.attributes["friendly_name"] == (
+            custom_name or (f"i4 {expected_name}" if translated else expected_name)
+        )
+        assert state.state == "OVERDUE"
+        assert state.attributes["due_date"] == "2029-07"
+        if translated:
+            assert Template("{{ state_translated('" + row.entity_id + "') }}", hass).async_render() == "Überfällig"
+        coordinator.async_restore_descriptor_state.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

@@ -70,7 +70,7 @@ On the integration main page, there is now a "Configure" button. You can use it 
 - **Settings** (toggle optional features like Magic SOC, Charging History, Tyre Diagnosis, trip-end polling cooldown)
 
 And manual API calls, these should be automatically called when needed, but if it seems that your device names aren't being updated, it might be worth it to run these manually.
-- **Initiate vehicles (API)** (fetch all vehicle VINs on your account and create entities)
+- **Log vehicle mappings (API)** (fetch the vehicles mapped to your account and write them to the log, to check which VINs and mapping types BMW reports)
 - **Get basic vehicle information (API)** (fetches vehicle details like model, series, etc. for all known VINs)
 - **Get telematics data (API)** (fetches telematics data from the CarData API)
 
@@ -221,7 +221,7 @@ Or:
 6. Small tip, on newer cars with Idrive7, you can force the sensor creation by opening the BMW/Mini App and press lock doors; on older ones like idrive6, You have to start the car, maybe even drive it a little bit
 
 ### Reauthorization
-If BMW rejects the token (e.g. because the portal revoked it), please use the Configure > Start Device Authorization Again tool
+If BMW rejects the token (e.g. because the portal revoked it), please use the Configure > Start Device Authorization Again tool. When Home Assistant starts with a token BMW no longer accepts, the integration asks for the new authorization itself, under Settings > Devices & services.
 
 When BMW refuses the stream using tokens it has just issued, the integration reports that instead of asking you to reauthorize, because the credentials are clearly accepted. That usually means something else holds the one stream connection your account gets, so see the custom MQTT broker section below. If nothing else is connected, the client ID is probably missing the `cardata:streaming:read` scope, which does need a new device authorization.
 
@@ -523,7 +523,7 @@ The integration includes a predicted SOC (State of Charge) sensor that estimates
 
 ### Vehicles Without Power Telemetry
 
-Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or voltage/current via MQTT. For these vehicles, the integration derives an implied charging power from BMW SOC changes: when an API poll delivers a higher SOC than the previous anchor and no real power data exists, the average power is back-calculated from the SOC delta, elapsed time, and default efficiency. The heartbeat then extrapolates between polls using this derived value, giving smooth SOC progression instead of staircase jumps every 30 minutes. Real power data (if it arrives later) overwrites the derived value automatically.
+Some older models (e.g. i3s, iDrive 6 cars) do not report charging power or voltage/current via MQTT. For these vehicles, the integration derives an implied charging power from BMW SOC changes: when an API poll delivers a higher SOC than the previous anchor and no real power data exists, the average power is back-calculated from the SOC delta, elapsed time, and default efficiency. The heartbeat then extrapolates between polls using this derived value, giving smooth SOC progression instead of staircase jumps every 30 minutes. Real power data (if it arrives later) overwrites the derived value automatically. A charge that ran on a derived power is not learned from, since its energy came from the default efficiency and only reflects how often BMW reported the SOC.
 
 ### Charging Phases
 
@@ -562,7 +562,7 @@ Two independent signs that a charge is over are each worth one API call to settl
 
 The predicted SOC sensor automatically learns your vehicle's charging efficiency:
 
-- **AC charging efficiency**: Starts at 90%, learns per charging condition (phases, voltage, current)
+- **AC charging efficiency**: Starts at 90%, learns per charging condition (phases, voltage, current), filing each charge under the current it mostly ran at
 - **DC charging efficiency**: Starts at 93%, learns from actual DC sessions
 - Both AC and DC use the same **efficiency matrix** with per-condition outlier detection, history tracking, and trend analysis
 - Uses **Exponential Moving Average (EMA)** with adaptive learning rate (converges fast initially, settles to 20%)
@@ -582,7 +582,7 @@ For learning to occur, a charging session must meet these criteria:
 ### Session Finalization
 
 Learning happens when a charging session ends:
-- **Target reached**: If charging stops within 2% of the target SOC, learning happens immediately
+- **Target reached**: If charging stops within 2% of the target SOC, learning happens immediately, provided the battery reading came with the end of the charge or already sits at the target (otherwise it waits for the next one, as below)
 - **Charge interrupted**: If stopped before target, waits for BMW SOC confirmation:
   - DC charging: 5-minute grace period
   - AC charging: 15-minute grace period
@@ -637,8 +637,8 @@ Magic SOC predicts battery drain during driving using real-time odometer distanc
 If you have a smart meter that reports the power delivered to the car, you can feed its readings into the SOC predictor and bypass BMW's V×A telemetry, which is refreshed only every ~5 hours on some models and returns sentinel zero values during fast EVSE flapping (see discussion [#359](https://github.com/kvanbiesen/bmw-cardata-ha/discussions/359)). It is also the recommended setup if you stop the EVSE externally (e.g. a Home Assistant automation cutting the wallbox), since BMW's backend can keep reporting `CHARGING` with stale power for some time after the actual stop and the predictor will keep extrapolating from the last known power. Feeding 0 W from the meter at stop time anchors the prediction to ground truth. **Disabled by default.**
 
 - **Enable via**: Settings → Devices & Services → BMW CarData → Configure → Settings → Use external power meter for charging
-- **Service**: `cardata.update_charging_power` with fields `vin`, `power_kw`, and optional `aux_power_kw`.
-- **Precedence**: Freshness-based. While a local reading has arrived within the last 120 seconds, BMW-sourced V×A and `charging.power` updates are suppressed. When local readings stop (car driven away, meter offline), the predictor falls back to BMW after the timeout — no manual switching needed.
+- **Service**: `cardata.update_charging_power` with fields `vin`, `power_kw`, and optional `aux_power_kw`. A call with a power that is not a finite number, or above the 350 kW (10 kW for `aux_power_kw`) the selectors allow, as a reading in watts would be, is refused, and one with a negative power is logged and ignored.
+- **Precedence**: Freshness-based. While a local reading has arrived within the last 120 seconds, BMW-sourced V×A and `charging.power` updates are suppressed. When local readings stop (car driven away, meter offline), the predictor falls back to BMW after the timeout — no manual switching needed. Until BMW reports something new it keeps the meter's last reading, so a single 0 W at stop time holds even when the automation only calls on changes.
 - **Typical setup**: A Home Assistant automation that triggers on your meter's power sensor changes (or on a 10–30 second interval) and calls the service with the current reading. **Gate the automation on the car being home** — otherwise the meter will happily push 0 W while the car is away at a public charger, holding the freshness gate and blocking BMW's V×A updates from the public session.
 
 ```yaml
@@ -711,24 +711,25 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_basic_data` calls `GET /customers/vehicles/{vin}/basicData` to retrieve static metadata (model name, series, etc.) for the specified VIN. The VIN can be left out when the entry has a single vehicle.
 - `cardata.fetch_charging_history` fetches charging sessions and returns the full BMW payload (including location, cost, charging point). Defaults to the last 30 days; optional `from`/`to` ISO-8601 fields select any range. Follows pagination automatically. Returns a `response_variable` dict keyed by VIN — use it in scripts/automations to log sessions to your own long-term store. Uses 1 API call per page per vehicle.
 - `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
-- `cardata.fetch_vehicle_images` manually fetches vehicle images for all configured vehicles.
-- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`).
-- `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them. Entity IDs you picked yourself are left alone unless `force` is set.
+- `cardata.fetch_vehicle_images` fetches vehicle images for the configured vehicles that have none yet. A vehicle BMW had no image for is asked again, which the automatic fetches never do; one that already has an image is left alone and costs no call.
+- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`). Administrators only.
+- `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them. Entity IDs you picked yourself are left alone unless `force` is set. Administrators only.
 - `cardata.update_charging_power` injects a locally measured charging power reading (kW) into the SOC predictor. Requires the **Use external power meter for charging** option to be enabled under Settings. Intended for users with a smart meter who want to feed accurate real-time power into the prediction instead of relying on BMW's V×A — see the section below.
 
 ## API Quota and MQTT Streaming
 
 BMW imposes a **50 calls/day** limit on the CarData API. This integration does not enforce the limit client-side — BMW's own 429 response is respected via backoff. API usage is minimized through MQTT freshness gating and rate limiting:
 
-- **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection) with an arrival-time fallback, so location updates work even when latitude and longitude arrive in separate MQTT messages. In direct BMW mode, token refresh during MQTT reconnection is lock-free to avoid blocking the connection, and the MQTT connection is proactively reconnected with fresh credentials to prevent session expiry (~1 hour).
+- **MQTT Stream (real-time)**: The MQTT stream is unlimited and provides real-time updates for events like door locks, motion state, charging power, etc. GPS coordinates are paired using BMW payload timestamps (same GPS fix detection), with an arrival-time fallback when a timestamp is missing, so location updates work even when latitude and longitude arrive in separate MQTT messages, and a half of one fix is never paired with a half of another. In direct BMW mode, token refresh during MQTT reconnection is lock-free to avoid blocking the connection, and the MQTT connection is proactively reconnected with fresh credentials to prevent session expiry (~1 hour).
 - **Telling a quiet car from a dead stream**: the CarData Debug Device carries `Last Message Received`, `Last Telematics API Call` and `Stream Connection Status`. Only real stream messages write the first and the third of those, so a car that has merely gone quiet shows a recent API call next to an older message, while a stream that has died keeps the status it failed with instead of being painted green by the next poll.
-- **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state. This ensures SOC is updated even when the MQTT stream only delivers GPS/mileage but not SOC (common on some models). A configurable per-VIN cooldown (default 10 minutes) prevents GPS burst flapping from burning API quota. A 30-second grace period after door unlock prevents brief intermediate stops (e.g. picking up a passenger) from fragmenting a trip and wasting API calls. Trip-end polling can be **disabled entirely** or the cooldown can be **increased** via Settings → Devices & Services → BMW CarData → Configure → Settings. Disabling it is useful for vehicles making many short trips (e.g. delivery drivers, nurses) that would otherwise exhaust the daily API quota.
+- **Trip-end polling**: When a vehicle stops moving (trip ends), the integration triggers an immediate API poll to capture post-trip battery state. This ensures SOC is updated even when the MQTT stream only delivers GPS/mileage but not SOC (common on some models). A configurable per-VIN cooldown (default 10 minutes), counted from the last poll or trip-end poll request, one BMW failed included, prevents GPS burst flapping from burning API quota. A 30-second grace period after door unlock prevents brief intermediate stops (e.g. picking up a passenger) from fragmenting a trip and wasting API calls. The door change at the end of a trip only masks GPS movement for 10 minutes once the car is parked, so a car that does not lock itself on drive-off still has its next trip detected. Trip-end polling can be **disabled entirely** or the cooldown can be **increased** via Settings → Devices & Services → BMW CarData → Configure → Settings. Disabling it is useful for vehicles making many short trips (e.g. delivery drivers, nurses) that would otherwise exhaust the daily API quota.
 - **Charge-end polling**: When charging completes or stops, the integration triggers an immediate API poll to get the actual BMW SOC for learning calibration of the predicted SOC sensor, subject to the same per-VIN cooldown.
 - **Charge-finish polling**: Some vehicles never report the end of a charge over the stream, which leaves the predicted SOC climbing until the next scheduled poll. When BMW's own estimate of the time left runs out, or the prediction reaches the charge target, the integration asks once whether the charge is still running. At most one call per charge, and no more than one an hour per vehicle.
 - **Charge-start polling**: BMW resets the AC phase count when a charge ends and reports the real one when the next charge starts, and some vehicles only ever send it in response to an API call. When a charge starts without a phase count for that charge, the integration polls once a minute later. This one is not subject to the trip-end cooldown, which would otherwise swallow it whenever a car is plugged in shortly after arriving home; it has its own cooldown of an hour per vehicle. Charges whose phase count is already known, and DC charges, poll nothing.
 - **Fallback polling**: The integration polls periodically as a fallback in case MQTT stream fails or after Home Assistant restarts. Each VIN is judged on its own, and only VINs whose last poll is older than the staleness threshold are fetched, so in multi-car setups the fresh ones consume no API calls. The time of each VIN's last successful poll is stored, so a restart does not poll a VIN that was polled recently.
-- **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The time of each call is stored, so a restart or reload does not make it again. The polling interval automatically increases to compensate — e.g. with both features on 2 cars, polling stretches from 2h to 2.4h per VIN.
+- **Daily optional features**: When Charging History and/or Tyre Diagnosis are enabled, each makes exactly 1 API call per vehicle per day regardless of whether the call succeeds or fails (no retries). The time of each call is stored, so a restart or reload does not make it again. The polling interval automatically increases to compensate, counting the daily service schedule read as well. With both features on 2 cars, for instance, polling stretches from about 2.2h to 2.7h per VIN.
 - **Multi-VIN setups**: All vehicles share the same 50 call/day limit. The poll interval scales with VIN count plus any enabled daily features. Each VIN is guaranteed at least 1 poll per day; BMW's 429 backoff handles actual quota enforcement.
+- **Container creation**: When the telemetry container has to be created, at setup after an update changed its descriptors or when BMW dropped it, a create BMW refused is stored and the automatic attempts wait an hour before trying again, so a create BMW keeps refusing does not spend two calls on every restart, reload or setup retry. A timeout, a network error or a BMW server error is simply tried again. Resetting the container from the options is not held back.
 - **Rate limiting**: If BMW returns a rate-limited response (HTTP 429 or HTTP 403 with `CU-429` error code), the integration backs off automatically with exponential delay (1h, 2h, 4h, 8h, up to 24h). Because the quota resets at midnight UTC, a backoff that would run past the reset is shortened to end at it, so API calls resume as soon as the quota is back instead of sitting out the rest of a long backoff. A `Retry-After` header sent by BMW takes precedence over that backoff and is not shortened to the quota reset, but it is still floored at 60 seconds and capped at 24 hours.
 
 ## Requirements
@@ -789,8 +790,9 @@ The integration is organized into focused modules:
 | `magic_soc.py` | Driving SOC: distance-based consumption prediction, adaptive EMA learning |
 | `stream.py` | MQTT connection management, credential hot-swap |
 | `stream_circuit_breaker.py` | Circuit breaker for reconnection rate limiting |
+| `stream_client.py` | Builds the MQTT client: topic, credentials, callbacks, TLS |
 | `stream_reconnect.py` | Reconnection, unauthorized handling, retry scheduling |
-| `geo_utils.py` | Shared geographic utilities (Haversine distance) |
+| `geo_utils.py` | Shared geographic utilities (Haversine distance, pairing the latitude and longitude of a GPS fix) |
 | `motion_detection.py` | GPS centroid movement detection, parking zone logic |
 | `sensor_diagnostics.py` | Diagnostic sensors: connection, metadata, efficiency, charging history, tyre diagnosis |
 | `sensor.py` / `binary_sensor.py` / `device_tracker.py` | Home Assistant entity platforms |

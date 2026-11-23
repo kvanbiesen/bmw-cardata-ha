@@ -67,6 +67,7 @@ from .device_info import (
     restore_descriptor_state as _di_restore_descriptor_state,
 )
 from .fault_memory import expand_fault_memory
+from .geo_utils import paired_location
 from .magic_soc import MagicSOCPredictor
 from .message_utils import (
     is_within_catalogue_limits,
@@ -134,6 +135,10 @@ class CardataCoordinator:
     # BMW never reports the end of costs one poll rather than one per heartbeat
     _charge_end_poll_asked: set[str] = field(default_factory=set, init=False)
     _debounce_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # Set once the entry lets go of this coordinator. A message paho queued
+    # before the stream stopped can still land afterwards, and must not arm
+    # timers or send signals the next coordinator's platforms would receive.
+    _stopped: bool = field(default=False, init=False)
     _pending_manager: UpdateBatcher = field(default_factory=UpdateBatcher, init=False)
     _DEBOUNCE_SECONDS: float = 5.0  # Update every 5 seconds max
     _MIN_CHANGE_THRESHOLD: float = 0.01  # Minimum change for numeric values
@@ -295,10 +300,24 @@ class CardataCoordinator:
 
     # --- Derived motion detection from GPS ---
 
+    def _feed_paired_location(self, vin: str) -> None:
+        """Hand the motion detector the vehicle's position once both halves of a fix are in.
+
+        Done here rather than in the device tracker, which Home Assistant never
+        adds when the user disables it: motion detection, trip-end polls and
+        Magic SOC driving sessions all hang off it.
+        """
+        vehicle_state = self.data.get(vin, {})
+        position = paired_location(
+            vehicle_state.get(LOCATION_LATITUDE_DESCRIPTOR), vehicle_state.get(LOCATION_LONGITUDE_DESCRIPTOR)
+        )
+        if position is not None:
+            self._update_location_tracking(vin, *position)
+
     def _update_location_tracking(self, vin: str, lat: float, lon: float) -> bool:
         """Update location tracking and handle isMoving state changes.
 
-        Called by the device tracker whenever a valid GPS pair arrives.
+        Called whenever a valid GPS pair arrives.
         Feeds the motion detector, handles isMoving entity creation and
         state change dispatch, and updates Magic SOC GPS tracking.
 
@@ -365,7 +384,14 @@ class CardataCoordinator:
         last = self._last_poll_at.get(vin)
         if last is None:
             return None
-        return time.time() - last
+        now = time.time()
+        if last > now:
+            # The clock went back since. Count from now rather than hold the
+            # VIN off the stale list and inside the trip cooldown until the
+            # clock catches up.
+            self._last_poll_at[vin] = now
+            return 0.0
+        return now - last
 
     def record_telematic_poll(self, vin: str) -> None:
         """Record that a telematic API poll succeeded for this VIN."""
@@ -599,6 +625,8 @@ class CardataCoordinator:
     # --- Message handling ---
 
     async def async_handle_message(self, payload: dict[str, Any], *, is_telematic: bool = False) -> None:
+        if self._stopped:
+            return
         vin = payload.get("vin")
         data = payload.get("data") or {}
         if not vin or not isinstance(data, dict):
@@ -670,6 +698,8 @@ class CardataCoordinator:
                 vin, data, is_telematic=is_telematic
             )
 
+        if immediate_updates:
+            self._feed_paired_location(vin)
         for update_vin, descriptor in immediate_updates:
             self._safe_dispatcher_send(self.signal_update, update_vin, descriptor)
 
@@ -946,18 +976,22 @@ class CardataCoordinator:
             converted_delta = converted - existing_value
             if self._MILEAGE_DECREASE_TOLERANCE <= converted_delta <= self._MAX_PLAUSIBLE_MILEAGE_JUMP:
                 self._mileage_pending_reading.pop(vin, None)
+                # Stored in the unit already there, as a reading labelled with
+                # the other unit is (#429). Kept in the other unit, it would
+                # switch the odometer to that unit for good, since every
+                # correctly labelled reading after it is converted into it.
                 _LOGGER.warning(
                     "Correcting unit-mismatched odometer reading for VIN %s: unlabelled raw value %s "
-                    "matches the existing %s %s when treated as %s; storing as %s %s",
+                    "matches the existing %s %s when treated as %s; storing as %.1f %s",
                     redacted_vin,
                     value,
                     existing_value,
                     existing_unit,
                     other_unit,
-                    value,
-                    other_unit,
+                    converted,
+                    existing_unit,
                 )
-                return True, other_unit, value
+                return True, existing_unit, converted
 
         # Not resolvable as a unit-swap. Require a second, corroborating
         # reading before accepting a jump this large - a single implausible
@@ -1053,6 +1087,8 @@ class CardataCoordinator:
         the request for nothing, which is what a poll on arriving home does to the
         charge that follows it.
         """
+        if self._stopped:
+            return
         if not needs_phase_count_poll(self.data.get(vin, {})):
             return
 
@@ -1085,7 +1121,7 @@ class CardataCoordinator:
     async def _async_schedule_debounced_update(self) -> None:
         """Schedule debounced coordinator update."""
         async with self._debounce_lock:
-            if self._update_debounce_handle is not None:
+            if self._update_debounce_handle is not None or self._stopped:
                 return
 
             self._update_debounce_handle = async_call_later(
@@ -1218,6 +1254,7 @@ class CardataCoordinator:
         self.watchdog_task = self.hass.loop.create_task(self._watchdog_loop())
 
     async def async_stop_watchdog(self) -> None:
+        self._stopped = True
         if self.watchdog_task:
             self.watchdog_task.cancel()
             try:

@@ -32,8 +32,8 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
-    SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -52,13 +52,14 @@ from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry,
     async_get,
 )
-from homeassistant.helpers.restore_state import RestoreEntity
 
 from .condition_based_services import (
     CBS_ATTRIBUTE_KEYS,
     CBS_DEFAULT_ICON,
     CBS_ICONS,
+    KNOWN_CBS_DESCRIPTORS,
     is_cbs_item_descriptor,
+    remember_cbs_title,
 )
 from .const import (
     CHARGING_ENERGY_DESCRIPTOR,
@@ -78,7 +79,7 @@ from .const import (
     has_hv_battery,
 )
 from .coordinator import CardataCoordinator
-from .entity import CardataSensorEntity
+from .entity import CardataSensorEntity, forget_removed_vehicles
 from .fault_memory import FAULT_MEMORY_ATTRIBUTE_KEYS, FAULT_MEMORY_ICON
 from .runtime import CardataRuntimeData
 from .sensor_charging_energy import CardataChargingEnergySensor
@@ -113,7 +114,7 @@ CHARGING_HISTORY_RESTORE_DESCRIPTORS = frozenset(
 )
 
 
-class CardataSensor(CardataSensorEntity, RestoreEntity, SensorEntity):
+class CardataSensor(CardataSensorEntity, RestoreSensor):
     """Sensor for generic telematic data."""
 
     _attr_should_poll = False
@@ -168,8 +169,17 @@ class CardataSensor(CardataSensorEntity, RestoreEntity, SensorEntity):
         ):
             last_state = await self.async_get_last_state()
             if last_state and last_state.state not in ("unknown", "unavailable"):
+                # The state and its unit attribute are what the user sees, in a
+                # unit picked in the entity settings or by the unit system. The
+                # coordinator works in the vehicle's own unit, which is stored
+                # apart; a state saved before that was stored has only the first.
+                state_value = last_state.state
                 unit = last_state.attributes.get("unit_of_measurement")
-                validated_state = validate_restored_state(last_state.state, unit, self._descriptor)
+                sensor_data = await self.async_get_last_sensor_data()
+                if sensor_data is not None and sensor_data.native_value is not None:
+                    state_value = str(sensor_data.native_value)
+                    unit = sensor_data.native_unit_of_measurement
+                validated_state = validate_restored_state(state_value, unit, self._descriptor)
                 if validated_state is None:
                     # Invalid restored state - skip restoration
                     last_state = None
@@ -208,6 +218,18 @@ class CardataSensor(CardataSensorEntity, RestoreEntity, SensorEntity):
                         restored_attributes = {
                             key: last_state.attributes[key] for key in attribute_keys if key in last_state.attributes
                         }
+                    # A CBS item the integration does not know is named from
+                    # BMW's title, which is only in memory until the next read.
+                    title = (restored_attributes or {}).get("title")
+                    if (
+                        is_cbs_item_descriptor(self._descriptor)
+                        and self._descriptor not in KNOWN_CBS_DESCRIPTORS
+                        and isinstance(title, str)
+                        and title
+                    ):
+                        remember_cbs_title(self._descriptor, title)
+                        self._base_name = self._format_name() or self._vin
+                        self._update_name(write_state=False)
                     await self._coordinator.async_restore_descriptor_state(
                         self.vin,
                         self.descriptor,
@@ -409,6 +431,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     charging_history_entities: dict[str, CardataChargingHistorySensor] = {}
     charging_energy_entities: dict[str, CardataChargingEnergySensor] = {}
     tyre_diagnosis_entities: dict[str, CardataTyreDiagnosisSensor] = {}
+    forget_removed_vehicles(
+        hass,
+        entry,
+        entities,
+        metadata_entities,
+        efficiency_entities,
+        charging_history_entities,
+        charging_energy_entities,
+        tyre_diagnosis_entities,
+    )
 
     def ensure_charging_history_sensors(vin: str) -> None:
         """Ensure the charging history entities exist for VIN when option is enabled.

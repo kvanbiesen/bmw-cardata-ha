@@ -50,23 +50,37 @@ def registry_row(domain: str, unique_id: str) -> SimpleNamespace:
 def platform(monkeypatch):
     """Drive the button platform with a registry and a coordinator we control."""
 
-    def run(rows, coordinator_data=None):
+    def run(rows, coordinator_data=None, signals=()):
         coordinator = SimpleNamespace(
             data=coordinator_data or {},
             names={VIN: "i3s"},
             _create_consumption_reset_callback=None,
+            signal_new_sensor="new_sensor",
         )
         hass = SimpleNamespace(data={DOMAIN: {"entry": SimpleNamespace(coordinator=coordinator)}})
-        entry = SimpleNamespace(entry_id="entry")
+        entry = SimpleNamespace(entry_id="entry", async_on_unload=lambda _remove: None)
 
         added: list = []
+        handlers: dict = {}
         monkeypatch.setattr(button_module, "async_get", lambda _hass: None)
         monkeypatch.setattr(button_module, "async_entries_for_config_entry", lambda _reg, _entry_id: rows)
+        monkeypatch.setattr(
+            button_module,
+            "async_dispatcher_connect",
+            lambda _hass, signal, handler: handlers.setdefault(signal, handler),
+        )
 
         import asyncio
 
-        asyncio.run(async_setup_entry(hass, entry, added.extend))
-        return {entity._attr_unique_id for entity in added}
+        async def setup_and_signal():
+            await async_setup_entry(hass, entry, added.extend)
+            for vin, descriptor in signals:
+                await handlers["new_sensor"](vin, descriptor)
+
+        asyncio.run(setup_and_signal())
+        unique_ids = [entity._attr_unique_id for entity in added]
+        assert len(unique_ids) == len(set(unique_ids))
+        return set(unique_ids)
 
     return run
 
@@ -99,6 +113,30 @@ class TestLearningResetRestore:
     def test_a_car_with_no_battery_descriptor_still_builds_nothing(self, platform):
         data = {VIN: {"vehicle.travelledDistance": object()}}
         assert platform([], data) == set()
+
+
+class TestLearningResetLater:
+    """Battery data arriving after the platform loaded still gets the buttons."""
+
+    def test_a_late_battery_reading_creates_them(self, platform):
+        assert platform([], signals=[(VIN, DESC_SOC_HEADER)]) == {
+            f"{VIN}_reset_ac_learning",
+            f"{VIN}_reset_dc_learning",
+        }
+
+    def test_a_late_neue_klasse_reading_creates_them(self, platform):
+        assert platform([], signals=[(VIN, DESC_SOC_DISPLAYED)]) == {
+            f"{VIN}_reset_ac_learning",
+            f"{VIN}_reset_dc_learning",
+        }
+
+    def test_they_are_not_built_twice(self, platform):
+        data = {VIN: {DESC_SOC_HEADER: object()}}
+        signals = [(VIN, DESC_SOC_HEADER), (VIN, DESC_SOC_DISPLAYED)]
+        assert platform([], data, signals) == {f"{VIN}_reset_ac_learning", f"{VIN}_reset_dc_learning"}
+
+    def test_other_descriptors_create_nothing(self, platform):
+        assert platform([], signals=[(VIN, "vehicle.travelledDistance")]) == set()
 
 
 class TestConsumptionResetRestore:

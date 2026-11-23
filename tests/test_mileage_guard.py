@@ -85,6 +85,20 @@ class TestConvertedReading:
         assert coordinator._magic_soc._last_reported_mileage[VIN] == pytest.approx(stored)
 
 
+class TestUnlabelledUnitSwap:
+    """An unlabelled reading in the other unit is stored in the unit already there (#405)."""
+
+    async def test_the_odometer_stays_in_its_unit(self, coordinator):
+        await coordinator.async_handle_message(message(50000.0, "km"))
+        # The API sends no unit, and this time the number is in miles.
+        await coordinator.async_handle_message(message(31069.0, None))
+        await coordinator.async_handle_message(message(50002.0, "km"))
+
+        stored = coordinator.data[VIN][DESC_TRAVELLED_DISTANCE]
+        assert stored.unit == "km"
+        assert stored.value == pytest.approx(50002.0)
+
+
 class TestOrdinaryReading:
     """Nothing to correct means nothing to copy."""
 

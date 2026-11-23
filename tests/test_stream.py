@@ -271,12 +271,12 @@ class TestCardataStreamManagerDebugInfo:
 
         info = manager.debug_info
 
-        assert info["client_id"] == "test_client"
-        assert info["gcid"] == "test_gcid"
+        assert info["client_id"] == "test****"
+        assert info["gcid"] == "test****"
         assert info["host"] == "test.host.com"
         assert info["port"] == 8883
         assert info["keepalive"] == 60
-        assert info["topic"] == "test_gcid/+"
+        assert info["topic"] == "test****/+"
         assert info["clean_session"] is True
         assert info["protocol"] == "MQTTv311"
 

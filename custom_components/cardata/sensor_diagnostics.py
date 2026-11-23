@@ -34,6 +34,7 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -187,6 +188,7 @@ class CardataDiagnosticsSensor(SensorEntity, RestoreEntity):
             self._unsubscribe()
             self._unsubscribe = None
 
+    @callback
     def _handle_update(self) -> None:
         """Handle updates from coordinator."""
         value: datetime | str | None
@@ -255,6 +257,7 @@ class CardataVehicleMetadataSensor(CardataSensorEntity, RestoreEntity, SensorEnt
         else:
             self._attr_native_value = "unavailable"
 
+    @callback
     def _handle_metadata_update(self, vin: str) -> None:
         """Handle metadata updates.
 
@@ -348,6 +351,7 @@ class CardataEfficiencyLearningSensor(CardataSensorEntity, RestoreEntity, Sensor
 
         self._attr_native_value = ", ".join(parts) if parts else "0 sessions"
 
+    @callback
     def _handle_learning_update(self, vin: str | None = None) -> None:
         """Handle efficiency learning updates."""
         if vin is not None and vin != self._vin:
@@ -428,6 +432,7 @@ class CardataChargingHistorySensor(CardataSensorEntity, RestoreEntity, SensorEnt
         else:
             self._attr_native_value = f"{len(sessions)} sessions"
 
+    @callback
     def _handle_update(self, vin: str) -> None:
         """Handle charging history updates."""
         if vin != self._vin:
@@ -553,6 +558,7 @@ class CardataTyreDiagnosisSensor(CardataSensorEntity, RestoreEntity, SensorEntit
             else:
                 self._attr_native_value = "OK"
 
+    @callback
     def _handle_update(self, vin: str) -> None:
         """Handle tyre diagnosis updates."""
         if vin != self._vin:

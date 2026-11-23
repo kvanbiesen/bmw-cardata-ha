@@ -83,6 +83,22 @@ def recover_failed_start(manager: CardataStreamManager) -> None:
     request_reconnect(manager)
 
 
+def restart_refused_stream(manager: CardataStreamManager) -> None:
+    """Hand a stream a refusal stopped to the reconnect chain.
+
+    The refusal's handling stops the stream first, which marks the stop
+    intentional, and a chain gives up on an intentional stop at once. Unless
+    the manager has been retired, that mark is lifted so the chain retries.
+    """
+    from .stream import ConnectionState
+
+    # Entered from an API refusal, the stream can be up and well: leave it.
+    if manager._shut_down or manager._connection_state is ConnectionState.CONNECTED:
+        return
+    manager._intentional_disconnect = False
+    request_reconnect(manager)
+
+
 def request_reconnect(manager: CardataStreamManager) -> None:
     """Start a reconnect, keeping a single chain running.
 
@@ -99,6 +115,13 @@ def request_reconnect(manager: CardataStreamManager) -> None:
     """
     if _custom_auth_blocked(manager):
         return
+    # The chain covers whatever a retry still waiting would do. A refused
+    # login or subscription asks for both, and running the two side by side
+    # doubles the attempts and opens the circuit breaker sooner.
+    retry = manager._retry_task
+    if retry is not None and not retry.done() and retry is not asyncio.current_task():
+        retry.cancel()
+        manager._retry_task = None
     task = manager._reconnect_task
     if task is not None and not task.done() and task is not asyncio.current_task():
         if manager._reconnect_waiting is not task:
@@ -274,7 +297,6 @@ async def handle_unauthorized(manager: CardataStreamManager) -> None:
     """Handle MQTT unauthorized response with rate limiting."""
     blocked = False
     block_reason = None
-    should_notify = False
 
     async with manager._unauthorized_lock:
         if manager._unauthorized_retry_in_progress:
@@ -302,9 +324,7 @@ async def handle_unauthorized(manager: CardataStreamManager) -> None:
         if not blocked:
             # Update flags while holding the lock to prevent races
             manager._awaiting_new_credentials = True
-            should_notify = not manager._reauth_notified
-            if should_notify:
-                manager._reauth_notified = True
+            manager._reauth_notified = True
 
     # Perform all callbacks outside the lock to avoid long lock holds. The
     # in-progress flag stays set until they are done, otherwise it only spans
@@ -318,10 +338,12 @@ async def handle_unauthorized(manager: CardataStreamManager) -> None:
                 await manager._status_callback("unauthorized_blocked", block_reason)
             return
 
-        if should_notify:
-            await notify_error(manager, "unauthorized")
-        else:
-            await manager.async_stop()
+        # Every refusal goes to the entry's handler, not only the first one
+        # since the last good connect: it decides whether to refresh the token
+        # or ask for a reauth, and has its own limits on both. Stopping here
+        # without it left a refresh that could not reach BMW, or one that met
+        # another already running, with nothing to try again.
+        await notify_error(manager, "unauthorized")
         if manager._status_callback:
             await manager._status_callback("unauthorized", "MQTT authentication failed")
     finally:

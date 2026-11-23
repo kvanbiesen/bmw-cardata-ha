@@ -31,16 +31,18 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+from typing import Any
 
-from homeassistant.core import callback
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .condition_based_services import CBS_DESCRIPTOR_PREFIX, KNOWN_CBS_DESCRIPTORS
-from .const import DOMAIN
+from .const import DOMAIN, vehicle_removed_signal
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
 from .utils import redact_vin_in_text
@@ -236,6 +238,7 @@ class CardataEntity(RestoreEntity):
             self._name_unsub = None
         await super().async_will_remove_from_hass()
 
+    @callback
     def _handle_vehicle_name(self, vin: str, name: str) -> None:
         # Coordinator sends canonical VIN; resolve our vin and compare
         resolved_vin = self._resolve_vin()
@@ -305,3 +308,24 @@ class CardataSensorEntity(CardataEntity):
         if device and device.name != name:
             # Keep name_by_user intact; HA gives it precedence over BMW's name.
             registry.async_update_device(device.id, name=name)
+
+
+def forget_removed_vehicles(hass: HomeAssistant, entry: ConfigEntry, *records: Collection[Any]) -> None:
+    """Drop a deleted vehicle from a platform's record of the entities it built.
+
+    Each record is a dict or set keyed by VIN or by a tuple starting with it.
+    The vehicle's entities go with its device, and a VIN that reports again
+    is claimed again; with the record kept, the platform would take them for
+    built and create nothing until a reload.
+    """
+
+    @callback
+    def _forget(vin: str) -> None:
+        for record in records:
+            for key in [key for key in record if key == vin or (isinstance(key, tuple) and key[:1] == (vin,))]:
+                if isinstance(record, dict):
+                    record.pop(key, None)
+                elif isinstance(record, set):
+                    record.discard(key)
+
+    entry.async_on_unload(async_dispatcher_connect(hass, vehicle_removed_signal(entry.entry_id), _forget))

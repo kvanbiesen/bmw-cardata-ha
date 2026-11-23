@@ -74,7 +74,7 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
             menu_options={
                 "action_refresh_tokens": "Refresh tokens",
                 "action_reauth": "Start device authorization again",
-                "action_fetch_mappings": "Initiate vehicles (API)",
+                "action_fetch_mappings": "Log vehicle mappings (API)",
                 "action_fetch_basic": "Get basic vehicle information (API)",
                 "action_fetch_telematic": "Get telematics data (API)",
                 "action_reset_container": "Reset telemetry container",
@@ -256,22 +256,34 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
         enabled = _default(OPTION_CUSTOM_MQTT_ENABLED, False)
         host = _default(OPTION_CUSTOM_MQTT_HOST, "")
         port = _default(OPTION_CUSTOM_MQTT_PORT, DEFAULT_CUSTOM_MQTT_PORT)
-        username = _default(OPTION_CUSTOM_MQTT_USERNAME, "")
-        password = _default(OPTION_CUSTOM_MQTT_PASSWORD, "")
+
+        def _suggested(key: str, fallback: str) -> str:
+            # Shown again after an error, the form keeps what was submitted,
+            # and a field the user emptied is missing from it rather than
+            # standing for the stored value.
+            if defaults:
+                return defaults.get(key, "")
+            return opts.get(key, fallback)
+
+        username = _suggested(OPTION_CUSTOM_MQTT_USERNAME, "")
+        password = _suggested(OPTION_CUSTOM_MQTT_PASSWORD, "")
         tls = _default(OPTION_CUSTOM_MQTT_TLS, "off")
-        topic_prefix = _default(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX)
+        topic_prefix = _suggested(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, DEFAULT_CUSTOM_MQTT_TOPIC_PREFIX)
 
         return vol.Schema(
             {
                 vol.Optional(OPTION_CUSTOM_MQTT_ENABLED, default=enabled): bool,
                 vol.Optional(OPTION_CUSTOM_MQTT_HOST, default=host): str,
                 vol.Optional(OPTION_CUSTOM_MQTT_PORT, default=port): int,
-                vol.Optional(OPTION_CUSTOM_MQTT_USERNAME, default=username): str,
-                vol.Optional(OPTION_CUSTOM_MQTT_PASSWORD, default=password): str,
+                # Suggested rather than defaulted: the frontend leaves out a
+                # field the user emptied, and a default would put the stored
+                # value straight back, so these could never be cleared.
+                vol.Optional(OPTION_CUSTOM_MQTT_USERNAME, description={"suggested_value": username}): str,
+                vol.Optional(OPTION_CUSTOM_MQTT_PASSWORD, description={"suggested_value": password}): str,
                 vol.Optional(OPTION_CUSTOM_MQTT_TLS, default=tls): vol.In(
                     {"off": "Off (plain TCP)", "tls": "TLS (verified)", "tls_insecure": "TLS (self-signed)"}
                 ),
-                vol.Optional(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, default=topic_prefix): str,
+                vol.Optional(OPTION_CUSTOM_MQTT_TOPIC_PREFIX, description={"suggested_value": topic_prefix}): str,
             }
         )
 

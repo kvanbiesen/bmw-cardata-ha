@@ -227,3 +227,53 @@ async def test_a_restored_state_does_not_overwrite_a_fresh_reading(hass, setup_p
 
     assert float(hass.states.get(sensor_id).state) == expected
     assert float(coordinator.get_state(VIN, DESC_SOC_HEADER).value) == expected
+
+
+async def test_a_restored_state_comes_back_in_the_vehicles_own_unit(hass, setup_platform):
+    """A user showing a range in miles must not hand the coordinator miles after a restart."""
+    make_coordinator, add = setup_platform
+    descriptor = "vehicle.drivetrain.lastRemainingRange"
+
+    coordinator = make_coordinator()
+    coordinator.data[VIN] = {descriptor: DescriptorState(value=200, unit="km", timestamp="2026-11-20T10:00:00Z")}
+    sensor = CardataSensor(coordinator, VIN, descriptor)
+    platform = await add([sensor])
+    sensor_id = sensor.entity_id
+    er.async_get(hass).async_update_entity_options(sensor_id, "sensor", {"unit_of_measurement": "mi"})
+    await hass.async_block_till_done()
+    assert hass.states.get(sensor_id).attributes["unit_of_measurement"] == "mi"
+
+    await platform.async_reset()
+    await hass.async_block_till_done()
+    coordinator = make_coordinator()
+    await add([CardataSensor(coordinator, VIN, descriptor)])
+
+    restored = coordinator.get_state(VIN, descriptor)
+    assert float(restored.value) == 200.0
+    assert restored.unit == "km"
+
+
+async def test_an_unknown_service_item_keeps_its_name_after_a_restart(hass, setup_platform):
+    """BMW's title for an item the integration does not know is only in memory until the next read."""
+    from custom_components.cardata.condition_based_services import expand_condition_based_services
+    from custom_components.cardata.const import DESC_CONDITION_BASED_SERVICES
+    from custom_components.cardata.descriptor_titles import DESCRIPTOR_TITLES
+
+    make_coordinator, add = setup_platform
+    expanded = expand_condition_based_services(
+        {DESC_CONDITION_BASED_SERVICES: {"value": '[{"id": 7, "title": "Brake pads front", "status": "OK"}]'}}
+    )
+    descriptor = next(key for key in expanded if key != DESC_CONDITION_BASED_SERVICES)
+    coordinator = make_coordinator()
+    await coordinator.async_handle_message({"vin": VIN, "data": expanded})
+    platform = await add([CardataSensor(coordinator, VIN, descriptor)])
+    await platform.async_reset()
+    await coordinator.async_stop_watchdog()
+    await hass.async_block_till_done()
+
+    DESCRIPTOR_TITLES.pop(descriptor, None)  # what a new process starts with
+    coordinator = make_coordinator()
+    restored = CardataSensor(coordinator, VIN, descriptor)
+    await add([restored])
+
+    assert "Service Brake pads front" in restored.name

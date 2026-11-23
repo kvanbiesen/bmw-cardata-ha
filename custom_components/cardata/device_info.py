@@ -170,6 +170,11 @@ def apply_basic_data(
     metadata = build_device_metadata(vin, payload)
     if not metadata:
         return None
+    # The image path is not part of BMW's basic data but found on disk at
+    # setup, so data fetched again must not take it away.
+    image_path = (device_metadata.get(vin) or {}).get("vehicle_image_path")
+    if image_path and "vehicle_image_path" not in metadata:
+        metadata["vehicle_image_path"] = image_path
     device_metadata[vin] = metadata
     new_name = metadata.get("name", vin)
     name_changed = names.get(vin) != new_name
