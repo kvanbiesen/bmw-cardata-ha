@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # Run by the Autorelease workflow before it releases.
+  workflow_call:
 
 jobs:
   tests:

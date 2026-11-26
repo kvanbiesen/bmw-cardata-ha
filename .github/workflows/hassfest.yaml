@@ -5,6 +5,8 @@ on:
   pull_request:
   schedule:
     - cron: "0 0 * * *"
+  # Run by the Autorelease workflow before it releases.
+  workflow_call:
 
 jobs:
   validate:

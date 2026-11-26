@@ -6,6 +6,8 @@ on:
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
+  # Run by the Autorelease workflow before it releases.
+  workflow_call:
 
 permissions: {}
 
