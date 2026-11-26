@@ -57,6 +57,7 @@ from .condition_based_services import (
     CBS_ATTRIBUTE_KEYS,
     CBS_DEFAULT_ICON,
     CBS_ICONS,
+    KNOWN_CBS_DESCRIPTORS,
     is_cbs_item_descriptor,
     remember_cbs_title,
 )
@@ -78,7 +79,7 @@ from .const import (
     has_hv_battery,
 )
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity, forget_removed_vehicles
+from .entity import CardataSensorEntity, forget_removed_vehicles
 from .fault_memory import FAULT_MEMORY_ATTRIBUTE_KEYS, FAULT_MEMORY_ICON
 from .runtime import CardataRuntimeData
 from .sensor_charging_energy import CardataChargingEnergySensor
@@ -113,7 +114,7 @@ CHARGING_HISTORY_RESTORE_DESCRIPTORS = frozenset(
 )
 
 
-class CardataSensor(CardataEntity, RestoreSensor):
+class CardataSensor(CardataSensorEntity, RestoreSensor):
     """Sensor for generic telematic data."""
 
     _attr_should_poll = False
@@ -220,7 +221,12 @@ class CardataSensor(CardataEntity, RestoreSensor):
                     # A CBS item the integration does not know is named from
                     # BMW's title, which is only in memory until the next read.
                     title = (restored_attributes or {}).get("title")
-                    if is_cbs_item_descriptor(self._descriptor) and isinstance(title, str) and title:
+                    if (
+                        is_cbs_item_descriptor(self._descriptor)
+                        and self._descriptor not in KNOWN_CBS_DESCRIPTORS
+                        and isinstance(title, str)
+                        and title
+                    ):
                         remember_cbs_title(self._descriptor, title)
                         self._base_name = self._format_name() or self._vin
                         self._update_name(write_state=False)

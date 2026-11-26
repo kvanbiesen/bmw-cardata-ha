@@ -36,10 +36,12 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .condition_based_services import CBS_DESCRIPTOR_PREFIX, KNOWN_CBS_DESCRIPTORS
 from .const import DOMAIN, vehicle_removed_signal
 from .coordinator import CardataCoordinator
 from .descriptor_titles import DESCRIPTOR_TITLES
@@ -244,6 +246,68 @@ class CardataEntity(RestoreEntity):
             return
         # Update name (do not force writing to registry again)
         self._update_name(write_state=False)
+
+
+# These helpers are sensors too, but have no BMW catalogue descriptor.
+SENSOR_TITLES = {
+    "diagnostics_vehicle_metadata": "Vehicle Metadata",
+    "diagnostics_charging_matrix": "Charging Efficiency Matrix",
+    "diagnostics_charging_history": "Charging History",
+    "charging_history_energy": "Charging History Energy",
+    "diagnostics_tyre_diagnosis": "Tyre Diagnosis",
+}
+
+
+class CardataSensorEntity(CardataEntity):
+    """Sensor naming through Home Assistant, with a fallback for new descriptors.
+
+    Keep unique IDs from CardataEntity: the entity registry reuses existing IDs
+    and preserves user names when it updates the translated original name.
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: CardataCoordinator, vin: str, descriptor: str) -> None:
+        super().__init__(coordinator, vin, descriptor)
+        if descriptor.startswith(CBS_DESCRIPTOR_PREFIX) and descriptor not in KNOWN_CBS_DESCRIPTORS:
+            # Unknown CBS items keep their existing naming path.
+            self._attr_has_entity_name = False
+        elif descriptor in DESCRIPTOR_TITLES or descriptor in SENSOR_TITLES:
+            self._attr_translation_key = descriptor.lower().replace(".", "_")
+            # Even _attr_name = None overrides Home Assistant's translated name.
+            del self._attr_name
+        else:
+            self._attr_name = self._base_name
+
+    def _format_name(self) -> str:
+        return SENSOR_TITLES.get(self._descriptor) or super()._format_name()
+
+    async def async_added_to_hass(self) -> None:
+        if self.descriptor.startswith(CBS_DESCRIPTOR_PREFIX) and self.descriptor not in KNOWN_CBS_DESCRIPTORS:
+            await super().async_added_to_hass()
+            return
+        # HA supplies the device prefix. The legacy listener would overwrite
+        # the translated entity name, so update the device registry instead.
+        await RestoreEntity.async_added_to_hass(self)
+        self._name_unsub = async_dispatcher_connect(
+            self.hass,
+            f"{DOMAIN}_{self._coordinator.entry_id}_name",
+            self._handle_vehicle_name,
+        )
+
+    @callback
+    def _handle_vehicle_name(self, vin: str, name: str) -> None:
+        """Refresh the vehicle name when BMW metadata arrives after setup."""
+        if self.descriptor.startswith(CBS_DESCRIPTOR_PREFIX) and self.descriptor not in KNOWN_CBS_DESCRIPTORS:
+            super()._handle_vehicle_name(vin, name)
+            return
+        if vin != self._resolve_vin() or not self.device_entry:
+            return
+        registry = dr.async_get(self.hass)
+        device = registry.async_get(self.device_entry.id)
+        if device and device.name != name:
+            # Keep name_by_user intact; HA gives it precedence over BMW's name.
+            registry.async_update_device(device.id, name=name)
 
 
 def forget_removed_vehicles(hass: HomeAssistant, entry: ConfigEntry, *records: Collection[Any]) -> None:

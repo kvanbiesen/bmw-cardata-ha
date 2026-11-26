@@ -156,9 +156,10 @@ class TestExpansion:
 
     def test_unknown_item_keyed_by_its_title(self):
         raw = json.dumps([{"id": 7, "status": "PENDING", "title": "Front brake pads", "date": "2027-01"}])
-        expanded = expand_condition_based_services(cbs_payload(raw))
-        assert expanded[key("frontBrakePads")]["value"] == "PENDING"
-        assert DESCRIPTOR_TITLES[key("frontBrakePads")] == "Service Front brake pads"
+        with patch.dict(DESCRIPTOR_TITLES):
+            expanded = expand_condition_based_services(cbs_payload(raw))
+            assert expanded[key("frontBrakePads")]["value"] == "PENDING"
+            assert DESCRIPTOR_TITLES[key("frontBrakePads")] == "Service Front brake pads"
 
     def test_unreadable_list_is_dropped_not_passed_on(self):
         """An oversized raw string must never reach a sensor state."""
@@ -272,7 +273,7 @@ class TestEntities:
         assert attrs["remaining_distance"] == 7000
         assert attrs["timestamp"] == TIMESTAMP
         assert sensor.icon == "mdi:oil"
-        assert sensor.name.endswith("Service Engine oil")
+        assert sensor.translation_key == "vehicle_status_conditionbasedservices_engineoil"
 
     def test_service_due_is_a_problem_sensor(self):
         state = DescriptorState(value=True, unit=None, timestamp=TIMESTAMP, attributes={"due_items": ["Engine oil"]})

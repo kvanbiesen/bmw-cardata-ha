@@ -47,7 +47,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .condition_based_services import DESC_CBS_SERVICE_DUE
 from .const import DOMAIN, OPENING_STATUS_DESCRIPTORS, OPENING_UNIQUE_ID_SUFFIX
 from .coordinator import CardataCoordinator
-from .entity import CardataEntity, forget_removed_vehicles
+from .entity import CardataSensorEntity, forget_removed_vehicles
 from .runtime import CardataRuntimeData
 from .utils import async_wait_for_bootstrap
 
@@ -126,7 +126,7 @@ def descriptor_from_unique_id(unique_id_tail: str) -> str:
     return unique_id_tail
 
 
-class CardataBinarySensor(CardataEntity, RestoreEntity, BinarySensorEntity):
+class CardataBinarySensor(CardataSensorEntity, RestoreEntity, BinarySensorEntity):
     """Binary sensor for boolean telematic data."""
 
     _attr_should_poll = False
