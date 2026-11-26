@@ -1,0 +1,145 @@
+name: Autorelease
+
+# A version bump of manifest.json on main is a release: once the checks pass,
+# tag it, write the release and attach bmw-cardata-ha.zip, which hacs.json
+# has HACS and the Marketplace install. Run it by hand to finish a release
+# that failed, or to rebuild the zip of the current version.
+on:
+  push:
+    branches: [main]
+    paths: [custom_components/cardata/manifest.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two bumps in quick succession would race on the tag and the release. Run
+# them one after the other, and never cancel one halfway.
+concurrency:
+  group: autorelease
+  cancel-in-progress: false
+
+jobs:
+  # The checks every push gets, run again here so that a version failing them
+  # is not released.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      check_only: true
+    # A called workflow gets no more than its caller grants, and ci.yml's lint
+    # job asks for write for its autofix commit, which check_only skips.
+    permissions:
+      contents: write
+
+  tests:
+    uses: ./.github/workflows/integration-tests.yml
+
+  hacs:
+    uses: ./.github/workflows/validate.yaml
+
+  hassfest:
+    uses: ./.github/workflows/hassfest.yaml
+
+  release:
+    # Started by hand it can be pointed at any branch, and releases come from
+    # main only.
+    if: github.ref == 'refs/heads/main'
+    needs: [ci, tests, hacs, hassfest]
+    runs-on: ubuntu-latest
+    # Only git, jq, unzip and gh run here, nothing from the repository.
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # Every tag, for the release notes and to find one already pushed.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(jq -r .version custom_components/cardata/manifest.json)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "no version in manifest.json" >&2
+            exit 1
+          fi
+          # Tags carry the bare version, like the existing releases.
+          echo "tag=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build the zip
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # A tag pushed already, by hand or by an earlier run, is what gets
+          # released, whatever main has become since.
+          ref=$GITHUB_SHA
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            ref="refs/tags/$TAG"
+            version=$(git show "$ref:custom_components/cardata/manifest.json" | jq -r .version)
+            if [ "$version" != "$TAG" ]; then
+              echo "tag $TAG holds version $version" >&2
+              exit 1
+            fi
+          fi
+          links=$(git ls-tree -r "$ref" custom_components/cardata | awk -F '\t' '$1 ~ /^120000 / { print $2 }')
+          if [ -n "$links" ]; then
+            echo "symbolic links under custom_components/cardata, not released:" >&2
+            printf '%s\n' "$links" >&2
+            exit 1
+          fi
+          # The committed tree only, with the integration at the zip root,
+          # where HACS unpacks it into custom_components/cardata. A tree, unlike
+          # a commit, is stamped with the current time, so stamp it with the
+          # commit's. Zip times are local times, hence TZ, so a rebuild
+          # anywhere gives the same zip.
+          mkdir -p dist
+          TZ=UTC git archive --format=zip --mtime="$(git log -1 --format='@%ct +0000' "$ref")" \
+            -o dist/bmw-cardata-ha.zip "$ref:custom_components/cardata"
+          unzip -l dist/bmw-cardata-ha.zip
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          zip=dist/bmw-cardata-ha.zip
+          # A release made on GitHub already, or by an earlier run, gets the
+          # zip, replacing one uploaded by hand.
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+            gh release upload "$TAG" "$zip" --clobber
+            exit 0
+          fi
+          args=(--title "$TAG" --generate-notes --target "$GITHUB_SHA")
+          # A beta is a pre-release, and its notes run from the tag before it.
+          # A stable release skips the betas, so its notes cover them all.
+          if [[ "$TAG" == *-* ]]; then
+            args+=(--prerelease)
+            tags=$(git tag --list '[0-9]*.*.*')
+          else
+            tags=$(git tag --list '[0-9]*.*.*' | grep -v -- - || true)
+          fi
+          # GitHub guesses the tag the notes start from, so hand it the
+          # highest one below this.
+          prev=$( { printf '%s\n' "$tags"; echo "$TAG"; } | sort -uV |
+            awk -v t="$TAG" '$0 == t { exit } { p = $0 } END { print p }')
+          if [ -n "$prev" ]; then
+            args+=(--notes-start-tag "$prev")
+          fi
+          # Writing the release is the call GitHub fails on a bad day, and a
+          # run that gives up here leaves the version unreleased.
+          for wait in 10 30 90 0; do
+            if gh release create "$TAG" "${args[@]}" "$zip"; then
+              exit 0
+            fi
+            # A call that failed late may still have published it.
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+              exit 0
+            fi
+            if [ "$wait" -eq 0 ]; then
+              exit 1
+            fi
+            echo "could not write the release, waiting ${wait}s" >&2
+            sleep "$wait"
+          done
