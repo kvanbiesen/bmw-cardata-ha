@@ -341,17 +341,28 @@ layout is unchanged.
 
 By default, the mini-map (and any other `type: map` card showing the vehicle's
 device tracker) shows the vehicle's auto-fetched photo. To use your own picture
-instead, drop an image in the same folder the integration stores that photo in:
+instead, drop an image in the same folder the integration stores that photo in,
+named after the photo with a `_marker` suffix:
 
 ```
-/config/www/community/cardata/<VIN>_marker.png   (or .jpg / .jpeg / .webp)
+/config/www/community/cardata/<name>_marker.png   (or .jpg / .jpeg / .webp)
 ```
 
-The `_marker` suffix keeps it from colliding with the auto-fetched
-`<VIN>.png` vehicle photo — both can coexist. Matching is case-insensitive,
-but the VIN must otherwise match exactly (find it on the vehicle's device
-page). Restart Home Assistant (or reload the integration) after adding the
-file for it to take effect.
+`<name>` is the photo's file name without `.png`, 64 hexadecimal characters.
+With several vehicles, the device tracker's `entity_picture` attribute
+(Developer tools → States) shows which photo is whose. The name is derived
+from the VIN, but the VIN cannot be worked back from it: everything in this
+folder can be downloaded without logging in, and a VIN in the URL would show
+up in browser history and proxy logs. Earlier versions named the photo
+`<VIN>.png`; it is renamed at the next start, and removed if the vehicle is
+no longer configured, so a picture card pointing at
+`/local/community/cardata/<VIN>.png` should show the vehicle's image entity
+instead.
+
+A marker named `<VIN>_marker.*`, as documented before, still works, but puts
+the VIN in the URL. If both exist, the one named after the photo is used.
+Matching is case-insensitive. Restart Home Assistant (or reload the
+integration) after adding the file for it to take effect.
 
 Both are served from `/local/community/cardata/`, a fixed address, so the
 device tracker's state does not change when Home Assistant rotates the image
