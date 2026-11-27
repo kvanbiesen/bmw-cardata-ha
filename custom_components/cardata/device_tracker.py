@@ -55,7 +55,7 @@ from .const import (
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity, forget_removed_vehicles
 from .geo_utils import coordinates_paired, haversine_m
-from .metadata import get_images_directory
+from .metadata import get_images_directory, image_file_stem
 from .runtime import CardataRuntimeData
 from .utils import async_wait_for_bootstrap, redact_vin
 
@@ -63,25 +63,31 @@ _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
 
-# Same folder as the auto-fetched BMW vehicle image (<vin>.png), but a
-# "_marker" suffix so a user-supplied map icon never collides with it.
+# Same folder as the auto-fetched BMW vehicle image, but a "_marker" suffix
+# so a user-supplied map icon never collides with it.
 _CUSTOM_MARKER_PICTURE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
 
-def _find_custom_marker_picture(hass: HomeAssistant, vin: str) -> str | None:
-    """Blocking lookup for a user-supplied www/community/cardata/<vin>_marker.* picture. Run via executor only.
+def _find_custom_marker_picture(hass: HomeAssistant, entry_id: str, vin: str) -> str | None:
+    """Blocking lookup for a user-supplied marker picture. Run via executor only.
 
-    Matched case-insensitively since VIN casing in a hand-placed filename is
-    an easy typo, and most HA installs run on a case-sensitive filesystem.
+    The picture is www/community/cardata/<name>_marker.*, where <name> is the
+    vehicle image's own name or, as documented before images were renamed,
+    the VIN. The image's name wins when both exist, since it keeps the VIN
+    out of the URL. Matched case-insensitively since the casing in a
+    hand-placed filename is an easy typo, and most HA installs run on a
+    case-sensitive filesystem.
     """
     images_dir = get_images_directory(hass)
     if not images_dir.is_dir():
         return None
 
-    picture_names = {f"{vin.lower()}_marker{ext}" for ext in _CUSTOM_MARKER_PICTURE_EXTENSIONS}
-    for entry in images_dir.iterdir():
-        if entry.is_file() and entry.name.lower() in picture_names:
-            return f"/local/community/cardata/{entry.name}"
+    found = {entry.name.lower(): entry.name for entry in images_dir.iterdir() if entry.is_file()}
+    for stem in (image_file_stem(entry_id, vin), vin.lower()):
+        for ext in _CUSTOM_MARKER_PICTURE_EXTENSIONS:
+            name = found.get(f"{stem}_marker{ext}")
+            if name:
+                return f"/local/community/cardata/{name}"
 
     return None
 
@@ -196,7 +202,7 @@ class CardataDeviceTracker(CardataEntity, TrackerEntity, RestoreEntity):
         await super().async_added_to_hass()
 
         self._custom_marker_picture = await self.hass.async_add_executor_job(
-            _find_custom_marker_picture, self.hass, self._vin
+            _find_custom_marker_picture, self.hass, self._coordinator.entry_id, self._vin
         )
 
         self.async_on_remove(

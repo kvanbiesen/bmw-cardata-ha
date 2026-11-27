@@ -27,6 +27,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 from pathlib import Path
 from typing import Any
@@ -69,10 +71,22 @@ def get_images_directory(hass: HomeAssistant) -> Path:
     return Path(hass.config.path("www/community/cardata"))
 
 
-def get_image_path(hass: HomeAssistant, vin: str) -> Path | None:
+def image_file_stem(entry_id: str, vin: str) -> str:
+    """Return the name a vehicle's files carry in the images directory.
+
+    The directory is served under /local without login, so the name must not
+    give the VIN away. A plain hash of a VIN is quickly reversed, since make,
+    model, year and plant leave few candidates; keyed with the entry id,
+    which no visitor sees, the name cannot be worked back to the VIN.
+    """
+    return hmac.new(entry_id.encode(), vin.encode(), hashlib.sha256).hexdigest()
+
+
+def get_image_path(hass: HomeAssistant, entry_id: str, vin: str) -> Path | None:
     """Get the file path for a specific vehicle image.
 
-    Returns: /config/www/community/cardata/{vin}.png, or None if VIN is invalid.
+    Returns: /config/www/community/cardata/{image_file_stem}.png, or None if
+    VIN is invalid.
 
     Security: Validates VIN format and path length to prevent attacks.
     """
@@ -81,7 +95,7 @@ def get_image_path(hass: HomeAssistant, vin: str) -> Path | None:
         return None
 
     images_dir = get_images_directory(hass)
-    image_path = images_dir / f"{vin}.png"
+    image_path = images_dir / f"{image_file_stem(entry_id, vin)}.png"
 
     # Validate path length to prevent filesystem issues
     if len(str(image_path)) > _MAX_PATH_LENGTH:
@@ -98,6 +112,55 @@ def get_image_path(hass: HomeAssistant, vin: str) -> Path | None:
         return None
 
     return image_path
+
+
+def _adopt_legacy_image(vin: str, image_path: Path) -> None:
+    """Rename the image an older version saved as {vin}.png. Blocking I/O.
+
+    The empty file left by a 404 is renamed too, so BMW is not asked again.
+    If the new name exists already, the old file is only removed.
+    """
+    legacy = image_path.with_name(f"{vin}.png")
+    try:
+        if not legacy.is_file():
+            return
+        if image_path.exists():
+            legacy.unlink()
+        else:
+            legacy.rename(image_path)
+    except OSError as err:
+        _LOGGER.warning(
+            "Failed to rename the vehicle image saved under the VIN of %s: %s",
+            redact_vin(vin),
+            redact_vin_in_text(str(err)),
+        )
+
+
+def _remove_orphaned_legacy_images(images_dir: Path, known_vins: set[str]) -> None:
+    """Delete images saved as {vin}.png for a vehicle no entry has. Blocking I/O.
+
+    No entry renames them, and their names would keep the VIN public.
+    """
+    for path in images_dir.glob("*.png"):
+        if not is_valid_vin(path.stem) or path.stem in known_vins:
+            continue
+        try:
+            path.unlink()
+        except OSError as err:
+            _LOGGER.warning(
+                "Failed to remove the vehicle image saved under the VIN of %s: %s",
+                redact_vin(path.stem),
+                redact_vin_in_text(str(err)),
+            )
+
+
+def _image_file_size(vin: str, image_path: Path) -> int:
+    """Return the image's size, or -1 when there is none. Blocking I/O."""
+    _adopt_legacy_image(vin, image_path)
+    try:
+        return image_path.stat().st_size
+    except OSError:
+        return -1
 
 
 async def async_fetch_and_store_basic_data(
@@ -196,7 +259,7 @@ async def async_fetch_and_store_vehicle_images(
 ) -> None:
     """Fetch vehicle images for each VIN and store as PNG files.
 
-    Images are stored in /config/www/community/cardata/{vin}.png
+    Images are stored in /config/www/community/cardata/{image_file_stem}.png
     Only fetches if file doesn't exist - NEVER refetches! The empty marker an
     earlier 404 left is retried only with retry_unavailable, which the manual
     fetch service passes: BMW may have an image for the car by now.
@@ -220,7 +283,7 @@ async def async_fetch_and_store_vehicle_images(
 
     for vin in vins:
         redacted_vin = redact_vin(vin)
-        image_path = get_image_path(hass, vin)
+        image_path = get_image_path(hass, entry.entry_id, vin)
 
         # Skip if VIN validation failed
         if image_path is None:
@@ -233,7 +296,7 @@ async def async_fetch_and_store_vehicle_images(
 
         try:
             # CRITICAL: Check if file already exists
-            file_size = await hass.async_add_executor_job(lambda p: p.stat().st_size if p.exists() else -1, image_path)
+            file_size = await hass.async_add_executor_job(_image_file_size, vin, image_path)
             if file_size == 0 and not retry_unavailable:
                 # Empty marker left by an earlier 404: BMW has no image for this car
                 _LOGGER.debug("No vehicle image available for %s (marker file), skipping", redacted_vin)
@@ -340,16 +403,13 @@ async def async_fetch_and_store_vehicle_images(
                 await pending_manager.release(vin)
 
 
-def _scan_image_files(images_dir: Path) -> list[tuple[Path, int]]:
-    """Scan image directory for PNG files with their sizes (blocking I/O)."""
-    if not images_dir.exists():
-        return []
+def _find_image_files(images: list[tuple[str, Path]]) -> list[tuple[str, Path, int]]:
+    """Return the vehicle images present on disk with their sizes (blocking I/O)."""
     result = []
-    for f in images_dir.glob("*.png"):
-        try:
-            result.append((f, f.stat().st_size))
-        except OSError:
-            pass
+    for vin, image_path in images:
+        file_size = _image_file_size(vin, image_path)
+        if file_size >= 0:
+            result.append((vin, image_path, file_size))
     return result
 
 
@@ -363,26 +423,32 @@ async def async_restore_vehicle_images(
     This loads cached image files into coordinator memory without making API calls.
     Called during integration setup to restore images after HA restart. The image
     directory is shared by every entry, so only the vehicles this entry has
-    metadata for or has saved as its own are considered.
+    metadata for or has saved as its own are considered. Images an older
+    version saved under the VIN of a vehicle no entry has are removed.
     """
-    images_dir = get_images_directory(hass)
+    stored_vins = entry.data.get(ALLOWED_VINS_KEY)
+    own_vins = set(coordinator.device_metadata) | set(stored_vins if isinstance(stored_vins, list) else [])
+    images = []
+    for vin in own_vins:
+        if is_valid_vin(vin) and (image_path := get_image_path(hass, entry.entry_id, vin)):
+            images.append((vin, image_path))
 
-    image_files = await hass.async_add_executor_job(_scan_image_files, images_dir)
+    image_files = await hass.async_add_executor_job(_find_image_files, images)
+
+    known_vins = set(own_vins)
+    for config_entry in hass.config_entries.async_entries(DOMAIN):
+        allowed = config_entry.data.get(ALLOWED_VINS_KEY)
+        stored = config_entry.data.get(VEHICLE_METADATA)
+        known_vins.update(allowed if isinstance(allowed, list) else [])
+        known_vins.update(stored if isinstance(stored, dict) else {})
+    await hass.async_add_executor_job(_remove_orphaned_legacy_images, get_images_directory(hass), known_vins)
+
     if not image_files:
-        _LOGGER.debug("Vehicle images directory doesn't exist yet or is empty")
+        _LOGGER.debug("No vehicle images on disk for entry %s", entry.entry_id)
         return
 
     restored_count = 0
-    stored_vins = entry.data.get(ALLOWED_VINS_KEY)
-    own_vins = set(coordinator.device_metadata) | set(stored_vins if isinstance(stored_vins, list) else [])
-
-    # Load all PNG files from images directory
-    for image_file, file_size in image_files:
-        vin = image_file.stem  # Filename without .png extension
-
-        if not is_valid_vin(vin) or vin not in own_vins:
-            continue
-
+    for vin, image_file, file_size in image_files:
         redacted_vin = redact_vin(vin)
         safe_image_file = redact_vin_in_text(str(image_file))
 

@@ -29,8 +29,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from custom_components.cardata import device_tracker as device_tracker_module
 from custom_components.cardata.coordinator import CardataCoordinator
-from custom_components.cardata.device_tracker import CardataDeviceTracker
+from custom_components.cardata.device_tracker import CardataDeviceTracker, _find_custom_marker_picture
+from custom_components.cardata.metadata import image_file_stem
 
 VIN = "WBA12345678901234"
 
@@ -65,3 +67,43 @@ class TestPicture:
 
         tracker._handle_new_image(VIN)
         tracker.async_write_ha_state.assert_called_once()
+
+
+class TestCustomMarker:
+    """A marker is named after the vehicle image, or after the VIN as documented before."""
+
+    @pytest.fixture
+    def images_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(device_tracker_module, "get_images_directory", lambda hass: tmp_path)
+        return tmp_path
+
+    def test_no_marker(self, images_dir):
+        (images_dir / f"{image_file_stem('entry', VIN)}.png").write_bytes(b"png")
+
+        assert _find_custom_marker_picture(MagicMock(), "entry", VIN) is None
+
+    def test_named_after_the_image(self, images_dir):
+        name = f"{image_file_stem('entry', VIN).upper()}_Marker.webp"
+        (images_dir / name).write_bytes(b"webp")
+
+        assert _find_custom_marker_picture(MagicMock(), "entry", VIN) == f"/local/community/cardata/{name}"
+
+    def test_named_after_the_vin(self, images_dir):
+        (images_dir / f"{VIN.lower()}_marker.jpg").write_bytes(b"jpg")
+
+        assert (
+            _find_custom_marker_picture(MagicMock(), "entry", VIN)
+            == f"/local/community/cardata/{VIN.lower()}_marker.jpg"
+        )
+
+    def test_the_image_name_wins_over_the_vin(self, images_dir):
+        name = f"{image_file_stem('entry', VIN)}_marker.png"
+        (images_dir / f"{VIN}_marker.png").write_bytes(b"vin")
+        (images_dir / name).write_bytes(b"image")
+
+        assert _find_custom_marker_picture(MagicMock(), "entry", VIN) == f"/local/community/cardata/{name}"
+
+    def test_another_entry_does_not_match(self, images_dir):
+        (images_dir / f"{image_file_stem('other', VIN)}_marker.png").write_bytes(b"png")
+
+        assert _find_custom_marker_picture(MagicMock(), "entry", VIN) is None
