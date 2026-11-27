@@ -280,6 +280,7 @@ Available configuration options:
 | `image_zoom` | `100` | Zoom the vehicle image, 50-200% |
 | `show_map` | `true` | Inline location map |
 | `map_height` | `120` | Mini map height in pixels |
+| `map_hours_to_show` | `24` | Hours of location history the mini map draws as a trail; `0` shows only the current position |
 | `show_buttons` | `true` | Quick-info tiles: location, range or fuel, motion, charging state or level, tyres (only when tyre sensors exist), and mileage |
 | `quick_tiles` | *(all six)* | Which quick-info tiles to show, in order. Available: `location`, `range`, `motion`, `charging`, `tires`, `mileage`. Omit to show all six. Use the same multi-select dropdown as `leasing_tiles`. |
 | `fuel_level_display` | `percentage` | Show fuel-level on the quick-info tile in `percentage` or `litres`. Litres uses the remaining-fuel sensor when available; otherwise the tile falls back to the default level value. |
@@ -471,6 +472,7 @@ image_crop_bottom: 0
 image_zoom: 100
 show_map: true
 map_height: 120
+map_hours_to_show: 24
 show_buttons: true
 additional_cards:
   - entity: sensor.vehicle_predicted_soc
