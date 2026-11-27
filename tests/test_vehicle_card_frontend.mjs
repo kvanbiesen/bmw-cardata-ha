@@ -9,8 +9,8 @@ const sandbox = {
   HTMLElement: class {},
   customElements: { get: () => undefined, define: () => {} },
 };
-runInNewContext(`${source}\nglobalThis.__cardTest = { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary };`, sandbox);
-const { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary } = sandbox.__cardTest;
+runInNewContext(`${source}\nglobalThis.__cardTest = { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary, mapHoursConfig };`, sandbox);
+const { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary, mapHoursConfig } = sandbox.__cardTest;
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
@@ -113,4 +113,14 @@ test('windows without any state are unknown, not closed', () => {
   assert.deepEqual(plain(windowSummary([undefined, undefined, { state: 'unavailable' }, { state: 'unknown' }])), { known: false, open: 0 });
   assert.deepEqual(plain(windowSummary([{ state: 'off' }, undefined, undefined, undefined])), { known: true, open: 0 });
   assert.deepEqual(plain(windowSummary([{ state: 'on' }, { state: 'INTERMEDIATE' }, { state: 'CLOSED' }, undefined])), { known: true, open: 2 });
+});
+
+test('map history defaults to 24 hours and accepts 0', () => {
+  assert.equal(mapHoursConfig(undefined), 24);
+  assert.equal(mapHoursConfig({}), 24);
+  assert.equal(mapHoursConfig({ map_hours_to_show: 0 }), 0);
+  assert.equal(mapHoursConfig({ map_hours_to_show: '2' }), 2);
+  assert.equal(mapHoursConfig({ map_hours_to_show: 1.5 }), 1.5);
+  assert.equal(mapHoursConfig({ map_hours_to_show: -1 }), 24);
+  assert.equal(mapHoursConfig({ map_hours_to_show: 'abc' }), 24);
 });

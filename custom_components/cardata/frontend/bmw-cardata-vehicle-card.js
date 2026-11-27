@@ -10,6 +10,7 @@ const CARD_TAG = "bmw-cardata-vehicle-card";
 const CACHE_MS = 30_000;
 const CARD_SIZE_UNIT_PX = 50;
 const MAP_HEIGHT_DEFAULT = 120;
+const MAP_HOURS_DEFAULT = 24;
 
 const ensureCustomCardsArray = () => {
   window.customCards = window.customCards || [];
@@ -62,6 +63,12 @@ const mapHeightConfig = (cfg) => {
   // can easily include the "px" suffix shown in that field's UI label.
   const value = Number.parseFloat(cfg?.map_height);
   return Number.isFinite(value) && value > 0 ? value : MAP_HEIGHT_DEFAULT;
+};
+
+// 0 is valid: the map card then shows the current position and no history.
+const mapHoursConfig = (cfg) => {
+  const value = Number.parseFloat(cfg?.map_hours_to_show);
+  return Number.isFinite(value) && value >= 0 ? value : MAP_HOURS_DEFAULT;
 };
 
 const cssColor = (value) => {
@@ -272,6 +279,7 @@ const TRANSLATIONS = {
     "editor.image_zoom": "Image zoom",
     "editor.show_map": "Show mini map",
     "editor.map_height": "Mini map height",
+    "editor.map_hours_to_show": "Mini map: hours of location history (0 = current position only)",
     "editor.show_buttons": "Show quick info buttons",
     "editor.quick_tiles": "Quick info tiles (order = display order)",
     "editor.leasing_entity": "Leasing sensor (optional)",
@@ -376,6 +384,7 @@ const TRANSLATIONS = {
     "editor.image_zoom": "Bild zoom",
     "editor.show_map": "Visa minikarta",
     "editor.map_height": "Minikarta höjd",
+    "editor.map_hours_to_show": "Minikarta: timmar positionshistorik (0 = endast aktuell position)",
     "editor.show_buttons": "Visa snabbinfoknappar",
     "editor.quick_tiles": "Snabbinfo-rutor (ordning = visningsordning)",
     "editor.leasing_entity": "Leasing sensor (frivillig)",
@@ -480,6 +489,7 @@ const TRANSLATIONS = {
     "editor.image_zoom": "Bildzoom",
     "editor.show_map": "Mini-Karte anzeigen",
     "editor.map_height": "Höhe der Mini-Karte",
+    "editor.map_hours_to_show": "Mini-Karte: Stunden Standortverlauf (0 = nur aktuelle Position)",
     "editor.show_buttons": "Schnellinfo-Kacheln anzeigen",
     "editor.quick_tiles": "Schnellinfo-Kacheln (Reihenfolge = Anzeigereihenfolge)",
     "editor.leasing_entity": "Leasing-Sensor (optional)",
@@ -584,6 +594,7 @@ const TRANSLATIONS = {
     "editor.image_zoom": "Bildezoom",
     "editor.show_map": "Vis minikart",
     "editor.map_height": "Høyde på minikart",
+    "editor.map_hours_to_show": "Minikart: timer med posisjonshistorikk (0 = kun nåværende posisjon)",
     "editor.show_buttons": "Vis hurtiginfo-knapper",
     "editor.quick_tiles": "Hurtiginfo-felt (rekkefølge = visningsrekkefølge)",
     "editor.leasing_entity": "Leasingsensor (valgfri)",
@@ -825,6 +836,16 @@ class BmwCardataVehicleCard extends HTMLElement {
             number: {
               mode: "box",
               unit_of_measurement: "px",
+            },
+          },
+        },
+        {
+          name: "map_hours_to_show",
+          selector: {
+            number: {
+              mode: "box",
+              min: 0,
+              unit_of_measurement: "h",
             },
           },
         },
@@ -1343,7 +1364,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     );
   }
 
-  async _createMapCard(hass, trackerEntityId) {
+  async _createMapCard(hass, trackerEntityId, hoursToShow) {
     try {
       if (!window.loadCardHelpers) return null;
       const helpers = await window.loadCardHelpers();
@@ -1356,7 +1377,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         type: "map",
         entities: hasPicture ? [trackerEntityId] : [{ entity: trackerEntityId, label_mode: "icon" }],
         default_zoom: 14,
-        hours_to_show: 24,
+        hours_to_show: hoursToShow,
       });
       mapCard.layout = "grid";
       mapCard.hass = hass;
@@ -1373,7 +1394,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     this._mapRenderToken = (this._mapRenderToken || 0) + 1;
   }
 
-  _renderMap(target, hass, trackerEntityId, t) {
+  _renderMap(target, hass, trackerEntityId, hoursToShow, t) {
     if (!target) return;
     // This method writes the DOM directly, so the _setHtml cache is stale.
     target._lastHtml = undefined;
@@ -1422,7 +1443,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     wrapper.appendChild(mapMount);
     target.replaceChildren(wrapper);
 
-    this._createMapCard(hass, trackerEntityId).then((mapCard) => {
+    this._createMapCard(hass, trackerEntityId, hoursToShow).then((mapCard) => {
       if (!target.isConnected) return;
       if (this._mapRenderToken !== renderToken) return;
       if (!mapCard) {
@@ -1778,7 +1799,7 @@ class BmwCardataVehicleCard extends HTMLElement {
     }
 
     if (showMap) {
-      this._renderMap(mapEl, hass, mapEntityId, t);
+      this._renderMap(mapEl, hass, mapEntityId, mapHoursConfig(cfg), t);
     } else {
       this._dropMapCard();
       this._setHtml(mapEl, "");
