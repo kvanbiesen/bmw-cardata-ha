@@ -38,14 +38,14 @@ import json
 import logging
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import aiohttp
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized, UnknownUser
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.util import dt as dt_util
 
@@ -686,27 +686,55 @@ async def async_handle_update_charging_power(call: ServiceCall) -> None:
     )
 
 
+def _admin_only(handler: Callable[[ServiceCall], Awaitable[Any]]) -> Callable[[ServiceCall], Awaitable[Any]]:
+    """Return handler behind the check async_register_admin_service makes.
+
+    That helper takes no supports_response on the oldest Home Assistant this
+    integration runs on, so the one service that answers is wrapped here. A
+    call no user made, as an automation makes it, passes as it does there.
+    """
+
+    async def checked(call: ServiceCall) -> Any:
+        if call.context.user_id:
+            user = await call.hass.auth.async_get_user(call.context.user_id)
+            if user is None:
+                raise UnknownUser(context=call.context)
+            if not user.is_admin:
+                raise Unauthorized(context=call.context)
+        return await handler(call)
+
+    return checked
+
+
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all Cardata services."""
-    hass.services.async_register(
+    # Every fetch spends calls from BMW's daily quota, a few of them enough to
+    # stop the polling until the next day, and a power reading goes straight
+    # into the SOC prediction. Home Assistant lets any user call a service, so
+    # only an administrator may call these.
+    async_register_admin_service(
+        hass,
         DOMAIN,
         "fetch_telematic_data",
         async_handle_fetch_telematic,
         schema=TELEMATIC_SERVICE_SCHEMA,
     )
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         "fetch_vehicle_mappings",
         async_handle_fetch_mappings,
         schema=MAPPING_SERVICE_SCHEMA,
     )
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         "fetch_basic_data",
         async_handle_fetch_basic_data,
         schema=BASIC_DATA_SERVICE_SCHEMA,
     )
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         "fetch_vehicle_images",
         async_fetch_vehicle_images_service,
@@ -715,17 +743,19 @@ def async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         "fetch_charging_history",
-        async_handle_fetch_charging_history,
+        _admin_only(async_handle_fetch_charging_history),
         schema=CHARGING_HISTORY_SERVICE_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         "fetch_tyre_diagnosis",
         async_handle_fetch_tyre_diagnosis,
         schema=DAILY_FETCH_SERVICE_SCHEMA,
     )
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         "update_charging_power",
         async_handle_update_charging_power,
@@ -733,7 +763,7 @@ def async_register_services(hass: HomeAssistant) -> None:
     )
 
     # The developer services rename entities and delete containers on the
-    # BMW account, so only an administrator may call them.
+    # BMW account.
     if not hass.services.has_service(DOMAIN, "migrate_entity_ids"):
         async_register_admin_service(
             hass,

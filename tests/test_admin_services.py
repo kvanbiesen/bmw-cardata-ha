@@ -27,26 +27,77 @@
 
 import pytest
 from homeassistant.core import Context
-from homeassistant.exceptions import Unauthorized
+from homeassistant.exceptions import ServiceValidationError, Unauthorized, UnknownUser
 
 from custom_components.cardata.const import DOMAIN
 from custom_components.cardata.services import async_register_services
 
-DEVELOPER_SERVICES = ("migrate_entity_ids", "clean_hv_containers")
+# Each service with data its schema accepts, so that a call gets as far as the
+# check on who is calling.
+SERVICES = {
+    "fetch_telematic_data": {},
+    "fetch_vehicle_mappings": {},
+    "fetch_basic_data": {},
+    "fetch_vehicle_images": {},
+    "fetch_charging_history": {},
+    "fetch_tyre_diagnosis": {},
+    "update_charging_power": {"vin": "WBA00000000000000", "power_kw": 7.4},
+    "migrate_entity_ids": {},
+    "clean_hv_containers": {},
+}
+# With no entry set up the charging history has nothing to answer with, and
+# says so instead of returning nothing like the others.
+ANSWERING_SERVICE = "fetch_charging_history"
+SILENT_SERVICES = [service for service in SERVICES if service != ANSWERING_SERVICE]
 
 
-@pytest.mark.parametrize("service", DEVELOPER_SERVICES)
+def test_every_registered_service_is_covered(hass):
+    async_register_services(hass)
+
+    assert set(hass.services.async_services()[DOMAIN]) == set(SERVICES)
+
+
+@pytest.mark.parametrize("service", SERVICES)
 async def test_a_user_who_is_not_an_admin_is_refused(hass, hass_read_only_user, service):
     async_register_services(hass)
 
     with pytest.raises(Unauthorized):
         await hass.services.async_call(
-            DOMAIN, service, {}, blocking=True, context=Context(user_id=hass_read_only_user.id)
+            DOMAIN, service, SERVICES[service], blocking=True, context=Context(user_id=hass_read_only_user.id)
         )
 
 
-@pytest.mark.parametrize("service", DEVELOPER_SERVICES)
+@pytest.mark.parametrize("service", SILENT_SERVICES)
 async def test_an_admin_may_call_them(hass, hass_admin_user, service):
     async_register_services(hass)
 
-    await hass.services.async_call(DOMAIN, service, {}, blocking=True, context=Context(user_id=hass_admin_user.id))
+    await hass.services.async_call(
+        DOMAIN, service, SERVICES[service], blocking=True, context=Context(user_id=hass_admin_user.id)
+    )
+
+
+@pytest.mark.parametrize("service", SILENT_SERVICES)
+async def test_a_call_no_user_made_goes_through(hass, service):
+    """An automation calls a service as no user."""
+    async_register_services(hass)
+
+    await hass.services.async_call(DOMAIN, service, SERVICES[service], blocking=True)
+
+
+async def test_the_answering_service_lets_an_admin_and_an_automation_in(hass, hass_admin_user):
+    async_register_services(hass)
+
+    for context in (Context(user_id=hass_admin_user.id), Context()):
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(
+                DOMAIN, ANSWERING_SERVICE, {}, blocking=True, context=context, return_response=True
+            )
+
+
+async def test_the_answering_service_refuses_a_user_it_does_not_know(hass):
+    async_register_services(hass)
+
+    with pytest.raises(UnknownUser):
+        await hass.services.async_call(
+            DOMAIN, ANSWERING_SERVICE, {}, blocking=True, context=Context(user_id="gone"), return_response=True
+        )

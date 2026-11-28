@@ -706,7 +706,7 @@ The workshop fault memory (`Vehicle Info Fault memory`) is requested in the same
 
 ## Developer Tools Services
 
-Home Assistant's Developer Tools expose helper services for manual API checks:
+Home Assistant's Developer Tools expose helper services for manual API checks. Only an administrator can call them, since most of them spend calls from the daily quota; an automation is not affected, as it runs as no user, while a script started by a user who is not an administrator is refused:
 
 - `cardata.fetch_telematic_data` fetches the current contents of the configured telematics container for a VIN and logs the raw payload. Called without a VIN it fetches every known vehicle, and skips any whose data already arrived in the last five minutes, whether over the stream or from an earlier poll, so repeated calls cannot empty the daily quota.
 - `cardata.fetch_vehicle_mappings` calls `GET /customers/vehicles/mappings` and logs the mapping details (including PRIMARY or SECONDARY status). Only primary mappings return data; some vehicles do not support secondary users, in which case the mapped user is considered the primary one.
@@ -714,8 +714,8 @@ Home Assistant's Developer Tools expose helper services for manual API checks:
 - `cardata.fetch_charging_history` fetches charging sessions and returns the full BMW payload (including location, cost, charging point). Defaults to the last 30 days; optional `from`/`to` ISO-8601 fields select any range. Follows pagination automatically. Returns a `response_variable` dict keyed by VIN — use it in scripts/automations to log sessions to your own long-term store. Uses 1 API call per page per vehicle.
 - `cardata.fetch_tyre_diagnosis` fetches tyre health and wear data for a VIN. Uses 1 API call per vehicle.
 - `cardata.fetch_vehicle_images` fetches vehicle images for the configured vehicles that have none yet. A vehicle BMW had no image for is asked again, which the automatic fetches never do; one that already has an image is left alone and costs no call.
-- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`). Administrators only.
-- `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them. Entity IDs you picked yourself are left alone unless `force` is set. Administrators only.
+- `cardata.clean_hv_containers` lists or deletes high-voltage battery telemetry containers (actions: `list`, `delete`, `delete_all`, `delete_all_matching`).
+- `cardata.migrate_entity_ids` migrates entity IDs from old format to new format. Use `dry_run` to preview changes without applying them. Entity IDs you picked yourself are left alone unless `force` is set.
 - `cardata.update_charging_power` injects a locally measured charging power reading (kW) into the SOC predictor. Requires the **Use external power meter for charging** option to be enabled under Settings. Intended for users with a smart meter who want to feed accurate real-time power into the prediction instead of relying on BMW's V×A — see the section below.
 
 ## API Quota and MQTT Streaming
