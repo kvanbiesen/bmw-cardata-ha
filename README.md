@@ -358,7 +358,8 @@ up in browser history and proxy logs. Earlier versions named the photo
 `<VIN>.png`; it is renamed at the next start, and removed if the vehicle is
 no longer configured, so a picture card pointing at
 `/local/community/cardata/<VIN>.png` should show the vehicle's image entity
-instead.
+instead. For the same reason the integration only saves what BMW sends when it
+is an image (PNG, JPEG, GIF or WebP) of at most 10 MB.
 
 A marker named `<VIN>_marker.*`, as documented before, still works, but puts
 the VIN in the URL. If both exist, the one named after the photo is used.

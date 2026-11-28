@@ -61,6 +61,29 @@ IMAGE_ENDPOINT = "/customers/vehicles/{vin}/image"
 # Maximum allowed path length to prevent filesystem issues
 _MAX_PATH_LENGTH = 255
 
+# The image is saved where Home Assistant serves it without login, so what
+# BMW answers is only kept when it is an image of a plausible size. BMW's
+# specification names no format; these are the ones a browser shows.
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+_IMAGE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
+
+
+def _is_image(data: bytes) -> bool:
+    """Tell whether data starts like a PNG, JPEG, GIF or WebP file."""
+    return data.startswith(_IMAGE_SIGNATURES) or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")
+
+
+async def _read_image(response: aiohttp.ClientResponse) -> bytes | None:
+    """Return the body of a reply, or None when it is larger than an image may be."""
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.content.iter_chunked(65536):
+        size += len(chunk)
+        if size > _MAX_IMAGE_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 def get_images_directory(hass: HomeAssistant) -> Path:
     """Get the path for storing vehicle images.
@@ -350,15 +373,25 @@ async def async_fetch_and_store_vehicle_images(
                         # Don't create file - allow retry on next bootstrap
                         continue
 
-                    # Read raw binary PNG data
-                    image_data = await response.read()
+                    image_data = await _read_image(response)
+                    if image_data is None:
+                        _LOGGER.warning(
+                            "Vehicle image for %s is larger than %d bytes, not saved",
+                            redacted_vin,
+                            _MAX_IMAGE_BYTES,
+                        )
+                        continue
 
-                    if not image_data or len(image_data) < 100:
+                    if len(image_data) < 100:
                         _LOGGER.debug(
                             "Vehicle image data too small for %s (%d bytes), likely invalid",
                             redacted_vin,
-                            len(image_data) if image_data else 0,
+                            len(image_data),
                         )
+                        continue
+
+                    if not _is_image(image_data):
+                        _LOGGER.warning("BMW's reply for the image of %s is not an image, not saved", redacted_vin)
                         continue
 
                     # Save PNG file to disk
