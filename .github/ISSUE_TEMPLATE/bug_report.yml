@@ -75,13 +75,15 @@ body:
       description: |
         Enable debug logging, reproduce the issue, and paste the logs here.
 
-        The integration already redacts VINs (e.g. `WBY...9486`) and bearer
-        tokens / Authorization headers in error messages. You only need to
-        redact things it doesn't auto-redact: account email, precise GPS
-        coordinates, and anything visible in attached screenshots.
+        The integration already redacts VINs (e.g. `WBY...9486`), your GCID
+        (e.g. `d2b6****`) and bearer tokens / Authorization headers in error
+        messages. You only need to redact things it doesn't auto-redact:
+        account email, precise GPS coordinates, and anything visible in
+        attached screenshots. The GCID identifies your BMW account, and a
+        version before 5.4.0 logs it in full: redact it there too.
 
         Please leave entry IDs (UUID-like), container IDs (e.g.
-        `G00B025F732UD`), GCIDs, and BMW descriptor names visible — they're
+        `G00B025F732UD`), and BMW descriptor names visible — they're
         internal identifiers, not personal data, and removing them makes
         diagnosis harder.
 
