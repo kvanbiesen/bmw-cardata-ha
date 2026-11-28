@@ -231,11 +231,12 @@ You can switch the live stream from BMW's MQTT endpoint to your own broker (for 
 BMW only accepts one active stream connection per account, so anything else already connected with the same credentials (a second Home Assistant instance, evcc, or a bridge) makes BMW refuse this one with `Not authorized` even though the token is valid. Letting a single bridge consume the BMW stream and pointing every consumer at your own broker avoids that.
 BMW authorization is still required; only stream transport changes.
 Expected topic format is `<topic_prefix><VIN>` (default prefix `bmw/`) and payload JSON must include `vin` and `data`.
+Whoever can publish under that prefix decides what the integration shows for your vehicles, so do not leave the broker open to others. A vehicle a message names for the first time is added as BMW's own stream would add it; the VIN must be in capitals, as BMW writes it, and an entry takes on at most 20 vehicles.
 Configure it in Home Assistant via **Settings -> Devices & Services -> BMW CarData -> Configure -> MQTT Broker**.
 
 ## Entity Naming & Structure
 
-- Each VIN becomes a device in HA (`VIN` pulled from CarData).
+- Each VIN becomes a device in HA (`VIN` pulled from CarData), up to 20 per config entry.
 - Sensors/binary sensors are auto-created from the descriptors that emit data. Most get a readable title from BMW's catalogue (e.g. `Door state (front driver)`); a descriptor with no catalogue title falls back to a name derived from the descriptor path.
 - The device tracker (location entity) is restored from the entity registry on restart, so it keeps its last known position even before MQTT data arrives.
 - The windows and the sunroof get a binary sensor with the `window` device class, which reports open or closed and can drive a `window.opened` trigger. The string sensor that reports the raw BMW enum (`CLOSED`, `INTERMEDIATE`, `OPEN`) is still there but hidden on a new install, so unhide it from the entity settings if you want the intermediate position. The vehicle card reads the windows from the binary sensors, and shows them as unknown rather than closed when none of them has a state.
