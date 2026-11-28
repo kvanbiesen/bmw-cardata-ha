@@ -86,7 +86,7 @@ def on_disconnect(client: mqtt.Client, userdata, reason_code, *args, **kwargs):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Subscribe to BMW CarData MQTT stream.")
-    parser.add_argument("vin", help="VIN/topic to subscribe to (e.g., WBY31AW090FP15359)")
+    parser.add_argument("vin", help="VIN/topic to subscribe to (e.g., WBA00000000000000)")
     parser.add_argument(
         "--tokens",
         default=DEFAULT_TOKENS_PATH,

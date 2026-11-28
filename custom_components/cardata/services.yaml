@@ -7,7 +7,7 @@ fetch_telematic_data:
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     vin:
       description: Optional VIN to query. Defaults to every vehicle of the entry, skipping those with data from the last five minutes.
-      example: WBY31AW090FP15359
+      example: WBA00000000000000
 fetch_vehicle_mappings:
   name: Fetch Vehicle Mappings
   description: Fetch mapping information for the configured account and log the response.
@@ -24,7 +24,7 @@ fetch_basic_data:
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     vin:
       description: Optional VIN to query. Can be left out when the entry has a single vehicle.
-      example: WBY31AW090FP15359
+      example: WBA00000000000000
 migrate_entity_ids:
   name: Migrate Entity IDs
   description: Developer tool to migrate entity IDs from old format to new format. Use dry_run to preview changes without applying them.
@@ -82,7 +82,7 @@ fetch_charging_history:
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     vin:
       description: Optional VIN to query. If omitted, fetches for all known VINs.
-      example: WBY31AW090FP15359
+      example: WBA00000000000000
     from:
       description: "Start of the date range (ISO-8601). Without an offset it is local time. Defaults to 30 days before the end."
       example: "2026-01-01T00:00:00Z"
@@ -98,7 +98,7 @@ fetch_tyre_diagnosis:
       example: 01K65NKFESKBQZ78PBW6V9BCCX
     vin:
       description: Optional VIN to query. If omitted, fetches for all known VINs.
-      example: WBY31AW090FP15359
+      example: WBA00000000000000
 update_charging_power:
   name: Update Charging Power
   description: >
@@ -114,7 +114,7 @@ update_charging_power:
     vin:
       description: VIN of the vehicle being charged.
       required: true
-      example: WBY31AW090FP15359
+      example: WBA00000000000000
     power_kw:
       description: Gross charging power delivered to the vehicle, in kW.
       required: true

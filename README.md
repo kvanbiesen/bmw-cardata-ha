@@ -657,7 +657,7 @@ automation:
     action:
       - service: cardata.update_charging_power
         data:
-          vin: "WBY31AW090FP15359"
+          vin: "WBA00000000000000"
           power_kw: "{{ states('sensor.my_ev_meter_power') | float / 1000 }}"
 ```
 
