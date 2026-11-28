@@ -37,6 +37,8 @@ from typing import Dict, Optional
 
 import requests
 
+from private_file import write_private
+
 DEFAULT_TOKENS_PATH = "tokens.json"
 DEFAULT_TOKEN_URL = "https://customer.bmwgroup.com/gcdm/oauth/token"
 
@@ -127,7 +129,7 @@ def main() -> int:
 
     tokens = load_tokens(token_path)
     updated = refresh_tokens(tokens, scope=scope, token_url=args.token_url, timeout=args.timeout)
-    token_path.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    write_private(token_path, json.dumps(updated, indent=2) + "\n")
     print(f"Updated tokens saved to {token_path}")
     return 0
 

@@ -39,6 +39,8 @@ from typing import Dict, List
 
 import requests
 
+from private_file import write_private
+
 DEVICE_CODE_URL_DEFAULT = "https://customer.bmwgroup.com/gcdm/oauth/device/code"
 TOKEN_URL_DEFAULT = "https://customer.bmwgroup.com/gcdm/oauth/token"
 
@@ -98,8 +100,12 @@ def request_device_code(
     return response_json
 
 
-def _print_summary(data: Dict) -> None:
-    """Pretty-print next steps to stdout."""
+def _print_summary(data: Dict, saved_to: str | None) -> None:
+    """Pretty-print next steps to stdout.
+
+    The device code and the code verifier are what the tokens are exchanged
+    for, so they are only printed when no file holds them.
+    """
     friendly = {
         "Client ID": data["client_id"],
         "Device code": data["device_code"],
@@ -111,14 +117,19 @@ def _print_summary(data: Dict) -> None:
         "Token URL": data.get("token_url"),
         "Scopes": data["scope"],
     }
+    if saved_to:
+        del friendly["Device code"], friendly["Code verifier"]
 
     max_key_len = max(len(key) for key in friendly)
     print("\nDevice authorization initiated. Provide the details below during the next step:\n")
     for key, value in friendly.items():
         print(f"{key:<{max_key_len}} : {value}")
-    print(
-        "\nKeep the code verifier somewhere safe. You will need it when exchanging the device code for tokens."
-    )
+    if saved_to:
+        print(f"\nThe device code and the code verifier are in {saved_to}; pass it to the next step with --input.")
+    else:
+        print(
+            "\nKeep the code verifier somewhere safe. You will need it when exchanging the device code for tokens."
+        )
 
 
 def main() -> None:
@@ -139,7 +150,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        help="Optional path to store the full response + code verifier as JSON",
+        help="Optional path to store the full response + code verifier as JSON, readable by you only. "
+        "The device code and the code verifier are then not printed",
     )
 
     args = parser.parse_args()
@@ -154,11 +166,9 @@ def main() -> None:
         sys.exit(1)
 
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as fptr:
-            json.dump(data, fptr, indent=2)
-            fptr.write("\n")
+        write_private(args.output, json.dumps(data, indent=2) + "\n")
 
-    _print_summary(data)
+    _print_summary(data, args.output)
 
 
 if __name__ == "__main__":
