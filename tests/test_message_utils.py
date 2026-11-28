@@ -190,7 +190,7 @@ class TestRedactIdentifier:
     """Account identifiers such as the GCID are cut to their first four characters."""
 
     def test_a_gcid_keeps_only_its_start(self):
-        assert utils.redact_identifier("d2b6e8a1-1c3f-4e5a-9b7d-0f12ab34cd56") == "d2b6****"
+        assert utils.redact_identifier("01234567-89ab-cdef-0123-456789abcdef") == "0123****"
 
     def test_nothing_to_redact(self):
         assert utils.redact_identifier(None) == "<none>"

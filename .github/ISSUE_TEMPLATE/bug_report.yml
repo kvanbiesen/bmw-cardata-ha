@@ -76,7 +76,7 @@ body:
         Enable debug logging, reproduce the issue, and paste the logs here.
 
         The integration already redacts VINs (e.g. `WBY...9486`), your GCID
-        (e.g. `d2b6****`) and bearer tokens / Authorization headers in error
+        (e.g. `0123****`) and bearer tokens / Authorization headers in error
         messages. You only need to redact things it doesn't auto-redact:
         account email, precise GPS coordinates, and anything visible in
         attached screenshots. The GCID identifies your BMW account, and a
