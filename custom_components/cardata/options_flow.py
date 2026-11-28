@@ -34,6 +34,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
 from .config_flow import _sanitize_error_for_user, _validate_client_id
 from .const import (
@@ -279,7 +280,11 @@ class CardataOptionsFlowHandler(config_entries.OptionsFlow):
                 # field the user emptied, and a default would put the stored
                 # value straight back, so these could never be cleared.
                 vol.Optional(OPTION_CUSTOM_MQTT_USERNAME, description={"suggested_value": username}): str,
-                vol.Optional(OPTION_CUSTOM_MQTT_PASSWORD, description={"suggested_value": password}): str,
+                # A password field, so the stored password is not shown in
+                # clear whenever the form is opened.
+                vol.Optional(OPTION_CUSTOM_MQTT_PASSWORD, description={"suggested_value": password}): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                ),
                 vol.Optional(OPTION_CUSTOM_MQTT_TLS, default=tls): vol.In(
                     {"off": "Off (plain TCP)", "tls": "TLS (verified)", "tls_insecure": "TLS (self-signed)"}
                 ),
