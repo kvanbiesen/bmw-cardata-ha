@@ -43,7 +43,7 @@ from homeassistant.helpers.entity_registry import async_entries_for_config_entry
 
 from .const import DESC_SOC_DISPLAYED, DESC_SOC_HEADER, DOMAIN, MAGIC_SOC_DESCRIPTOR, has_hv_battery
 from .entity import forget_removed_vehicles
-from .utils import redact_vin
+from .utils import escape_markdown, redact_vin
 
 if TYPE_CHECKING:
     from .coordinator import CardataCoordinator
@@ -201,7 +201,9 @@ class ResetLearningButton(ButtonEntity):
         """Handle button press."""
         _LOGGER.info("Resetting %s learning for VIN %s", self._kind, redact_vin(self._vin))
         result = self._reset_fn(self._vin)
-        vehicle_name = self._coordinator.names.get(self._vin, redact_vin(self._vin))
+        # The name comes from BMW or from a broker, and the notification is
+        # rendered as Markdown.
+        vehicle_name = escape_markdown(self._coordinator.names.get(self._vin, redact_vin(self._vin)))
         msg = self._success_msg.format(name=vehicle_name) if result else self._empty_msg.format(name=vehicle_name)
         persistent_notification.async_create(
             self.hass,

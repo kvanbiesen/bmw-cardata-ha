@@ -145,3 +145,30 @@ class TestConsumptionResetRestore:
     def test_it_follows_the_magic_soc_sensor_row(self, platform):
         rows = [registry_row("sensor", f"{VIN}_{MAGIC_SOC_DESCRIPTOR}")]
         assert platform(rows) == {f"{VIN}_reset_consumption_learning"}
+
+
+class TestResetNotification:
+    """Pressing a reset button tells the user which vehicle it was for."""
+
+    async def test_the_vehicle_name_cannot_add_markdown(self, monkeypatch):
+        """The name comes from BMW or a broker; the notification is rendered as Markdown."""
+        name = "i4 [log in again](https://example.invalid/) ![](https://example.invalid/p.png)"
+        coordinator = SimpleNamespace(
+            names={VIN: name},
+            _soc_predictor=SimpleNamespace(reset_learned_efficiency=lambda _vin, _method: True),
+        )
+        messages: list[str] = []
+        monkeypatch.setattr(
+            button_module.persistent_notification,
+            "async_create",
+            lambda _hass, message, **_kwargs: messages.append(message),
+        )
+        button = button_module.ResetACLearningButton(coordinator, VIN, name, "entry")
+        button.hass = SimpleNamespace()
+
+        await button.async_press()
+
+        assert messages == [
+            "AC charging efficiency learning reset for i4 \\[log in again\\]\\(https\\:\\/\\/example\\.invalid\\/\\) "
+            "\\!\\[\\]\\(https\\:\\/\\/example\\.invalid\\/p\\.png\\)."
+        ]
