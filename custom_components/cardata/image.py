@@ -40,7 +40,7 @@ from .const import DOMAIN
 from .coordinator import CardataCoordinator
 from .entity import CardataEntity, forget_removed_vehicles
 from .runtime import CardataRuntimeData
-from .utils import redact_vin, redact_vin_in_text
+from .utils import redact_sensitive_data, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ async def _async_auto_fetch_image(
         _LOGGER.warning(
             "Failed to auto-fetch vehicle image for %s: %s",
             redacted,
-            str(err),
+            redact_sensitive_data(str(err)),
         )
 
 

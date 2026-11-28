@@ -40,7 +40,7 @@ from .api_parsing import extract_primary_vins, extract_telematic_payload, try_pa
 from .const import ALLOWED_VINS_KEY, API_BASE_URL, API_VERSION, BOOTSTRAP_COMPLETE
 from .http_retry import async_request_with_retry
 from .runtime import CardataRuntimeData, async_update_entry_data
-from .utils import get_all_registered_vins, is_valid_vin, redact_vin, redact_vin_in_text
+from .utils import get_all_registered_vins, is_valid_vin, redact_sensitive_data, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -308,11 +308,12 @@ async def async_fetch_primary_vins(
     )
 
     if error:
-        reason = f"request error: {error}"
+        safe_error = redact_sensitive_data(str(error))
+        reason = f"request error: {safe_error}"
         _LOGGER.warning(
             "Bootstrap mapping request errored for entry %s: %s",
             entry_id,
-            error,
+            safe_error,
         )
         return None, reason
 
@@ -410,7 +411,7 @@ async def async_fetch_all_container_ids(
         _LOGGER.debug(
             "Bootstrap could not list containers for entry %s: %s",
             entry_id,
-            error or (response.status if response else "no response"),
+            redact_sensitive_data(str(error)) if error else (response.status if response else "no response"),
         )
         return []
 
@@ -488,7 +489,7 @@ async def async_seed_telematic_data(
                     "Bootstrap telematic request errored for %s (container %s): %s",
                     redacted_vin,
                     container_id,
-                    error,
+                    redact_sensitive_data(str(error)),
                 )
                 continue
 

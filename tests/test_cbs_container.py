@@ -294,6 +294,20 @@ class TestFetch:
         assert entry.data[CBS_CONTAINER_ID_KEY] is None
         runtime.coordinator.async_handle_message.assert_not_awaited()
 
+    async def test_a_request_error_naming_the_address_does_not_put_the_vin_in_the_log(
+        self, hass, entry, runtime, caplog
+    ):
+        """Some aiohttp errors print the whole address, and the VIN is part of it."""
+        error = RuntimeError(
+            f"0, message='Bad status line', url='https://example.invalid/vehicles/{VIN}/telematicData'"
+        )
+        request = AsyncMock(return_value=(None, error))
+        with patch.object(telematics, "async_request_with_retry", request), caplog.at_level("WARNING"):
+            assert await telematics.async_fetch_condition_based_services(hass, entry, runtime, VIN) is False
+
+        assert "Bad status line" in caplog.text
+        assert VIN not in caplog.text
+
     async def test_the_container_is_created_once_then_reused(self, hass, entry, runtime):
         entry.data = {"access_token": "token", "hv_container_id": "hv-1"}
         reset = AsyncMock(return_value="cbs-new")
@@ -488,7 +502,6 @@ class TestMissingHvContainer:
 
 
 class TestSchedule:
-
     """Once a day per vehicle, failed or not, restart or not."""
 
     def test_due_when_never_read(self):
@@ -499,7 +512,9 @@ class TestSchedule:
         assert not telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - 3600}}, CBS_LAST_FETCH_KEY, VIN, NOW)
 
     def test_due_after_a_day(self):
-        assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW - DAILY_FETCH_INTERVAL}}, CBS_LAST_FETCH_KEY, VIN, NOW)
+        assert telematics.daily_fetch_due(
+            {CBS_LAST_FETCH_KEY: {VIN: NOW - DAILY_FETCH_INTERVAL}}, CBS_LAST_FETCH_KEY, VIN, NOW
+        )
 
     def test_due_when_stamped_in_the_future(self):
         assert telematics.daily_fetch_due({CBS_LAST_FETCH_KEY: {VIN: NOW + 3600}}, CBS_LAST_FETCH_KEY, VIN, NOW)

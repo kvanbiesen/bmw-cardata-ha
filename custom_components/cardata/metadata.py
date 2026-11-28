@@ -50,7 +50,7 @@ from .const import (
 )
 from .http_retry import async_request_with_retry
 from .runtime import async_update_entry_data
-from .utils import is_valid_vin, redact_vin, redact_vin_in_text
+from .utils import is_valid_vin, redact_sensitive_data, redact_vin, redact_vin_in_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -223,7 +223,7 @@ async def async_fetch_and_store_basic_data(
             _LOGGER.warning(
                 "Basic data request errored for %s: %s",
                 redacted_vin,
-                error,
+                redact_sensitive_data(str(error)),
             )
             continue
 
