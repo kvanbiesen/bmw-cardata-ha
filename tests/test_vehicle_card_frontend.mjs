@@ -9,8 +9,8 @@ const sandbox = {
   HTMLElement: class {},
   customElements: { get: () => undefined, define: () => {} },
 };
-runInNewContext(`${source}\nglobalThis.__cardTest = { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary };`, sandbox);
-const { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary } = sandbox.__cardTest;
+runInNewContext(`${source}\nglobalThis.__cardTest = { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary, resolveLang };`, sandbox);
+const { configuredAdditionalCards, additionalCardItems, tileGrid, tileGridWithAdditional, BmwCardataVehicleCard, doorsSecured, isChargingActive, windowSummary, resolveLang } = sandbox.__cardTest;
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
@@ -113,4 +113,12 @@ test('windows without any state are unknown, not closed', () => {
   assert.deepEqual(plain(windowSummary([undefined, undefined, { state: 'unavailable' }, { state: 'unknown' }])), { known: false, open: 0 });
   assert.deepEqual(plain(windowSummary([{ state: 'off' }, undefined, undefined, undefined])), { known: true, open: 0 });
   assert.deepEqual(plain(windowSummary([{ state: 'on' }, { state: 'INTERMEDIATE' }, { state: 'CLOSED' }, undefined])), { known: true, open: 2 });
+});
+
+test('a language that is not a translation falls back, whatever its name', () => {
+  assert.equal(resolveLang({ language: 'de' }, {}), 'de');
+  assert.equal(resolveLang({ language: 'de-CH' }, {}), 'de');
+  for (const language of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'xx']) {
+    assert.equal(resolveLang({ language }, {}), 'en', language);
+  }
 });
