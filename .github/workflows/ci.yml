@@ -6,23 +6,22 @@ on:
   pull_request:
     branches: ["**"]
   # The Autorelease workflow runs these checks before it releases. It passes
-  # check_only, so ruff checks instead of fixing and committing.
+  # check_only, so ruff checks instead of fixing.
   workflow_call:
     inputs:
       check_only:
         type: boolean
         default: false
 
-# lint asks for write itself, for the autofix commit. Every other job only
-# reads, including when the Autorelease workflow grants this workflow write.
+# Nothing here writes to the repository. On a push, ruff fixes what it can in
+# the checkout so that only what it cannot fix fails the job; the Ruff autofix
+# workflow is the one that commits those fixes.
 permissions:
   contents: read
 
 jobs:
   lint:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Check out
         uses: actions/checkout@v5
@@ -65,12 +64,6 @@ jobs:
         with:
           args: "format --check"
           src: "custom_components/cardata"
-
-      - name: Commit ruff fixes
-        if: github.event_name == 'push' && !inputs.check_only
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: ruff autofix"
 
   typecheck:
     runs-on: ubuntu-latest

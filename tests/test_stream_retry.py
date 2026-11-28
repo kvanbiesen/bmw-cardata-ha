@@ -775,7 +775,7 @@ def test_the_network_thread_does_not_carry_the_gcid() -> None:
     try:
         hass = MagicMock()
         hass.loop = loop
-        gcid = "d2b6e8a1-1c3f-4e5a-9b7d-0f12ab34cd56"
+        gcid = "01234567-89ab-cdef-0123-456789abcdef"
         manager = CardataStreamManager(
             hass=hass, client_id="client", gcid=gcid, id_token="token", host="localhost", port=8883, keepalive=30
         )

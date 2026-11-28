@@ -37,6 +37,8 @@ from typing import Any, Dict, Tuple
 
 import requests
 
+from private_file import write_private
+
 TOKEN_URL_DEFAULT = "https://customer.bmwgroup.com/gcdm/oauth/token"
 
 
@@ -130,8 +132,15 @@ def main() -> None:
         description="Poll the BMW CarData token endpoint using the device code flow.",
     )
     parser.add_argument("--client-id", help="Client ID generated in the BMW portal")
-    parser.add_argument("--device-code", help="Device code returned by the device authorization request")
-    parser.add_argument("--code-verifier", help="PKCE code verifier generated alongside the device code")
+    parser.add_argument(
+        "--device-code",
+        help="Device code returned by the device authorization request. Other users of this machine "
+        "can read a command line while it runs; --input keeps the code off it",
+    )
+    parser.add_argument(
+        "--code-verifier",
+        help="PKCE code verifier generated alongside the device code. Prefer --input, as for --device-code",
+    )
     parser.add_argument(
         "--token-url",
         default=TOKEN_URL_DEFAULT,
@@ -153,7 +162,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        help="Optional path to persist the token payload as JSON",
+        help="Optional path to persist the token payload as JSON, readable by you only. "
+        "The tokens are then not printed",
     )
 
     args = parser.parse_args()
@@ -172,9 +182,9 @@ def main() -> None:
         sys.exit(1)
 
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as fptr:
-            json.dump(data, fptr, indent=2)
-            fptr.write("\n")
+        write_private(args.output, json.dumps(data, indent=2) + "\n")
+        print(f"Tokens received and saved to {args.output}.")
+        return
 
     print("Tokens received. Save the details below:\n")
     printable = {

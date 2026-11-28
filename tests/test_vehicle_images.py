@@ -286,3 +286,74 @@ def test_basic_data_fetched_again_keeps_the_image_path():
     apply_basic_data(OWN_VIN, payload, device_metadata, names, MagicMock(), lambda *args: None, "entry")
 
     assert device_metadata[OWN_VIN]["vehicle_image_path"].endswith(f"{OWN_VIN}.png")
+
+
+def _image_reply(body: bytes, chunk_size: int = 4096) -> MagicMock:
+    """A 200 reply whose body is read in chunks, as the fetch reads it."""
+
+    async def chunks(_size):
+        for start in range(0, len(body), chunk_size):
+            yield body[start : start + chunk_size]
+
+    response = MagicMock(status=200)
+    response.content.iter_chunked = chunks
+    session = MagicMock()
+    session.get.return_value.__aenter__ = AsyncMock(return_value=response)
+    session.get.return_value.__aexit__ = AsyncMock(return_value=False)
+    return session
+
+
+async def _fetch_image(hass, body: bytes) -> bytes | None:
+    """Fetch the image of a vehicle that has none and return what was saved."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    coordinator = SimpleNamespace(device_metadata={OWN_VIN: {}}, signal_new_image="test_new_image")
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = SimpleNamespace(
+        coordinator=coordinator, image_fetch_pending=None
+    )
+
+    await async_fetch_and_store_vehicle_images(hass, entry, {}, [OWN_VIN], _image_reply(body))
+
+    saved = await _read_file(hass, f"{image_file_stem(entry.entry_id, OWN_VIN)}.png")
+    assert ("vehicle_image_path" in coordinator.device_metadata[OWN_VIN]) is (saved is not None)
+    return saved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "start",
+    [b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff\xe0", b"GIF89a", b"RIFF\x00\x00\x00\x00WEBP"],
+    ids=["png", "jpeg", "gif", "webp"],
+)
+async def test_an_image_is_saved(hass, start):
+    """BMW's specification names no format, so any a browser shows is kept."""
+    body = start + bytes(500)
+
+    assert await _fetch_image(hass, body) == body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<!doctype html><html><body>" + b"x" * 500 + b"</body></html>",
+        b'<svg xmlns="http://www.w3.org/2000/svg"><script>' + b"x" * 500 + b"</script></svg>",
+        b'{"error": "' + b"x" * 500 + b'"}',
+        b"RIFF\x00\x00\x00\x00WAVE" + bytes(500),
+    ],
+    ids=["html", "svg", "json", "riff that is not webp"],
+)
+async def test_a_reply_that_is_not_an_image_is_not_saved(hass, body):
+    """The folder is served without login, so only an image goes into it."""
+    assert await _fetch_image(hass, body) is None
+
+
+@pytest.mark.asyncio
+async def test_an_image_over_the_size_limit_is_not_saved(hass, monkeypatch):
+    from custom_components.cardata import metadata
+
+    monkeypatch.setattr(metadata, "_MAX_IMAGE_BYTES", 10_000)
+    start = b"\x89PNG\r\n\x1a\n"
+
+    assert await _fetch_image(hass, start + bytes(10_000 - len(start))) is not None
+    assert await _fetch_image(hass, start + bytes(10_001 - len(start))) is None

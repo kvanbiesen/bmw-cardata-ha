@@ -161,6 +161,13 @@ class CardataCoordinator:
     _MAX_DESCRIPTORS_PER_VIN: int = 1000  # Max unique descriptors stored per VIN
     _MAX_DESCRIPTOR_AGE_SECONDS: int = 604800  # 7 days - evict descriptors not updated in this time
     _descriptors_evicted_count: int = field(default=0, init=False)
+    # A vehicle a message names for the first time is taken on as it comes,
+    # which is how a car mapped as non-primary gets in at all. A broker that
+    # lets others publish could name any number of them, each one a device, a
+    # set of entities and a daily API poll, so there is a ceiling well above
+    # what an account holds.
+    _MAX_VINS: int = 20
+    _vin_limit_reported: bool = field(default=False, init=False)
     # Track dispatcher exceptions to detect recurring issues (per-instance)
     _dispatcher_exception_count: int = field(default=0, init=False)
     _DISPATCHER_EXCEPTION_THRESHOLD: int = 10  # Class constant for threshold
@@ -632,9 +639,24 @@ class CardataCoordinator:
         if not vin or not isinstance(data, dict):
             return
 
-        if not is_valid_vin(vin):
+        # BMW writes a VIN in capitals. Taken in lower case as well, the same
+        # car would come in a second time as a vehicle of its own.
+        if not is_valid_vin(vin) or vin != vin.upper():
             _LOGGER.warning("Rejecting message with invalid VIN format: %s", redact_vin(vin))
             return
+
+        if vin not in self._allowed_vins and vin not in self.data:
+            if len(self._allowed_vins | self.data.keys()) >= self._MAX_VINS:
+                # Once is enough: whoever sends these can send a great many.
+                log = _LOGGER.debug if self._vin_limit_reported else _LOGGER.warning
+                self._vin_limit_reported = True
+                log(
+                    "Ignoring vehicle %s: entry %s already has %d vehicles, the most it takes on",
+                    redact_vin(vin),
+                    self.entry_id,
+                    self._MAX_VINS,
+                )
+                return
 
         if self._allowed_vins_initialized and vin not in self._allowed_vins:
             _LOGGER.debug(

@@ -322,7 +322,7 @@ async def async_perform_telematic_fetch(
                     "Cardata fetch_telematic_data: network error for %s (container %s): %s",
                     redacted_vin,
                     cid,
-                    error,
+                    redact_sensitive_data(str(error)),
                 )
                 continue
 
@@ -912,7 +912,7 @@ async def async_fetch_condition_based_services(
     )
 
     if error or response is None:
-        _LOGGER.warning("Failed to fetch the service schedule for %s: %s", redacted, error)
+        _LOGGER.warning("Failed to fetch the service schedule for %s: %s", redacted, redact_sensitive_data(str(error)))
         return False
 
     if response.is_container_invalid or response.status == 404:

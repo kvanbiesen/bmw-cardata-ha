@@ -26,10 +26,6 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       check_only: true
-    # A called workflow gets no more than its caller grants, and ci.yml's lint
-    # job asks for write for its autofix commit, which check_only skips.
-    permissions:
-      contents: write
 
   tests:
     uses: ./.github/workflows/integration-tests.yml

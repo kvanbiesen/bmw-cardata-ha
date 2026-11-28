@@ -624,6 +624,44 @@ async def test_mqtt_broker_credentials_can_be_cleared(hass):
 
 
 @pytest.mark.asyncio
+async def test_mqtt_broker_password_is_a_password_field(hass):
+    """The form must not show the stored password in clear, and still takes a new one."""
+    from homeassistant.helpers.selector import TextSelector, TextSelectorType
+
+    from custom_components.cardata.const import (
+        OPTION_CUSTOM_MQTT_ENABLED,
+        OPTION_CUSTOM_MQTT_HOST,
+        OPTION_CUSTOM_MQTT_PASSWORD,
+        OPTION_CUSTOM_MQTT_PORT,
+        OPTION_CUSTOM_MQTT_TLS,
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"client_id": CLIENT_ID})
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "action_mqtt_broker"}
+    )
+    field = result["data_schema"].schema[OPTION_CUSTOM_MQTT_PASSWORD]
+    assert isinstance(field, TextSelector)
+    assert field.config["type"] == TextSelectorType.PASSWORD
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            OPTION_CUSTOM_MQTT_ENABLED: True,
+            OPTION_CUSTOM_MQTT_HOST: "broker.local",
+            OPTION_CUSTOM_MQTT_PORT: 1883,
+            OPTION_CUSTOM_MQTT_PASSWORD: "new-pass",
+            OPTION_CUSTOM_MQTT_TLS: "off",
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[OPTION_CUSTOM_MQTT_PASSWORD] == "new-pass"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("taken", [False, True])
 async def test_a_reauth_on_another_client_moves_the_unique_id(hass, taken):
     """Adding the old client again later must not pick the entry now on the new one."""

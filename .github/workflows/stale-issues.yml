@@ -22,6 +22,9 @@ jobs:
             const NOW = Date.now();
             const DAY_MS = 24 * 60 * 60 * 1000;
             const EXEMPT_LABELS = ['pinned', 'security'];
+            // The reminders are told apart by a marker in their text. Only
+            // those this workflow posted count: anyone can write the marker.
+            const REMINDER_AUTHOR = 'github-actions[bot]';
 
             const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
@@ -45,7 +48,7 @@ jobs:
               let lastActivity = new Date(issue.created_at);
 
               for (const c of comments) {
-                if (c.user.type === 'Bot' || c.body.includes('<!-- stale-reminder')) {
+                if (c.user.type === 'Bot') {
                   continue;
                 }
                 const d = new Date(c.created_at);
@@ -55,7 +58,7 @@ jobs:
               // Find highest reminder level after last human activity
               let maxReminder = 0;
               for (const c of comments) {
-                if (new Date(c.created_at) > lastActivity) {
+                if (c.user.login === REMINDER_AUTHOR && new Date(c.created_at) > lastActivity) {
                   const m = c.body.match(/<!-- stale-reminder (\d+)/);
                   if (m) maxReminder = Math.max(maxReminder, parseInt(m[1], 10));
                 }
@@ -123,7 +126,6 @@ jobs:
             const issue = context.payload.issue;
 
             if (comment.user.type === 'Bot') return;
-            if (comment.body.includes('<!-- stale-')) return;
 
             const hasStale = issue.labels.some(l => l.name === 'stale');
             if (!hasStale) return;

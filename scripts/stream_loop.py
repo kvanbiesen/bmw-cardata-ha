@@ -39,6 +39,8 @@ from uuid import uuid4
 
 import requests
 
+from private_file import write_private
+
 try:
     import paho.mqtt.client as mqtt
 except ImportError:  # pragma: no cover
@@ -203,7 +205,7 @@ def stream_with_refresh(args) -> None:
             token_url=args.token_url,
             timeout=args.timeout,
         )
-        token_path.write_text(json.dumps(tokens, indent=2) + "\n", encoding="utf-8")
+        write_private(token_path, json.dumps(tokens, indent=2) + "\n")
         print(f"Tokens refreshed at {tokens['received_at']}.")
 
         username = args.username or tokens.get("gcid")

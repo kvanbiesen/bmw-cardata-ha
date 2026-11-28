@@ -171,6 +171,19 @@ def redact_sensitive_data(text: str | None) -> str:
     return result
 
 
+# Every ASCII punctuation character, which is what Markdown lets a backslash escape
+_MARKDOWN_PUNCTUATION = re.compile(r"([!-/:-@\[-`{-~])")
+
+
+def escape_markdown(text: Any) -> str:
+    """Return text so that Markdown shows it as written, on one line.
+
+    For a value BMW or a broker sent that goes into a notification: Home
+    Assistant renders those as Markdown, links and remote images included.
+    """
+    return _MARKDOWN_PUNCTUATION.sub(r"\\\1", " ".join(str(text).split()))
+
+
 def validate_and_clamp_option(
     value: Any,
     min_val: int,

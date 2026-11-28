@@ -1,0 +1,44 @@
+name: Ruff autofix
+
+# Commits what ruff can fix on a push. Kept apart from CI because the commit
+# needs a token that writes, and the checks have no use for one. A push made
+# with that token starts no workflow, so the commit is not checked again.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - custom_components/cardata/**
+      - .github/workflows/ruff-autofix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The actions run beside a token that can push, so each is pinned to a
+      # commit rather than to a tag its owner can move.
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Run ruff linter (auto-fix)
+        uses: astral-sh/ruff-action@4919ec5cf1f49eff0871dbcea0da843445b837e6 # v3.6.1
+        with:
+          # Lint that cannot be fixed fails CI; here it must not stop the
+          # fixes that can be made from being committed.
+          args: "check --fix --exit-zero"
+          src: "custom_components/cardata"
+
+      - name: Run ruff formatter (auto-fix)
+        uses: astral-sh/ruff-action@4919ec5cf1f49eff0871dbcea0da843445b837e6 # v3.6.1
+        with:
+          args: "format"
+          src: "custom_components/cardata"
+
+      - name: Commit ruff fixes
+        uses: stefanzweifel/git-auto-commit-action@b863ae1933cb653a53c021fe36dbb774e1fb9403 # v5.2.0
+        with:
+          commit_message: "chore: ruff autofix"

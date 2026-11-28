@@ -620,11 +620,16 @@ const LEASE_TILE_OPTIONS = [
 ];
 const DEFAULT_LEASE_TILES = ["lease_remaining", "monthly_budget", "projected", "cost"];
 
+// A key taken from the card's configuration is looked up among an object's
+// own entries only: "constructor" or "toString" would otherwise be found on
+// every object and pass for a language or a tile.
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+
 const resolveLang = (cfg, hass) => {
   const configured = typeof cfg?.language === "string" && cfg.language !== "auto" ? cfg.language : "";
   const raw = (configured || hass?.locale?.language || hass?.language || DEFAULT_LANG).toLowerCase();
   const short = raw.split("-")[0] === "no" ? "nb" : raw.split("-")[0];
-  return TRANSLATIONS[raw] ? raw : TRANSLATIONS[short] ? short : DEFAULT_LANG;
+  return hasOwn(TRANSLATIONS, raw) ? raw : hasOwn(TRANSLATIONS, short) ? short : DEFAULT_LANG;
 };
 
 const localize = (lang, key) =>
@@ -1741,7 +1746,7 @@ class BmwCardataVehicleCard extends HTMLElement {
             <div class="range-top">
               <div class="bar-wrap ${chargingActive ? "charging" : ""}" data-entity-id="${escapeHtml(primaryLevelEntity)}" title="${escapeHtml(primaryLevelEntity)}"${barColor ? ` style="--tile-color:${escapeHtml(barColor)};"` : ""}>
                 <div class="bar-level" style="width:${primaryLevelValue}%;"></div>
-                <div class="energy-text">${primaryLevelLabel}</div>
+                <div class="energy-text">${escapeHtml(primaryLevelLabel)}</div>
               </div>
               <div class="range-value" data-entity-id="${escapeHtml(primaryRangeEntity)}" title="${escapeHtml(primaryRangeEntity)}">
                 <ha-icon icon="${primaryRangeIcon}"></ha-icon>
@@ -1992,7 +1997,7 @@ class BmwCardataVehicleCard extends HTMLElement {
         },
       };
       const selectedTiles = Array.isArray(cfg.leasing_tiles) && cfg.leasing_tiles.length
-        ? cfg.leasing_tiles.filter((key) => tileDefs[key])
+        ? cfg.leasing_tiles.filter((key) => hasOwn(tileDefs, key))
         : DEFAULT_LEASE_TILES;
       const leasingItems = selectedTiles.map((key) => tileDefs[key]);
       this._setHtml(

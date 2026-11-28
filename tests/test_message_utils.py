@@ -25,6 +25,8 @@
 
 """Tests for message_utils module."""
 
+import re
+
 from custom_components.cardata import utils
 from custom_components.cardata.message_utils import (
     BOOLEAN_DESCRIPTORS,
@@ -188,11 +190,37 @@ class TestRedactIdentifier:
     """Account identifiers such as the GCID are cut to their first four characters."""
 
     def test_a_gcid_keeps_only_its_start(self):
-        assert utils.redact_identifier("d2b6e8a1-1c3f-4e5a-9b7d-0f12ab34cd56") == "d2b6****"
+        assert utils.redact_identifier("01234567-89ab-cdef-0123-456789abcdef") == "0123****"
 
     def test_nothing_to_redact(self):
         assert utils.redact_identifier(None) == "<none>"
         assert utils.redact_identifier("") == "<none>"
+
+
+class TestEscapeMarkdown:
+    """A value from outside is shown as written by a Markdown renderer."""
+
+    def test_a_plain_name_is_left_alone(self):
+        assert utils.escape_markdown("i4 eDrive40") == "i4 eDrive40"
+
+    def test_a_link_and_an_image_lose_their_syntax(self):
+        escaped = utils.escape_markdown("[log in](https://example.invalid/) ![](https://example.invalid/p.png)")
+        # No bracket, parenthesis, colon or dot is left without a backslash
+        # before it, so neither the link syntax nor a bare address survives.
+        assert not re.search(r"(?<!\\)[\[\]()!:.]", escaped)
+
+    def test_html_is_escaped(self):
+        assert utils.escape_markdown("<img src=x>") == "\\<img src\\=x\\>"
+
+    def test_a_backslash_is_escaped_itself(self):
+        assert utils.escape_markdown("a\\[b") == "a\\\\\\[b"
+
+    def test_line_breaks_cannot_start_a_block(self):
+        assert utils.escape_markdown("i4\n# Heading\n\n- item") == "i4 \\# Heading \\- item"
+
+    def test_a_value_that_is_not_text(self):
+        assert utils.escape_markdown(None) == "None"
+        assert utils.escape_markdown(40) == "40"
 
 
 class TestRedactLocation:
