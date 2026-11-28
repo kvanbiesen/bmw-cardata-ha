@@ -7,12 +7,19 @@ on:
   # Run by the Autorelease workflow before it releases.
   workflow_call:
 
+# The job installs and runs packages straight from PyPI, so it gets a token
+# that only reads and no credentials left in the clone.
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
